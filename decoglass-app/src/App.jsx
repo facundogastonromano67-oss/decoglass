@@ -1,0 +1,2079 @@
+import { useState, useEffect } from "react";
+import { storage } from "./lib/storage";
+import {
+  Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
+  Lock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
+  Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
+  FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
+  Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign
+} from "lucide-react";
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
+  PieChart, Pie, Cell
+} from "recharts";
+
+const ICONS = { Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones };
+const METODO_ICONS = { "Retira": Building2, "Envío": Truck, "Envío flex": Truck, "Interior": Truck, "Colocación": Wrench, "Otro": Package };
+const QUICK_ICONS = { MessageCircle, Check, ShoppingCart };
+
+const OFFICE_VARIANTS = {
+  marketing:      { desks: [{ l: 12, t: 52 }], board: "moodboard" },
+  ventas:         { desks: [{ l: 10, t: 14 }, { l: 10, t: 54 }], board: "generic" },
+  administracion: { desks: [{ l: 12, t: 34 }], board: "cabinet" },
+  postventa:      { desks: [{ l: 12, t: 34 }], board: "checklist" },
+};
+
+function RoomScene({ sector }) {
+  if (sector.tipo === "fabrica") {
+    return (
+      <div className="dg-room-scene dg-room-fabrica">
+        <div className="dg-r-bench" style={{ left: "8%", top: "12%", width: "34%", height: "24%" }} />
+        <div className="dg-r-bench" style={{ left: "8%", top: "60%", width: "34%", height: "24%" }} />
+        <div className="dg-r-shelf" style={{ left: "62%", top: "8%", width: "28%", height: "80%" }} />
+        <div className="dg-r-belt-top" />
+      </div>
+    );
+  }
+  if (sector.tipo === "despacho") {
+    return (
+      <div className="dg-room-scene dg-room-despacho">
+        <div className="dg-r-lane" />
+        <div className="dg-r-pallet" style={{ left: "10%", top: "14%" }} />
+        <div className="dg-r-pallet" style={{ left: "10%", top: "56%" }} />
+        <div className="dg-r-truck">
+          <div className="dg-r-truck-cab" />
+          <div className="dg-r-truck-trailer" />
+        </div>
+      </div>
+    );
+  }
+  const variant = OFFICE_VARIANTS[sector.id] || { desks: [{ l: 14, t: 40 }], board: "generic" };
+  return (
+    <div className="dg-room-scene dg-room-oficina">
+      {variant.desks.map((d, i) => (
+        <div className="dg-r-desk" key={i} style={{ left: d.l + "%", top: d.t + "%" }}>
+          <div className="dg-r-desk-top" />
+          <div className="dg-r-monitor" />
+          <div className="dg-r-chair" />
+        </div>
+      ))}
+      <div className={`dg-r-board dg-r-board-${variant.board}`}>
+        {variant.board === "moodboard" && (<><span className="dg-r-note" style={{ background: "#F5C451" }} /><span className="dg-r-note" style={{ background: "#48E0D8" }} /><span className="dg-r-note" style={{ background: "#F16565" }} /></>)}
+        {variant.board === "cabinet" && <div className="dg-r-cabinet-lines" />}
+        {variant.board === "checklist" && <div className="dg-r-checklist-lines" />}
+        {variant.board === "generic" && <div className="dg-r-cabinet-lines" />}
+      </div>
+    </div>
+  );
+}
+const CHART_PALETTE = ["#48E0D8", "#F5C451", "#F16565", "#8B96A8", "#7DD3FC", "#C4B5FD"];
+
+const DEFAULT_SECTORS = [
+  { id: "marketing",      name: "Marketing y Publicidad",  icon: "Megaphone",    tipo: "oficina",  encargado: "", clave: null, tasks: [] },
+  { id: "ventas",         name: "Ventas",                   icon: "ShoppingCart", tipo: "oficina",  encargado: "", clave: null, tasks: [] },
+  { id: "administracion", name: "Administración",           icon: "Calculator",   tipo: "oficina",  encargado: "", clave: null, tasks: [] },
+  { id: "fabrica",        name: "Fábrica",                  icon: "Factory",      tipo: "fabrica",  encargado: "", clave: null, tasks: [] },
+  { id: "postventa",      name: "PostVenta",                 icon: "Headphones",   tipo: "oficina",  encargado: "", clave: null, tasks: [] },
+  { id: "logistica",      name: "Logística y Distribución", icon: "Truck",        tipo: "despacho", encargado: "", clave: null, tasks: [] },
+];
+
+const SUGGESTED_TASKS = {
+  marketing: [
+    "Definir identidad de marca (logo, colores, tono)",
+    "Organizar catálogo de productos con fotos profesionales",
+    "Armar calendario de contenido para redes sociales",
+    "Configurar campañas de Meta Ads / Google Ads",
+    "Reportar resultados de campañas cada mes",
+    "Recolectar testimonios y reseñas de clientes",
+  ],
+  ventas: [
+    "Definir lista de precios mayorista y minorista actualizada",
+    "Armar script de atención y seguimiento de consultas",
+    "Llevar planilla o CRM de seguimiento de clientes",
+    "Definir metas de venta mensuales por canal",
+    "Capacitar sobre las líneas de espejos LED",
+    "Definir proceso de cotización y cierre de venta",
+  ],
+  administracion: [
+    "Ordenar facturación y control de caja diario",
+    "Definir proceso de cobros y cuentas por cobrar",
+    "Controlar pagos a proveedores e importaciones",
+    "Comparar costos de fabricación propia vs. importación",
+    "Preparar reporte mensual de rentabilidad",
+    "Coordinar temas impositivos y contables",
+  ],
+  fabrica: [
+    "Estandarizar fichas técnicas por modelo de espejo",
+    "Controlar stock de insumos (vidrio, LED, marcos, transformadores)",
+    "Definir control de calidad antes de despacho",
+    "Armar cronograma de producción según pedidos",
+    "Planificar mantenimiento preventivo de maquinaria",
+    "Capacitar al personal en seguridad e higiene",
+  ],
+  postventa: [
+    "Definir política de garantía y devoluciones",
+    "Armar protocolo de atención a reclamos",
+    "Hacer seguimiento post-entrega al cliente",
+    "Documentar problemas frecuentes y soluciones",
+    "Medir tiempo de respuesta a reclamos",
+  ],
+  logistica: [
+    "Definir zonas de entrega y costos de envío",
+    "Gestionar transportistas o flota propia",
+    "Armar checklist de empaque para productos frágiles",
+    "Controlar stock de producto terminado listo para despacho",
+    "Coordinar agenda de despachos con fábrica y ventas",
+    "Hacer seguimiento de envíos hasta la entrega",
+  ],
+};
+
+const STATUS = {
+  green:  { glow: "#52E08A", label: "Al día" },
+  yellow: { glow: "#F5C451", label: "Atención" },
+  red:    { glow: "#F16565", label: "Crítico" },
+  gray:   { glow: "#5B6576", label: "Sin tareas" },
+};
+
+const PURCHASE_TYPES = { proveedor: "Proveedor", importacion: "Importación", insumos: "Insumos fábrica", sueldo: "Sueldo", servicio: "Servicio", otro: "Otro" };
+const INCOME_CHANNELS = { mayorista: "Mayorista", minorista: "Minorista", otro: "Otro" };
+const PAYMENT_METHODS = { efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta", otro: "Otro" };
+const CUENTA_INGRESO = { caja_efectivo: "Caja de efectivo", ingresos_bancarios: "Ingresos bancarios", ahorro_importados: "Ahorro de importados" };
+const IVA_RATE = 0.21;
+
+function determineCuentaPedido(pedido) {
+  if (pedido.tipo === "Importado") return "ahorro_importados";
+  if (pedido.tipoFactura === "Efectivo / No") return "caja_efectivo";
+  return "ingresos_bancarios";
+}
+
+const LEAD_CHANNELS = { whatsapp: "WhatsApp", instagram: "Instagram", local: "Local / Showroom", otro: "Otro" };
+const LEAD_STATES = {
+  mensaje_enviado: { label: "Mensaje enviado", color: "#8B96A8" },
+  respondio: { label: "Respondió", color: "#48E0D8" },
+  no_respondio: { label: "No respondió", color: "#F16565" },
+  venta_cerrada: { label: "Venta cerrada", color: "#52E08A" },
+  perdido: { label: "Sin cerrar / Perdido", color: "#F5C451" },
+};
+const DEFAULT_VENDEDORES = ["Cande", "Dou", "Facu", "Fran", "Sergio"];
+
+const QUICK_BUTTONS = [
+  { estado: "mensaje_enviado", label: "Le escribí a alguien", icon: "MessageCircle", color: "#8B96A8" },
+  { estado: "respondio", label: "Me respondió", icon: "Check", color: "#48E0D8" },
+  { estado: "venta_cerrada", label: "¡Compró!", icon: "ShoppingCart", color: "#52E08A" },
+];
+
+const FORMA_OPTIONS = ["Rectangular", "Pastilla", "Circular", "P. Curvas", "Ovalado", "Orgánico", "Capilla Arriba", "Capilla Abajo", "Capilla Izquierda", "Soft Orgánico", "Otro"];
+const TIPO_PEDIDO_OPTIONS = ["Simple", "Importado", "Esm.", "Sin led", "Biselado"];
+const TOUCH_OPTIONS = ["Touch", "No"];
+const DESEMP_OPTIONS = ["Desempañante", "No"];
+const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
+const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
+const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
+const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
+const COMISION_OPTIONS = ["No", "Liquidar", "Sí", "No aplica"];
+const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Pasado a fábrica", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado"];
+const METODO_OPTIONS = ["Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
+const PULIDO_OPTIONS = ["No", "Sí"];
+const ENVIO_METODOS = ["Envío", "Envío flex", "Interior", "Colocación"];
+
+const ESTADO_PEDIDO_COLOR = {
+  "Sin pasar a fábrica": "#8B96A8", "Verificado": "#F5C451", "Pasado a fábrica": "#48E0D8", "Mandar a grabar": "#F5C451",
+  "En grabado": "#F5C451", "Pedir biselado": "#F5C451", "Para armar": "#F5C451", "Espejo listo": "#48E0D8", "Entregado": "#52E08A",
+};
+const COMISION_COLOR = { "No": "#8B96A8", "Liquidar": "#F5C451", "Sí": "#52E08A", "No aplica": "#5B6576" };
+
+const METODO_ICON = { "Retira": "Building2", "Envío": "Truck", "Envío flex": "Truck", "Interior": "Truck", "Colocación": "Wrench", "Otro": "Package" };
+
+const ESTADO_STAGE = {
+  "Sin pasar a fábrica": { stage: "Sin verificar", color: "#8B96A8" },
+  "Verificado": { stage: "Verificado", color: "#F5C451" },
+  "Pasado a fábrica": { stage: "Pasado a fábrica", color: "#48E0D8" },
+  "Mandar a grabar": { stage: "Para cortar / grabar", color: "#F5C451" },
+  "En grabado": { stage: "Para cortar / grabar", color: "#F5C451" },
+  "Pedir biselado": { stage: "Para cortar / grabar", color: "#F5C451" },
+  "Para armar": { stage: "Para cortar / grabar", color: "#F5C451" },
+  "Espejo listo": { stage: "Espejo listo", color: "#48E0D8" },
+  "Entregado": { stage: "Entregado", color: "#52E08A" },
+};
+
+function waLink(tel) {
+  const clean = String(tel || "").replace(/[^0-9]/g, "");
+  return clean ? `https://wa.me/${clean}` : null;
+}
+function igLink(user) {
+  const clean = String(user || "").trim().replace(/^@/, "");
+  return clean ? `https://instagram.com/${clean}` : null;
+}
+
+// ---- Motor de presupuestos (replica del PRESUPUESTADOR_FRAN) ----
+const TIPO_PRODUCTO_TABLE = {
+  "Rectangular Simple":       { clase: "Simple",   esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0,     display: "Rectangular" },
+  "Redondo Simple":           { clase: "Simple",   esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0,     display: "Redondo" },
+  "Esmerilado Recto":         { clase: "Complejo", esmerilado: "Recto",         cargaBase: "Esmerilado",     recargoForma: 0,     display: "Rectangular" },
+  "Esmerilado Redondo":       { clase: "Complejo", esmerilado: "Circular",      cargaBase: "Esmerilado",     recargoForma: 0,     display: "Redondo" },
+  "Esmerilado Pastilla/Oval": { clase: "Complejo", esmerilado: "Pastilla/Oval", cargaBase: "Esmerilado",     recargoForma: 0,     display: "Pastilla/Oval" },
+  "Pastilla Simple":          { clase: "Complejo", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Pastilla" },
+  "Ovalado Simple":           { clase: "Complejo", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Ovalado" },
+  "Puntas Curvas":            { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Puntas Curvas" },
+  "Orgánico":                 { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Orgánico" },
+  "Soft":                     { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Soft" },
+};
+
+const DEFAULT_QUOTE_CONFIG = {
+  materiales: {
+    aluminioPrecio: 16395, aluminioRendimiento: 4.09875,
+    planchaPrecio: 181290, planchaRendimiento: 6.09,
+    ledPrecio: 8300, ledRendimiento: 1,
+    transformadorPrecio: 7500, transformadorRendimiento: 1,
+    selladorPrecio: 129360, selladorRendimiento: 240,
+    pulidoPrecio: 0, pulidoRendimiento: 1,
+  },
+  embalaje: {
+    burbujaPrecio: 20249.1, burbujaRendimiento: 50, carasCubiertas: 2, mermaBurbuja: 0.15,
+    stretchPrecio: 45372.48, stretchRendimiento: 16, vueltasPorExtremo: 4, cantidadExtremos: 2, metrosPorBobina: 180, espesorEmbalado: 0.05,
+    cintaPrecio: 2500, cintaRendimiento: 30.12048,
+    pitonPrecio: 26702, pitonRendimiento: 100, pitonesPorEspejo: 2,
+    tarugoPrecio: 0, tarugoRendimiento: 100, tarugosPorEspejo: 2,
+    alcoholPrecio: 2500, alcoholRendimiento: 30.12048,
+    cartonPuntasPrecio: 0, cartonPuntasRendimiento: 1,
+    maderaInteriorPrecio: 6000, telgoporInteriorPrecio: 3125, extraCaja: 10,
+  },
+  opcionales: {
+    touch: { costo: 3500, carga: 0 },
+    desemp: { costo: 4500, carga: 10000 },
+    horaTemp: { costo: 6000, carga: 2000 },
+    bluetooth: {
+      "Sin Bluetooth": { componente: 0, parlantes: 0, carga: 0 },
+      "Bluetooth 1 parlante": { componente: 3500, parlantes: 17000, carga: 6000 },
+      "Bluetooth 2 parlantes": { componente: 3500, parlantes: 23500, carga: 10000 },
+    },
+    paneles: {
+      "30x30": { costoReal: 3500, minimoAgregado: 40000 },
+      "30x40": { costoReal: 4700, minimoAgregado: 40000 },
+      "40x60": { costoReal: 8000, minimoAgregado: 40000 },
+    },
+    esmerilado: { Recto: 61000, Circular: 80430, "Pastilla/Oval": 99500 },
+  },
+  cargaOperativa: { "Simple / Touch": 48000, Esmerilado: 53000, embalajeInteriorAdicional: 15000, panelAdicional: 2500 },
+  reglas: {
+    iva: 0.21, factor3cuotas: 1.20407, limiteMedidaEstandar: 0.81,
+    margenMinorista: 0.4, margenRevendedor: 0.3, margenConstructora10: 0.25, margenConstructora20: 0.2,
+    recargoNoEstandar: 0.3, minRevendedorQty: 5, minConstructora10Qty: 10, minConstructora20Qty: 20,
+    minimoAgregado: 20000, medidaMaxAncho: 240, medidaMaxAlto: 170, margenMinDesempCm: 18,
+  },
+};
+
+function unitCost(precio, rendimiento) { return rendimiento ? precio / rendimiento : 0; }
+
+function determinePanel(ancho, alto, margen) {
+  if ((ancho >= 40 + margen && alto >= 60 + margen) || (ancho >= 60 + margen && alto >= 40 + margen)) return "40x60";
+  if ((ancho >= 30 + margen && alto >= 40 + margen) || (ancho >= 40 + margen && alto >= 30 + margen)) return "30x40";
+  if (ancho >= 30 + margen && alto >= 30 + margen) return "30x30";
+  return "NO ENTRA";
+}
+
+function roundTo1000(n) { return Math.round(n / 1000) * 1000; }
+function fmtMoney(n) { return "$" + Math.round(n).toLocaleString("es-AR"); }
+
+function computeQuote(inputs, cfg) {
+  const { tipoProducto, ancho, alto, touch, desemp, horaTemp, bluetoothSel, panelesAdicionales, envioInterior, tipoCliente, cantidad } = inputs;
+  const { materiales: M, embalaje: E, opcionales: O, cargaOperativa: C, reglas: R } = cfg;
+
+  const tipoRow = TIPO_PRODUCTO_TABLE[tipoProducto] || TIPO_PRODUCTO_TABLE["Rectangular Simple"];
+  const area = (ancho * alto) / 10000;
+  const perimetro = (2 * (ancho + alto)) / 100;
+  const estandar = area <= R.limiteMedidaEstandar;
+  const factorTamaño = estandar ? 1 : 1 + R.recargoNoEstandar;
+
+  const alertaMedidaMaxima = (ancho <= R.medidaMaxAncho && alto <= R.medidaMaxAlto) || (ancho <= R.medidaMaxAlto && alto <= R.medidaMaxAncho) ? "OK" : `COTIZACIÓN MANUAL: supera ${R.medidaMaxAncho}×${R.medidaMaxAlto} cm`;
+
+  const costoEspejo = area * unitCost(M.planchaPrecio, M.planchaRendimiento);
+  const costoAluminio = perimetro * unitCost(M.aluminioPrecio, M.aluminioRendimiento);
+  const costoPulido = perimetro * unitCost(M.pulidoPrecio, M.pulidoRendimiento);
+  const costoLed = unitCost(M.ledPrecio, M.ledRendimiento);
+  const costoTransformador = unitCost(M.transformadorPrecio, M.transformadorRendimiento);
+  const costoSellador = unitCost(M.selladorPrecio, M.selladorRendimiento);
+  const costoEsmerilado = tipoRow.esmerilado !== "Ninguno" ? area * (O.esmerilado[tipoRow.esmerilado] || 0) : 0;
+
+  const unitBurbuja = unitCost(E.burbujaPrecio, E.burbujaRendimiento);
+  const burbuja = area * E.carasCubiertas * unitBurbuja * (1 + E.mermaBurbuja);
+  const unitStretch = unitCost(E.stretchPrecio, E.stretchRendimiento);
+  const stretch = ((2 * (ancho / 100 + E.espesorEmbalado) * E.vueltasPorExtremo * E.cantidadExtremos) / E.metrosPorBobina) * unitStretch;
+  const cinta = unitCost(E.cintaPrecio, E.cintaRendimiento);
+  const pitones = unitCost(E.pitonPrecio, E.pitonRendimiento) * E.pitonesPorEspejo;
+  const tarugos = unitCost(E.tarugoPrecio, E.tarugoRendimiento) * E.tarugosPorEspejo;
+  const alcohol = unitCost(E.alcoholPrecio, E.alcoholRendimiento);
+  const cartonPuntas = unitCost(E.cartonPuntasPrecio, E.cartonPuntasRendimiento);
+
+  const areaCajaInterior = envioInterior === "Sí" ? ((ancho + E.extraCaja) * (alto + E.extraCaja)) / 10000 : 0;
+  const materialesEmbalajeInterior = areaCajaInterior * (unitCost(E.maderaInteriorPrecio, 1) + unitCost(E.telgoporInteriorPrecio, 1));
+  const cargaEmbalajeInterior = envioInterior === "Sí" ? C.embalajeInteriorAdicional : 0;
+
+  const cargaBaseOperativa = C[tipoRow.cargaBase] || 0;
+
+  const costoBaseSinFunciones = costoEspejo + costoAluminio + costoPulido + costoLed + costoTransformador + costoSellador
+    + costoEsmerilado + burbuja + stretch + cinta + pitones + tarugos + alcohol + cargaBaseOperativa
+    + cargaEmbalajeInterior + materialesEmbalajeInterior + cartonPuntas;
+
+  const touchCostoReal = touch === "Sí" ? O.touch.costo : 0;
+  const desempCostoReal = desemp === "Sí" ? O.desemp.costo : 0;
+  const horaTempCostoReal = horaTemp === "Sí" ? O.horaTemp.costo : 0;
+  const bt = O.bluetooth[bluetoothSel] || O.bluetooth["Sin Bluetooth"];
+  const bluetoothCostoReal = bt.componente + bt.parlantes;
+
+  const panelSize = desemp === "Sí" ? determinePanel(ancho, alto, R.margenMinDesempCm) : "No aplica";
+  const panelDisponible = panelSize !== "No aplica" && panelSize !== "NO ENTRA";
+  const panelPrincipalCosto = panelDisponible ? O.paneles[panelSize].costoReal : 0;
+  const panelesAdicionalesCosto = panelDisponible ? panelesAdicionales * O.paneles[panelSize].costoReal : 0;
+  const cantidadTotalPaneles = panelDisponible ? 1 + panelesAdicionales : 0;
+  const precioAdicionalPaneles = panelDisponible && panelesAdicionales > 0 ? panelesAdicionales * O.paneles[panelSize].minimoAgregado : 0;
+
+  const cargaTouch = touch === "Sí" ? O.touch.carga : 0;
+  const cargaDesemp = desemp === "Sí" ? O.desemp.carga : 0;
+  const cargaHoraTemp = horaTemp === "Sí" ? O.horaTemp.carga : 0;
+  const cargaBluetooth = bt.carga;
+  const cargaPanelesAdicionales = desemp === "Sí" ? panelesAdicionales * C.panelAdicional : 0;
+
+  const costoRealFunciones = touchCostoReal + desempCostoReal + horaTempCostoReal + bluetoothCostoReal + panelPrincipalCosto + panelesAdicionalesCosto
+    + cargaTouch + cargaDesemp + cargaHoraTemp + cargaBluetooth + cargaPanelesAdicionales;
+
+  const costoTotalEstimado = costoBaseSinFunciones + costoRealFunciones;
+
+  const alertaPaneles = desemp !== "Sí" && panelesAdicionales > 0
+    ? "REVISAR: panel adicional sin desempañante"
+    : panelSize === "NO ENTRA"
+    ? `NO ENTRA: medida insuficiente con margen de ${R.margenMinDesempCm} cm`
+    : (ancho > 100 || alto > 100) && desemp === "Sí" && panelesAdicionales === 0
+    ? "RECOMENDACIÓN: agregar panel adicional"
+    : "OK";
+
+  function precioPorMargen(m) {
+    if (alertaMedidaMaxima !== "OK" || panelSize === "NO ENTRA") return 0;
+    const base = (costoBaseSinFunciones / (1 - m)) * factorTamaño * (1 + tipoRow.recargoForma) * (1 + R.iva);
+    const term = (costo, carga, activo) => (activo ? Math.max(R.minimoAgregado, ((costo + carga) / (1 - m)) * (1 + R.iva)) : 0);
+    const funciones =
+      term(touchCostoReal, cargaTouch, touch === "Sí") +
+      term(desempCostoReal + panelPrincipalCosto, cargaDesemp, desemp === "Sí") +
+      term(horaTempCostoReal, cargaHoraTemp, horaTemp === "Sí") +
+      term(bluetoothCostoReal, cargaBluetooth, bluetoothSel !== "Sin Bluetooth");
+    return base + funciones + precioAdicionalPaneles;
+  }
+
+  const precioMinorista = precioPorMargen(R.margenMinorista);
+  const precioRevendedor = precioPorMargen(R.margenRevendedor);
+  const precioConstructora10 = precioPorMargen(R.margenConstructora10);
+  const precioConstructora20 = precioPorMargen(R.margenConstructora20);
+
+  const escalaComercial = tipoCliente === "Consumidor Final" ? "Minorista"
+    : cantidad < R.minRevendedorQty ? "No habilitado: precio minorista"
+    : cantidad < R.minConstructora10Qty ? "Revendedor 5–9"
+    : cantidad < R.minConstructora20Qty ? "Constructora 10–19"
+    : "Constructora 20+";
+
+  const alertaComercial = tipoCliente === "Consumidor Final" ? "OK" : (cantidad < R.minRevendedorQty ? `Mínimo ${R.minRevendedorQty} unidades idénticas` : "OK");
+
+  const precioTransferencia = tipoCliente === "Consumidor Final" ? precioMinorista
+    : cantidad < R.minRevendedorQty ? precioMinorista
+    : cantidad < R.minConstructora10Qty ? precioRevendedor
+    : cantidad < R.minConstructora20Qty ? precioConstructora10
+    : precioConstructora20;
+
+  const margenAplicado = tipoCliente === "Consumidor Final" ? R.margenMinorista
+    : cantidad < R.minRevendedorQty ? R.margenMinorista
+    : cantidad < R.minConstructora10Qty ? R.margenRevendedor
+    : cantidad < R.minConstructora20Qty ? R.margenConstructora10
+    : R.margenConstructora20;
+
+  const precio3Cuotas = tipoCliente === "Consumidor Final" && precioTransferencia ? precioTransferencia * R.factor3cuotas : null;
+  const precioEfectivoSinIva = precioTransferencia ? precioTransferencia / (1 + R.iva) : 0;
+  const totalPedidoTransferencia = precioTransferencia * cantidad;
+  const margenReal = precioEfectivoSinIva ? (precioEfectivoSinIva - costoTotalEstimado) / precioEfectivoSinIva : 0;
+
+  const esEsmeriladoOBiselado = tipoRow.esmerilado !== "Ninguno" || tipoProducto === "Biselado";
+  const tiempoFabricacion = esEsmeriladoOBiselado ? "25 días hábiles" : (desemp === "Sí" || bluetoothSel !== "Sin Bluetooth") ? "10 a 12 días hábiles" : "5 a 7 días hábiles";
+
+  const modeloComercial = (tipoRow.esmerilado !== "Ninguno" ? "Esmerilado" : "Simple")
+    + (touch === "Sí" ? " + Touch" : "")
+    + (desemp === "Sí" ? " + Desempañante" : "")
+    + (horaTemp === "Sí" ? " + Hora/Temperatura" : "")
+    + (bluetoothSel !== "Sin Bluetooth" ? ` + ${bluetoothSel}` : "")
+    + (desemp === "Sí" && panelesAdicionales > 0 ? ` (${1 + panelesAdicionales} paneles)` : "");
+
+  return {
+    area, perimetro, estandar, factorTamaño, alertaMedidaMaxima, alertaPaneles, alertaComercial,
+    costoTotalEstimado, escalaComercial, margenAplicado, margenReal,
+    panelSize, cantidadTotalPaneles,
+    precioMinorista, precioRevendedor, precioConstructora10, precioConstructora20,
+    precioTransferencia, precio3Cuotas, precioEfectivoSinIva, totalPedidoTransferencia,
+    tiempoFabricacion, modeloComercial, tipoComercialDisplay: tipoRow.display,
+  };
+}
+
+function buildWhatsappMessage(inputs, result) {
+  const { cliente, ancho, alto, envioInterior } = inputs;
+  const saludo = cliente ? `Hola ${cliente}, te paso el presupuesto:` : "Hola, te paso el presupuesto:";
+  let msg = `${saludo}\n\nEspejo ${result.tipoComercialDisplay} retroiluminado\n• Modelo: ${result.modeloComercial}\n\n📏 Medida: ${ancho} × ${alto} cm\n\n`;
+  if (result.precio3Cuotas) msg += `💰 ${fmtMoney(roundTo1000(result.precio3Cuotas))} - Hasta 3 cuotas\n`;
+  if (result.precioTransferencia) msg += `💰 ${fmtMoney(roundTo1000(result.precioTransferencia))} - Transferencia`;
+  msg += `\n\n🕛 Tiempo de fabricación: ${result.tiempoFabricacion}\n\n`;
+  msg += envioInterior === "Sí"
+    ? "Se puede encargar con un anticipo del 50% y el saldo restante antes del despacho."
+    : "Se puede encargar con un anticipo del 50% y el saldo restante al momento de retirar o antes de la entrega.";
+  return msg;
+}
+
+function getStatus(tasks) {
+  if (!tasks || tasks.length === 0) return { key: "gray", pct: null };
+  const done = tasks.filter((t) => t.completed).length;
+  const pct = Math.round((done / tasks.length) * 100);
+  const key = pct >= 80 ? "green" : pct >= 50 ? "yellow" : "red";
+  return { key, pct };
+}
+function uid() { return Math.random().toString(36).slice(2, 10); }
+function money(n) { return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n || 0); }
+function monthLabel(ym) {
+  const [y, m] = ym.split("-");
+  const names = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  return `${names[parseInt(m, 10) - 1]} '${y.slice(2)}`;
+}
+function last6Months() {
+  const out = [];
+  const d = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const dt = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    out.push(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return out;
+}
+function monthlyTotals(entries) {
+  const months = last6Months();
+  const byMonth = {};
+  months.forEach((m) => (byMonth[m] = 0));
+  entries.forEach((e) => {
+    const ym = (e.fecha || "").slice(0, 7);
+    if (byMonth[ym] !== undefined) byMonth[ym] += Number(e.monto || 0);
+  });
+  return months.map((m) => ({ mes: monthLabel(m), total: byMonth[m] }));
+}
+function breakdownBy(entries, field, labels) {
+  const totals = {};
+  entries.forEach((e) => { totals[e[field]] = (totals[e[field]] || 0) + Number(e.monto || 0); });
+  return Object.entries(totals).map(([k, v]) => ({ name: labels[k] || k, value: v }));
+}
+
+export default function App() {
+  const [page, setPage] = useState("edificio");
+  const [sectors, setSectors] = useState(null);
+  const [purchases, setPurchases] = useState(null);
+  const [incomes, setIncomes] = useState(null);
+  const [quoteConfig, setQuoteConfig] = useState(null);
+  const [quotes, setQuotes] = useState(null);
+  const [leads, setLeads] = useState(null);
+  const [vendedores, setVendedores] = useState(null);
+  const [pedidos, setPedidos] = useState(null);
+  const [adminKeyExists, setAdminKeyExists] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState(null);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [openSectorId, setOpenSectorId] = useState(null);
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    let loadedSectors = DEFAULT_SECTORS;
+    try {
+      const s = await storage.get("sectors", true);
+      loadedSectors = s ? JSON.parse(s.value) : DEFAULT_SECTORS;
+    } catch (e) { loadedSectors = DEFAULT_SECTORS; }
+
+    const today = new Date().toISOString().slice(0, 10);
+    let lastReset = null;
+    try {
+      const lr = await storage.get("last-reset-date", true);
+      lastReset = lr ? lr.value : null;
+    } catch (e) { lastReset = null; }
+    if (lastReset !== today) {
+      loadedSectors = loadedSectors.map((sec) => ({ ...sec, tasks: sec.tasks.map((t) => ({ ...t, completed: false })) }));
+      try {
+        await storage.set("sectors", JSON.stringify(loadedSectors), true);
+        await storage.set("last-reset-date", today, true);
+      } catch (e) {}
+    }
+    setSectors(loadedSectors);
+
+    try {
+      const p = await storage.get("payments", true);
+      setPurchases(p ? JSON.parse(p.value) : []);
+    } catch (e) { setPurchases([]); }
+    try {
+      const inc = await storage.get("incomes", true);
+      setIncomes(inc ? JSON.parse(inc.value) : []);
+    } catch (e) { setIncomes([]); }
+    try {
+      const qc = await storage.get("quote-config", true);
+      setQuoteConfig(qc ? JSON.parse(qc.value) : DEFAULT_QUOTE_CONFIG);
+    } catch (e) { setQuoteConfig(DEFAULT_QUOTE_CONFIG); }
+    try {
+      const q = await storage.get("quotes", true);
+      setQuotes(q ? JSON.parse(q.value) : []);
+    } catch (e) { setQuotes([]); }
+    try {
+      const l = await storage.get("leads", true);
+      setLeads(l ? JSON.parse(l.value) : []);
+    } catch (e) { setLeads([]); }
+    try {
+      const v = await storage.get("vendedores", true);
+      setVendedores(v ? JSON.parse(v.value) : DEFAULT_VENDEDORES);
+    } catch (e) { setVendedores(DEFAULT_VENDEDORES); }
+    try {
+      const p = await storage.get("pedidos", true);
+      setPedidos(p ? JSON.parse(p.value) : []);
+    } catch (e) { setPedidos([]); }
+    try {
+      const a = await storage.get("admin-key", true);
+      setAdminKeyExists(!!a);
+    } catch (e) { setAdminKeyExists(false); }
+    setLoading(false);
+  }
+
+  async function persistSectors(next) { setSectors(next); try { await storage.set("sectors", JSON.stringify(next), true); } catch (e) {} }
+  async function persistPurchases(next) { setPurchases(next); try { await storage.set("payments", JSON.stringify(next), true); } catch (e) {} }
+  async function persistIncomes(next) { setIncomes(next); try { await storage.set("incomes", JSON.stringify(next), true); } catch (e) {} }
+  async function persistQuoteConfig(next) { setQuoteConfig(next); try { await storage.set("quote-config", JSON.stringify(next), true); } catch (e) {} }
+  async function persistQuotes(next) { setQuotes(next); try { await storage.set("quotes", JSON.stringify(next), true); } catch (e) {} }
+  async function persistLeads(next) { setLeads(next); try { await storage.set("leads", JSON.stringify(next), true); } catch (e) {} }
+  async function persistVendedores(next) { setVendedores(next); try { await storage.set("vendedores", JSON.stringify(next), true); } catch (e) {} }
+  async function persistPedidos(next) { setPedidos(next); try { await storage.set("pedidos", JSON.stringify(next), true); } catch (e) {} }
+  function createIncomeFromPedido(entry) { persistIncomes([entry, ...incomes]); }
+
+  function updateSector(id, patch) { persistSectors(sectors.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
+
+  const counts = sectors ? sectors.reduce((acc, s) => { const { key } = getStatus(s.tasks); acc[key] = (acc[key] || 0) + 1; return acc; }, {}) : {};
+  const isAdmin = session?.role === "admin";
+  const isVentas = session?.role === "sector" && session.sectorId === "ventas";
+  const canQuote = isAdmin || isVentas;
+  const canSeePedidos = !!session;
+  const canEditPedidoFull = isAdmin || isVentas;
+
+  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos) {
+    return (<div style={wrap}><Style /><div className="dg-app dg-loading"><Loader2 className="dg-spin" size={28} /><span>Cargando DECOGLASS...</span></div></div>);
+  }
+
+  const openSector = sectors.find((s) => s.id === openSectorId) || null;
+
+  return (
+    <div style={wrap}>
+      <Style />
+      <div className="dg-app">
+        <header className="dg-header">
+          <div className="dg-brand">
+            <div className="dg-brand-mark">DG</div>
+            <div><div className="dg-brand-title">DECOGLASS</div><div className="dg-brand-sub">Gestión de sectores · Espejos LED</div></div>
+          </div>
+          {session ? (
+            <div className="dg-session">
+              <span className="dg-session-badge">
+                {session.role === "admin" ? <ShieldCheck size={14} /> : <User size={14} />}
+                {session.role === "admin" ? "Admin" : sectors.find((s) => s.id === session.sectorId)?.name || "Encargado"}
+              </span>
+              <button className="dg-icon-btn" onClick={() => setSession(null)} title="Cerrar sesión"><LogOut size={16} /></button>
+            </div>
+          ) : (
+            <button className="dg-login-btn" onClick={() => setLoginOpen(true)}><Lock size={14} /> Iniciar sesión</button>
+          )}
+        </header>
+
+        <nav className="dg-nav">
+          <button className={`dg-nav-btn ${page === "edificio" ? "dg-nav-on" : ""}`} onClick={() => setPage("edificio")}><Building2 size={14} /> Edificio</button>
+          <button className={`dg-nav-btn ${page === "ingresos" ? "dg-nav-on" : ""}`} onClick={() => setPage("ingresos")}><TrendingUp size={14} /> Ingresos</button>
+          <button className={`dg-nav-btn ${page === "compras" ? "dg-nav-on" : ""}`} onClick={() => setPage("compras")}><TrendingDown size={14} /> Compras</button>
+          <button className={`dg-nav-btn ${page === "presupuestador" ? "dg-nav-on" : ""}`} onClick={() => setPage("presupuestador")}><FileText size={14} /> Presupuestador</button>
+          <button className={`dg-nav-btn ${page === "crm" ? "dg-nav-on" : ""}`} onClick={() => setPage("crm")}><Users size={14} /> CRM</button>
+          <button className={`dg-nav-btn ${page === "pedidos" ? "dg-nav-on" : ""}`} onClick={() => setPage("pedidos")}><ClipboardList size={14} /> Pedidos</button>
+        </nav>
+
+        {page === "edificio" && (
+          <>
+            <div className="dg-summary">
+              {["green", "yellow", "red", "gray"].map((k) => (
+                <div className="dg-chip" key={k} style={{ "--c": STATUS[k].glow }}><span className="dg-chip-dot" />{counts[k] || 0} {STATUS[k].label}</div>
+              ))}
+            </div>
+            <div className="dg-plant-outer">
+              <div className="dg-plant-grid">
+                {sectors.map((sector, i) => {
+                  const { key, pct } = getStatus(sector.tasks);
+                  const glow = STATUS[key].glow;
+                  const Icon = ICONS[sector.icon];
+                  return (
+                    <button key={sector.id} className={`dg-room-tile dg-room-tile-${sector.tipo}`} style={{ "--glow": glow }} onClick={() => setOpenSectorId(sector.id)}>
+                      <RoomScene sector={sector} />
+                      <div className="dg-room-plate" style={{ "--glow": glow }}>
+                        <span className="dg-room-plate-num">{String(i + 1).padStart(2, "0")}</span>
+                        <div className="dg-room-plate-icon" style={{ "--glow": glow }}>{Icon && <Icon size={14} />}</div>
+                        <div className="dg-room-plate-text">
+                          <span className="dg-room-plate-name">{sector.name}</span>
+                          <span className="dg-room-plate-sub">{sector.encargado || "Sin encargado"}</span>
+                        </div>
+                        <span className="dg-room-plate-pct" style={{ color: glow }}>{pct === null ? "—" : `${pct}%`}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+
+        {page === "ingresos" && (
+          isAdmin ? (
+            <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={persistIncomes} />
+          ) : (
+            <LockedPage label="Ingresos" onLogin={() => setLoginOpen(true)} />
+          )
+        )}
+
+        {page === "compras" && (
+          isAdmin ? (
+            <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={persistPurchases} />
+          ) : (
+            <LockedPage label="Compras" onLogin={() => setLoginOpen(true)} />
+          )
+        )}
+
+        {page === "presupuestador" && (
+          canQuote ? (
+            <QuotePage config={quoteConfig} onConfigChange={persistQuoteConfig} quotes={quotes} onQuotesChange={persistQuotes} isAdmin={isAdmin} />
+          ) : (
+            <LockedPage label="El Presupuestador" onLogin={() => setLoginOpen(true)} />
+          )
+        )}
+
+        {page === "crm" && (
+          canQuote ? (
+            <CRMPage leads={leads} onLeadsChange={persistLeads} vendedores={vendedores} onVendedoresChange={persistVendedores} isAdmin={isAdmin} />
+          ) : (
+            <LockedPage label="El CRM" onLogin={() => setLoginOpen(true)} />
+          )
+        )}
+
+        {page === "pedidos" && (
+          canSeePedidos ? (
+            <PedidosPage pedidos={pedidos} onChange={persistPedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} sessionSectorId={session?.role === "sector" ? session.sectorId : null} incomes={incomes} onCreateIncome={createIncomeFromPedido} />
+          ) : (
+            <LockedPage label="La Planilla de Pedidos" onLogin={() => setLoginOpen(true)} />
+          )
+        )}
+      </div>
+
+      {loginOpen && (
+        <LoginModal
+          sectors={sectors} adminKeyExists={adminKeyExists}
+          onClose={() => setLoginOpen(false)}
+          onAdminKeyCreated={() => setAdminKeyExists(true)}
+          onSectorUpdate={updateSector}
+          onSuccess={(s) => { setSession(s); setLoginOpen(false); }}
+        />
+      )}
+
+      {openSector && (
+        <SectorModal
+          sector={openSector} index={sectors.findIndex((s) => s.id === openSector.id)} session={session}
+          onClose={() => setOpenSectorId(null)}
+          onUpdate={(patch) => updateSector(openSector.id, patch)}
+          onRequestLogin={() => setLoginOpen(true)}
+        />
+      )}
+    </div>
+  );
+}
+
+function LockedPage({ label, onLogin }) {
+  return (
+    <div className="dg-page dg-locked-page">
+      <Lock size={24} />
+      <p>{label} es información sensible del negocio. Iniciá sesión como admin para verla.</p>
+      <button className="dg-btn-primary" onClick={onLogin}><Lock size={14} /> Iniciar sesión</button>
+    </div>
+  );
+}
+
+function MoneyPage({ kind, entries, sectors, onChange }) {
+  const isIncome = kind === "income";
+  const TYPES = isIncome ? INCOME_CHANNELS : PURCHASE_TYPES;
+  const typeField = isIncome ? "canal" : "tipo";
+  const partyField = isIncome ? "cliente" : "proveedor";
+  const partyLabel = isIncome ? "Cliente" : "Proveedor";
+
+  const [concepto, setConcepto] = useState("");
+  const [monto, setMonto] = useState("");
+  const [tipo, setTipo] = useState(Object.keys(TYPES)[0]);
+  const [party, setParty] = useState("");
+  const [metodo, setMetodo] = useState("efectivo");
+  const [cuenta, setCuenta] = useState("ingresos_bancarios");
+  const [sectorId, setSectorId] = useState("");
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filtro, setFiltro] = useState("todos");
+
+  const totalPendiente = entries.filter((e) => e.estado === "pendiente").reduce((a, e) => a + Number(e.monto || 0), 0);
+  const totalConfirmado = entries.filter((e) => e.estado === "pagado").reduce((a, e) => a + Number(e.monto || 0), 0);
+  const chartData = monthlyTotals(entries);
+  const breakdown = breakdownBy(entries, typeField, TYPES);
+
+  const cuentaTotals = isIncome ? Object.keys(CUENTA_INGRESO).map((k) => ({
+    key: k, label: CUENTA_INGRESO[k], total: entries.filter((e) => (e.cuenta || "ingresos_bancarios") === k).reduce((a, e) => a + Number(e.monto || 0), 0),
+  })) : [];
+  const bancarizadoPagado = entries.filter((e) => (e.cuenta || "ingresos_bancarios") === "ingresos_bancarios" && e.estado === "pagado").reduce((a, e) => a + Number(e.monto || 0), 0);
+  const ivaAPagar = bancarizadoPagado * (IVA_RATE / (1 + IVA_RATE));
+  const ivaChartData = isIncome ? monthlyTotals(entries.filter((e) => (e.cuenta || "ingresos_bancarios") === "ingresos_bancarios" && e.estado === "pagado")).map((m) => ({ mes: m.mes, total: m.total * (IVA_RATE / (1 + IVA_RATE)) })) : [];
+
+  const visibles = entries.filter((e) => filtro === "todos" || e.estado === filtro).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+
+  function addEntry() {
+    if (!concepto.trim() || !monto) return;
+    const next = [...entries, {
+      id: uid(), concepto: concepto.trim(), monto: Number(monto), [typeField]: tipo,
+      [partyField]: party.trim(), ...(isIncome ? { metodo, cuenta } : {}), sectorId, fecha, estado: "pendiente",
+    }];
+    onChange(next);
+    setConcepto(""); setMonto(""); setParty("");
+  }
+  function toggleEstado(id) { onChange(entries.map((e) => (e.id === id ? { ...e, estado: e.estado === "pendiente" ? "pagado" : "pendiente" } : e))); }
+  function removeEntry(id) { onChange(entries.filter((e) => e.id !== id)); }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-totales">
+        <div className="dg-total-card" style={{ "--c": "#F16565" }}><span>Pendiente</span><strong>{money(totalPendiente)}</strong></div>
+        <div className="dg-total-card" style={{ "--c": "#52E08A" }}><span>{isIncome ? "Cobrado" : "Pagado"}</span><strong>{money(totalConfirmado)}</strong></div>
+      </div>
+
+      {isIncome && (
+        <div className="dg-totales dg-cuenta-totales">
+          {cuentaTotals.map((c) => (
+            <div className="dg-total-card" style={{ "--c": "#48E0D8" }} key={c.key}><span>{c.label}</span><strong>{money(c.total)}</strong></div>
+          ))}
+        </div>
+      )}
+
+      {isIncome && (
+        <div className="dg-iva-card">
+          <div className="dg-iva-head">
+            <div><span className="dg-chart-title">IVA estimado a pagar (solo ingresos bancarizados y cobrados)</span><strong className="dg-iva-amount">{money(ivaAPagar)}</strong></div>
+            <span className="dg-iva-note">Base: {money(bancarizadoPagado)} × {Math.round((IVA_RATE / (1 + IVA_RATE)) * 1000) / 10}% — cálculo estimado, no reemplaza la liquidación real.</span>
+          </div>
+          <ResponsiveContainer width="100%" height={120}>
+            <BarChart data={ivaChartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis dataKey="mes" stroke="#8B96A8" fontSize={10} tickLine={false} axisLine={false} />
+              <YAxis stroke="#8B96A8" fontSize={10} tickLine={false} axisLine={false} width={36} />
+              <Tooltip contentStyle={{ background: "#161B26", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }} formatter={(v) => money(v)} />
+              <Bar dataKey="total" fill="#F5C451" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="dg-charts">
+        <div className="dg-chart-card">
+          <div className="dg-chart-title">Últimos 6 meses</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis dataKey="mes" stroke="#8B96A8" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#8B96A8" fontSize={11} tickLine={false} axisLine={false} width={40} />
+              <Tooltip contentStyle={{ background: "#161B26", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }} formatter={(v) => money(v)} />
+              <Bar dataKey="total" fill={isIncome ? "#52E08A" : "#F16565"} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="dg-chart-card">
+          <div className="dg-chart-title">Por {isIncome ? "canal" : "tipo"}</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <PieChart>
+              <Pie data={breakdown} dataKey="value" nameKey="name" innerRadius={38} outerRadius={62} paddingAngle={2}>
+                {breakdown.map((_, i) => (<Cell key={i} fill={CHART_PALETTE[i % CHART_PALETTE.length]} />))}
+              </Pie>
+              <Tooltip contentStyle={{ background: "#161B26", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }} formatter={(v) => money(v)} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="dg-form dg-pago-form">
+        <div className="dg-form-row">
+          <div style={{ flex: 2 }}><label>Concepto</label><input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={isIncome ? "Ej: Venta 4 espejos LED redondos" : "Ej: Vidrio importado - contenedor"} /></div>
+          <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></div>
+        </div>
+        <div className="dg-form-row">
+          <div style={{ flex: 1 }}><label>{isIncome ? "Canal" : "Tipo"}</label>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)}>{Object.entries(TYPES).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+          </div>
+          <div style={{ flex: 1 }}><label>{partyLabel}</label><input value={party} onChange={(e) => setParty(e.target.value)} placeholder="Opcional" /></div>
+          {isIncome && (
+            <div style={{ flex: 1 }}><label>Método de pago</label>
+              <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>{Object.entries(PAYMENT_METHODS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+            </div>
+          )}
+          {isIncome && (
+            <div style={{ flex: 1 }}><label>Cuenta destino</label>
+              <select value={cuenta} onChange={(e) => setCuenta(e.target.value)}>{Object.entries(CUENTA_INGRESO).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+            </div>
+          )}
+        </div>
+        <div className="dg-form-row">
+          <div style={{ flex: 1 }}><label>Sector (opcional)</label>
+            <select value={sectorId} onChange={(e) => setSectorId(e.target.value)}><option value="">General</option>{sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}</select>
+          </div>
+          <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
+          <div style={{ flex: 1, display: "flex", alignItems: "flex-end" }}>
+            <button className="dg-btn-primary" style={{ width: "100%", justifyContent: "center" }} onClick={addEntry}><Plus size={16} /> Registrar</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="dg-filtros">
+        {["todos", "pendiente", "pagado"].map((f) => (
+          <button key={f} className={`dg-filtro-btn ${filtro === f ? "dg-filtro-on" : ""}`} onClick={() => setFiltro(f)}>{f === "todos" ? "Todos" : f === "pendiente" ? "Pendientes" : isIncome ? "Cobrados" : "Pagados"}</button>
+        ))}
+      </div>
+
+      <div className="dg-task-list dg-pago-list">
+        {visibles.length === 0 && <div className="dg-empty">No hay registros en esta vista.</div>}
+        {visibles.map((e) => (
+          <div className="dg-task dg-pago-row" key={e.id}>
+            <button className={`dg-checkbox ${e.estado === "pagado" ? "dg-checkbox-on" : ""}`} onClick={() => toggleEstado(e.id)} title="Marcar cobrado/pagado" />
+            <div className="dg-pago-info">
+              <span className={e.estado === "pagado" ? "dg-task-done" : ""}>{e.concepto}</span>
+              <span className="dg-pago-meta">{TYPES[e[typeField]]} · {e[partyField] || "—"} · {sectors.find((s) => s.id === e.sectorId)?.name || "General"} · {e.fecha}{isIncome && e.cuenta ? ` · ${CUENTA_INGRESO[e.cuenta]}` : ""}</span>
+            </div>
+            <span className="dg-pago-monto">{money(e.monto)}</span>
+            <button className="dg-icon-btn dg-task-del" onClick={() => removeEntry(e.id)}><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function emptyPedido() {
+  return {
+    id: uid(), orden: null, fecha: new Date().toISOString().slice(0, 10), vendedor: "", cliente: "", celular: "", dniCuit: "",
+    ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
+    touch: "No", desemp: "No", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
+    tipoFactura: "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
+    estado: "Sin pasar a fábrica", listo: "", metodo: "Retira", detalleEntrega: "",
+  };
+}
+
+const QUICK_VIEWS = [
+  { id: "todos", label: "Todos" },
+  { id: "verificados", label: "Verificados → listos para fábrica" },
+  { id: "facturar", label: "Pendiente de facturar" },
+  { id: "comision_candidatos", label: "Comisión: candidatos a liquidar" },
+  { id: "comision_liquidar", label: "Comisión: a pagar" },
+  { id: "envios", label: "Envíos de la semana" },
+];
+
+function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
+
+function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSectorId, incomes, onCreateIncome }) {
+  const [quickView, setQuickView] = useState("todos");
+  const [filtroEstado, setFiltroEstado] = useState("todos");
+  const [filtroVendedor, setFiltroVendedor] = useState("todos");
+  const [busqueda, setBusqueda] = useState("");
+  const [openPedido, setOpenPedido] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  const canEditEstadoOnly = !canEditFull && ["fabrica", "logistica", "postventa"].includes(sessionSectorId);
+
+  let visibles = pedidos.slice();
+  if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado");
+  else if (quickView === "facturar") visibles = visibles.filter((p) => !p.facturado);
+  else if (quickView === "comision_candidatos") visibles = visibles.filter((p) => p.comision === "No" && pedidoSaldo(p) === 0);
+  else if (quickView === "comision_liquidar") visibles = visibles.filter((p) => p.comision === "Liquidar");
+  else if (quickView === "envios") visibles = visibles.filter((p) => ENVIO_METODOS.includes(p.metodo) && p.estado !== "Entregado");
+  else visibles = visibles.filter((p) => filtroEstado === "todos" || p.estado === filtroEstado);
+
+  visibles = visibles
+    .filter((p) => filtroVendedor === "todos" || p.vendedor === filtroVendedor)
+    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
+    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+
+  const totalComision = visibles.reduce((a, p) => a + (Number(p.monto) || 0), 0);
+
+  function nextOrden() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
+
+  function savePedido(pedido) {
+    const exists = pedidos.some((p) => p.id === pedido.id);
+    const withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
+
+    const yaRegistrado = Number(withOrden.montoRegistrado) || 0;
+    const anticipoActual = Number(withOrden.anticipo) || 0;
+    const delta = anticipoActual - yaRegistrado;
+    let toSave = withOrden;
+    if (delta > 0 && onCreateIncome) {
+      const cuenta = determineCuentaPedido(withOrden);
+      onCreateIncome({
+        id: uid(), concepto: `Anticipo pedido #${withOrden.orden || "?"} — ${withOrden.cliente || "Sin nombre"}`,
+        monto: delta, canal: "otro", cuenta, cliente: withOrden.cliente || "",
+        metodo: cuenta === "caja_efectivo" ? "efectivo" : "transferencia",
+        sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
+      });
+      toSave = { ...withOrden, montoRegistrado: anticipoActual };
+    }
+    onChange(exists ? pedidos.map((p) => (p.id === pedido.id ? toSave : p)) : [...pedidos, toSave]);
+    setOpenPedido(null); setCreating(false);
+  }
+  function removePedido(id) { onChange(pedidos.filter((p) => p.id !== id)); setOpenPedido(null); }
+  function bulkSetComision(ids, val) { onChange(pedidos.map((p) => (ids.includes(p.id) ? { ...p, comision: val } : p))); }
+
+  const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
+
+  return (
+    <div className="dg-page">
+      <div className="dg-quickviews">
+        {QUICK_VIEWS.map((v) => (
+          <button key={v.id} className={`dg-quickview-btn ${quickView === v.id ? "dg-quickview-on" : ""}`} onClick={() => setQuickView(v.id)}>{v.label}</button>
+        ))}
+      </div>
+
+      {quickView === "comision_candidatos" && visibles.length > 0 && canEditFull && (
+        <div className="dg-comision-banner">
+          <span>{visibles.length} pedido(s) saldados y sin liquidar — {money(totalComision)} en total.</span>
+          <button className="dg-btn-primary" onClick={() => bulkSetComision(visibles.map((p) => p.id), "Liquidar")}>Marcar todos como "Liquidar"</button>
+        </div>
+      )}
+      {quickView === "comision_liquidar" && visibles.length > 0 && canEditFull && (
+        <div className="dg-comision-banner">
+          <span>A pagar: {visibles.length} pedido(s) — {money(totalComision)} en total{filtroVendedor !== "todos" ? ` de ${filtroVendedor}` : ""}.</span>
+          <button className="dg-btn-primary" onClick={() => bulkSetComision(visibles.map((p) => p.id), "Sí")}>Marcar todos como pagados</button>
+        </div>
+      )}
+
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        {quickView === "todos" && (
+          <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+            <option value="todos">Todos los estados</option>
+            {ESTADO_PEDIDO_OPTIONS.map((e) => (<option key={e} value={e}>{e}</option>))}
+          </select>
+        )}
+        <select value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
+          <option value="todos">Todos los vendedores</option>
+          {vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}
+        </select>
+        <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
+        {canEditFull && (
+          <button className="dg-btn-primary" style={{ marginLeft: "auto" }} onClick={() => setCreating(true)}><Plus size={14} /> Nuevo pedido</button>
+        )}
+      </div>
+
+      <div className="dg-task-list dg-pedido-list">
+        {visibles.length === 0 && <div className="dg-empty">No hay pedidos en esta vista.</div>}
+        {visibles.map((p) => {
+          const saldo = pedidoSaldo(p);
+          const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
+          const MetodoIcon = METODO_ICONS[p.metodo] || Package;
+          return (
+            <button className="dg-pedido-card" key={p.id} onClick={() => setOpenPedido(p)}>
+              <div className="dg-pedido-card-top">
+                <span className="dg-pedido-orden">#{p.orden}</span>
+                <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
+                <span className="dg-pago-monto">{p.monto ? money(p.monto) : "—"}</span>
+              </div>
+              <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.vendedor || "—"} · {p.fecha}</div>
+              <div className="dg-pedido-badges">
+                <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
+                <span className="dg-badge" style={{ "--bc": p.facturado ? "#52E08A" : "#F16565" }}>
+                  {p.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {p.facturado ? "Facturado" : "Sin facturar"}
+                </span>
+                <span className="dg-badge" style={{ "--bc": saldo > 0 ? "#F16565" : "#52E08A" }}>
+                  <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
+                </span>
+                <span className="dg-badge" style={{ "--bc": "#8B96A8" }}><MetodoIcon size={12} /> {p.metodo}</span>
+                {p.comision === "Liquidar" && <span className="dg-badge" style={{ "--bc": "#F5C451" }}>Liquidar comisión</span>}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {(openPedido || creating) && (
+        <PedidoModal
+          pedido={openPedido || emptyPedido()}
+          vendedores={vendedores}
+          canEditFull={canEditFull}
+          canEditEstadoOnly={canEditEstadoOnly}
+          onClose={() => { setOpenPedido(null); setCreating(false); }}
+          onSave={savePedido}
+          onDelete={openPedido ? () => removePedido(openPedido.id) : null}
+        />
+      )}
+
+      <div className="dg-print-area dg-print-pedidos">
+        <div className="dg-print-head">
+          <div className="dg-print-brand">DECOGLASS</div>
+          <div className="dg-print-sub">
+            {activeViewLabel}{filtroVendedor !== "todos" ? ` · Vendedor: ${filtroVendedor}` : ""} — {new Date().toLocaleDateString("es-AR")} · {visibles.length} pedido(s)
+          </div>
+        </div>
+        <table className="dg-print-table">
+          <thead>
+            <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Vendedor</th><th>Monto</th><th>Saldo</th><th>Estado</th><th>Comisión</th><th>Factura</th><th>Método</th></tr>
+          </thead>
+          <tbody>
+            {visibles.map((p) => (
+              <tr key={p.id}>
+                <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}</td><td>{p.vendedor}</td>
+                <td>{money(p.monto)}</td><td>{money(pedidoSaldo(p))}</td><td>{p.estado}</td><td>{p.comision}</td>
+                <td>{p.facturado ? "Sí" : "No"}</td><td>{p.metodo}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {(quickView === "comision_candidatos" || quickView === "comision_liquidar") && (
+          <div className="dg-print-total">Total: {money(totalComision)}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, computed, children }) {
+  return (
+    <div className={`dg-field ${computed ? "dg-field-computed" : ""}`}>
+      <label>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete }) {
+  const [draft, setDraft] = useState(pedido);
+  const readOnly = !canEditFull && !canEditEstadoOnly;
+  const saldo = (Number(draft.monto) || 0) - (Number(draft.anticipo) || 0);
+
+  function set(field, val) { setDraft((d) => ({ ...d, [field]: val })); }
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title">{draft.orden ? `Pedido #${draft.orden}` : "Nuevo pedido"}</div>
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="dg-section-card">
+          <div className="dg-section-header"><Calculator size={14} /> Medida y producto</div>
+          <div className="dg-field-grid">
+            <Field label="Ancho (cm)"><input type="number" disabled={!canEditFull} value={draft.ancho} onChange={(e) => set("ancho", e.target.value)} /></Field>
+            <Field label="Alto (cm)"><input type="number" disabled={!canEditFull} value={draft.alto} onChange={(e) => set("alto", e.target.value)} /></Field>
+            <Field label="Cantidad"><input type="number" disabled={!canEditFull} value={draft.cant} onChange={(e) => set("cant", e.target.value)} /></Field>
+            <Field label="Pulido"><select disabled={!canEditFull} value={draft.pulido} onChange={(e) => set("pulido", e.target.value)}>{PULIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+          </div>
+          <div className="dg-field-grid" style={{ marginTop: 12 }}>
+            <Field label="Forma"><select disabled={!canEditFull} value={draft.forma} onChange={(e) => set("forma", e.target.value)}>{FORMA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Tipo"><select disabled={!canEditFull} value={draft.tipo} onChange={(e) => set("tipo", e.target.value)}>{TIPO_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Grabado / esmerilado"><input disabled={!canEditFull} placeholder="Ej: 15+30" value={draft.grabado} onChange={(e) => set("grabado", e.target.value)} /></Field>
+          </div>
+        </div>
+
+        <div className="dg-section-card">
+          <div className="dg-section-header"><Sparkles size={14} /> Funciones</div>
+          <div className="dg-field-grid">
+            <Field label="Touch"><select disabled={!canEditFull} value={draft.touch} onChange={(e) => set("touch", e.target.value)}>{TOUCH_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Desempañante"><select disabled={!canEditFull} value={draft.desemp} onChange={(e) => set("desemp", e.target.value)}>{DESEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Hora / Temp"><select disabled={!canEditFull} value={draft.horaTemp} onChange={(e) => set("horaTemp", e.target.value)}>{HORATEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Bluetooth"><select disabled={!canEditFull} value={draft.bluetooth} onChange={(e) => set("bluetooth", e.target.value)}>{BLUETOOTH_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Tono de luz"><select disabled={!canEditFull} value={draft.tono} onChange={(e) => set("tono", e.target.value)}>{TONO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+          </div>
+        </div>
+
+        <div className="dg-section-card">
+          <div className="dg-section-header"><User size={14} /> Cliente y pago</div>
+          <div className="dg-field-grid">
+            <Field label="Cliente"><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+            <Field label="Vendedor"><select disabled={!canEditFull} value={draft.vendedor} onChange={(e) => set("vendedor", e.target.value)}><option value="">—</option>{vendedores.map((v) => (<option key={v}>{v}</option>))}</select></Field>
+            <Field label="Celular"><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
+            <Field label="DNI/CUIT"><input disabled={!canEditFull} value={draft.dniCuit} onChange={(e) => set("dniCuit", e.target.value)} /></Field>
+            <Field label="Tipo factura"><select disabled={!canEditFull} value={draft.tipoFactura} onChange={(e) => set("tipoFactura", e.target.value)}>{TIPOFACTURA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Facturado">
+              <button type="button" disabled={!canEditFull} className={`dg-checkbox-field ${draft.facturado ? "dg-checkbox-field-on" : ""}`} onClick={() => set("facturado", !draft.facturado)}>
+                {draft.facturado ? <Check size={14} /> : null} {draft.facturado ? "Facturado" : "Sin facturar"}
+              </button>
+            </Field>
+            <Field label="Comisión"><select disabled={!canEditFull} value={draft.comision} onChange={(e) => set("comision", e.target.value)}>{COMISION_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+          </div>
+          <div className="dg-field-grid dg-money-row">
+            <Field label="Monto"><input type="number" disabled={!canEditFull} value={draft.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
+            <Field label="Anticipo"><input type="number" disabled={!canEditFull} value={draft.anticipo} onChange={(e) => set("anticipo", e.target.value)} /></Field>
+            <Field label="Saldo" computed><input disabled value={money(saldo)} /></Field>
+          </div>
+          {canEditFull && Number(draft.anticipo) > 0 && (
+            <p className="dg-hint" style={{ marginTop: 10 }}>
+              Al guardar, {money(Math.max(0, Number(draft.anticipo || 0) - Number(draft.montoRegistrado || 0)))} se registran como ingreso en <strong>{CUENTA_INGRESO[determineCuentaPedido(draft)]}</strong>.
+            </p>
+          )}
+        </div>
+
+        <div className="dg-section-card">
+          <div className="dg-section-header"><Truck size={14} /> Entrega</div>
+          <div className="dg-field-grid">
+            <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => set("estado", e.target.value)}>{ESTADO_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Listo para (fecha)"><input type="date" disabled={readOnly} value={draft.listo} onChange={(e) => set("listo", e.target.value)} /></Field>
+            <Field label="Método de entrega"><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+          </div>
+          <div className="dg-field-grid" style={{ marginTop: 12 }}>
+            <Field label="Detalle de entrega"><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Dirección, costo de envío..." /></Field>
+          </div>
+        </div>
+
+        <div className="dg-form-actions" style={{ marginTop: 4 }}>
+          {onDelete && canEditFull && <button className="dg-btn-ghost" onClick={onDelete}><Trash2 size={14} /> Eliminar</button>}
+          {!readOnly && <button className="dg-btn-primary" onClick={() => onSave(draft)}><Save size={14} /> Guardar</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin }) {
+  const [soyYo, setSoyYo] = useState(vendedores[0] || "");
+  const [filtroVendedor, setFiltroVendedor] = useState("todos");
+  const [filtroEstado, setFiltroEstado] = useState("todos");
+  const [showForm, setShowForm] = useState(false);
+  const [nuevoVendedor, setNuevoVendedor] = useState("");
+  const [quickType, setQuickType] = useState(null);
+  const [quickNombre, setQuickNombre] = useState("");
+  const [quickMonto, setQuickMonto] = useState("");
+  const [justAdded, setJustAdded] = useState(null);
+
+  const [cliente, setCliente] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [instagram, setInstagram] = useState("");
+  const [canal, setCanal] = useState("whatsapp");
+  const [vendedorLead, setVendedorLead] = useState(vendedores[0] || "");
+  const [estado, setEstado] = useState("mensaje_enviado");
+  const [monto, setMonto] = useState("");
+  const [notas, setNotas] = useState("");
+
+  function quickAdd() {
+    if (!quickType) return;
+    const lead = {
+      id: uid(), cliente: quickNombre.trim() || "Contacto rápido", telefono: "", instagram: "",
+      canal: "whatsapp", vendedor: soyYo, estado: quickType,
+      monto: quickType === "venta_cerrada" ? Number(quickMonto) || 0 : 0,
+      notas: "", fecha: new Date().toISOString().slice(0, 10),
+    };
+    onLeadsChange([lead, ...leads]);
+    setQuickType(null); setQuickNombre(""); setQuickMonto("");
+    setJustAdded(QUICK_BUTTONS.find((b) => b.estado === lead.estado)?.label || "Agregado");
+    setTimeout(() => setJustAdded(null), 1800);
+  }
+
+  const stats = vendedores.map((v) => {
+    const propios = leads.filter((l) => l.vendedor === v);
+    const mensajesIniciados = propios.length;
+    const respondieron = propios.filter((l) => l.estado === "respondio" || l.estado === "venta_cerrada" || l.estado === "perdido").length;
+    const noRespondieron = propios.filter((l) => l.estado === "no_respondio").length;
+    const ventasCerradas = propios.filter((l) => l.estado === "venta_cerrada").length;
+    const importeVendido = propios.filter((l) => l.estado === "venta_cerrada").reduce((a, l) => a + Number(l.monto || 0), 0);
+    return {
+      vendedor: v, mensajesIniciados, respondieron, noRespondieron, ventasCerradas, importeVendido,
+      pctRespuesta: mensajesIniciados ? Math.round((respondieron / mensajesIniciados) * 100) : 0,
+      pctConversion: mensajesIniciados ? Math.round((ventasCerradas / mensajesIniciados) * 100) : 0,
+    };
+  });
+
+  const chartData = stats.map((s) => ({ vendedor: s.vendedor, Mensajes: s.mensajesIniciados, Respondieron: s.respondieron, Ventas: s.ventasCerradas }));
+
+  const visibles = leads
+    .filter((l) => filtroVendedor === "todos" || l.vendedor === filtroVendedor)
+    .filter((l) => filtroEstado === "todos" || l.estado === filtroEstado)
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+
+  function addLead() {
+    if (!cliente.trim()) return;
+    const next = [{ id: uid(), cliente: cliente.trim(), telefono: telefono.trim(), instagram: instagram.trim(), canal, vendedor: vendedorLead, estado, monto: Number(monto) || 0, notas: notas.trim(), fecha: new Date().toISOString().slice(0, 10) }, ...leads];
+    onLeadsChange(next);
+    setCliente(""); setTelefono(""); setInstagram(""); setMonto(""); setNotas("");
+  }
+  function updateLeadEstado(id, val) { onLeadsChange(leads.map((l) => (l.id === id ? { ...l, estado: val } : l))); }
+  function removeLead(id) { onLeadsChange(leads.filter((l) => l.id !== id)); }
+  function addVendedor() {
+    if (!nuevoVendedor.trim() || vendedores.includes(nuevoVendedor.trim())) return;
+    onVendedoresChange([...vendedores, nuevoVendedor.trim()]);
+    setNuevoVendedor("");
+  }
+  function removeVendedor(v) { onVendedoresChange(vendedores.filter((x) => x !== v)); }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-top">
+        <div className="dg-crm-soyyo">
+          <User size={14} />
+          <span>Soy:</span>
+          <select value={soyYo} onChange={(e) => { setSoyYo(e.target.value); setVendedorLead(e.target.value); }}>
+            {vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}
+          </select>
+        </div>
+        {isAdmin && (
+          <div className="dg-crm-vendedores-admin">
+            <input placeholder="Nuevo vendedor..." value={nuevoVendedor} onChange={(e) => setNuevoVendedor(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addVendedor()} />
+            <button className="dg-btn-ghost" onClick={addVendedor}><UserPlus size={14} /></button>
+            {vendedores.map((v) => (
+              <span key={v} className="dg-vendedor-chip">{v}<button onClick={() => removeVendedor(v)}><X size={11} /></button></span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="dg-quick-actions">
+        <div className="dg-quick-title">Registro rápido — {soyYo}</div>
+        <div className="dg-quick-buttons">
+          {QUICK_BUTTONS.map((b) => {
+            const Icon = QUICK_ICONS[b.icon];
+            return (
+              <button key={b.estado} className="dg-quick-btn" style={{ "--c": b.color }} onClick={() => setQuickType(b.estado)}>
+                <Icon size={22} />
+                <span>{b.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        {quickType && (
+          <div className="dg-quick-inline">
+            <input placeholder="Nombre del cliente (opcional)" value={quickNombre} onChange={(e) => setQuickNombre(e.target.value)} autoFocus />
+            {quickType === "venta_cerrada" && (
+              <input type="number" placeholder="Monto vendido" value={quickMonto} onChange={(e) => setQuickMonto(e.target.value)} />
+            )}
+            <button className="dg-btn-ghost" onClick={() => { setQuickType(null); setQuickNombre(""); setQuickMonto(""); }}>Cancelar</button>
+            <button className="dg-btn-primary" onClick={quickAdd}><Check size={14} /> Confirmar</button>
+          </div>
+        )}
+        {justAdded && <div className="dg-quick-toast">✓ {justAdded} — agregado</div>}
+      </div>
+
+      <div className="dg-chart-card" style={{ marginBottom: 16 }}>
+        <div className="dg-chart-title"><BarChart3 size={12} style={{ display: "inline", marginRight: 4, verticalAlign: "-2px" }} />Comparativa por vendedor</div>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis dataKey="vendedor" stroke="#8B96A8" fontSize={11} tickLine={false} axisLine={false} />
+            <YAxis stroke="#8B96A8" fontSize={11} tickLine={false} axisLine={false} width={30} />
+            <Tooltip contentStyle={{ background: "#161B26", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }} />
+            <Bar dataKey="Mensajes" fill="#8B96A8" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="Respondieron" fill="#48E0D8" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="Ventas" fill="#52E08A" radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="dg-vendor-stats">
+        {stats.map((s) => (
+          <div className="dg-vendor-card" key={s.vendedor}>
+            <div className="dg-vendor-name">{s.vendedor}</div>
+            <div className="dg-vendor-metrics">
+              <div><span>Mensajes</span><strong>{s.mensajesIniciados}</strong></div>
+              <div><span>Respondieron</span><strong>{s.respondieron}</strong></div>
+              <div><span>No respondieron</span><strong>{s.noRespondieron}</strong></div>
+              <div><span>Ventas cerradas</span><strong>{s.ventasCerradas}</strong></div>
+              <div><span>% respuesta</span><strong>{s.pctRespuesta}%</strong></div>
+              <div><span>% conversión</span><strong>{s.pctConversion}%</strong></div>
+            </div>
+            <div className="dg-vendor-importe">{money(s.importeVendido)} vendido</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <select value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
+          <option value="todos">Todos los vendedores</option>
+          {vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}
+        </select>
+        <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+          <option value="todos">Todos los estados</option>
+          {Object.entries(LEAD_STATES).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
+        </select>
+        <button className="dg-btn-primary" style={{ marginLeft: "auto" }} onClick={() => setShowForm((v) => !v)}><Plus size={14} /> Nuevo contacto</button>
+      </div>
+
+      {showForm && (
+        <div className="dg-form dg-pago-form">
+          <div className="dg-form-row">
+            <div style={{ flex: 1 }}><label>Cliente</label><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre" /></div>
+            <div style={{ flex: 1 }}><label>Vendedor</label>
+              <select value={vendedorLead} onChange={(e) => setVendedorLead(e.target.value)}>{vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}</select>
+            </div>
+          </div>
+          <div className="dg-form-row">
+            <div style={{ flex: 1 }}><label>Teléfono (WhatsApp)</label><input value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 1122334455" /></div>
+            <div style={{ flex: 1 }}><label>Usuario Instagram</label><input value={instagram} onChange={(e) => setInstagram(e.target.value)} placeholder="@usuario" /></div>
+          </div>
+          <div className="dg-form-row">
+            <div style={{ flex: 1 }}><label>Canal de origen</label>
+              <select value={canal} onChange={(e) => setCanal(e.target.value)}>{Object.entries(LEAD_CHANNELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+            </div>
+            <div style={{ flex: 1 }}><label>Estado</label>
+              <select value={estado} onChange={(e) => setEstado(e.target.value)}>{Object.entries(LEAD_STATES).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}</select>
+            </div>
+          </div>
+          {estado === "venta_cerrada" && (<><label>Monto vendido</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} /></>)}
+          <label>Notas</label><input value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" />
+          <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addLead}><Plus size={16} /> Guardar contacto</button></div>
+        </div>
+      )}
+
+      <div className="dg-task-list dg-lead-list">
+        {visibles.length === 0 && <div className="dg-empty">No hay contactos en esta vista.</div>}
+        {visibles.map((l) => {
+          const wa = waLink(l.telefono);
+          const ig = igLink(l.instagram);
+          const st = LEAD_STATES[l.estado] || LEAD_STATES.mensaje_enviado;
+          return (
+            <div className="dg-lead-row" key={l.id}>
+              <div className="dg-lead-main">
+                <span className="dg-lead-dot" style={{ background: st.color }} />
+                <div className="dg-lead-info">
+                  <span className="dg-lead-name">{l.cliente}</span>
+                  <span className="dg-pago-meta">{l.vendedor} · {LEAD_CHANNELS[l.canal]} · {l.fecha}{l.notas ? ` · ${l.notas}` : ""}</span>
+                </div>
+              </div>
+              <div className="dg-lead-actions">
+                {wa && <a className="dg-icon-btn" href={wa} target="_blank" rel="noopener noreferrer" title="Abrir WhatsApp"><MessageCircle size={15} /></a>}
+                {ig && <a className="dg-icon-btn" href={ig} target="_blank" rel="noopener noreferrer" title="Abrir Instagram"><Instagram size={15} /></a>}
+                <select className="dg-lead-estado-select" value={l.estado} onChange={(e) => updateLeadEstado(l.id, e.target.value)} style={{ color: st.color }}>
+                  {Object.entries(LEAD_STATES).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
+                </select>
+                <button className="dg-icon-btn dg-task-del" onClick={() => removeLead(l.id)}><Trash2 size={14} /></button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const TIPOS_PRODUCTO_LIST = Object.keys(TIPO_PRODUCTO_TABLE);
+
+function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) {
+  const [tipoProducto, setTipoProducto] = useState(TIPOS_PRODUCTO_LIST[0]);
+  const [ancho, setAncho] = useState(60);
+  const [alto, setAlto] = useState(60);
+  const [touch, setTouch] = useState("No");
+  const [desemp, setDesemp] = useState("No");
+  const [horaTemp, setHoraTemp] = useState("No");
+  const [bluetoothSel, setBluetoothSel] = useState("Sin Bluetooth");
+  const [panelesAdicionales, setPanelesAdicionales] = useState(0);
+  const [envioInterior, setEnvioInterior] = useState("No");
+  const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
+  const [cantidad, setCantidad] = useState(1);
+  const [cliente, setCliente] = useState("");
+  const [showConfig, setShowConfig] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const inputs = { tipoProducto, ancho: Number(ancho) || 0, alto: Number(alto) || 0, touch, desemp, horaTemp, bluetoothSel, panelesAdicionales: Number(panelesAdicionales) || 0, envioInterior, tipoCliente, cantidad: Number(cantidad) || 1, cliente };
+  const result = computeQuote(inputs, config);
+  const mensaje = buildWhatsappMessage(inputs, result);
+
+  function copyMessage() {
+    if (navigator.clipboard) navigator.clipboard.writeText(mensaje).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  }
+  function saveQuote() {
+    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
+    onQuotesChange([q, ...quotes]);
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
+  }
+  function removeQuote(id) { onQuotesChange(quotes.filter((q) => q.id !== id)); }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-quote-grid">
+        <div className="dg-quote-form">
+          <div className="dg-section-card">
+            <div className="dg-section-header"><Calculator size={14} /> Datos del espejo</div>
+            <div className="dg-field-grid">
+              <Field label="Tipo de producto">
+                <select value={tipoProducto} onChange={(e) => setTipoProducto(e.target.value)}>
+                  {TIPOS_PRODUCTO_LIST.map((t) => (<option key={t} value={t}>{t}</option>))}
+                </select>
+              </Field>
+              <Field label="Ancho (cm)"><input type="number" value={ancho} onChange={(e) => setAncho(e.target.value)} /></Field>
+              <Field label="Alto (cm)"><input type="number" value={alto} onChange={(e) => setAlto(e.target.value)} /></Field>
+            </div>
+          </div>
+
+          <div className="dg-section-card">
+            <div className="dg-section-header"><Sparkles size={14} /> Funciones</div>
+            <div className="dg-field-grid">
+              <Field label="Touch"><select value={touch} onChange={(e) => setTouch(e.target.value)}><option>No</option><option>Sí</option></select></Field>
+              <Field label="Desempañante"><select value={desemp} onChange={(e) => setDesemp(e.target.value)}><option>No</option><option>Sí</option></select></Field>
+              <Field label="Hora / Temperatura"><select value={horaTemp} onChange={(e) => setHoraTemp(e.target.value)}><option>No</option><option>Sí</option></select></Field>
+              <Field label="Bluetooth">
+                <select value={bluetoothSel} onChange={(e) => setBluetoothSel(e.target.value)}>
+                  {Object.keys(config.opcionales.bluetooth).map((k) => (<option key={k} value={k}>{k}</option>))}
+                </select>
+              </Field>
+              {desemp === "Sí" && (
+                <Field label="Paneles adicionales"><input type="number" min="0" value={panelesAdicionales} onChange={(e) => setPanelesAdicionales(e.target.value)} /></Field>
+              )}
+            </div>
+          </div>
+
+          <div className="dg-section-card">
+            <div className="dg-section-header"><User size={14} /> Cliente y entrega</div>
+            <div className="dg-field-grid">
+              <Field label="Tipo de cliente">
+                <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)}>
+                  <option>Consumidor Final</option><option>Revendedor</option>
+                </select>
+              </Field>
+              <Field label="Cantidad idéntica"><input type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+              <Field label="Envío interior"><select value={envioInterior} onChange={(e) => setEnvioInterior(e.target.value)}><option>No</option><option>Sí</option></select></Field>
+              <Field label="Nombre del cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Opcional" /></Field>
+            </div>
+          </div>
+
+          {isAdmin && (
+            <button className="dg-btn-ghost dg-suggest-btn" onClick={() => setShowConfig((v) => !v)}>
+              <Settings2 size={14} /> {showConfig ? "Ocultar" : "Ver/editar"} configuración de costos y márgenes
+            </button>
+          )}
+          {showConfig && isAdmin && <ConfigEditor config={config} onChange={onConfigChange} />}
+        </div>
+
+        <div className="dg-quote-result">
+          {result.alertaMedidaMaxima !== "OK" && (
+            <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaMedidaMaxima}</div>
+          )}
+          {result.alertaPaneles !== "OK" && (
+            <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaPaneles}</div>
+          )}
+          {result.alertaComercial !== "OK" && (
+            <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaComercial}</div>
+          )}
+
+          <div className="dg-price-card">
+            <span className="dg-price-label">Transferencia (con IVA)</span>
+            <strong className="dg-price-main">{fmtMoney(roundTo1000(result.precioTransferencia))}</strong>
+            {result.precio3Cuotas && <span className="dg-price-sub">{fmtMoney(roundTo1000(result.precio3Cuotas))} en 3 cuotas</span>}
+          </div>
+
+          <div className="dg-quote-meta">
+            <div><span>Escala</span><strong>{result.escalaComercial}</strong></div>
+            <div><span>Margen aplicado</span><strong>{Math.round(result.margenAplicado * 100)}%</strong></div>
+            <div><span>Margen real estimado</span><strong>{Math.round(result.margenReal * 100)}%</strong></div>
+            <div><span>Costo total estimado</span><strong>{fmtMoney(result.costoTotalEstimado)}</strong></div>
+            <div><span>Total pedido ({inputs.cantidad} u.)</span><strong>{fmtMoney(result.totalPedidoTransferencia)}</strong></div>
+            <div><span>Tiempo de fabricación</span><strong>{result.tiempoFabricacion}</strong></div>
+          </div>
+
+          <div className="dg-mensaje-box">
+            <div className="dg-quote-section-title">Mensaje para el cliente</div>
+            <pre className="dg-mensaje-text">{mensaje}</pre>
+            <div className="dg-quote-actions">
+              <button className="dg-btn-ghost" onClick={copyMessage}>{copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copiado" : "Copiar mensaje"}</button>
+              <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Vista de impresión (PDF)</button>
+              <button className="dg-btn-primary" onClick={saveQuote}>{saved ? <Check size={14} /> : <Save size={14} />} {saved ? "Guardado" : "Guardar cotización"}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {quotes.length > 0 && (
+        <div className="dg-quotes-history">
+          <div className="dg-quote-section-title"><ClipboardList size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />Cotizaciones guardadas</div>
+          <div className="dg-task-list">
+            {quotes.slice(0, 12).map((q) => (
+              <div className="dg-task dg-pago-row" key={q.id}>
+                <div className="dg-pago-info">
+                  <span>{q.cliente} — {q.tipoProducto} {q.medida} cm {q.cantidad > 1 ? `x${q.cantidad}` : ""}</span>
+                  <span className="dg-pago-meta">{q.fecha}</span>
+                </div>
+                <span className="dg-pago-monto">{fmtMoney(roundTo1000(q.precioTransferencia))}</span>
+                <button className="dg-icon-btn dg-task-del" onClick={() => removeQuote(q.id)}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="dg-print-area">
+        <div className="dg-print-head">
+          <div className="dg-print-brand">DECOGLASS</div>
+          <div className="dg-print-sub">Espejos LED — Presupuesto</div>
+        </div>
+        <div className="dg-print-row"><span>Fecha</span><span>{new Date().toLocaleDateString("es-AR")}</span></div>
+        {cliente && <div className="dg-print-row"><span>Cliente</span><span>{cliente}</span></div>}
+        <div className="dg-print-row"><span>Producto</span><span>Espejo {result.tipoComercialDisplay} retroiluminado</span></div>
+        <div className="dg-print-row"><span>Modelo</span><span>{result.modeloComercial}</span></div>
+        <div className="dg-print-row"><span>Medida</span><span>{ancho} × {alto} cm{inputs.cantidad > 1 ? ` — Cantidad: ${inputs.cantidad}` : ""}</span></div>
+        <div className="dg-print-row"><span>Tiempo de fabricación</span><span>{result.tiempoFabricacion}</span></div>
+        <div className="dg-print-price">
+          <div>{fmtMoney(roundTo1000(result.precioTransferencia))} <small>transferencia</small></div>
+          {result.precio3Cuotas && <div>{fmtMoney(roundTo1000(result.precio3Cuotas))} <small>hasta 3 cuotas</small></div>}
+          {inputs.cantidad > 1 && <div>{fmtMoney(result.totalPedidoTransferencia)} <small>total del pedido</small></div>}
+        </div>
+        <div className="dg-print-terms">
+          {envioInterior === "Sí" ? "Se puede encargar con un anticipo del 50% y el saldo restante antes del despacho." : "Se puede encargar con un anticipo del 50% y el saldo restante al momento de retirar o antes de la entrega."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfigField({ label, value, onChange }) {
+  return (
+    <div className="dg-config-field">
+      <label>{label}</label>
+      <input type="number" value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </div>
+  );
+}
+
+function ConfigEditor({ config, onChange }) {
+  function set(section, key, val) {
+    onChange({ ...config, [section]: { ...config[section], [key]: val } });
+  }
+  function setNested(section, group, key, val) {
+    onChange({ ...config, [section]: { ...config[section], [group]: { ...config[section][group], [key]: val } } });
+  }
+  const M = config.materiales, E = config.embalaje, O = config.opcionales, C = config.cargaOperativa, R = config.reglas;
+
+  return (
+    <div className="dg-config-editor">
+      <p className="dg-hint">Estos son los mismos costos y márgenes de tu presupuestador en Excel. Cambiá lo que haga falta — se guarda automáticamente para todos.</p>
+
+      <div className="dg-config-group-title">Materiales (precio de compra)</div>
+      <div className="dg-config-grid">
+        <ConfigField label="Aluminio $" value={M.aluminioPrecio} onChange={(v) => set("materiales", "aluminioPrecio", v)} />
+        <ConfigField label="Plancha espejo $" value={M.planchaPrecio} onChange={(v) => set("materiales", "planchaPrecio", v)} />
+        <ConfigField label="Tira LED $" value={M.ledPrecio} onChange={(v) => set("materiales", "ledPrecio", v)} />
+        <ConfigField label="Transformador $" value={M.transformadorPrecio} onChange={(v) => set("materiales", "transformadorPrecio", v)} />
+        <ConfigField label="Sellador/silicona $" value={M.selladorPrecio} onChange={(v) => set("materiales", "selladorPrecio", v)} />
+      </div>
+
+      <div className="dg-config-group-title">Funciones (costo componente / carga operativa)</div>
+      <div className="dg-config-grid">
+        <ConfigField label="Touch — costo" value={O.touch.costo} onChange={(v) => setNested("opcionales", "touch", "costo", v)} />
+        <ConfigField label="Desempañante — costo" value={O.desemp.costo} onChange={(v) => setNested("opcionales", "desemp", "costo", v)} />
+        <ConfigField label="Desempañante — carga" value={O.desemp.carga} onChange={(v) => setNested("opcionales", "desemp", "carga", v)} />
+        <ConfigField label="Hora/Temp — costo" value={O.horaTemp.costo} onChange={(v) => setNested("opcionales", "horaTemp", "costo", v)} />
+        <ConfigField label="Hora/Temp — carga" value={O.horaTemp.carga} onChange={(v) => setNested("opcionales", "horaTemp", "carga", v)} />
+      </div>
+
+      <div className="dg-config-group-title">Carga operativa y reglas comerciales</div>
+      <div className="dg-config-grid">
+        <ConfigField label="Carga base simple $" value={C["Simple / Touch"]} onChange={(v) => onChange({ ...config, cargaOperativa: { ...C, "Simple / Touch": v } })} />
+        <ConfigField label="Carga base esmerilado $" value={C.Esmerilado} onChange={(v) => onChange({ ...config, cargaOperativa: { ...C, Esmerilado: v } })} />
+        <ConfigField label="IVA (%, ej 0.21)" value={R.iva} onChange={(v) => set("reglas", "iva", v)} />
+        <ConfigField label="Factor 3 cuotas" value={R.factor3cuotas} onChange={(v) => set("reglas", "factor3cuotas", v)} />
+        <ConfigField label="Margen minorista (0-1)" value={R.margenMinorista} onChange={(v) => set("reglas", "margenMinorista", v)} />
+        <ConfigField label="Margen revendedor 5-9 (0-1)" value={R.margenRevendedor} onChange={(v) => set("reglas", "margenRevendedor", v)} />
+        <ConfigField label="Margen constructora 10-19 (0-1)" value={R.margenConstructora10} onChange={(v) => set("reglas", "margenConstructora10", v)} />
+        <ConfigField label="Margen constructora 20+ (0-1)" value={R.margenConstructora20} onChange={(v) => set("reglas", "margenConstructora20", v)} />
+        <ConfigField label="Recargo medida no estándar (0-1)" value={R.recargoNoEstandar} onChange={(v) => set("reglas", "recargoNoEstandar", v)} />
+        <ConfigField label="Mínimo agregado por función $" value={R.minimoAgregado} onChange={(v) => set("reglas", "minimoAgregado", v)} />
+      </div>
+    </div>
+  );
+}
+
+function LoginModal({ sectors, adminKeyExists, onClose, onAdminKeyCreated, onSectorUpdate, onSuccess }) {
+  const [mode, setMode] = useState("choose");
+  const [sectorId, setSectorId] = useState(sectors[0]?.id || "");
+  const [clave, setClave] = useState("");
+  const [clave2, setClave2] = useState("");
+  const [nombre, setNombre] = useState("");
+  const [error, setError] = useState("");
+  const sector = sectors.find((s) => s.id === sectorId);
+  const sectorNeedsSetup = sector && !sector.clave;
+
+  async function handleAdmin() {
+    setError("");
+    if (!adminKeyExists) {
+      if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
+      if (clave !== clave2) return setError("Las claves no coinciden.");
+      try { await storage.set("admin-key", clave, true); onAdminKeyCreated(); onSuccess({ role: "admin" }); }
+      catch (e) { setError("No se pudo guardar la clave. Probá de nuevo."); }
+      return;
+    }
+    try {
+      const res = await storage.get("admin-key", true);
+      if (res && res.value === clave) onSuccess({ role: "admin" }); else setError("Clave incorrecta.");
+    } catch (e) { setError("No se pudo verificar la clave."); }
+  }
+  function handleSector() {
+    setError("");
+    if (!sector) return;
+    if (sectorNeedsSetup) {
+      if (!nombre.trim()) return setError("Ingresá el nombre del encargado.");
+      if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
+      if (clave !== clave2) return setError("Las claves no coinciden.");
+      onSectorUpdate(sector.id, { encargado: nombre.trim(), clave });
+      onSuccess({ role: "sector", sectorId: sector.id });
+      return;
+    }
+    if (sector.clave === clave) onSuccess({ role: "sector", sectorId: sector.id }); else setError("Clave incorrecta.");
+  }
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head"><div className="dg-modal-title">Iniciar sesión</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
+        {mode === "choose" && (
+          <div className="dg-choice-grid">
+            <button className="dg-choice-btn" onClick={() => setMode("admin")}><ShieldCheck size={20} /><div>Soy Facundo (Admin)</div><span>Tareas, encargados, ingresos y compras</span></button>
+            <button className="dg-choice-btn" onClick={() => setMode("sector")}><User size={20} /><div>Soy encargado de un sector</div><span>Actualizo mis propias tareas</span></button>
+          </div>
+        )}
+        {mode === "admin" && (
+          <div className="dg-form">
+            {!adminKeyExists && <p className="dg-hint">Primera vez: creá tu clave de administrador.</p>}
+            <label>Clave{!adminKeyExists ? " nueva" : ""}</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
+            {!adminKeyExists && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
+            {error && <div className="dg-error">{error}</div>}
+            <div className="dg-form-actions"><button className="dg-btn-ghost" onClick={() => setMode("choose")}>Volver</button><button className="dg-btn-primary" onClick={handleAdmin}>{adminKeyExists ? "Entrar" : "Crear clave y entrar"}</button></div>
+          </div>
+        )}
+        {mode === "sector" && (
+          <div className="dg-form">
+            <label>Sector</label>
+            <select value={sectorId} onChange={(e) => { setSectorId(e.target.value); setError(""); }}>{sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}</select>
+            {sectorNeedsSetup ? (
+              <>
+                <p className="dg-hint">Este sector no tiene encargado configurado. Poné tu nombre y clave.</p>
+                <label>Tu nombre</label><input value={nombre} onChange={(e) => setNombre(e.target.value)} />
+                <label>Clave nueva</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
+                <label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} />
+              </>
+            ) : (<><label>Clave de {sector?.encargado || "encargado"}</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} /></>)}
+            {error && <div className="dg-error">{error}</div>}
+            <div className="dg-form-actions"><button className="dg-btn-ghost" onClick={() => setMode("choose")}>Volver</button><button className="dg-btn-primary" onClick={handleSector}>{sectorNeedsSetup ? "Guardar y entrar" : "Entrar"}</button></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectorModal({ sector, index, session, onClose, onUpdate, onRequestLogin }) {
+  const [newTask, setNewTask] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(sector.encargado || "");
+  const Icon = ICONS[sector.icon];
+  const { key, pct } = getStatus(sector.tasks);
+  const glow = STATUS[key].glow;
+  const isAdmin = session?.role === "admin";
+  const isThisSector = session?.role === "sector" && session.sectorId === sector.id;
+  const suggested = SUGGESTED_TASKS[sector.id] || [];
+
+  function addTask() { if (!newTask.trim()) return; onUpdate({ tasks: [...sector.tasks, { id: uid(), text: newTask.trim(), completed: false }] }); setNewTask(""); }
+  function removeTask(id) { onUpdate({ tasks: sector.tasks.filter((t) => t.id !== id) }); }
+  function toggleTask(id) { onUpdate({ tasks: sector.tasks.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)) }); }
+  function loadSuggested() { onUpdate({ tasks: [...sector.tasks, ...suggested.map((text) => ({ id: uid(), text, completed: false }))] }); }
+  function saveName() { onUpdate({ encargado: nameDraft.trim() }); setEditingName(false); }
+  function resetClave() { onUpdate({ clave: null }); }
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title-row"><div className="dg-modal-icon" style={{ "--glow": glow }}>{Icon && <Icon size={20} />}</div>
+            <div><div className="dg-modal-title">{sector.name}</div><div className="dg-modal-sub">Piso {String(index + 1).padStart(2, "0")}</div></div>
+          </div>
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="dg-sector-meta-row">
+          <div className="dg-encargado-box dg-encargado-box-compact">
+            <User size={13} />
+            {!editingName ? (<span>{sector.encargado || "Sin encargado asignado"}</span>) : (<input className="dg-inline-input" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} autoFocus />)}
+            {isAdmin && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={() => setEditingName(true)} title="Editar encargado"><Pencil size={12} /></button>)}
+            {isAdmin && editingName && (<button className="dg-btn-primary dg-mini-btn" onClick={saveName}>Guardar</button>)}
+            {isAdmin && sector.clave && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={resetClave} title="Restablecer clave"><RotateCcw size={12} /></button>)}
+          </div>
+          <div className="dg-status-pill" style={{ "--glow": glow }}>{pct === null ? "Sin tareas" : `${pct}% hoy`}</div>
+        </div>
+
+        <div className="dg-room-strip" style={{ "--glow": glow }}>
+          <RoomScene sector={sector} />
+        </div>
+
+        <div className="dg-task-table-wrap">
+          <div className="dg-task-table-head">
+            <span>Checklist del día</span>
+            <span>{sector.tasks.filter((t) => t.completed).length}/{sector.tasks.length}</span>
+          </div>
+          <div className="dg-task-table">
+            {sector.tasks.length === 0 && <div className="dg-empty">Todavía no hay tareas asignadas a este sector.</div>}
+            {sector.tasks.map((t, i) => (
+              <div className={`dg-task-table-row ${t.completed ? "dg-task-table-row-done" : ""}`} key={t.id}>
+                <button className={`dg-checkbox ${t.completed ? "dg-checkbox-on" : ""}`} disabled={!isThisSector && !isAdmin} onClick={() => toggleTask(t.id)} />
+                <span className={t.completed ? "dg-task-done" : ""}>{t.text}</span>
+                {isAdmin && <button className="dg-icon-btn dg-task-del" onClick={() => removeTask(t.id)}><Trash2 size={14} /></button>}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {isAdmin && (
+          <>
+            <div className="dg-add-task">
+              <input placeholder="Nueva tarea para este sector..." value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTask()} />
+              <button className="dg-btn-primary" onClick={addTask}><Plus size={16} /> Agregar</button>
+            </div>
+            {suggested.length > 0 && (<button className="dg-btn-ghost dg-suggest-btn" onClick={loadSuggested}><Sparkles size={14} /> Cargar tareas sugeridas para este sector</button>)}
+          </>
+        )}
+
+        {!isAdmin && !isThisSector && (
+          <div className="dg-locked-note"><Lock size={14} /> Iniciá sesión como admin o como encargado de este sector para modificar tareas.
+            <button className="dg-btn-ghost dg-inline-btn" onClick={onRequestLogin}>Iniciar sesión</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const wrap = { minHeight: "100%", background: "#0A0D13" };
+
+function Style() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+      .dg-app { --bg:#0A0D13; --panel: rgba(22,28,40,0.78); --panel-border: rgba(255,255,255,0.08); --text:#E7ECF2; --text-dim:#8B96A8; --cyan:#48E0D8;
+        font-family:'Inter', sans-serif; color: var(--text);
+        background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(72,224,216,0.08), transparent), var(--bg);
+        min-height:100vh; padding:28px 16px 60px; box-sizing:border-box; }
+      .dg-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; min-height:60vh; color: var(--text-dim); }
+      .dg-spin { animation: dg-spin 1s linear infinite; color:#48E0D8; }
+      @keyframes dg-spin { to { transform: rotate(360deg); } }
+
+      .dg-header { display:flex; align-items:center; justify-content:space-between; max-width:680px; margin:0 auto 16px; gap:12px; flex-wrap:wrap; }
+      .dg-brand { display:flex; align-items:center; gap:12px; }
+      .dg-brand-mark { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:15px; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: linear-gradient(145deg, rgba(72,224,216,0.18), rgba(72,224,216,0.04)); border:1px solid rgba(72,224,216,0.35); color:#48E0D8; box-shadow: 0 0 18px rgba(72,224,216,0.25); }
+      .dg-brand-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:18px; letter-spacing:0.5px; }
+      .dg-brand-sub { font-size:12px; color: var(--text-dim); }
+      .dg-session { display:flex; align-items:center; gap:8px; }
+      .dg-session-badge { display:flex; align-items:center; gap:6px; font-size:12px; padding:7px 12px; border-radius:100px; background: var(--panel); border:1px solid var(--panel-border); }
+      .dg-login-btn, .dg-btn-primary { display:flex; align-items:center; gap:6px; font-family:'Inter',sans-serif; font-weight:600; font-size:13px; background: linear-gradient(145deg, #48E0D8, #2FB8B0); color:#03181A; border:none; border-radius:10px; padding:9px 14px; cursor:pointer; box-shadow: 0 0 20px rgba(72,224,216,0.3); }
+      .dg-login-btn:hover, .dg-btn-primary:hover { filter: brightness(1.08); }
+      .dg-icon-btn { background:transparent; border:none; color:var(--text-dim); cursor:pointer; padding:6px; border-radius:8px; display:flex; }
+      .dg-icon-btn:hover { background: rgba(255,255,255,0.06); color:var(--text); }
+      .dg-btn-ghost { background:transparent; border:1px solid var(--panel-border); color:var(--text-dim); border-radius:10px; padding:9px 14px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; }
+      .dg-btn-ghost:hover { color:var(--text); border-color: rgba(255,255,255,0.2); }
+      .dg-inline-btn { padding:4px 10px; font-size:12px; margin-left:8px; }
+      .dg-mini-btn { padding:5px 10px; font-size:12px; }
+
+      .dg-nav { display:flex; gap:6px; max-width:680px; margin:0 auto 22px; background: var(--panel); border:1px solid var(--panel-border); border-radius:12px; padding:4px; }
+      .dg-nav-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:transparent; border:none; color:var(--text-dim); font-family:'Inter',sans-serif; font-size:13px; font-weight:600; padding:9px; border-radius:9px; cursor:pointer; }
+      .dg-nav-on { background: rgba(72,224,216,0.14); color:#48E0D8; }
+
+      .dg-summary { display:flex; gap:8px; max-width:640px; margin:0 auto 28px; flex-wrap:wrap; }
+      .dg-chip { --c:#888; display:flex; align-items:center; gap:6px; font-size:12px; padding:6px 12px; border-radius:100px; background: var(--panel); border:1px solid var(--panel-border); color: var(--text-dim); font-family:'JetBrains Mono', monospace; }
+      .dg-chip-dot { width:7px; height:7px; border-radius:50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+
+      .dg-roof { max-width:640px; margin:0 auto; height:44px; clip-path: polygon(6% 100%, 50% 0%, 94% 100%); background: linear-gradient(160deg, #17202b, #0f151f); border:1px solid rgba(255,255,255,0.08); display:flex; align-items:flex-end; justify-content:center; padding-bottom:8px; }
+      .dg-roof-sign { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#48E0D8; text-shadow: 0 0 10px rgba(72,224,216,0.9), 0 0 22px rgba(72,224,216,0.5); }
+      .dg-building { max-width:640px; margin:-1px auto 0; border-left:3px solid rgba(255,255,255,0.1); border-right:3px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.015); overflow:hidden; }
+      .dg-floor { position:relative; width:100%; text-align:left; background: rgba(22,28,40,0.55); border:none; border-bottom:1px solid rgba(255,255,255,0.08); cursor:pointer; padding:0; color:var(--text); display:block; transition: background 0.15s ease; }
+      .dg-floor:hover { background: rgba(22,28,40,0.85); }
+      .dg-floor:hover .dg-floor-icon { box-shadow: 0 0 16px var(--glow); }
+      .dg-floor:last-child { border-bottom:none; }
+      .dg-floor-tag { position:absolute; top:8px; left:12px; font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:1px; color: var(--text-dim); z-index:2; background: rgba(10,13,19,0.5); padding:2px 6px; border-radius:4px; }
+      .dg-facade { position:relative; height:38px; }
+      .dg-facade-oficina { background: repeating-linear-gradient(90deg, rgba(120,180,220,0.16) 0px 20px, transparent 20px 32px); }
+      .dg-facade-fabrica { height:52px; background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0px 10px, transparent 10px 20px), repeating-linear-gradient(-135deg, rgba(255,255,255,0.04) 0px 10px, transparent 10px 20px); }
+      .dg-conveyor { position:absolute; bottom:6px; left:5%; right:5%; height:2px; background: repeating-linear-gradient(90deg, rgba(72,224,216,0.7) 0 10px, transparent 10px 20px); animation: dg-scroll 1.6s linear infinite; }
+      @keyframes dg-scroll { from { background-position:0 0; } to { background-position:20px 0; } }
+      .dg-facade-despacho { height:46px; display:flex; align-items:center; justify-content:space-between; padding:0 14px; background: repeating-linear-gradient(180deg, rgba(255,255,255,0.09) 0px 6px, rgba(255,255,255,0.02) 6px 12px); }
+      .dg-dock-label { font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:1.5px; color: var(--text-dim); }
+      .dg-dock-truck { color:#48E0D8; animation: dg-drive 3s ease-in-out infinite; }
+      @keyframes dg-drive { 0%,100% { transform: translateX(0); } 50% { transform: translateX(-6px); } }
+      .dg-floor-info { display:flex; align-items:center; gap:12px; padding:12px 16px; }
+      .dg-floor-icon { --glow:#48E0D8; width:38px; height:38px; min-width:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 15%, transparent); color: var(--glow); border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); transition: box-shadow 0.2s ease; }
+      .dg-floor-text { flex:1; min-width:0; }
+      .dg-floor-name { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; line-height:1.25; }
+      .dg-floor-sub { font-size:12px; color: var(--text-dim); }
+      .dg-floor-pct { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:600; }
+      .dg-ground { max-width:640px; margin:0 auto; height:14px; background: repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 24px, transparent 24px 48px); border-radius:0 0 4px 4px; opacity:0.6; }
+
+      .dg-page { max-width:680px; margin:0 auto; }
+      .dg-locked-page { display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; color: var(--text-dim); padding:60px 20px; background: var(--panel); border:1px solid var(--panel-border); border-radius:16px; }
+      .dg-locked-page p { max-width:320px; font-size:13px; }
+
+      .dg-totales { display:flex; gap:10px; margin-bottom:16px; }
+      .dg-cuenta-totales { margin-top:-6px; }
+      .dg-iva-card { background:#161B26; border:1px solid rgba(245,196,81,0.3); border-radius:12px; padding:14px; margin-bottom:16px; }
+      .dg-iva-head { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; }
+      .dg-iva-head > div { display:flex; align-items:baseline; gap:10px; }
+      .dg-iva-amount { font-family:'JetBrains Mono', monospace; font-size:20px; color:#F5C451; }
+      .dg-iva-note { font-size:11px; color:#8B96A8; }
+      .dg-total-card { --c:#888; flex:1; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:4px; }
+      .dg-total-card span { font-size:11px; color:#8B96A8; }
+      .dg-total-card strong { font-family:'JetBrains Mono', monospace; font-size:16px; color: var(--c); }
+
+      .dg-charts { display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+      .dg-chart-card { flex:1; min-width:220px; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px; }
+      .dg-chart-title { font-size:12px; color:#8B96A8; margin-bottom:6px; font-family:'JetBrains Mono', monospace; }
+
+      .dg-overlay { position:fixed; inset:0; background: rgba(5,7,11,0.72); backdrop-filter: blur(4px); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50; }
+      .dg-modal { font-family:'Inter', sans-serif; color:#E7ECF2; width:100%; max-width:400px; background:#10141D; border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; }
+      .dg-modal-lg { max-width:540px; }
+      .dg-modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+      .dg-modal-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:17px; }
+      .dg-modal-title-row { display:flex; align-items:center; gap:12px; }
+      .dg-modal-icon { --glow:#48E0D8; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 15%, transparent); color: var(--glow); border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); }
+      .dg-modal-sub { font-size:12px; color:#8B96A8; margin-top:2px; }
+      .dg-encargado-box { display:flex; align-items:center; gap:8px; font-size:13px; color:#8B96A8; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:9px 12px; margin-bottom:14px; }
+      .dg-sector-meta-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+      .dg-encargado-box-compact { flex:1; margin-bottom:0; padding:7px 10px; }
+      .dg-status-pill { --glow:#48E0D8; font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; color: var(--glow); background: color-mix(in srgb, var(--glow) 14%, transparent); border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); border-radius:100px; padding:7px 12px; white-space:nowrap; }
+      .dg-room-strip { --glow:#48E0D8; position:relative; height:74px; border-radius:10px; overflow:hidden; margin-bottom:14px; background: repeating-linear-gradient(0deg, #171d2a 0 24px, #151a26 24px 48px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow) 30%, transparent); opacity:0.9; }
+      .dg-task-table-wrap { background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:4px; margin-bottom:14px; }
+      .dg-task-table-head { display:flex; justify-content:space-between; align-items:center; padding:10px 12px 8px; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:#E7ECF2; }
+      .dg-task-table-head span:last-child { font-family:'JetBrains Mono', monospace; color:#48E0D8; font-size:12px; }
+      .dg-task-table { display:flex; flex-direction:column; max-height:340px; overflow-y:auto; }
+      .dg-task-table-row { display:flex; align-items:center; gap:10px; padding:12px 12px; font-size:14px; border-top:1px solid rgba(255,255,255,0.05); }
+      .dg-task-table-row:nth-child(even) { background: rgba(255,255,255,0.018); }
+      .dg-task-table-row-done { opacity:0.6; }
+      .dg-encargado-box span { color:#E7ECF2; }
+      .dg-encargado-edit { margin-left:auto; }
+      .dg-inline-input { flex:1; background:#0F1420; border:1px solid rgba(72,224,216,0.4); border-radius:6px; padding:5px 8px; color:#E7ECF2; font-size:13px; outline:none; }
+      .dg-choice-grid { display:flex; flex-direction:column; gap:10px; }
+      .dg-choice-btn { display:flex; flex-direction:column; align-items:flex-start; gap:4px; text-align:left; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:14px; color:#E7ECF2; cursor:pointer; }
+      .dg-choice-btn:hover { border-color:#48E0D8; }
+      .dg-choice-btn div { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; margin-top:4px; }
+      .dg-choice-btn span { font-size:12px; color:#8B96A8; }
+      .dg-form { display:flex; flex-direction:column; gap:8px; }
+      .dg-form label { font-size:12px; color:#8B96A8; margin-top:6px; display:block; }
+      .dg-app, .dg-modal { color-scheme: dark; }
+      select { color-scheme: dark; }
+      select option { background:#161B26; color:#E7ECF2; }
+      .dg-form input, .dg-form select { width:100%; background:#161B26; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:10px 12px; color:#E7ECF2; font-family:'Inter',sans-serif; font-size:14px; outline:none; box-sizing:border-box; }
+      .dg-form input:focus, .dg-form select:focus { border-color:#48E0D8; }
+      .dg-form-row { display:flex; gap:10px; }
+      .dg-hint { font-size:12px; color:#8B96A8; background:rgba(72,224,216,0.06); border:1px solid rgba(72,224,216,0.2); border-radius:8px; padding:8px 10px; }
+      .dg-error { font-size:12px; color:#F16565; }
+      .dg-form-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
+      .dg-status-bar { display:flex; flex-direction:column; gap:6px; margin-bottom:18px; }
+      .dg-status-track { height:6px; border-radius:100px; background:rgba(255,255,255,0.08); overflow:hidden; }
+      .dg-status-fill { height:100%; border-radius:100px; transition: width 0.3s ease; }
+      .dg-status-bar span { font-size:12px; font-family:'JetBrains Mono', monospace; }
+      .dg-task-list { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; max-height:280px; overflow-y:auto; }
+      .dg-empty { font-size:13px; color:#8B96A8; padding:14px; text-align:center; border:1px dashed rgba(255,255,255,0.1); border-radius:10px; }
+      .dg-task { display:flex; align-items:center; gap:10px; background:#161B26; border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 12px; font-size:13px; }
+      .dg-task-done { text-decoration: line-through; color:#8B96A8; }
+      .dg-task-del { margin-left:auto; }
+      .dg-checkbox { width:18px; height:18px; min-width:18px; border-radius:6px; border:1.5px solid rgba(255,255,255,0.25); background:transparent; cursor:pointer; }
+      .dg-checkbox-on { background:#48E0D8; border-color:#48E0D8; }
+      .dg-checkbox:disabled { cursor:not-allowed; opacity:0.5; }
+      .dg-add-task { display:flex; gap:8px; }
+      .dg-add-task input { flex:1; background:#161B26; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:10px 12px; color:#E7ECF2; font-family:'Inter',sans-serif; font-size:13px; outline:none; }
+      .dg-add-task input:focus { border-color:#48E0D8; }
+      .dg-suggest-btn { margin-top:10px; width:100%; justify-content:center; }
+      .dg-locked-note { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:12px; color:#8B96A8; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 12px; }
+      .dg-pago-form { margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,0.08); }
+      .dg-filtros { display:flex; gap:6px; margin-bottom:10px; }
+      .dg-filtro-btn { background:transparent; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:5px 12px; font-size:12px; cursor:pointer; }
+      .dg-filtro-on { background: rgba(72,224,216,0.15); border-color:#48E0D8; color:#48E0D8; }
+      .dg-pago-row { align-items:center; }
+      .dg-pago-info { display:flex; flex-direction:column; flex:1; gap:2px; }
+      .dg-pago-meta { font-size:11px; color:#8B96A8; }
+      .dg-pago-monto { font-family:'JetBrains Mono', monospace; font-size:13px; margin-right:6px; }
+      .dg-pago-list { max-height:320px; }
+
+      .dg-section-card { background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:14px 14px 16px; margin-bottom:12px; }
+      .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:#48E0D8; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:12.5px; text-transform:uppercase; letter-spacing:0.4px; }
+      .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; }
+      .dg-money-row { margin-top:12px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.08); }
+      .dg-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+      .dg-field label { font-size:10.5px; font-weight:600; letter-spacing:0.4px; text-transform:uppercase; color:#7A8699; }
+      .dg-field input, .dg-field select {
+        background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+        border:1px solid rgba(255,255,255,0.1); border-radius:9px; padding:9px 10px; color:#E7ECF2;
+        font-family:'Inter',sans-serif; font-size:13.5px; outline:none; box-sizing:border-box; width:100%;
+        transition: border-color .15s ease, box-shadow .15s ease;
+      }
+      .dg-field input:focus, .dg-field select:focus { border-color:#48E0D8; box-shadow: 0 0 0 3px rgba(72,224,216,0.12); }
+      .dg-field input:disabled, .dg-field select:disabled { opacity:0.5; cursor:not-allowed; }
+      .dg-field-computed input { background: rgba(72,224,216,0.08); border-color: rgba(72,224,216,0.35); color:#48E0D8; font-family:'JetBrains Mono', monospace; font-weight:600; opacity:1; }
+
+      .dg-quote-grid { display:flex; gap:16px; align-items:flex-start; }
+      .dg-quote-form, .dg-quote-result { flex:1; min-width:280px; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:16px; }
+      .dg-quote-section-title { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:#48E0D8; margin:14px 0 6px; }
+      .dg-quote-section-title:first-child { margin-top:0; }
+      .dg-alert { display:flex; align-items:center; gap:8px; font-size:12px; color:#F5C451; background:rgba(245,196,81,0.1); border:1px solid rgba(245,196,81,0.3); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+      .dg-price-card { display:flex; flex-direction:column; gap:2px; background: rgba(72,224,216,0.08); border:1px solid rgba(72,224,216,0.3); border-radius:12px; padding:14px; margin-bottom:14px; }
+      .dg-price-label { font-size:11px; color:#8B96A8; }
+      .dg-price-main { font-family:'JetBrains Mono', monospace; font-size:26px; color:#48E0D8; }
+      .dg-price-sub { font-size:12px; color:#8B96A8; }
+      .dg-quote-meta { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px; }
+      .dg-quote-meta div { background:#10141D; border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
+      .dg-quote-meta span { font-size:10px; color:#8B96A8; }
+      .dg-quote-meta strong { font-family:'JetBrains Mono', monospace; font-size:13px; }
+      .dg-mensaje-box { margin-top:4px; }
+      .dg-mensaje-text { white-space:pre-wrap; font-family:'Inter',sans-serif; font-size:12.5px; background:#10141D; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; margin:6px 0 10px; line-height:1.5; }
+      .dg-quote-actions { display:flex; gap:8px; flex-wrap:wrap; }
+      .dg-quotes-history { margin-top:18px; }
+      .dg-config-editor { margin-top:12px; background:#0F1420; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; }
+      .dg-config-group-title { font-size:12px; font-weight:600; color:#8B96A8; margin:12px 0 6px; }
+      .dg-config-group-title:first-of-type { margin-top:4px; }
+      .dg-config-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+      .dg-config-field label { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; color:#7A8699; display:block; margin-bottom:5px; }
+      .dg-config-field input { width:100%; background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015)); border:1px solid rgba(255,255,255,0.1); border-radius:9px; padding:8px 10px; color:#E7ECF2; font-size:12.5px; box-sizing:border-box; outline:none; transition: border-color .15s ease, box-shadow .15s ease; }
+      .dg-config-field input:focus { border-color:#48E0D8; box-shadow: 0 0 0 3px rgba(72,224,216,0.12); }
+
+      .dg-quick-actions { background: var(--panel); border:1px solid var(--panel-border); border-radius:14px; padding:14px; margin-bottom:16px; }
+      .dg-quick-title { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:#8B96A8; margin-bottom:10px; }
+      .dg-quick-buttons { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+      .dg-quick-btn { --c:#48E0D8; display:flex; flex-direction:column; align-items:center; gap:8px; background: color-mix(in srgb, var(--c) 10%, #161B26); border:1.5px solid color-mix(in srgb, var(--c) 45%, transparent); color: var(--c); border-radius:14px; padding:18px 10px; cursor:pointer; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:12.5px; text-align:center; transition: transform 0.1s ease, box-shadow 0.15s ease; }
+      .dg-quick-btn:hover { transform: translateY(-2px); box-shadow: 0 0 20px -4px var(--c); }
+      .dg-quick-btn:active { transform: scale(0.97); }
+      .dg-quick-inline { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+      .dg-quick-inline input { flex:1; min-width:140px; background:#161B26; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:9px 12px; color:#E7ECF2; font-size:13px; outline:none; }
+      .dg-quick-inline input:focus { border-color:#48E0D8; }
+      .dg-quick-toast { margin-top:10px; font-size:12px; color:#52E08A; font-family:'JetBrains Mono', monospace; }
+
+      .dg-crm-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+      .dg-crm-soyyo { display:flex; align-items:center; gap:8px; font-size:13px; color:#8B96A8; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px 12px; }
+      .dg-crm-soyyo select { background:transparent; border:none; color:#48E0D8; font-weight:600; font-size:13px; outline:none; }
+      .dg-crm-vendedores-admin { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+      .dg-crm-vendedores-admin input { background:#161B26; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 10px; color:#E7ECF2; font-size:12px; width:140px; }
+      .dg-vendedor-chip { display:flex; align-items:center; gap:4px; font-size:11px; background:#161B26; border:1px solid rgba(255,255,255,0.1); border-radius:100px; padding:4px 8px; color:#8B96A8; }
+      .dg-vendedor-chip button { background:none; border:none; color:#8B96A8; cursor:pointer; display:flex; padding:0; }
+
+      .dg-vendor-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px,1fr)); gap:10px; margin-bottom:16px; }
+      .dg-vendor-card { background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px; }
+      .dg-vendor-name { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:14px; margin-bottom:8px; color:#48E0D8; }
+      .dg-vendor-metrics { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px; }
+      .dg-vendor-metrics div { display:flex; flex-direction:column; gap:1px; }
+      .dg-vendor-metrics span { font-size:10px; color:#8B96A8; }
+      .dg-vendor-metrics strong { font-family:'JetBrains Mono', monospace; font-size:13px; }
+      .dg-vendor-importe { font-size:12px; color:#52E08A; font-family:'JetBrains Mono', monospace; border-top:1px solid rgba(255,255,255,0.06); padding-top:6px; }
+
+      .dg-crm-filters { display:flex; align-items:center; gap:8px; margin-bottom:12px; flex-wrap:wrap; color:#8B96A8; }
+      .dg-crm-filters select { background:#161B26; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:7px 10px; color:#E7ECF2; font-size:12px; }
+
+      .dg-pedido-search { background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015)); border:1px solid rgba(255,255,255,0.1); border-radius:9px; padding:8px 12px; color:#E7ECF2; font-size:12.5px; min-width:160px; outline:none; }
+      .dg-pedido-search:focus { border-color:#48E0D8; }
+      .dg-pedido-list { max-height:none; }
+      .dg-pedido-orden { font-family:'JetBrains Mono', monospace; font-size:11px; color:#8B96A8; }
+      .dg-pedido-card { display:flex; flex-direction:column; gap:8px; width:100%; text-align:left; background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:12px 14px; color:#E7ECF2; cursor:pointer; font-family:'Inter',sans-serif; }
+      .dg-pedido-card:hover { border-color:rgba(72,224,216,0.3); }
+      .dg-pedido-card-top { display:flex; align-items:center; gap:10px; }
+      .dg-pedido-card-top .dg-lead-name { flex:1; }
+      .dg-pedido-badges { display:flex; gap:6px; flex-wrap:wrap; }
+      .dg-badge { --bc:#8B96A8; display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:600; padding:4px 9px; border-radius:100px; background: color-mix(in srgb, var(--bc) 14%, transparent); color: var(--bc); border:1px solid color-mix(in srgb, var(--bc) 35%, transparent); white-space:nowrap; }
+      .dg-lead-list { max-height:none; }
+      .dg-lead-row { display:flex; align-items:center; justify-content:space-between; gap:10px; background:#161B26; border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 12px; flex-wrap:wrap; }
+      .dg-lead-main { display:flex; align-items:center; gap:10px; min-width:0; }
+      .dg-lead-dot { width:8px; height:8px; min-width:8px; border-radius:50%; }
+      .dg-lead-info { display:flex; flex-direction:column; gap:2px; min-width:0; }
+      .dg-lead-name { font-size:13px; font-weight:600; }
+      .dg-lead-actions { display:flex; align-items:center; gap:6px; }
+      .dg-lead-estode-select { }
+      .dg-lead-estado-select { background:#0F1420; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:5px 8px; font-size:11px; }
+
+      .dg-quickviews { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+      .dg-quickview-btn { background:#161B26; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 13px; font-size:12px; cursor:pointer; white-space:nowrap; }
+      .dg-quickview-btn:hover { color:#E7ECF2; }
+      .dg-quickview-on { background: rgba(72,224,216,0.15); border-color:#48E0D8; color:#48E0D8; font-weight:600; }
+      .dg-comision-banner { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background: rgba(245,196,81,0.08); border:1px solid rgba(245,196,81,0.3); border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#F5C451; }
+      .dg-pedido-flag { font-size:11px; }
+      .dg-checkbox-field { width:100%; display:flex; align-items:center; justify-content:center; gap:6px; background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:9px; padding:9px 10px; color:#8B96A8; font-size:12.5px; cursor:pointer; font-family:'Inter',sans-serif; }
+      .dg-checkbox-field-on { background: rgba(82,224,138,0.12); border-color:#52E08A; color:#52E08A; font-weight:600; }
+      .dg-checkbox-field:disabled { cursor:not-allowed; opacity:0.6; }
+      .dg-print-table { display:none; }
+
+      @media print {
+        body * { visibility:hidden; }
+        .dg-print-area, .dg-print-area * { visibility:visible; }
+        .dg-print-area { display:block; position:absolute; top:0; left:0; width:100%; padding:24px; background:#fff; color:#111; font-family:'Inter',sans-serif; }
+        .dg-print-brand { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:22px; color:#0f766e; letter-spacing:1px; }
+        .dg-print-sub { font-size:13px; color:#555; margin-bottom:20px; }
+        .dg-print-row { display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:8px 0; font-size:13px; }
+        .dg-print-row span:first-child { color:#666; }
+        .dg-print-price { margin:20px 0; padding:16px; border:2px solid #0f766e; border-radius:10px; }
+        .dg-print-price div { font-family:'JetBrains Mono', monospace; font-size:20px; font-weight:700; color:#0f766e; margin-bottom:4px; }
+        .dg-print-price small { font-size:12px; color:#555; font-weight:400; }
+        .dg-print-terms { margin-top:16px; font-size:12px; color:#555; }
+        .dg-print-table { display:table; width:100%; border-collapse:collapse; font-size:11px; }
+        .dg-print-table th, .dg-print-table td { border-bottom:1px solid #ddd; padding:6px 8px; text-align:left; }
+        .dg-print-table th { color:#555; font-weight:600; text-transform:uppercase; font-size:10px; }
+        .dg-print-total { margin-top:14px; font-family:'JetBrains Mono', monospace; font-size:15px; font-weight:700; color:#0f766e; text-align:right; }
+      }
+
+      .dg-plant-outer { max-width:760px; margin:0 auto; padding:10px 4px 56px; perspective:1900px; position:relative; }
+      .dg-plant-outer::after { content:''; position:absolute; left:8%; right:8%; bottom:14px; height:34px; background: radial-gradient(ellipse, rgba(0,0,0,0.55), transparent 70%); filter:blur(4px); z-index:-1; }
+      .dg-plant-grid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr); gap:5px; background:#05070b; padding:5px; border-radius:18px; transform:rotateX(30deg); transform-style:preserve-3d; box-shadow: 0 42px 70px -26px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06); }
+      .dg-room-tile { position:relative; aspect-ratio:auto; min-height:190px; border-radius:0; padding:0; cursor:pointer; border:none; background:#151a26; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); overflow:hidden; transition: box-shadow 0.18s ease, filter 0.18s ease; transform-style:preserve-3d; }
+      .dg-room-tile:hover { box-shadow: inset 0 0 0 3px var(--glow), inset 0 0 30px -8px var(--glow); filter:brightness(1.08); z-index:2; }
+      .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
+      .dg-room-tile:nth-child(3) { border-radius:0 16px 0 0; }
+      .dg-room-tile:nth-child(4) { border-radius:0 0 0 16px; }
+      .dg-room-tile:nth-child(6) { border-radius:0 0 16px 0; }
+      .dg-room-tile-oficina { background: repeating-linear-gradient(0deg, #171d2a 0 24px, #151a26 24px 48px), repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0 24px, transparent 24px 48px); }
+      .dg-room-tile-fabrica { background: repeating-linear-gradient(45deg, #1a1f27 0 14px, #171b22 14px 28px); }
+      .dg-room-tile-despacho { background: #23262b; }
+
+      .dg-room-scene { position:absolute; inset:0; }
+      .dg-r-desk { position:absolute; width:20%; height:16%; }
+      .dg-r-desk-top { position:absolute; inset:0; background: linear-gradient(160deg, #3a3f4d, #2b2f3a); border-radius:3px; box-shadow: 3px 5px 0 rgba(0,0,0,0.35); }
+      .dg-r-monitor { position:absolute; left:22%; top:-18%; width:56%; height:34%; background: linear-gradient(160deg, #1a5c58, #0d3a37); border:1px solid rgba(72,224,216,0.6); border-radius:2px; box-shadow: 0 0 8px rgba(72,224,216,0.5); }
+      .dg-r-chair { position:absolute; left:32%; top:105%; width:36%; height:36%; border-radius:50%; background:#20242c; box-shadow:2px 2px 0 rgba(0,0,0,0.3); }
+      .dg-r-board { position:absolute; right:8%; top:10%; width:26%; height:34%; background:#e8ecef; border-radius:3px; box-shadow:3px 4px 0 rgba(0,0,0,0.3); }
+      .dg-r-note { position:absolute; width:22%; height:26%; border-radius:1px; }
+      .dg-r-note:nth-child(1){ left:10%; top:15%; } .dg-r-note:nth-child(2){ left:40%; top:40%; } .dg-r-note:nth-child(3){ left:65%; top:15%; }
+      .dg-r-cabinet-lines { position:absolute; inset:10%; background: repeating-linear-gradient(0deg, #b7c0c6 0 4px, #e8ecef 4px 9px); }
+      .dg-r-checklist-lines { position:absolute; inset:14% 10%; background: repeating-linear-gradient(0deg, #48a89e 0 3px, transparent 3px 10px); }
+
+      .dg-r-bench { position:absolute; background: linear-gradient(160deg, #5a4636, #3d3024); border-radius:3px; box-shadow:3px 5px 0 rgba(0,0,0,0.35); }
+      .dg-r-shelf { position:absolute; background: repeating-linear-gradient(0deg, #4a4f58 0 8px, #383c44 8px 16px); border-radius:3px; box-shadow:3px 5px 0 rgba(0,0,0,0.35); }
+      .dg-r-belt-top { position:absolute; left:8%; right:10%; top:44%; height:10%; background: repeating-linear-gradient(90deg, #48E0D8 0 10px, #1a2530 10px 20px); border-radius:3px; animation: dg-scroll 1.4s linear infinite; box-shadow: inset 0 0 6px rgba(0,0,0,0.4); }
+
+      .dg-r-lane { position:absolute; left:50%; top:0; bottom:0; width:6%; transform:translateX(-50%); background: repeating-linear-gradient(0deg, #e8ecef 0 14px, transparent 14px 26px); opacity:0.5; }
+      .dg-r-pallet { position:absolute; width:16%; height:14%; background: repeating-linear-gradient(90deg, #7a5a34 0 4px, #5c4326 4px 8px); border-radius:2px; box-shadow:2px 3px 0 rgba(0,0,0,0.35); }
+      .dg-r-truck { position:absolute; right:6%; bottom:8%; width:34%; height:40%; }
+      .dg-r-truck-cab { position:absolute; right:0; top:30%; width:36%; height:70%; background:#48E0D8; border-radius:3px 3px 0 0; box-shadow:2px 3px 0 rgba(0,0,0,0.35); }
+      .dg-r-truck-trailer { position:absolute; left:0; top:0; width:64%; height:100%; background:#dfe3e6; border-radius:2px; box-shadow:2px 3px 0 rgba(0,0,0,0.35); }
+
+      .dg-room-plate { position:absolute; left:6%; right:6%; bottom:7%; display:flex; align-items:center; gap:7px; background: rgba(8,10,15,0.82); border:1px solid var(--glow); border-radius:10px; padding:8px 10px; box-shadow:0 0 14px -2px var(--glow); backdrop-filter: blur(2px); }
+      .dg-room-plate-num { font-family:'JetBrains Mono', monospace; font-size:10px; color:#8B96A8; }
+      .dg-room-plate-icon { --glow:#48E0D8; width:26px; height:26px; min-width:26px; border-radius:7px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 18%, transparent); color: var(--glow); }
+      .dg-room-plate-text { display:flex; flex-direction:column; min-width:0; flex:1; }
+      .dg-room-plate-name { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:12.5px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .dg-room-plate-sub { font-size:10.5px; color:#8B96A8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .dg-room-plate-pct { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; }
+
+      .dg-room-tile-lg { position:relative; width:100%; aspect-ratio:16/9; border-radius:14px; border:2px solid var(--glow); box-shadow:0 0 24px -6px var(--glow); margin-bottom:16px; overflow:hidden; background:#151a26; }
+      .dg-room-tile-lg.dg-room-tile-lg-static { background: repeating-linear-gradient(0deg, #171d2a 0 24px, #151a26 24px 48px); }
+
+      @media (max-width:680px) {
+        .dg-plant-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(3,1fr); transform:rotateX(16deg); }
+        .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
+        .dg-room-tile:nth-child(2) { border-radius:0 16px 0 0; }
+        .dg-room-tile:nth-child(5) { border-radius:0 0 0 16px; }
+        .dg-room-tile:nth-child(6) { border-radius:0 0 16px 0; }
+        .dg-room-tile:nth-child(3), .dg-room-tile:nth-child(4) { border-radius:0; }
+        .dg-floor-name { font-size:13px; }
+        .dg-form-row { flex-direction:column; }
+        .dg-charts { flex-direction:column; }
+        .dg-quote-grid { flex-direction:column; }
+        .dg-quote-meta { grid-template-columns:1fr; }
+        .dg-config-grid { grid-template-columns:1fr; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .dg-spin, .dg-conveyor, .dg-dock-truck { animation:none; }
+      }
+    `}</style>
+  );
+}
