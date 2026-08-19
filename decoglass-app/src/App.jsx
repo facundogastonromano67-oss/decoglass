@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { storage } from "./lib/storage";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
@@ -984,13 +984,14 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
 
           <div className="dg-section-card">
             <div className="dg-section-header"><Plus size={14} /> Nueva liquidación</div>
+            <EnterFlow onSubmit={addLiquidacion} autoFocus={false}>
             <div className="dg-field-grid">
               <Field label="Empleado">
                 <select value={empleadoId} onChange={(e) => setEmpleadoId(e.target.value)}>
                   {empleados.map((e) => (<option key={e.id} value={e.id}>{e.nombre} ({e.sector})</option>))}
                 </select>
               </Field>
-              <Field label="Período"><input value={periodo} onChange={(e) => setPeriodo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLiquidacion()} placeholder="Ej: Semana 1 - Agosto 2026" /></Field>
+              <Field label="Período"><input value={periodo} onChange={(e) => setPeriodo(e.target.value)} placeholder="Ej: Semana 1 - Agosto 2026" /></Field>
             </div>
             {empSel?.sector === "Oficina/Ventas" ? (
               <div className="dg-field-grid" style={{ marginTop: 12 }}>
@@ -1004,6 +1005,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                 <Field label="Semanas con plus"><input type="number" value={plusesAplicados} onChange={(e) => setPlusesAplicados(e.target.value)} /></Field>
               </div>
             )}
+            </EnterFlow>
             <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addLiquidacion}><Plus size={16} /> Agregar liquidación</button></div>
           </div>
 
@@ -1043,7 +1045,7 @@ function EmpleadoForm({ empleado, onSave, onCancel }) {
   const [draft, setDraft] = useState(empleado);
   function set(f, v) { setDraft((d) => ({ ...d, [f]: v })); }
   return (
-    <>
+    <EnterFlow onSubmit={() => onSave(draft)} autoFocus={false}>
       <div className="dg-field-grid">
         <Field label="Nombre"><input value={draft.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
         <Field label="Sector"><select value={draft.sector} onChange={(e) => set("sector", e.target.value)}>{SUELDOS_SECTORES.map((s) => (<option key={s}>{s}</option>))}</select></Field>
@@ -1065,7 +1067,7 @@ function EmpleadoForm({ empleado, onSave, onCancel }) {
         {onCancel && <button className="dg-btn-ghost" onClick={onCancel}>Cancelar</button>}
         <button className="dg-btn-primary" onClick={() => onSave(draft)}><Save size={14} /> Guardar</button>
       </div>
-    </>
+    </EnterFlow>
   );
 }
 
@@ -1103,7 +1105,7 @@ function RecursosVentaPanel({ recursos, onChange, isAdmin }) {
   return (
     <div className="dg-page">
       {isAdmin && (
-        <div className="dg-form dg-pago-form">
+        <EnterFlow className="dg-form dg-pago-form" onSubmit={addRecurso} autoFocus={false}>
           <div className="dg-form-row">
             <div style={{ flex: 1 }}>
               <label>Tipo</label>
@@ -1112,10 +1114,10 @@ function RecursosVentaPanel({ recursos, onChange, isAdmin }) {
             <div style={{ flex: 2 }}><label>Título</label><input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Catálogo espejos redondos 2026" /></div>
           </div>
           <label>Link (Google Drive, Dropbox, etc.)</label>
-          <input value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addRecurso()} placeholder="https://..." />
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." />
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addRecurso}><Plus size={16} /> Agregar recurso</button></div>
           <p className="dg-hint" style={{ marginTop: 10 }}>Subí el archivo a Google Drive o Dropbox, compartilo con "cualquiera con el link" y pegá ese link acá.</p>
-        </div>
+        </EnterFlow>
       )}
 
       {grupos.every((g) => g.items.length === 0) && (
@@ -1240,10 +1242,10 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
         </div>
       </div>
 
-      <div className="dg-form dg-pago-form">
+      <EnterFlow className="dg-form dg-pago-form" onSubmit={addEntry} autoFocus={false}>
         <div className="dg-form-row">
-          <div style={{ flex: 2 }}><label>Concepto</label><input value={concepto} onChange={(e) => setConcepto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEntry()} placeholder={isIncome ? "Ej: Venta 4 espejos LED redondos" : "Ej: Vidrio importado - contenedor"} /></div>
-          <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEntry()} placeholder="0" /></div>
+          <div style={{ flex: 2 }}><label>Concepto</label><input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={isIncome ? "Ej: Venta 4 espejos LED redondos" : "Ej: Vidrio importado - contenedor"} /></div>
+          <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></div>
         </div>
         <div className="dg-form-row">
           <div style={{ flex: 1 }}><label>{isIncome ? "Canal" : "Tipo"}</label>
@@ -1270,7 +1272,7 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
             <button className="dg-btn-primary" style={{ width: "100%", justifyContent: "center" }} onClick={addEntry}><Plus size={16} /> Registrar</button>
           </div>
         </div>
-      </div>
+      </EnterFlow>
 
       <div className="dg-filtros">
         {["todos", "pendiente", "pagado"].map((f) => (
@@ -1518,6 +1520,46 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
   );
 }
 
+// Hace que Enter salte al siguiente campo del formulario, y en el último dispare onSubmit.
+// Además enfoca automáticamente el primer campo vacío al abrirse.
+function EnterFlow({ children, onSubmit, autoFocus = true, className }) {
+  const ref = useRef(null);
+
+  function campos() {
+    if (!ref.current) return [];
+    return Array.from(ref.current.querySelectorAll("input, select, textarea"))
+      .filter((el) => !el.disabled && el.type !== "hidden" && el.offsetParent !== null);
+  }
+
+  useEffect(() => {
+    if (!autoFocus) return;
+    const t = setTimeout(() => {
+      const els = campos();
+      const target = els.find((el) => !el.value) || els[0];
+      if (target) { try { target.focus(); if (target.select) target.select(); } catch (e) {} }
+    }, 60);
+    return () => clearTimeout(t);
+  }, []);
+
+  function handleKeyDown(e) {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    if (e.target.tagName === "TEXTAREA") return;
+    const els = campos();
+    const i = els.indexOf(e.target);
+    if (i === -1) return;
+    e.preventDefault();
+    if (i < els.length - 1) {
+      const next = els[i + 1];
+      next.focus();
+      if (next.select) try { next.select(); } catch (err) {}
+    } else if (onSubmit) {
+      onSubmit();
+    }
+  }
+
+  return <div ref={ref} onKeyDown={handleKeyDown} className={className}>{children}</div>;
+}
+
 function Field({ label, computed, children }) {
   return (
     <div className={`dg-field ${computed ? "dg-field-computed" : ""}`}>
@@ -1542,6 +1584,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
 
+        <EnterFlow onSubmit={() => onSave(draft)}>
         <div className="dg-section-card">
           <div className="dg-section-header"><Calculator size={14} /> Medida y producto</div>
           <div className="dg-field-grid">
@@ -1609,6 +1652,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           </div>
         </div>
 
+        </EnterFlow>
+
         <div className="dg-form-actions" style={{ marginTop: 4 }}>
           {onDelete && canEditFull && <button className="dg-btn-ghost" onClick={onDelete}><Trash2 size={14} /> Eliminar</button>}
           {canEditFull && (
@@ -1653,6 +1698,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
           <div className="dg-section-card" key={p.id}>
             <div className="dg-section-header"><Truck size={14} /> #{p.orden} · {p.cliente} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "#52E08A", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
             <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma} · Método: {p.metodo}</div>
+            <EnterFlow autoFocus={false}>
             <div className="dg-field-grid">
               <Field label="Teléfono de contacto"><input disabled={!canEdit} value={p.celular} onChange={(e) => update(p.id, { celular: e.target.value })} /></Field>
               <Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega} onChange={(e) => update(p.id, { detalleEntrega: e.target.value })} /></Field>
@@ -1662,6 +1708,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
               <Field label="Horario de entrega"><input disabled={!canEdit} value={p.horarioEntrega} onChange={(e) => update(p.id, { horarioEntrega: e.target.value })} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
               <Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo} onChange={(e) => update(p.id, { listo: e.target.value })} /></Field>
             </div>
+            </EnterFlow>
             <div className="dg-quote-actions" style={{ marginTop: 10 }}>
               <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
               {p.estado === "Espejo listo" && entregaWaLink(p) && (
@@ -1699,14 +1746,16 @@ function FacturasManualesPanel({ facturas, onChange, isAdmin }) {
       {isAdmin && (
         <div className="dg-section-card">
           <div className="dg-section-header"><FileText size={14} /> Cargar factura a hacer</div>
+          <EnterFlow onSubmit={addFactura} autoFocus={false}>
           <div className="dg-field-grid">
-            <Field label="Nombre / Cliente"><input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addFactura()} /></Field>
+            <Field label="Nombre / Cliente"><input value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
             <Field label="Monto"><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} /></Field>
             <Field label="CUIT"><input value={cuit} onChange={(e) => setCuit(e.target.value)} /></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
-            <Field label="Detalle"><input value={detalle} onChange={(e) => setDetalle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addFactura()} placeholder="Concepto de la factura" /></Field>
+            <Field label="Detalle"><input value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Concepto de la factura" /></Field>
           </div>
+          </EnterFlow>
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addFactura}><Plus size={16} /> Agregar</button></div>
         </div>
       )}
@@ -1878,13 +1927,15 @@ function StockMaterialesPanel({ stock, onChange, canEdit }) {
       {canEdit && stock.length > 0 && (
         <div className="dg-section-card">
           <div className="dg-section-header"><PackagePlus size={14} /> Agregar material</div>
+          <EnterFlow onSubmit={addItem} autoFocus={false}>
           <div className="dg-field-grid">
-            <Field label="Material"><input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} /></Field>
+            <Field label="Material"><input value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
             <Field label="Categoría"><select value={categoria} onChange={(e) => setCategoria(e.target.value)}>{MATERIAL_CATEGORIAS.map((c) => (<option key={c}>{c}</option>))}</select></Field>
             <Field label="Unidad"><input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="u / m / m² / l" /></Field>
-            <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} /></Field>
-            <Field label="Mínimo de alerta"><input type="number" value={minimo} onChange={(e) => setMinimo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} /></Field>
+            <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+            <Field label="Mínimo de alerta"><input type="number" value={minimo} onChange={(e) => setMinimo(e.target.value)} /></Field>
           </div>
+          </EnterFlow>
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button></div>
         </div>
       )}
@@ -1949,15 +2000,17 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
       {canEdit && (
         <div className="dg-section-card">
           <div className="dg-section-header"><Package size={14} /> Agregar modelo al stock</div>
+          <EnterFlow onSubmit={addItem} autoFocus={false}>
           <div className="dg-field-grid">
             <Field label="Modelo / código"><input value={modelo} onChange={(e) => setModelo(e.target.value)} /></Field>
-            <Field label="Descripción"><input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} placeholder="Ej: 70Ø - Esmerilado" /></Field>
+            <Field label="Descripción"><input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Ej: 70Ø - Esmerilado" /></Field>
             <Field label="Espesor"><input value={espesor} onChange={(e) => setEspesor(e.target.value)} placeholder="4mm" /></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
             <Field label="Funciones"><input value={funciones} onChange={(e) => setFunciones(e.target.value)} placeholder="Touch 3 tonos + Desempañante" /></Field>
             <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
           </div>
+          </EnterFlow>
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button></div>
         </div>
       )}
@@ -2217,9 +2270,9 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
       </div>
 
       {showForm && (
-        <div className="dg-form dg-pago-form">
+        <EnterFlow className="dg-form dg-pago-form" onSubmit={addLead}>
           <div className="dg-form-row">
-            <div style={{ flex: 1 }}><label>Cliente</label><input value={cliente} onChange={(e) => setCliente(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLead()} placeholder="Nombre" /></div>
+            <div style={{ flex: 1 }}><label>Cliente</label><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre" /></div>
             <div style={{ flex: 1 }}><label>Vendedor</label>
               <select value={vendedorLead} onChange={(e) => setVendedorLead(e.target.value)}>{vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}</select>
             </div>
@@ -2237,9 +2290,9 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
             </div>
           </div>
           {estado === "venta_cerrada" && (<><label>Monto vendido</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} /></>)}
-          <label>Notas</label><input value={notas} onChange={(e) => setNotas(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLead()} placeholder="Opcional" />
+          <label>Notas</label><input value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" />
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addLead}><Plus size={16} /> Guardar contacto</button></div>
-        </div>
+        </EnterFlow>
       )}
 
       <div className="dg-task-list dg-lead-list">
@@ -2548,29 +2601,29 @@ function LoginModal({ sectors, adminKeyExists, onClose, onAdminKeyCreated, onSec
           </div>
         )}
         {mode === "admin" && (
-          <div className="dg-form">
+          <EnterFlow className="dg-form" onSubmit={handleAdmin}>
             {!adminKeyExists && <p className="dg-hint">Primera vez: creá tu clave de administrador.</p>}
             <label>Clave{!adminKeyExists ? " nueva" : ""}</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
             {!adminKeyExists && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
             {error && <div className="dg-error">{error}</div>}
             <div className="dg-form-actions"><button className="dg-btn-ghost" onClick={() => setMode("choose")}>Volver</button><button className="dg-btn-primary" onClick={handleAdmin}>{adminKeyExists ? "Entrar" : "Crear clave y entrar"}</button></div>
-          </div>
+          </EnterFlow>
         )}
         {mode === "sector" && (
-          <div className="dg-form">
+          <EnterFlow className="dg-form" onSubmit={handleSector}>
             <label>Sector</label>
             <select value={sectorId} onChange={(e) => { setSectorId(e.target.value); setError(""); }}>{sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}</select>
             {sectorNeedsSetup ? (
               <>
                 <p className="dg-hint">Este sector no tiene encargado configurado. Poné tu nombre y clave.</p>
-                <label>Tu nombre</label><input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} />
-                <label>Clave nueva</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} />
-                <label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} />
+                <label>Tu nombre</label><input value={nombre} onChange={(e) => setNombre(e.target.value)} />
+                <label>Clave nueva</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
+                <label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} />
               </>
-            ) : (<><label>Clave de {sector?.encargado || "encargado"}</label><input type="password" autoFocus value={clave} onChange={(e) => setClave(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} /></>)}
+            ) : (<><label>Clave de {sector?.encargado || "encargado"}</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} /></>)}
             {error && <div className="dg-error">{error}</div>}
             <div className="dg-form-actions"><button className="dg-btn-ghost" onClick={() => setMode("choose")}>Volver</button><button className="dg-btn-primary" onClick={handleSector}>{sectorNeedsSetup ? "Guardar y entrar" : "Entrar"}</button></div>
-          </div>
+          </EnterFlow>
         )}
       </div>
     </div>
