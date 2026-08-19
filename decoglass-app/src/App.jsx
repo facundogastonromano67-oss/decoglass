@@ -17,53 +17,22 @@ const ICONS = { Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones 
 const METODO_ICONS = { "Retira": Building2, "Envío": Truck, "Envío flex": Truck, "Interior": Truck, "Colocación": Wrench, "Otro": Package };
 const QUICK_ICONS = { MessageCircle, Check, ShoppingCart };
 
-const OFFICE_VARIANTS = {
-  marketing:      { desks: [{ l: 12, t: 52 }], board: "moodboard" },
-  ventas:         { desks: [{ l: 10, t: 14 }, { l: 10, t: 54 }], board: "generic" },
-  administracion: { desks: [{ l: 12, t: 34 }], board: "cabinet" },
-  postventa:      { desks: [{ l: 12, t: 34 }], board: "checklist" },
+const SECTOR_VISUAL = {
+  marketing:      { accent: "#E8739E", pattern: "arcs" },
+  ventas:         { accent: "#5BB8E0", pattern: "bars" },
+  administracion: { accent: "#7C8FE8", pattern: "ledger" },
+  fabrica:        { accent: "#9098A8", pattern: "hazard" },
+  postventa:      { accent: "#B583DE", pattern: "rings" },
+  logistica:      { accent: "#4FA0D8", pattern: "lanes" },
 };
 
 function RoomScene({ sector }) {
-  if (sector.tipo === "fabrica") {
-    return (
-      <div className="dg-room-scene dg-room-fabrica">
-        <div className="dg-r-bench" style={{ left: "8%", top: "12%", width: "34%", height: "24%" }} />
-        <div className="dg-r-bench" style={{ left: "8%", top: "60%", width: "34%", height: "24%" }} />
-        <div className="dg-r-shelf" style={{ left: "62%", top: "8%", width: "28%", height: "80%" }} />
-        <div className="dg-r-belt-top" />
-      </div>
-    );
-  }
-  if (sector.tipo === "despacho") {
-    return (
-      <div className="dg-room-scene dg-room-despacho">
-        <div className="dg-r-lane" />
-        <div className="dg-r-pallet" style={{ left: "10%", top: "14%" }} />
-        <div className="dg-r-pallet" style={{ left: "10%", top: "56%" }} />
-        <div className="dg-r-truck">
-          <div className="dg-r-truck-cab" />
-          <div className="dg-r-truck-trailer" />
-        </div>
-      </div>
-    );
-  }
-  const variant = OFFICE_VARIANTS[sector.id] || { desks: [{ l: 14, t: 40 }], board: "generic" };
+  const visual = SECTOR_VISUAL[sector.id] || { accent: "#48E0D8", pattern: "arcs" };
+  const Icon = ICONS[sector.icon];
   return (
-    <div className="dg-room-scene dg-room-oficina">
-      {variant.desks.map((d, i) => (
-        <div className="dg-r-desk" key={i} style={{ left: d.l + "%", top: d.t + "%" }}>
-          <div className="dg-r-desk-top" />
-          <div className="dg-r-monitor" />
-          <div className="dg-r-chair" />
-        </div>
-      ))}
-      <div className={`dg-r-board dg-r-board-${variant.board}`}>
-        {variant.board === "moodboard" && (<><span className="dg-r-note" style={{ background: "#F5C451" }} /><span className="dg-r-note" style={{ background: "#48E0D8" }} /><span className="dg-r-note" style={{ background: "#F16565" }} /></>)}
-        {variant.board === "cabinet" && <div className="dg-r-cabinet-lines" />}
-        {variant.board === "checklist" && <div className="dg-r-checklist-lines" />}
-        {variant.board === "generic" && <div className="dg-r-cabinet-lines" />}
-      </div>
+    <div className="dg-room-scene" style={{ "--accent": visual.accent }}>
+      <div className={`dg-scene-pattern dg-scene-pattern-${visual.pattern}`} />
+      {Icon && <Icon className="dg-scene-watermark" />}
     </div>
   );
 }
@@ -252,6 +221,24 @@ function waLink(tel) {
 function igLink(user) {
   const clean = String(user || "").trim().replace(/^@/, "");
   return clean ? `https://instagram.com/${clean}` : null;
+}
+
+function entregaWaLink(p) {
+  const base = waLink(p.celular);
+  if (!base) return null;
+  const nombre = p.cliente ? ` ${p.cliente}` : "";
+  const saldo = pedidoSaldo(p);
+  const saldoTexto = saldo > 0 ? `💰 Saldo pendiente: ${money(saldo)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+  let cuerpo;
+  if (p.metodo === "Retira") {
+    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo para retirar. ¿Coordinamos un día y horario?\n\n${saldoTexto}`;
+  } else if (p.metodo === "Colocación") {
+    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo. ¿Coordinamos día y horario para la colocación?\n\n${saldoTexto}`;
+  } else {
+    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo para el envío. Por favor confirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto: ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
+  }
+  const mensaje = `Hola${nombre}! 👋 ${cuerpo}`;
+  return `${base}?text=${encodeURIComponent(mensaje)}`;
 }
 
 // ---- Motor de presupuestos (replica del PRESUPUESTADOR_FRAN) ----
@@ -972,7 +959,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "Retira", detalleEntrega: prefill?.detalleEntrega || "", envioPagado: false, envioConfirmado: false,
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "Retira", detalleEntrega: prefill?.detalleEntrega || "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false,
   };
 }
 
@@ -1101,8 +1088,9 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
           const saldo = pedidoSaldo(p);
           const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
           const MetodoIcon = METODO_ICONS[p.metodo] || Package;
+          const waEntrega = p.estado === "Espejo listo" ? entregaWaLink(p) : null;
           return (
-            <button className="dg-pedido-card" key={p.id} onClick={() => setOpenPedido(p)}>
+            <div className="dg-pedido-card" key={p.id} onClick={() => setOpenPedido(p)}>
               <div className="dg-pedido-card-top">
                 <span className="dg-pedido-orden">#{p.orden}</span>
                 <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
@@ -1121,7 +1109,15 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
                 {p.comision === "Liquidar" && <span className="dg-badge" style={{ "--bc": "#F5C451" }}>Liquidar comisión</span>}
                 {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "#48E0D8" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
               </div>
-            </button>
+              {waEntrega && (
+                <a className="dg-btn-primary dg-confirmar-entrega-btn" href={waEntrega} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                  <MessageCircle size={14} /> Confirmar entrega por WhatsApp
+                </a>
+              )}
+              {p.estado === "Espejo listo" && !p.celular && (
+                <p className="dg-hint" style={{ marginTop: 8 }}>Sin celular cargado — no se puede armar el link de WhatsApp.</p>
+              )}
+            </div>
           );
         })}
       </div>
@@ -1252,7 +1248,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Método de entrega"><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
-            <Field label="Detalle de entrega"><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Dirección, costo de envío..." /></Field>
+            <Field label="Dirección / detalle de entrega"><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Dirección, costo de envío..." /></Field>
+            <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} /></Field>
+            <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
           </div>
         </div>
 
@@ -1283,7 +1281,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
 
   function mensaje(p) {
-    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\nEspejo ${p.ancho}×${p.alto} cm\nDirección / detalle: ${p.detalleEntrega || "(a confirmar)"}\nFecha estimada: ${p.listo || "a coordinar"}\n\n¿Podés confirmarnos que estos datos son correctos?`;
+    const saldo = pedidoSaldo(p);
+    const saldoTexto = saldo > 0 ? `💰 Saldo pendiente: ${money(saldo)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\nEspejo ${p.ancho}×${p.alto} cm\n📞 Teléfono: ${p.celular || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto: ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha estimada: ${p.listo || "a coordinar"}\n\n${saldoTexto}\n\n¿Podés confirmarnos que estos datos son correctos?`;
   }
   function copiar(p) {
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje(p)).then(() => { setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); });
@@ -1299,11 +1299,21 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
             <div className="dg-section-header"><Truck size={14} /> #{p.orden} · {p.cliente} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "#52E08A", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
             <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma} · Método: {p.metodo}</div>
             <div className="dg-field-grid">
-              <Field label="Dirección / detalle de entrega"><input disabled={!canEdit} value={p.detalleEntrega} onChange={(e) => update(p.id, { detalleEntrega: e.target.value })} /></Field>
+              <Field label="Teléfono de contacto"><input disabled={!canEdit} value={p.celular} onChange={(e) => update(p.id, { celular: e.target.value })} /></Field>
+              <Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega} onChange={(e) => update(p.id, { detalleEntrega: e.target.value })} /></Field>
+              <Field label="Piso / Depto"><input disabled={!canEdit} value={p.piso} onChange={(e) => update(p.id, { piso: e.target.value })} /></Field>
+            </div>
+            <div className="dg-field-grid" style={{ marginTop: 12 }}>
+              <Field label="Horario de entrega"><input disabled={!canEdit} value={p.horarioEntrega} onChange={(e) => update(p.id, { horarioEntrega: e.target.value })} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
               <Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo} onChange={(e) => update(p.id, { listo: e.target.value })} /></Field>
             </div>
             <div className="dg-quote-actions" style={{ marginTop: 10 }}>
               <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
+              {p.estado === "Espejo listo" && entregaWaLink(p) && (
+                <a className="dg-btn-primary dg-confirmar-entrega-btn" href={entregaWaLink(p)} target="_blank" rel="noopener noreferrer">
+                  <MessageCircle size={14} /> Confirmar entrega por WhatsApp
+                </a>
+              )}
               {canEdit && !p.envioConfirmado && (
                 <button className="dg-btn-primary" onClick={() => update(p.id, { envioConfirmado: true })}><CheckCircle2 size={14} /> Confirmar envío</button>
               )}
@@ -2276,30 +2286,6 @@ function Style() {
       .dg-chip { --c:#888; display:flex; align-items:center; gap:6px; font-size:12px; padding:6px 12px; border-radius:100px; background: var(--panel); border:1px solid var(--panel-border); color: var(--text-dim); font-family:'JetBrains Mono', monospace; }
       .dg-chip-dot { width:7px; height:7px; border-radius:50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
 
-      .dg-roof { max-width:640px; margin:0 auto; height:44px; clip-path: polygon(6% 100%, 50% 0%, 94% 100%); background: linear-gradient(160deg, #17202b, #0f151f); border:1px solid rgba(255,255,255,0.08); display:flex; align-items:flex-end; justify-content:center; padding-bottom:8px; }
-      .dg-roof-sign { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#48E0D8; text-shadow: 0 0 10px rgba(72,224,216,0.9), 0 0 22px rgba(72,224,216,0.5); }
-      .dg-building { max-width:640px; margin:-1px auto 0; border-left:3px solid rgba(255,255,255,0.1); border-right:3px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.015); overflow:hidden; }
-      .dg-floor { position:relative; width:100%; text-align:left; background: rgba(22,28,40,0.55); border:none; border-bottom:1px solid rgba(255,255,255,0.08); cursor:pointer; padding:0; color:var(--text); display:block; transition: background 0.15s ease; }
-      .dg-floor:hover { background: rgba(22,28,40,0.85); }
-      .dg-floor:hover .dg-floor-icon { box-shadow: 0 0 16px var(--glow); }
-      .dg-floor:last-child { border-bottom:none; }
-      .dg-floor-tag { position:absolute; top:8px; left:12px; font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:1px; color: var(--text-dim); z-index:2; background: rgba(10,13,19,0.5); padding:2px 6px; border-radius:4px; }
-      .dg-facade { position:relative; height:38px; }
-      .dg-facade-oficina { background: repeating-linear-gradient(90deg, rgba(120,180,220,0.16) 0px 20px, transparent 20px 32px); }
-      .dg-facade-fabrica { height:52px; background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0px 10px, transparent 10px 20px), repeating-linear-gradient(-135deg, rgba(255,255,255,0.04) 0px 10px, transparent 10px 20px); }
-      .dg-conveyor { position:absolute; bottom:6px; left:5%; right:5%; height:2px; background: repeating-linear-gradient(90deg, rgba(72,224,216,0.7) 0 10px, transparent 10px 20px); animation: dg-scroll 1.6s linear infinite; }
-      @keyframes dg-scroll { from { background-position:0 0; } to { background-position:20px 0; } }
-      .dg-facade-despacho { height:46px; display:flex; align-items:center; justify-content:space-between; padding:0 14px; background: repeating-linear-gradient(180deg, rgba(255,255,255,0.09) 0px 6px, rgba(255,255,255,0.02) 6px 12px); }
-      .dg-dock-label { font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:1.5px; color: var(--text-dim); }
-      .dg-dock-truck { color:#48E0D8; animation: dg-drive 3s ease-in-out infinite; }
-      @keyframes dg-drive { 0%,100% { transform: translateX(0); } 50% { transform: translateX(-6px); } }
-      .dg-floor-info { display:flex; align-items:center; gap:12px; padding:12px 16px; }
-      .dg-floor-icon { --glow:#48E0D8; width:38px; height:38px; min-width:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 15%, transparent); color: var(--glow); border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); transition: box-shadow 0.2s ease; }
-      .dg-floor-text { flex:1; min-width:0; }
-      .dg-floor-name { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; line-height:1.25; }
-      .dg-floor-sub { font-size:12px; color: var(--text-dim); }
-      .dg-floor-pct { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:600; }
-      .dg-ground { max-width:640px; margin:0 auto; height:14px; background: repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 24px, transparent 24px 48px); border-radius:0 0 4px 4px; opacity:0.6; }
 
       .dg-page { max-width:680px; margin:0 auto; }
       .dg-locked-page { display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; color: var(--text-dim); padding:60px 20px; background: var(--panel); border:1px solid var(--panel-border); border-radius:16px; }
@@ -2325,14 +2311,13 @@ function Style() {
       .dg-modal-lg { max-width:540px; }
       .dg-modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
       .dg-modal-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:17px; }
-      .dg-modal-title-row { display:flex; align-items:center; gap:12px; }
       .dg-modal-icon { --glow:#48E0D8; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 15%, transparent); color: var(--glow); border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); }
       .dg-modal-sub { font-size:12px; color:#8B96A8; margin-top:2px; }
       .dg-encargado-box { display:flex; align-items:center; gap:8px; font-size:13px; color:#8B96A8; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:9px 12px; margin-bottom:14px; }
       .dg-sector-meta-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
       .dg-encargado-box-compact { flex:1; margin-bottom:0; padding:7px 10px; }
       .dg-status-pill { --glow:#48E0D8; font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; color: var(--glow); background: color-mix(in srgb, var(--glow) 14%, transparent); border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); border-radius:100px; padding:7px 12px; white-space:nowrap; }
-      .dg-room-strip { --glow:#48E0D8; position:relative; height:74px; border-radius:10px; overflow:hidden; margin-bottom:14px; background: repeating-linear-gradient(0deg, #171d2a 0 24px, #151a26 24px 48px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow) 30%, transparent); opacity:0.9; }
+      .dg-room-strip { --glow:#48E0D8; position:relative; height:74px; border-radius:10px; overflow:hidden; margin-bottom:14px; background:#151a26; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow) 30%, transparent); }
       .dg-task-table-wrap { background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:4px; margin-bottom:14px; }
       .dg-task-table-head { display:flex; justify-content:space-between; align-items:center; padding:10px 12px 8px; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:#E7ECF2; }
       .dg-task-table-head span:last-child { font-family:'JetBrains Mono', monospace; color:#48E0D8; font-size:12px; }
@@ -2463,6 +2448,7 @@ function Style() {
       .dg-pedido-list { max-height:none; }
       .dg-pedido-orden { font-family:'JetBrains Mono', monospace; font-size:11px; color:#8B96A8; }
       .dg-pedido-card { display:flex; flex-direction:column; gap:8px; width:100%; text-align:left; background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:12px 14px; color:#E7ECF2; cursor:pointer; font-family:'Inter',sans-serif; }
+      .dg-confirmar-entrega-btn { justify-content:center; text-decoration:none; background: linear-gradient(145deg, #52E08A, #2FB86A); }
       .dg-pedido-card:hover { border-color:rgba(72,224,216,0.3); }
       .dg-pedido-card-top { display:flex; align-items:center; gap:10px; }
       .dg-pedido-card-top .dg-lead-name { flex:1; }
@@ -2519,30 +2505,27 @@ function Style() {
       .dg-room-tile:nth-child(3) { border-radius:0 16px 0 0; }
       .dg-room-tile:nth-child(4) { border-radius:0 0 0 16px; }
       .dg-room-tile:nth-child(6) { border-radius:0 0 16px 0; }
-      .dg-room-tile-oficina { background: repeating-linear-gradient(0deg, #171d2a 0 24px, #151a26 24px 48px), repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0 24px, transparent 24px 48px); }
-      .dg-room-tile-fabrica { background: repeating-linear-gradient(45deg, #1a1f27 0 14px, #171b22 14px 28px); }
-      .dg-room-tile-despacho { background: #23262b; }
+      .dg-room-tile-oficina { background: #151a26; }
+      .dg-room-tile-fabrica { background: #171b22; }
+      .dg-room-tile-despacho { background: #171b22; }
 
-      .dg-room-scene { position:absolute; inset:0; }
-      .dg-r-desk { position:absolute; width:20%; height:16%; }
-      .dg-r-desk-top { position:absolute; inset:0; background: linear-gradient(160deg, #3a3f4d, #2b2f3a); border-radius:3px; box-shadow: 3px 5px 0 rgba(0,0,0,0.35); }
-      .dg-r-monitor { position:absolute; left:22%; top:-18%; width:56%; height:34%; background: linear-gradient(160deg, #1a5c58, #0d3a37); border:1px solid rgba(72,224,216,0.6); border-radius:2px; box-shadow: 0 0 8px rgba(72,224,216,0.5); }
-      .dg-r-chair { position:absolute; left:32%; top:105%; width:36%; height:36%; border-radius:50%; background:#20242c; box-shadow:2px 2px 0 rgba(0,0,0,0.3); }
-      .dg-r-board { position:absolute; right:8%; top:10%; width:26%; height:34%; background:#e8ecef; border-radius:3px; box-shadow:3px 4px 0 rgba(0,0,0,0.3); }
-      .dg-r-note { position:absolute; width:22%; height:26%; border-radius:1px; }
-      .dg-r-note:nth-child(1){ left:10%; top:15%; } .dg-r-note:nth-child(2){ left:40%; top:40%; } .dg-r-note:nth-child(3){ left:65%; top:15%; }
-      .dg-r-cabinet-lines { position:absolute; inset:10%; background: repeating-linear-gradient(0deg, #b7c0c6 0 4px, #e8ecef 4px 9px); }
-      .dg-r-checklist-lines { position:absolute; inset:14% 10%; background: repeating-linear-gradient(0deg, #48a89e 0 3px, transparent 3px 10px); }
-
-      .dg-r-bench { position:absolute; background: linear-gradient(160deg, #5a4636, #3d3024); border-radius:3px; box-shadow:3px 5px 0 rgba(0,0,0,0.35); }
-      .dg-r-shelf { position:absolute; background: repeating-linear-gradient(0deg, #4a4f58 0 8px, #383c44 8px 16px); border-radius:3px; box-shadow:3px 5px 0 rgba(0,0,0,0.35); }
-      .dg-r-belt-top { position:absolute; left:8%; right:10%; top:44%; height:10%; background: repeating-linear-gradient(90deg, #48E0D8 0 10px, #1a2530 10px 20px); border-radius:3px; animation: dg-scroll 1.4s linear infinite; box-shadow: inset 0 0 6px rgba(0,0,0,0.4); }
-
-      .dg-r-lane { position:absolute; left:50%; top:0; bottom:0; width:6%; transform:translateX(-50%); background: repeating-linear-gradient(0deg, #e8ecef 0 14px, transparent 14px 26px); opacity:0.5; }
-      .dg-r-pallet { position:absolute; width:16%; height:14%; background: repeating-linear-gradient(90deg, #7a5a34 0 4px, #5c4326 4px 8px); border-radius:2px; box-shadow:2px 3px 0 rgba(0,0,0,0.35); }
-      .dg-r-truck { position:absolute; right:6%; bottom:8%; width:34%; height:40%; }
-      .dg-r-truck-cab { position:absolute; right:0; top:30%; width:36%; height:70%; background:#48E0D8; border-radius:3px 3px 0 0; box-shadow:2px 3px 0 rgba(0,0,0,0.35); }
-      .dg-r-truck-trailer { position:absolute; left:0; top:0; width:64%; height:100%; background:#dfe3e6; border-radius:2px; box-shadow:2px 3px 0 rgba(0,0,0,0.35); }
+      .dg-room-scene { position:absolute; inset:0; background: radial-gradient(circle at 30% 22%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 62%); }
+      .dg-scene-pattern { position:absolute; inset:0; opacity:0.55; }
+      .dg-scene-pattern-arcs { background: repeating-radial-gradient(circle at 88% 12%, transparent 0 9px, color-mix(in srgb, var(--accent) 32%, transparent) 9px 10.5px, transparent 10.5px 20px); }
+      .dg-scene-pattern-bars {
+        background-repeat:no-repeat;
+        background-image:
+          linear-gradient(color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 30%, transparent)),
+          linear-gradient(color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 30%, transparent)),
+          linear-gradient(color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 30%, transparent));
+        background-size: 9% 26%, 9% 42%, 9% 60%;
+        background-position: right 16% bottom 12%, right 27% bottom 12%, right 38% bottom 12%;
+      }
+      .dg-scene-pattern-ledger { background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent) 26%, transparent) 0 1px, transparent 1px 15px); }
+      .dg-scene-pattern-hazard { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--accent) 20%, transparent) 0 10px, transparent 10px 20px); }
+      .dg-scene-pattern-rings { background: repeating-radial-gradient(circle at 50% 58%, transparent 0 13px, color-mix(in srgb, var(--accent) 30%, transparent) 13px 14.5px, transparent 14.5px 26px); }
+      .dg-scene-pattern-lanes { background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 26%, transparent) 0 18px, transparent 18px 38px); }
+      .dg-scene-watermark { position:absolute; right:-8%; bottom:-12%; width:58%; height:58%; color: var(--accent); opacity:0.24; stroke-width:1.3; }
 
       .dg-room-plate { position:absolute; left:6%; right:6%; bottom:7%; display:flex; align-items:center; gap:7px; background: rgba(8,10,15,0.82); border:1px solid var(--glow); border-radius:10px; padding:8px 10px; box-shadow:0 0 14px -2px var(--glow); backdrop-filter: blur(2px); }
       .dg-room-plate-num { font-family:'JetBrains Mono', monospace; font-size:10px; color:#8B96A8; }
@@ -2552,9 +2535,6 @@ function Style() {
       .dg-room-plate-sub { font-size:10.5px; color:#8B96A8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .dg-room-plate-pct { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; }
 
-      .dg-room-tile-lg { position:relative; width:100%; aspect-ratio:16/9; border-radius:14px; border:2px solid var(--glow); box-shadow:0 0 24px -6px var(--glow); margin-bottom:16px; overflow:hidden; background:#151a26; }
-      .dg-room-tile-lg.dg-room-tile-lg-static { background: repeating-linear-gradient(0deg, #171d2a 0 24px, #151a26 24px 48px); }
-
       @media (max-width:680px) {
         .dg-plant-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(3,1fr); transform:rotateX(20deg); }
         .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
@@ -2562,7 +2542,6 @@ function Style() {
         .dg-room-tile:nth-child(5) { border-radius:0 0 0 16px; }
         .dg-room-tile:nth-child(6) { border-radius:0 0 16px 0; }
         .dg-room-tile:nth-child(3), .dg-room-tile:nth-child(4) { border-radius:0; }
-        .dg-floor-name { font-size:13px; }
         .dg-form-row { flex-direction:column; }
         .dg-charts { flex-direction:column; }
         .dg-quote-grid { flex-direction:column; }
@@ -2570,7 +2549,7 @@ function Style() {
         .dg-config-grid { grid-template-columns:1fr; }
       }
       @media (prefers-reduced-motion: reduce) {
-        .dg-spin, .dg-conveyor, .dg-dock-truck { animation:none; }
+        .dg-spin { animation:none; }
       }
     `}</style>
   );
