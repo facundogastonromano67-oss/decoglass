@@ -157,7 +157,7 @@ const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
 const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
 const COMISION_OPTIONS = ["No", "Liquidar", "Sí", "No aplica"];
 const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Pasado a fábrica", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
-const METODO_OPTIONS = ["Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
+const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
 const ENVIO_METODOS = ["Envío", "Envío flex", "Interior", "Colocación"];
 
@@ -1305,7 +1305,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "Retira", detalleEntrega: prefill?.detalleEntrega || "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false,
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false,
   };
 }
 
@@ -1319,6 +1319,27 @@ const QUICK_VIEWS = [
 ];
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
+
+// Campos que no pueden faltar al pasar un pedido. Devuelve { campo: "motivo" }
+function validarPedido(p) {
+  const errores = {};
+  const falta = (v) => v === undefined || v === null || String(v).trim() === "";
+  if (falta(p.cliente)) errores.cliente = "Falta el nombre del cliente";
+  if (falta(p.celular)) errores.celular = "Falta el celular de contacto";
+  if (falta(p.vendedor)) errores.vendedor = "Falta indicar quién vendió";
+  if (falta(p.ancho) || Number(p.ancho) <= 0) errores.ancho = "Falta el ancho";
+  if (falta(p.alto) || Number(p.alto) <= 0) errores.alto = "Falta el alto";
+  if (falta(p.cant) || Number(p.cant) <= 0) errores.cant = "Falta la cantidad";
+  if (falta(p.monto) || Number(p.monto) <= 0) errores.monto = "Falta el monto de la venta";
+  if (falta(p.anticipo)) errores.anticipo = "Poné el anticipo (0 si no dejó nada)";
+  if (Number(p.anticipo) > Number(p.monto)) errores.anticipo = "El anticipo no puede ser mayor al monto";
+  if (falta(p.metodo) || p.metodo === "A confirmar") errores.metodo = "Confirmá el método de entrega";
+  if (["Envío", "Envío flex", "Interior", "Colocación"].includes(p.metodo) && falta(p.detalleEntrega)) {
+    errores.detalleEntrega = "Con envío hace falta la dirección";
+  }
+  if (falta(p.tipoFactura) || p.tipoFactura === "No aplica") errores.tipoFactura = "Definí el tipo de factura";
+  return errores;
+}
 
 function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSectorId, incomes, onCreateIncome }) {
   const [quickView, setQuickView] = useState("todos");
@@ -1354,19 +1375,30 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
     let withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
     if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
 
+    // Cuánto plata entró realmente por este pedido:
+    // si ya se entregó, se cobró todo; si no, solo el anticipo.
+    const cobradoAhora = withOrden.estado === "Entregado"
+      ? Number(withOrden.monto) || 0
+      : Number(withOrden.anticipo) || 0;
     const yaRegistrado = Number(withOrden.montoRegistrado) || 0;
-    const anticipoActual = Number(withOrden.anticipo) || 0;
-    const delta = anticipoActual - yaRegistrado;
+    const delta = cobradoAhora - yaRegistrado;
+
     let toSave = withOrden;
-    if (delta > 0 && onCreateIncome) {
+    if (delta !== 0 && onCreateIncome) {
       const cuenta = determineCuentaPedido(withOrden);
+      const esAjuste = delta < 0;
+      const esSaldo = yaRegistrado > 0 && delta > 0;
+      const etiqueta = esAjuste ? "Ajuste" : esSaldo ? "Saldo" : "Anticipo";
       onCreateIncome({
-        id: uid(), concepto: `Anticipo pedido #${withOrden.orden || "?"} — ${withOrden.cliente || "Sin nombre"}`,
-        monto: delta, canal: withOrden.tipo === "Importado" ? "local_importados" : "local_nuestros", cuenta, cliente: withOrden.cliente || "",
+        id: uid(),
+        concepto: `${etiqueta} pedido #${withOrden.orden || "?"} — ${withOrden.cliente || "Sin nombre"}`,
+        monto: delta,
+        canal: withOrden.tipo === "Importado" ? "local_importados" : "local_nuestros",
+        cuenta, cliente: withOrden.cliente || "",
         metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
         sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
       });
-      toSave = { ...withOrden, montoRegistrado: anticipoActual };
+      toSave = { ...withOrden, montoRegistrado: cobradoAhora };
     }
     onChange(exists ? pedidos.map((p) => (p.id === pedido.id ? toSave : p)) : [...pedidos, toSave]);
 
@@ -1544,6 +1576,21 @@ function EnterFlow({ children, onSubmit, autoFocus = true, className }) {
   function handleKeyDown(e) {
     if (e.key !== "Enter" || e.shiftKey) return;
     if (e.target.tagName === "TEXTAREA") return;
+
+    // En los desplegables: el primer Enter abre la lista, el segundo confirma y avanza.
+    if (e.target.tagName === "SELECT") {
+      if (!e.target.dataset.dgOpen) {
+        e.preventDefault();
+        e.target.dataset.dgOpen = "1";
+        try {
+          if (typeof e.target.showPicker === "function") e.target.showPicker();
+          else e.target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        } catch (err) { /* si el navegador no lo permite, el usuario usa las flechas igual */ }
+        return;
+      }
+      delete e.target.dataset.dgOpen;
+    }
+
     const els = campos();
     const i = els.indexOf(e.target);
     if (i === -1) return;
@@ -1557,24 +1604,49 @@ function EnterFlow({ children, onSubmit, autoFocus = true, className }) {
     }
   }
 
-  return <div ref={ref} onKeyDown={handleKeyDown} className={className}>{children}</div>;
+  function handleBlur(e) {
+    if (e.target.tagName === "SELECT") delete e.target.dataset.dgOpen;
+  }
+
+  return <div ref={ref} onKeyDown={handleKeyDown} onBlur={handleBlur} className={className}>{children}</div>;
 }
 
-function Field({ label, computed, children }) {
+function Field({ label, computed, error, children }) {
   return (
-    <div className={`dg-field ${computed ? "dg-field-computed" : ""}`}>
-      <label>{label}</label>
+    <div className={`dg-field ${computed ? "dg-field-computed" : ""} ${error ? "dg-field-error" : ""}`}>
+      <label>{label}{error ? " *" : ""}</label>
       {children}
+      {error && <span className="dg-field-error-msg">{error}</span>}
     </div>
   );
 }
 
 function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete }) {
   const [draft, setDraft] = useState(pedido);
+  const [intentoGuardar, setIntentoGuardar] = useState(false);
   const readOnly = !canEditFull && !canEditEstadoOnly;
   const saldo = (Number(draft.monto) || 0) - (Number(draft.anticipo) || 0);
 
+  const errores = validarPedido(draft);
+  const cantErrores = Object.keys(errores).length;
+  const err = (campo) => (intentoGuardar && errores[campo]) || null;
+
   function set(field, val) { setDraft((d) => ({ ...d, [field]: val })); }
+
+  function intentarGuardar(opts) {
+    setIntentoGuardar(true);
+    if (Object.keys(validarPedido(draft)).length > 0) {
+      const primer = ref_scrollTop();
+      return;
+    }
+    onSave(draft, opts);
+  }
+  function ref_scrollTop() {
+    try {
+      const el = document.querySelector(".dg-validacion-banner");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (e) {}
+  }
 
   return (
     <div className="dg-overlay" onClick={onClose}>
@@ -1584,13 +1656,23 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
 
-        <EnterFlow onSubmit={() => onSave(draft)}>
+        {intentoGuardar && cantErrores > 0 && (
+          <div className="dg-validacion-banner">
+            <AlertTriangle size={15} />
+            <div>
+              <strong>Faltan {cantErrores} dato(s) para pasar el pedido</strong>
+              <ul>{Object.values(errores).map((m, i) => (<li key={i}>{m}</li>))}</ul>
+            </div>
+          </div>
+        )}
+
+        <EnterFlow onSubmit={intentarGuardar}>
         <div className="dg-section-card">
           <div className="dg-section-header"><Calculator size={14} /> Medida y producto</div>
           <div className="dg-field-grid">
-            <Field label="Ancho (cm)"><input type="number" disabled={!canEditFull} value={draft.ancho} onChange={(e) => set("ancho", e.target.value)} /></Field>
-            <Field label="Alto (cm)"><input type="number" disabled={!canEditFull} value={draft.alto} onChange={(e) => set("alto", e.target.value)} /></Field>
-            <Field label="Cantidad"><input type="number" disabled={!canEditFull} value={draft.cant} onChange={(e) => set("cant", e.target.value)} /></Field>
+            <Field label="Ancho (cm)" error={err("ancho")}><input type="number" disabled={!canEditFull} value={draft.ancho} onChange={(e) => set("ancho", e.target.value)} /></Field>
+            <Field label="Alto (cm)" error={err("alto")}><input type="number" disabled={!canEditFull} value={draft.alto} onChange={(e) => set("alto", e.target.value)} /></Field>
+            <Field label="Cantidad" error={err("cant")}><input type="number" disabled={!canEditFull} value={draft.cant} onChange={(e) => set("cant", e.target.value)} /></Field>
             <Field label="Pulido"><select disabled={!canEditFull} value={draft.pulido} onChange={(e) => set("pulido", e.target.value)}>{PULIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
@@ -1614,11 +1696,11 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         <div className="dg-section-card">
           <div className="dg-section-header"><User size={14} /> Cliente y pago</div>
           <div className="dg-field-grid">
-            <Field label="Cliente"><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
-            <Field label="Vendedor"><select disabled={!canEditFull} value={draft.vendedor} onChange={(e) => set("vendedor", e.target.value)}><option value="">—</option>{vendedores.map((v) => (<option key={v}>{v}</option>))}</select></Field>
-            <Field label="Celular"><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
+            <Field label="Cliente" error={err("cliente")}><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+            <Field label="Vendedor" error={err("vendedor")}><select disabled={!canEditFull} value={draft.vendedor} onChange={(e) => set("vendedor", e.target.value)}><option value="">—</option>{vendedores.map((v) => (<option key={v}>{v}</option>))}</select></Field>
+            <Field label="Celular" error={err("celular")}><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
             <Field label="DNI/CUIT"><input disabled={!canEditFull} value={draft.dniCuit} onChange={(e) => set("dniCuit", e.target.value)} /></Field>
-            <Field label="Tipo factura"><select disabled={!canEditFull} value={draft.tipoFactura} onChange={(e) => set("tipoFactura", e.target.value)}>{TIPOFACTURA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Tipo factura" error={err("tipoFactura")}><select disabled={!canEditFull} value={draft.tipoFactura} onChange={(e) => set("tipoFactura", e.target.value)}>{TIPOFACTURA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Facturado">
               <button type="button" disabled={!canEditFull} className={`dg-checkbox-field ${draft.facturado ? "dg-checkbox-field-on" : ""}`} onClick={() => set("facturado", !draft.facturado)}>
                 {draft.facturado ? <Check size={14} /> : null} {draft.facturado ? "Facturado" : "Sin facturar"}
@@ -1627,15 +1709,21 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Comisión"><select disabled={!canEditFull} value={draft.comision} onChange={(e) => set("comision", e.target.value)}>{COMISION_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
           <div className="dg-field-grid dg-money-row">
-            <Field label="Monto"><input type="number" disabled={!canEditFull} value={draft.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
-            <Field label="Anticipo"><input type="number" disabled={!canEditFull} value={draft.anticipo} onChange={(e) => set("anticipo", e.target.value)} /></Field>
+            <Field label="Monto" error={err("monto")}><input type="number" disabled={!canEditFull} value={draft.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
+            <Field label="Anticipo" error={err("anticipo")}><input type="number" disabled={!canEditFull} value={draft.anticipo} onChange={(e) => set("anticipo", e.target.value)} /></Field>
             <Field label="Saldo" computed><input disabled value={money(saldo)} /></Field>
           </div>
-          {canEditFull && Number(draft.anticipo) > 0 && (
-            <p className="dg-hint" style={{ marginTop: 10 }}>
-              Al guardar, {money(Math.max(0, Number(draft.anticipo || 0) - Number(draft.montoRegistrado || 0)))} se registran como ingreso en <strong>{CUENTA_INGRESO[determineCuentaPedido(draft)]}</strong>.
-            </p>
-          )}
+          {canEditFull && (() => {
+            const cobrado = draft.estado === "Entregado" ? Number(draft.monto) || 0 : Number(draft.anticipo) || 0;
+            const delta = cobrado - (Number(draft.montoRegistrado) || 0);
+            if (delta === 0) return null;
+            return (
+              <p className="dg-hint" style={{ marginTop: 10 }}>
+                Al guardar se {delta > 0 ? "registran" : "descuentan"} <strong>{money(Math.abs(delta))}</strong> en <strong>{CUENTA_INGRESO[determineCuentaPedido(draft)]}</strong>
+                {draft.estado === "Entregado" ? " (pedido entregado: se cobra el total)." : " (anticipo)."}
+              </p>
+            );
+          })()}
         </div>
 
         <div className="dg-section-card">
@@ -1643,10 +1731,10 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <div className="dg-field-grid">
             <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => set("estado", e.target.value)}>{ESTADO_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Listo para (fecha)"><input type="date" disabled={readOnly} value={draft.listo} onChange={(e) => set("listo", e.target.value)} /></Field>
-            <Field label="Método de entrega"><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Método de entrega" error={err("metodo")}><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
-            <Field label="Dirección / detalle de entrega"><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Dirección, costo de envío..." /></Field>
+            <Field label="Dirección / detalle de entrega" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Dirección, costo de envío..." /></Field>
             <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} /></Field>
             <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
           </div>
@@ -1657,11 +1745,15 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         <div className="dg-form-actions" style={{ marginTop: 4 }}>
           {onDelete && canEditFull && <button className="dg-btn-ghost" onClick={onDelete}><Trash2 size={14} /> Eliminar</button>}
           {canEditFull && (
-            <button className="dg-btn-ghost" onClick={() => onSave(draft, { addAnother: true })}>
+            <button className="dg-btn-ghost" onClick={() => intentarGuardar({ addAnother: true })}>
               <PackagePlus size={14} /> Guardar y agregar otro espejo del mismo cliente
             </button>
           )}
-          {!readOnly && <button className="dg-btn-primary" onClick={() => onSave(draft)}><Save size={14} /> Guardar</button>}
+          {!readOnly && (
+            <button className={`dg-btn-primary ${cantErrores > 0 ? "dg-btn-warn" : ""}`} onClick={() => intentarGuardar()}>
+              <Save size={14} /> Guardar{cantErrores > 0 ? ` (${cantErrores} faltan)` : ""}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -2996,6 +3088,14 @@ function Style() {
       }
       .dg-field input:focus, .dg-field select:focus { border-color:#48E0D8; box-shadow: 0 0 0 3px rgba(72,224,216,0.12); }
       .dg-field input:disabled, .dg-field select:disabled { opacity:0.5; cursor:not-allowed; }
+      .dg-validacion-banner { display:flex; gap:10px; align-items:flex-start; background: rgba(241,101,101,0.1); border:1px solid rgba(241,101,101,0.35); border-radius:12px; padding:12px 14px; margin-bottom:14px; color:#F16565; font-size:12.5px; }
+      .dg-validacion-banner strong { display:block; margin-bottom:4px; font-size:13px; }
+      .dg-validacion-banner ul { margin:0; padding-left:16px; }
+      .dg-validacion-banner li { margin-bottom:2px; }
+      .dg-field-error input, .dg-field-error select { border-color: rgba(241,101,101,0.6) !important; background: rgba(241,101,101,0.06) !important; }
+      .dg-field-error label { color:#F16565 !important; }
+      .dg-field-error-msg { font-size:10.5px; color:#F16565; }
+      .dg-btn-warn { background: linear-gradient(145deg, #F5C451, #E0A828) !important; color:#2A1F05 !important; box-shadow: 0 2px 14px -2px rgba(245,196,81,0.5) !important; }
       .dg-field-computed input { background: rgba(72,224,216,0.08); border-color: rgba(72,224,216,0.35); color:#48E0D8; font-family:'JetBrains Mono', monospace; font-weight:600; opacity:1; }
 
       .dg-quote-grid { display:flex; gap:16px; align-items:flex-start; }
@@ -3154,7 +3254,45 @@ function Style() {
       .dg-room-plate-pct { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; }
 
       @media (max-width:680px) {
-        .dg-plant-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(3,1fr); transform:rotateX(20deg); }
+        .dg-app { padding:16px 12px 48px; }
+        .dg-plant-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(3,1fr); transform:none; gap:8px; box-shadow:none; padding:0; background:transparent; }
+        .dg-plant-outer { perspective:none; padding:0 0 24px; }
+        .dg-plant-outer::after { display:none; }
+        .dg-room-tile { min-height:150px; border-radius:14px !important; border-width:3px; border-color: rgba(255,255,255,0.1); transform:none; box-shadow: 0 6px 16px -8px rgba(0,0,0,0.6); }
+        .dg-room-tile:hover { transform:none; }
+        .dg-room-plate { left:5%; right:5%; bottom:5%; padding:6px 8px; gap:5px; }
+        .dg-room-plate-icon { width:22px; height:22px; min-width:22px; }
+        .dg-room-plate-name { font-size:11px; }
+        .dg-room-plate-sub { font-size:9px; }
+        .dg-room-plate-num { display:none; }
+
+        /* Campos y botones mas grandes para el dedo */
+        .dg-field input, .dg-field select { font-size:16px; padding:12px 12px; }
+        .dg-form input, .dg-form select { font-size:16px; padding:12px; }
+        .dg-field-grid { grid-template-columns:1fr 1fr; gap:10px; }
+        .dg-btn-primary, .dg-btn-ghost, .dg-login-btn { padding:12px 16px; font-size:14px; }
+        .dg-icon-btn { padding:9px; }
+        .dg-checkbox { width:24px; height:24px; min-width:24px; }
+        .dg-fabrica-btn { min-width:100%; padding:14px; font-size:14px; }
+        .dg-quick-btn { padding:14px 8px; font-size:11.5px; }
+
+        /* Navegacion y pestañas: scroll horizontal comodo en vez de apretadas */
+        .dg-sector-tabs, .dg-quickviews { flex-wrap:nowrap; overflow-x:auto; padding-bottom:10px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+        .dg-sector-tabs::-webkit-scrollbar, .dg-quickviews::-webkit-scrollbar { display:none; }
+        .dg-sector-tab, .dg-quickview-btn { flex:0 0 auto; }
+        .dg-nav { position:sticky; top:0; z-index:20; backdrop-filter: blur(8px); }
+
+        .dg-sector-page-head { gap:8px; }
+        .dg-modal { padding:16px; border-radius:16px; max-height:92vh; }
+        .dg-modal-lg { max-width:100%; }
+        .dg-section-card { padding:13px 13px 15px; }
+        .dg-crm-filters { gap:6px; }
+        .dg-crm-filters select, .dg-pedido-search { flex:1 1 auto; min-width:0; font-size:14px; padding:10px; }
+        .dg-vendor-stats { grid-template-columns:1fr; }
+        .dg-totales { gap:8px; }
+        .dg-total-card { min-width:calc(50% - 4px); }
+        .dg-room-strip { height:56px; }
+        .dg-task-table-row { padding:14px 12px; font-size:14px; }
         .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
         .dg-room-tile:nth-child(2) { border-radius:0 16px 0 0; }
         .dg-room-tile:nth-child(5) { border-radius:0 0 0 16px; }
@@ -3165,6 +3303,13 @@ function Style() {
         .dg-quote-grid { flex-direction:column; }
         .dg-quote-meta { grid-template-columns:1fr; }
         .dg-config-grid { grid-template-columns:1fr; }
+      }
+      @media (max-width:420px) {
+        .dg-field-grid { grid-template-columns:1fr; }
+        .dg-plant-grid { grid-template-columns:1fr; grid-template-rows:none; }
+        .dg-room-tile { min-height:118px; }
+        .dg-quick-buttons { grid-template-columns:1fr !important; }
+        .dg-total-card { min-width:100%; }
       }
       @media (prefers-reduced-motion: reduce) {
         .dg-spin { animation:none; }
