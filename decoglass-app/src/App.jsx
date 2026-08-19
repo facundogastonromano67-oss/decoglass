@@ -6,7 +6,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -135,9 +135,24 @@ const STATUS = {
   gray:   { glow: "#5B6576", label: "Sin tareas" },
 };
 
-const PURCHASE_TYPES = { proveedor: "Proveedor", importacion: "Importación", insumos: "Insumos fábrica", sueldo: "Sueldo", servicio: "Servicio", otro: "Otro" };
-const INCOME_CHANNELS = { mayorista: "Mayorista", minorista: "Minorista", otro: "Otro" };
-const PAYMENT_METHODS = { efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta", otro: "Otro" };
+const PURCHASE_TYPES = {
+  sueldos: "Sueldos", materiales: "Materiales", contenedor: "Contenedor", publicidad: "Publicidad",
+  cargos_venta: "Cargos de venta", impuestos: "Impuestos", deudas: "Deudas y financiamiento",
+  administracion: "Administración", operativos: "Operativos", combustible_logistica: "Combustible y logística",
+  extraempresariales: "Extraempresariales", otros: "Otros", mov_entre_cuentas: "Egreso mov. entre cuentas",
+};
+const INCOME_CHANNELS = {
+  meli_importados: "Meli Importados", meli_nuestros: "Meli Nuestros",
+  wpp_ig_importados: "Wpp e IG Importados", wpp_ig_nuestros: "Wpp e IG Nuestros",
+  tienda_nube_importados: "Tienda Nube Importados", tienda_nube_nuestros: "Tienda Nube Nuestros",
+  local_importados: "Local Importados", local_nuestros: "Local Nuestros",
+  mov_entre_cuentas: "Mov. entre cuentas", envios_extras: "Envíos o extras",
+};
+const PAYMENT_METHODS = {
+  santander: "Santander", mercado_pago: "Mercado Pago", mp_efectivo: "Mp_Efectivo",
+  icbc_importado: "ICBC Importado", icbc_nuestro: "ICBC Nuestro", credicoop: "Credicoop",
+  efec_importados: "Efec. Importados", efectivo_nuestro: "Efectivo Nuestro", usd: "USD",
+};
 const CUENTA_INGRESO = { caja_efectivo: "Caja de efectivo", ingresos_bancarios: "Ingresos bancarios", ahorro_importados: "Ahorro de importados" };
 const IVA_RATE = 0.21;
 
@@ -176,6 +191,39 @@ const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Pasado a f
 const METODO_OPTIONS = ["Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
 const ENVIO_METODOS = ["Envío", "Envío flex", "Interior", "Colocación"];
+
+const SECTOR_SUBPAGES = {
+  marketing: [{ id: "tareas", label: "Tareas" }],
+  ventas: [
+    { id: "presupuestador", label: "Presupuestador" },
+    { id: "pedidos", label: "Pedidos" },
+    { id: "crm", label: "CRM" },
+    { id: "recursos", label: "Catálogos y precios" },
+    { id: "tareas", label: "Tareas" },
+  ],
+  administracion: [
+    { id: "pedidos", label: "Lista de ventas" },
+    { id: "finanzas", label: "Finanzas" },
+    { id: "tareas", label: "Tareas" },
+  ],
+  fabrica: [
+    { id: "pedidos", label: "Pedidos de fábrica" },
+    { id: "tareas", label: "Tareas" },
+  ],
+  postventa: [
+    { id: "envios", label: "Envíos" },
+    { id: "facturas", label: "Facturas pendientes" },
+    { id: "reclamos", label: "Reclamos" },
+    { id: "tareas", label: "Tareas" },
+  ],
+  logistica: [
+    { id: "envios", label: "Envíos confirmados" },
+    { id: "tareas", label: "Tareas" },
+  ],
+};
+
+const RECLAMO_TIPOS = ["Producto dañado", "Demora en entrega", "Falla eléctrica/LED", "Error en el pedido", "Mal trato/atención", "Garantía", "Otro"];
+const RECLAMO_COLORS = ["#F16565", "#F5C451", "#48E0D8", "#8B96A8", "#7DD3FC", "#C4B5FD", "#52E08A"];
 
 const ESTADO_PEDIDO_COLOR = {
   "Sin pasar a fábrica": "#8B96A8", "Verificado": "#F5C451", "Pasado a fábrica": "#48E0D8", "Mandar a grabar": "#F5C451",
@@ -463,7 +511,6 @@ function breakdownBy(entries, field, labels) {
 }
 
 export default function App() {
-  const [page, setPage] = useState("edificio");
   const [sectors, setSectors] = useState(null);
   const [purchases, setPurchases] = useState(null);
   const [incomes, setIncomes] = useState(null);
@@ -472,11 +519,14 @@ export default function App() {
   const [leads, setLeads] = useState(null);
   const [vendedores, setVendedores] = useState(null);
   const [pedidos, setPedidos] = useState(null);
+  const [recursos, setRecursos] = useState(null);
+  const [facturas, setFacturas] = useState(null);
+  const [reclamos, setReclamos] = useState(null);
   const [adminKeyExists, setAdminKeyExists] = useState(false);
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [openSectorId, setOpenSectorId] = useState(null);
+  const [activeSectorId, setActiveSectorId] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -531,6 +581,18 @@ export default function App() {
       setPedidos(p ? JSON.parse(p.value) : []);
     } catch (e) { setPedidos([]); }
     try {
+      const r = await storage.get("recursos-venta", true);
+      setRecursos(r ? JSON.parse(r.value) : []);
+    } catch (e) { setRecursos([]); }
+    try {
+      const f = await storage.get("facturas-manuales", true);
+      setFacturas(f ? JSON.parse(f.value) : []);
+    } catch (e) { setFacturas([]); }
+    try {
+      const rc = await storage.get("reclamos", true);
+      setReclamos(rc ? JSON.parse(rc.value) : []);
+    } catch (e) { setReclamos([]); }
+    try {
       const a = await storage.get("admin-key", true);
       setAdminKeyExists(!!a);
     } catch (e) { setAdminKeyExists(false); }
@@ -545,6 +607,9 @@ export default function App() {
   async function persistLeads(next) { setLeads(next); try { await storage.set("leads", JSON.stringify(next), true); } catch (e) {} }
   async function persistVendedores(next) { setVendedores(next); try { await storage.set("vendedores", JSON.stringify(next), true); } catch (e) {} }
   async function persistPedidos(next) { setPedidos(next); try { await storage.set("pedidos", JSON.stringify(next), true); } catch (e) {} }
+  async function persistRecursos(next) { setRecursos(next); try { await storage.set("recursos-venta", JSON.stringify(next), true); } catch (e) {} }
+  async function persistFacturas(next) { setFacturas(next); try { await storage.set("facturas-manuales", JSON.stringify(next), true); } catch (e) {} }
+  async function persistReclamos(next) { setReclamos(next); try { await storage.set("reclamos", JSON.stringify(next), true); } catch (e) {} }
   function createIncomeFromPedido(entry) { persistIncomes([entry, ...incomes]); }
 
   function updateSector(id, patch) { persistSectors(sectors.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
@@ -556,11 +621,11 @@ export default function App() {
   const canSeePedidos = !!session;
   const canEditPedidoFull = isAdmin || isVentas;
 
-  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos) {
+  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !reclamos) {
     return (<div style={wrap}><Style /><div className="dg-app dg-loading"><Loader2 className="dg-spin" size={28} /><span>Cargando DECOGLASS...</span></div></div>);
   }
 
-  const openSector = sectors.find((s) => s.id === openSectorId) || null;
+  const activeSector = sectors.find((s) => s.id === activeSectorId) || null;
 
   return (
     <div style={wrap}>
@@ -584,16 +649,14 @@ export default function App() {
           )}
         </header>
 
-        <nav className="dg-nav">
-          <button className={`dg-nav-btn ${page === "edificio" ? "dg-nav-on" : ""}`} onClick={() => setPage("edificio")}><Building2 size={14} /> Edificio</button>
-          <button className={`dg-nav-btn ${page === "ingresos" ? "dg-nav-on" : ""}`} onClick={() => setPage("ingresos")}><TrendingUp size={14} /> Ingresos</button>
-          <button className={`dg-nav-btn ${page === "compras" ? "dg-nav-on" : ""}`} onClick={() => setPage("compras")}><TrendingDown size={14} /> Compras</button>
-          <button className={`dg-nav-btn ${page === "presupuestador" ? "dg-nav-on" : ""}`} onClick={() => setPage("presupuestador")}><FileText size={14} /> Presupuestador</button>
-          <button className={`dg-nav-btn ${page === "crm" ? "dg-nav-on" : ""}`} onClick={() => setPage("crm")}><Users size={14} /> CRM</button>
-          <button className={`dg-nav-btn ${page === "pedidos" ? "dg-nav-on" : ""}`} onClick={() => setPage("pedidos")}><ClipboardList size={14} /> Pedidos</button>
+        <nav className="dg-nav dg-nav-breadcrumb">
+          <button className={`dg-nav-btn ${!activeSectorId ? "dg-nav-on" : ""}`} onClick={() => setActiveSectorId(null)}><Building2 size={14} /> Edificio</button>
+          {activeSector && (
+            <span className="dg-nav-btn dg-nav-on dg-nav-crumb"><ChevronRight size={13} /> {activeSector.name}</span>
+          )}
         </nav>
 
-        {page === "edificio" && (
+        {!activeSector && (
           <>
             <div className="dg-summary">
               {["green", "yellow", "red", "gray"].map((k) => (
@@ -607,17 +670,18 @@ export default function App() {
                   const glow = STATUS[key].glow;
                   const Icon = ICONS[sector.icon];
                   return (
-                    <button key={sector.id} className={`dg-room-tile dg-room-tile-${sector.tipo}`} style={{ "--glow": glow }} onClick={() => setOpenSectorId(sector.id)}>
+                    <button key={sector.id} className={`dg-room-tile dg-room-tile-${sector.tipo}`} style={{ "--glow": glow }} onClick={() => setActiveSectorId(sector.id)}>
                       <RoomScene sector={sector} />
                       <div className="dg-room-plate" style={{ "--glow": glow }}>
                         <span className="dg-room-plate-num">{String(i + 1).padStart(2, "0")}</span>
-                        <div className="dg-room-plate-icon" style={{ "--glow": glow }}>{Icon && <Icon size={14} />}</div>
+                        <div className="dg-room-plate-icon" style={{ "--glow": glow }}>{Icon && <Icon size={16} />}</div>
                         <div className="dg-room-plate-text">
                           <span className="dg-room-plate-name">{sector.name}</span>
                           <span className="dg-room-plate-sub">{sector.encargado || "Sin encargado"}</span>
                         </div>
                         <span className="dg-room-plate-pct" style={{ color: glow }}>{pct === null ? "—" : `${pct}%`}</span>
                       </div>
+                      <div className="dg-room-enter"><ChevronRight size={16} /></div>
                     </button>
                   );
                 })}
@@ -626,44 +690,28 @@ export default function App() {
           </>
         )}
 
-        {page === "ingresos" && (
-          isAdmin ? (
-            <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={persistIncomes} />
-          ) : (
-            <LockedPage label="Ingresos" onLogin={() => setLoginOpen(true)} />
-          )
-        )}
-
-        {page === "compras" && (
-          isAdmin ? (
-            <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={persistPurchases} />
-          ) : (
-            <LockedPage label="Compras" onLogin={() => setLoginOpen(true)} />
-          )
-        )}
-
-        {page === "presupuestador" && (
-          canQuote ? (
-            <QuotePage config={quoteConfig} onConfigChange={persistQuoteConfig} quotes={quotes} onQuotesChange={persistQuotes} isAdmin={isAdmin} />
-          ) : (
-            <LockedPage label="El Presupuestador" onLogin={() => setLoginOpen(true)} />
-          )
-        )}
-
-        {page === "crm" && (
-          canQuote ? (
-            <CRMPage leads={leads} onLeadsChange={persistLeads} vendedores={vendedores} onVendedoresChange={persistVendedores} isAdmin={isAdmin} />
-          ) : (
-            <LockedPage label="El CRM" onLogin={() => setLoginOpen(true)} />
-          )
-        )}
-
-        {page === "pedidos" && (
-          canSeePedidos ? (
-            <PedidosPage pedidos={pedidos} onChange={persistPedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} sessionSectorId={session?.role === "sector" ? session.sectorId : null} incomes={incomes} onCreateIncome={createIncomeFromPedido} />
-          ) : (
-            <LockedPage label="La Planilla de Pedidos" onLogin={() => setLoginOpen(true)} />
-          )
+        {activeSector && (
+          <SectorPage
+            sector={activeSector}
+            index={sectors.findIndex((s) => s.id === activeSector.id)}
+            session={session}
+            isAdmin={isAdmin}
+            onUpdate={(patch) => updateSector(activeSector.id, patch)}
+            onRequestLogin={() => setLoginOpen(true)}
+            onBack={() => setActiveSectorId(null)}
+            pedidos={pedidos} onChangePedidos={persistPedidos}
+            vendedores={vendedores} onChangeVendedores={persistVendedores}
+            incomes={incomes} onChangeIncomes={persistIncomes}
+            purchases={purchases} onChangePurchases={persistPurchases}
+            quoteConfig={quoteConfig} onChangeQuoteConfig={persistQuoteConfig}
+            quotes={quotes} onChangeQuotes={persistQuotes}
+            leads={leads} onChangeLeads={persistLeads}
+            onCreateIncome={createIncomeFromPedido}
+            sectors={sectors}
+            recursos={recursos} onChangeRecursos={persistRecursos}
+            facturas={facturas} onChangeFacturas={persistFacturas}
+            reclamos={reclamos} onChangeReclamos={persistReclamos}
+          />
         )}
       </div>
 
@@ -674,15 +722,6 @@ export default function App() {
           onAdminKeyCreated={() => setAdminKeyExists(true)}
           onSectorUpdate={updateSector}
           onSuccess={(s) => { setSession(s); setLoginOpen(false); }}
-        />
-      )}
-
-      {openSector && (
-        <SectorModal
-          sector={openSector} index={sectors.findIndex((s) => s.id === openSector.id)} session={session}
-          onClose={() => setOpenSectorId(null)}
-          onUpdate={(patch) => updateSector(openSector.id, patch)}
-          onRequestLogin={() => setLoginOpen(true)}
         />
       )}
     </div>
@@ -699,6 +738,75 @@ function LockedPage({ label, onLogin }) {
   );
 }
 
+function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangePurchases }) {
+  const [tab, setTab] = useState("ingresos");
+  return (
+    <div className="dg-page">
+      <div className="dg-quickviews" style={{ marginBottom: 16 }}>
+        <button className={`dg-quickview-btn ${tab === "ingresos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("ingresos")}><TrendingUp size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Ingresos</button>
+        <button className={`dg-quickview-btn ${tab === "compras" ? "dg-quickview-on" : ""}`} onClick={() => setTab("compras")}><TrendingDown size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Compras</button>
+      </div>
+      {tab === "ingresos"
+        ? <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={onChangeIncomes} />
+        : <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={onChangePurchases} />}
+    </div>
+  );
+}
+
+const RECURSO_TIPOS = { precios: "Lista de precios", catalogo: "Catálogo", reglamento: "Reglamento de ventas", garantia: "Garantía", imagenes: "Imágenes de muestra", otro: "Otro" };
+
+function RecursosVentaPanel({ recursos, onChange, isAdmin }) {
+  const [tipo, setTipo] = useState("catalogo");
+  const [titulo, setTitulo] = useState("");
+  const [url, setUrl] = useState("");
+
+  function addRecurso() {
+    if (!titulo.trim() || !url.trim()) return;
+    onChange([{ id: uid(), tipo, titulo: titulo.trim(), url: url.trim() }, ...recursos]);
+    setTitulo(""); setUrl("");
+  }
+  function removeRecurso(id) { onChange(recursos.filter((r) => r.id !== id)); }
+
+  const grupos = Object.keys(RECURSO_TIPOS).map((k) => ({ tipo: k, label: RECURSO_TIPOS[k], items: recursos.filter((r) => r.tipo === k) }));
+
+  return (
+    <div className="dg-page">
+      {isAdmin && (
+        <div className="dg-form dg-pago-form">
+          <div className="dg-form-row">
+            <div style={{ flex: 1 }}>
+              <label>Tipo</label>
+              <select value={tipo} onChange={(e) => setTipo(e.target.value)}>{Object.entries(RECURSO_TIPOS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+            </div>
+            <div style={{ flex: 2 }}><label>Título</label><input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Catálogo espejos redondos 2026" /></div>
+          </div>
+          <label>Link (Google Drive, Dropbox, etc.)</label>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." />
+          <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addRecurso}><Plus size={16} /> Agregar recurso</button></div>
+          <p className="dg-hint" style={{ marginTop: 10 }}>Subí el archivo a Google Drive o Dropbox, compartilo con "cualquiera con el link" y pegá ese link acá.</p>
+        </div>
+      )}
+
+      {grupos.every((g) => g.items.length === 0) && (
+        <div className="dg-empty">Todavía no hay catálogos, precios ni documentos cargados.</div>
+      )}
+      {grupos.map((g) => g.items.length > 0 && (
+        <div key={g.tipo} className="dg-section-card">
+          <div className="dg-section-header"><Download size={14} /> {g.label}</div>
+          <div className="dg-task-list">
+            {g.items.map((r) => (
+              <div className="dg-task" key={r.id}>
+                <a href={r.url} target="_blank" rel="noopener noreferrer" className="dg-recurso-link"><Download size={14} /> {r.titulo}</a>
+                {isAdmin && <button className="dg-icon-btn dg-task-del" onClick={() => removeRecurso(r.id)}><Trash2 size={14} /></button>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function MoneyPage({ kind, entries, sectors, onChange }) {
   const isIncome = kind === "income";
   const TYPES = isIncome ? INCOME_CHANNELS : PURCHASE_TYPES;
@@ -710,7 +818,7 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
   const [monto, setMonto] = useState("");
   const [tipo, setTipo] = useState(Object.keys(TYPES)[0]);
   const [party, setParty] = useState("");
-  const [metodo, setMetodo] = useState("efectivo");
+  const [metodo, setMetodo] = useState(Object.keys(PAYMENT_METHODS)[0]);
   const [cuenta, setCuenta] = useState("ingresos_bancarios");
   const [sectorId, setSectorId] = useState("");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
@@ -812,7 +920,7 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
           </div>
           <div style={{ flex: 1 }}><label>{partyLabel}</label><input value={party} onChange={(e) => setParty(e.target.value)} placeholder="Opcional" /></div>
           {isIncome && (
-            <div style={{ flex: 1 }}><label>Método de pago</label>
+            <div style={{ flex: 1 }}><label>Banco / Medio</label>
               <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>{Object.entries(PAYMENT_METHODS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
             </div>
           )}
@@ -857,13 +965,14 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
   );
 }
 
-function emptyPedido() {
+function emptyPedido(prefill) {
   return {
-    id: uid(), orden: null, fecha: new Date().toISOString().slice(0, 10), vendedor: "", cliente: "", celular: "", dniCuit: "",
+    id: uid(), orden: null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
+    vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
-    tipoFactura: "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", listo: "", metodo: "Retira", detalleEntrega: "",
+    tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "Retira", detalleEntrega: prefill?.detalleEntrega || "", envioPagado: false, envioConfirmado: false,
   };
 }
 
@@ -885,6 +994,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
   const [busqueda, setBusqueda] = useState("");
   const [openPedido, setOpenPedido] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [nextDraft, setNextDraft] = useState(null);
 
   const canEditEstadoOnly = !canEditFull && ["fabrica", "logistica", "postventa"].includes(sessionSectorId);
 
@@ -905,9 +1015,10 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
 
   function nextOrden() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
 
-  function savePedido(pedido) {
+  function savePedido(pedido, opts) {
     const exists = pedidos.some((p) => p.id === pedido.id);
-    const withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
+    let withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
+    if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
 
     const yaRegistrado = Number(withOrden.montoRegistrado) || 0;
     const anticipoActual = Number(withOrden.anticipo) || 0;
@@ -917,19 +1028,32 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
       const cuenta = determineCuentaPedido(withOrden);
       onCreateIncome({
         id: uid(), concepto: `Anticipo pedido #${withOrden.orden || "?"} — ${withOrden.cliente || "Sin nombre"}`,
-        monto: delta, canal: "otro", cuenta, cliente: withOrden.cliente || "",
-        metodo: cuenta === "caja_efectivo" ? "efectivo" : "transferencia",
+        monto: delta, canal: withOrden.tipo === "Importado" ? "local_importados" : "local_nuestros", cuenta, cliente: withOrden.cliente || "",
+        metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
         sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
       });
       toSave = { ...withOrden, montoRegistrado: anticipoActual };
     }
     onChange(exists ? pedidos.map((p) => (p.id === pedido.id ? toSave : p)) : [...pedidos, toSave]);
-    setOpenPedido(null); setCreating(false);
+
+    if (opts?.addAnother) {
+      setOpenPedido(null);
+      setCreating(false);
+      setTimeout(() => {
+        setNextDraft(emptyPedido({
+          grupoId: toSave.grupoId, cliente: toSave.cliente, celular: toSave.celular, dniCuit: toSave.dniCuit,
+          vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, detalleEntrega: toSave.detalleEntrega,
+        }));
+      }, 0);
+    } else {
+      setOpenPedido(null); setCreating(false);
+    }
   }
   function removePedido(id) { onChange(pedidos.filter((p) => p.id !== id)); setOpenPedido(null); }
   function bulkSetComision(ids, val) { onChange(pedidos.map((p) => (ids.includes(p.id) ? { ...p, comision: val } : p))); }
 
   const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
+  const grupoCounts = pedidos.reduce((acc, p) => { const g = p.grupoId || p.id; acc[g] = (acc[g] || 0) + 1; return acc; }, {});
 
   return (
     <div className="dg-page">
@@ -995,19 +1119,20 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
                 </span>
                 <span className="dg-badge" style={{ "--bc": "#8B96A8" }}><MetodoIcon size={12} /> {p.metodo}</span>
                 {p.comision === "Liquidar" && <span className="dg-badge" style={{ "--bc": "#F5C451" }}>Liquidar comisión</span>}
+                {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "#48E0D8" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
               </div>
             </button>
           );
         })}
       </div>
 
-      {(openPedido || creating) && (
+      {(openPedido || creating || nextDraft) && (
         <PedidoModal
-          pedido={openPedido || emptyPedido()}
+          pedido={openPedido || nextDraft || emptyPedido()}
           vendedores={vendedores}
           canEditFull={canEditFull}
           canEditEstadoOnly={canEditEstadoOnly}
-          onClose={() => { setOpenPedido(null); setCreating(false); }}
+          onClose={() => { setOpenPedido(null); setCreating(false); setNextDraft(null); }}
           onSave={savePedido}
           onDelete={openPedido ? () => removePedido(openPedido.id) : null}
         />
@@ -1133,8 +1258,270 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
 
         <div className="dg-form-actions" style={{ marginTop: 4 }}>
           {onDelete && canEditFull && <button className="dg-btn-ghost" onClick={onDelete}><Trash2 size={14} /> Eliminar</button>}
+          {canEditFull && (
+            <button className="dg-btn-ghost" onClick={() => onSave(draft, { addAnother: true })}>
+              <PackagePlus size={14} /> Guardar y agregar otro espejo del mismo cliente
+            </button>
+          )}
           {!readOnly && <button className="dg-btn-primary" onClick={() => onSave(draft)}><Save size={14} /> Guardar</button>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [copiedId, setCopiedId] = useState(null);
+
+  const envios = pedidos
+    .filter((p) => p.metodo === "Envío" || p.metodo === "Envío flex" || p.metodo === "Interior")
+    .filter((p) => p.estado !== "Entregado")
+    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
+    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+
+  function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
+
+  function mensaje(p) {
+    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\nEspejo ${p.ancho}×${p.alto} cm\nDirección / detalle: ${p.detalleEntrega || "(a confirmar)"}\nFecha estimada: ${p.listo || "a coordinar"}\n\n¿Podés confirmarnos que estos datos son correctos?`;
+  }
+  function copiar(p) {
+    if (navigator.clipboard) navigator.clipboard.writeText(mensaje(p)).then(() => { setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); });
+  }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters"><Filter size={14} /><input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
+      <div className="dg-task-list dg-pedido-list">
+        {envios.length === 0 && <div className="dg-empty">No hay pedidos con envío o interior pendientes.</div>}
+        {envios.map((p) => (
+          <div className="dg-section-card" key={p.id}>
+            <div className="dg-section-header"><Truck size={14} /> #{p.orden} · {p.cliente} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "#52E08A", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
+            <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma} · Método: {p.metodo}</div>
+            <div className="dg-field-grid">
+              <Field label="Dirección / detalle de entrega"><input disabled={!canEdit} value={p.detalleEntrega} onChange={(e) => update(p.id, { detalleEntrega: e.target.value })} /></Field>
+              <Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo} onChange={(e) => update(p.id, { listo: e.target.value })} /></Field>
+            </div>
+            <div className="dg-quote-actions" style={{ marginTop: 10 }}>
+              <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
+              {canEdit && !p.envioConfirmado && (
+                <button className="dg-btn-primary" onClick={() => update(p.id, { envioConfirmado: true })}><CheckCircle2 size={14} /> Confirmar envío</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FacturasManualesPanel({ facturas, onChange, isAdmin }) {
+  const [nombre, setNombre] = useState("");
+  const [monto, setMonto] = useState("");
+  const [cuit, setCuit] = useState("");
+  const [detalle, setDetalle] = useState("");
+
+  function addFactura() {
+    if (!nombre.trim()) return;
+    onChange([{ id: uid(), nombre: nombre.trim(), monto: Number(monto) || 0, cuit: cuit.trim(), detalle: detalle.trim(), listo: false, fecha: new Date().toISOString().slice(0, 10) }, ...facturas]);
+    setNombre(""); setMonto(""); setCuit(""); setDetalle("");
+  }
+  function toggleListo(id) { onChange(facturas.map((f) => (f.id === id ? { ...f, listo: !f.listo } : f))); }
+  function removeFactura(id) { onChange(facturas.filter((f) => f.id !== id)); }
+
+  return (
+    <div className="dg-page">
+      {isAdmin && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><FileText size={14} /> Cargar factura a hacer</div>
+          <div className="dg-field-grid">
+            <Field label="Nombre / Cliente"><input value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
+            <Field label="Monto"><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} /></Field>
+            <Field label="CUIT"><input value={cuit} onChange={(e) => setCuit(e.target.value)} /></Field>
+          </div>
+          <div className="dg-field-grid" style={{ marginTop: 12 }}>
+            <Field label="Detalle"><input value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Concepto de la factura" /></Field>
+          </div>
+          <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addFactura}><Plus size={16} /> Agregar</button></div>
+        </div>
+      )}
+      <div className="dg-task-list">
+        {facturas.length === 0 && <div className="dg-empty">No hay facturas pendientes cargadas.</div>}
+        {facturas.map((f) => (
+          <div className="dg-task" key={f.id}>
+            <button className={`dg-checkbox ${f.listo ? "dg-checkbox-on" : ""}`} onClick={() => toggleListo(f.id)} />
+            <div className="dg-pago-info">
+              <span className={f.listo ? "dg-task-done" : ""}>{f.nombre} — {money(f.monto)}</span>
+              <span className="dg-pago-meta">CUIT: {f.cuit || "—"} · {f.detalle || "sin detalle"} · {f.fecha}</span>
+            </div>
+            {isAdmin && <button className="dg-icon-btn dg-task-del" onClick={() => removeFactura(f.id)}><Trash2 size={14} /></button>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReclamosPanel({ reclamos, onChange }) {
+  const [tipo, setTipo] = useState(null);
+  const [cliente, setCliente] = useState("");
+  const [notas, setNotas] = useState("");
+
+  function addReclamo() {
+    if (!tipo) return;
+    onChange([{ id: uid(), tipo, cliente: cliente.trim(), notas: notas.trim(), fecha: new Date().toISOString().slice(0, 10) }, ...reclamos]);
+    setTipo(null); setCliente(""); setNotas("");
+  }
+  function removeReclamo(id) { onChange(reclamos.filter((r) => r.id !== id)); }
+
+  const chartData = RECLAMO_TIPOS.map((t, i) => ({ tipo: t, cantidad: reclamos.filter((r) => r.tipo === t).length, fill: RECLAMO_COLORS[i] }));
+
+  return (
+    <div className="dg-page">
+      <div className="dg-chart-card" style={{ marginBottom: 16 }}>
+        <div className="dg-chart-title">Reclamos por tipo — qué falla más seguido</div>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={chartData} layout="vertical" margin={{ left: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" horizontal={false} />
+            <XAxis type="number" stroke="#8B96A8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+            <YAxis type="category" dataKey="tipo" stroke="#8B96A8" fontSize={11} tickLine={false} axisLine={false} width={130} />
+            <Tooltip contentStyle={{ background: "#161B26", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }} />
+            <Bar dataKey="cantidad" radius={[0, 4, 4, 0]}>
+              {chartData.map((d, i) => (<Cell key={i} fill={d.fill} />))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="dg-section-card">
+        <div className="dg-section-header"><AlertTriangle size={14} /> Cargar reclamo</div>
+        <div className="dg-quick-buttons" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          {RECLAMO_TIPOS.map((t, i) => (
+            <button key={t} className="dg-quick-btn" style={{ "--c": RECLAMO_COLORS[i], opacity: tipo === t ? 1 : 0.75 }} onClick={() => setTipo(t)}>
+              <AlertTriangle size={18} /><span>{t}</span>
+            </button>
+          ))}
+        </div>
+        {tipo && (
+          <div className="dg-quick-inline" style={{ marginTop: 12 }}>
+            <input placeholder="Cliente (opcional)" value={cliente} onChange={(e) => setCliente(e.target.value)} />
+            <input placeholder="Notas (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} />
+            <button className="dg-btn-ghost" onClick={() => setTipo(null)}>Cancelar</button>
+            <button className="dg-btn-primary" onClick={addReclamo}><Check size={14} /> Guardar reclamo: {tipo}</button>
+          </div>
+        )}
+      </div>
+
+      <div className="dg-task-list" style={{ marginTop: 14 }}>
+        {reclamos.length === 0 && <div className="dg-empty">No hay reclamos cargados todavía.</div>}
+        {reclamos.slice(0, 30).map((r) => (
+          <div className="dg-task" key={r.id}>
+            <span className="dg-badge" style={{ "--bc": RECLAMO_COLORS[RECLAMO_TIPOS.indexOf(r.tipo)] || "#8B96A8" }}>{r.tipo}</span>
+            <span>{r.cliente || "Sin cliente"}{r.notas ? ` — ${r.notas}` : ""}</span>
+            <span className="dg-pago-meta" style={{ marginLeft: "auto" }}>{r.fecha}</span>
+            <button className="dg-icon-btn dg-task-del" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
+  const confirmados = pedidos
+    .filter((p) => ENVIO_METODOS.includes(p.metodo) && p.envioConfirmado && p.estado !== "Entregado")
+    .sort((a, b) => (a.listo || "9999").localeCompare(b.listo || "9999"));
+
+  function toggle(id, field) { onChange(pedidos.map((p) => (p.id === id ? { ...p, [field]: !p[field] } : p))); }
+  function marcarEntregado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, estado: "Entregado" } : p))); }
+
+  return (
+    <div className="dg-page">
+      <p className="dg-hint" style={{ marginBottom: 14 }}>Estos son los envíos que PostVenta ya confirmó con el cliente, ordenados por fecha estimada.</p>
+      <div className="dg-task-list dg-pedido-list">
+        {confirmados.length === 0 && <div className="dg-empty">No hay envíos confirmados pendientes de entregar.</div>}
+        {confirmados.map((p) => (
+          <div className="dg-pedido-card" key={p.id}>
+            <div className="dg-pedido-card-top">
+              <span className="dg-pedido-orden">#{p.orden}</span>
+              <span className="dg-lead-name">{p.cliente}</span>
+              <span className="dg-pago-meta">{p.listo || "sin fecha"}</span>
+            </div>
+            <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.metodo} · {p.detalleEntrega || "sin dirección"}</div>
+            {canEdit && (
+              <div className="dg-fabrica-actions">
+                <button className={`dg-fabrica-btn ${p.envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => toggle(p.id, "envioPagado")}>
+                  <CircleDollarSign size={16} /> {p.envioPagado ? "Envío pagado ✓" : "Marcar envío pagado"}
+                </button>
+                <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => marcarEntregado(p.id)}><Check size={16} /> Marcar entregado</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FabricaPedidosPage({ pedidos, onChange, canEdit }) {
+  const [filtroEstado, setFiltroEstado] = useState("activos");
+  const [busqueda, setBusqueda] = useState("");
+
+  const activos = pedidos.filter((p) => p.estado !== "Entregado");
+  let visibles = filtroEstado === "activos" ? activos : filtroEstado === "demorados" ? pedidos.filter((p) => p.demorado) : pedidos;
+  visibles = visibles
+    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
+    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+
+  function setEstado(id, estado) { onChange(pedidos.map((p) => (p.id === id ? { ...p, estado } : p))); }
+  function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); }
+
+  const funcionesTexto = (p) => {
+    const f = [];
+    if (p.touch === "Touch") f.push("Touch");
+    if (p.desemp === "Desempañante") f.push("Desempañante");
+    if (p.horaTemp === "Hora y Temperatura") f.push("Hora/Temp");
+    if (p.bluetooth !== "No") f.push(p.bluetooth);
+    return f.length ? f.join(" · ") : "Sin funciones extra";
+  };
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+          <option value="activos">Pedidos activos</option>
+          <option value="demorados">Solo demorados</option>
+          <option value="todos">Todos</option>
+        </select>
+        <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+      </div>
+
+      <div className="dg-task-list dg-pedido-list">
+        {visibles.length === 0 && <div className="dg-empty">No hay pedidos en esta vista.</div>}
+        {visibles.map((p) => {
+          const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
+          return (
+            <div className="dg-pedido-card dg-fabrica-card" key={p.id}>
+              <div className="dg-pedido-card-top">
+                <span className="dg-pedido-orden">#{p.orden}</span>
+                <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
+                {p.demorado && <span className="dg-badge" style={{ "--bc": "#F16565" }}><AlertTriangle size={12} /> Demorado</span>}
+              </div>
+              <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.tipo}{p.grabado ? ` (${p.grabado})` : ""}</div>
+              <div className="dg-pago-meta">{funcionesTexto(p)}</div>
+              <div className="dg-pedido-badges">
+                <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
+              </div>
+              {canEdit && (
+                <div className="dg-fabrica-actions">
+                  <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => setEstado(p.id, "Espejo listo")}><Check size={16} /> Marcar listo</button>
+                  <button className={`dg-fabrica-btn dg-fabrica-btn-demora ${p.demorado ? "dg-fabrica-btn-demora-on" : ""}`} onClick={() => toggleDemorado(p.id)}><AlertTriangle size={16} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1663,14 +2050,10 @@ function LoginModal({ sectors, adminKeyExists, onClose, onAdminKeyCreated, onSec
   );
 }
 
-function SectorModal({ sector, index, session, onClose, onUpdate, onRequestLogin }) {
+function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }) {
   const [newTask, setNewTask] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(sector.encargado || "");
-  const Icon = ICONS[sector.icon];
-  const { key, pct } = getStatus(sector.tasks);
-  const glow = STATUS[key].glow;
-  const isAdmin = session?.role === "admin";
   const isThisSector = session?.role === "sector" && session.sectorId === sector.id;
   const suggested = SUGGESTED_TASKS[sector.id] || [];
 
@@ -1682,63 +2065,150 @@ function SectorModal({ sector, index, session, onClose, onUpdate, onRequestLogin
   function resetClave() { onUpdate({ clave: null }); }
 
   return (
-    <div className="dg-overlay" onClick={onClose}>
-      <div className="dg-modal dg-modal-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="dg-modal-head">
-          <div className="dg-modal-title-row"><div className="dg-modal-icon" style={{ "--glow": glow }}>{Icon && <Icon size={20} />}</div>
-            <div><div className="dg-modal-title">{sector.name}</div><div className="dg-modal-sub">Piso {String(index + 1).padStart(2, "0")}</div></div>
-          </div>
-          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+    <div className="dg-page">
+      <div className="dg-sector-meta-row">
+        <div className="dg-encargado-box dg-encargado-box-compact">
+          <User size={13} />
+          {!editingName ? (<span>{sector.encargado || "Sin encargado asignado"}</span>) : (<input className="dg-inline-input" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} autoFocus />)}
+          {isAdmin && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={() => setEditingName(true)} title="Editar encargado"><Pencil size={12} /></button>)}
+          {isAdmin && editingName && (<button className="dg-btn-primary dg-mini-btn" onClick={saveName}>Guardar</button>)}
+          {isAdmin && sector.clave && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={resetClave} title="Restablecer clave"><RotateCcw size={12} /></button>)}
         </div>
-
-        <div className="dg-sector-meta-row">
-          <div className="dg-encargado-box dg-encargado-box-compact">
-            <User size={13} />
-            {!editingName ? (<span>{sector.encargado || "Sin encargado asignado"}</span>) : (<input className="dg-inline-input" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} autoFocus />)}
-            {isAdmin && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={() => setEditingName(true)} title="Editar encargado"><Pencil size={12} /></button>)}
-            {isAdmin && editingName && (<button className="dg-btn-primary dg-mini-btn" onClick={saveName}>Guardar</button>)}
-            {isAdmin && sector.clave && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={resetClave} title="Restablecer clave"><RotateCcw size={12} /></button>)}
-          </div>
-          <div className="dg-status-pill" style={{ "--glow": glow }}>{pct === null ? "Sin tareas" : `${pct}% hoy`}</div>
-        </div>
-
-        <div className="dg-room-strip" style={{ "--glow": glow }}>
-          <RoomScene sector={sector} />
-        </div>
-
-        <div className="dg-task-table-wrap">
-          <div className="dg-task-table-head">
-            <span>Checklist del día</span>
-            <span>{sector.tasks.filter((t) => t.completed).length}/{sector.tasks.length}</span>
-          </div>
-          <div className="dg-task-table">
-            {sector.tasks.length === 0 && <div className="dg-empty">Todavía no hay tareas asignadas a este sector.</div>}
-            {sector.tasks.map((t, i) => (
-              <div className={`dg-task-table-row ${t.completed ? "dg-task-table-row-done" : ""}`} key={t.id}>
-                <button className={`dg-checkbox ${t.completed ? "dg-checkbox-on" : ""}`} disabled={!isThisSector && !isAdmin} onClick={() => toggleTask(t.id)} />
-                <span className={t.completed ? "dg-task-done" : ""}>{t.text}</span>
-                {isAdmin && <button className="dg-icon-btn dg-task-del" onClick={() => removeTask(t.id)}><Trash2 size={14} /></button>}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {isAdmin && (
-          <>
-            <div className="dg-add-task">
-              <input placeholder="Nueva tarea para este sector..." value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTask()} />
-              <button className="dg-btn-primary" onClick={addTask}><Plus size={16} /> Agregar</button>
-            </div>
-            {suggested.length > 0 && (<button className="dg-btn-ghost dg-suggest-btn" onClick={loadSuggested}><Sparkles size={14} /> Cargar tareas sugeridas para este sector</button>)}
-          </>
-        )}
-
-        {!isAdmin && !isThisSector && (
-          <div className="dg-locked-note"><Lock size={14} /> Iniciá sesión como admin o como encargado de este sector para modificar tareas.
-            <button className="dg-btn-ghost dg-inline-btn" onClick={onRequestLogin}>Iniciar sesión</button>
-          </div>
-        )}
       </div>
+
+      <div className="dg-task-table-wrap">
+        <div className="dg-task-table-head">
+          <span>Checklist del día</span>
+          <span>{sector.tasks.filter((t) => t.completed).length}/{sector.tasks.length}</span>
+        </div>
+        <div className="dg-task-table">
+          {sector.tasks.length === 0 && <div className="dg-empty">Todavía no hay tareas asignadas a este sector.</div>}
+          {sector.tasks.map((t) => (
+            <div className={`dg-task-table-row ${t.completed ? "dg-task-table-row-done" : ""}`} key={t.id}>
+              <button className={`dg-checkbox ${t.completed ? "dg-checkbox-on" : ""}`} disabled={!isThisSector && !isAdmin} onClick={() => toggleTask(t.id)} />
+              <span className={t.completed ? "dg-task-done" : ""}>{t.text}</span>
+              {isAdmin && <button className="dg-icon-btn dg-task-del" onClick={() => removeTask(t.id)}><Trash2 size={14} /></button>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {isAdmin && (
+        <>
+          <div className="dg-add-task">
+            <input placeholder="Nueva tarea para este sector..." value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTask()} />
+            <button className="dg-btn-primary" onClick={addTask}><Plus size={16} /> Agregar</button>
+          </div>
+          {suggested.length > 0 && (<button className="dg-btn-ghost dg-suggest-btn" onClick={loadSuggested}><Sparkles size={14} /> Cargar tareas sugeridas para este sector</button>)}
+        </>
+      )}
+
+      {!isAdmin && !isThisSector && (
+        <div className="dg-locked-note"><Lock size={14} /> Iniciá sesión como admin o como encargado de este sector para modificar tareas.
+          <button className="dg-btn-ghost dg-inline-btn" onClick={onRequestLogin}>Iniciar sesión</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SectorPage({
+  sector, index, session, isAdmin, onUpdate, onRequestLogin, onBack,
+  pedidos, onChangePedidos, vendedores, onChangeVendedores, incomes, onChangeIncomes,
+  purchases, onChangePurchases, quoteConfig, onChangeQuoteConfig, quotes, onChangeQuotes,
+  leads, onChangeLeads, onCreateIncome, sectors, recursos, onChangeRecursos,
+  facturas, onChangeFacturas, reclamos, onChangeReclamos,
+}) {
+  const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
+  const [subpage, setSubpage] = useState(tabs[0].id);
+  const Icon = ICONS[sector.icon];
+  const { key, pct } = getStatus(sector.tasks);
+  const glow = STATUS[key].glow;
+
+  const isVentasSession = session?.role === "sector" && session.sectorId === "ventas";
+  const canQuote = isAdmin || isVentasSession;
+  const canSeePedidos = !!session;
+  const sessionSectorId = session?.role === "sector" ? session.sectorId : null;
+  const canEditPedidoFull = isAdmin || isVentasSession;
+  const canEditFabrica = isAdmin || sessionSectorId === "fabrica";
+  const canEditPostventa = isAdmin || sessionSectorId === "postventa";
+  const canEditLogistica = isAdmin || sessionSectorId === "logistica";
+
+  return (
+    <div className="dg-sector-page">
+      <div className="dg-sector-page-head">
+        <button className="dg-back-btn" onClick={onBack}><ArrowLeft size={15} /> Edificio</button>
+        <div className="dg-sector-page-title">
+          <div className="dg-modal-icon" style={{ "--glow": glow }}>{Icon && <Icon size={20} />}</div>
+          <div>
+            <div className="dg-modal-title">{sector.name}</div>
+            <div className="dg-modal-sub">Piso {String(index + 1).padStart(2, "0")} · {sector.encargado || "Sin encargado"}</div>
+          </div>
+        </div>
+        <div className="dg-status-pill" style={{ "--glow": glow }}>{pct === null ? "Sin tareas" : `${pct}% hoy`}</div>
+      </div>
+
+      <div className="dg-room-strip" style={{ "--glow": glow }}><RoomScene sector={sector} /></div>
+
+      {tabs.length > 1 && (
+        <div className="dg-sector-tabs">
+          {tabs.map((t) => (
+            <button key={t.id} className={`dg-sector-tab ${subpage === t.id ? "dg-sector-tab-on" : ""}`} onClick={() => setSubpage(t.id)}>{t.label}</button>
+          ))}
+        </div>
+      )}
+
+      {subpage === "tareas" && (
+        <SectorTasksPanel sector={sector} session={session} isAdmin={isAdmin} onUpdate={onUpdate} onRequestLogin={onRequestLogin} />
+      )}
+
+      {subpage === "presupuestador" && (
+        canQuote ? <QuotePage config={quoteConfig} onConfigChange={onChangeQuoteConfig} quotes={quotes} onQuotesChange={onChangeQuotes} isAdmin={isAdmin} />
+          : <LockedPage label="El Presupuestador" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "crm" && (
+        canQuote ? <CRMPage leads={leads} onLeadsChange={onChangeLeads} vendedores={vendedores} onVendedoresChange={onChangeVendedores} isAdmin={isAdmin} />
+          : <LockedPage label="El CRM" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "recursos" && <RecursosVentaPanel recursos={recursos} onChange={onChangeRecursos} isAdmin={isAdmin} />}
+
+      {subpage === "pedidos" && sector.id !== "fabrica" && (
+        canSeePedidos ? (
+          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={sector.id === "administracion" ? isAdmin : canEditPedidoFull} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} />
+        ) : <LockedPage label="Pedidos" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "pedidos" && sector.id === "fabrica" && (
+        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} />
+          : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "finanzas" && (
+        isAdmin ? <FinanzasPanel incomes={incomes} purchases={purchases} sectors={sectors} onChangeIncomes={onChangeIncomes} onChangePurchases={onChangePurchases} />
+          : <LockedPage label="Finanzas" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "envios" && sector.id === "postventa" && (
+        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} />
+          : <LockedPage label="Envíos" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "envios" && sector.id === "logistica" && (
+        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} />
+          : <LockedPage label="Envíos confirmados" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "facturas" && (
+        canSeePedidos ? <FacturasManualesPanel facturas={facturas} onChange={onChangeFacturas} isAdmin={isAdmin} />
+          : <LockedPage label="Facturas pendientes" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "reclamos" && (
+        canSeePedidos ? <ReclamosPanel reclamos={reclamos} onChange={onChangeReclamos} />
+          : <LockedPage label="Reclamos" onLogin={onRequestLogin} />
+      )}
     </div>
   );
 }
@@ -1776,6 +2246,31 @@ function Style() {
       .dg-nav { display:flex; gap:6px; max-width:680px; margin:0 auto 22px; background: var(--panel); border:1px solid var(--panel-border); border-radius:12px; padding:4px; }
       .dg-nav-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:transparent; border:none; color:var(--text-dim); font-family:'Inter',sans-serif; font-size:13px; font-weight:600; padding:9px; border-radius:9px; cursor:pointer; }
       .dg-nav-on { background: rgba(72,224,216,0.14); color:#48E0D8; }
+      .dg-nav-breadcrumb { justify-content:flex-start; }
+      .dg-nav-breadcrumb .dg-nav-btn { flex:none; }
+      .dg-nav-crumb { cursor:default; }
+
+      .dg-back-btn { display:inline-flex; align-items:center; gap:6px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:9px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer; margin-bottom:14px; }
+      .dg-back-btn:hover { color:#E7ECF2; border-color:rgba(255,255,255,0.2); }
+      .dg-sector-page { max-width:760px; margin:0 auto; }
+      .dg-sector-page-head { display:flex; align-items:center; gap:12px; margin-bottom:2px; flex-wrap:wrap; }
+      .dg-sector-page-title { display:flex; align-items:center; gap:12px; flex:1; }
+      .dg-sector-tabs { display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 18px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px; }
+      .dg-sector-tab { background:transparent; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 14px; font-size:12.5px; font-weight:600; cursor:pointer; }
+      .dg-sector-tab:hover { color:#E7ECF2; }
+      .dg-sector-tab-on { background: rgba(72,224,216,0.15); border-color:#48E0D8; color:#48E0D8; }
+
+      .dg-room-enter { position:absolute; top:10px; right:10px; width:26px; height:26px; border-radius:50%; background: rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; color:#E7ECF2; opacity:0; transform: translateX(-4px); transition: opacity 0.15s ease, transform 0.15s ease; }
+      .dg-room-tile:hover .dg-room-enter { opacity:1; transform:translateX(0); }
+
+      .dg-fabrica-card { cursor:default; }
+      .dg-fabrica-actions { display:flex; gap:8px; margin-top:6px; flex-wrap:wrap; }
+      .dg-fabrica-btn { flex:1; min-width:140px; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid rgba(255,255,255,0.1); background:#161B26; color:#8B96A8; }
+      .dg-fabrica-btn-listo:hover { border-color:#52E08A; color:#52E08A; }
+      .dg-fabrica-btn-demora:hover { border-color:#F5C451; color:#F5C451; }
+      .dg-fabrica-btn-demora-on { background: rgba(241,101,101,0.14); border-color:#F16565; color:#F16565; }
+      .dg-recurso-link { display:flex; align-items:center; gap:8px; color:#48E0D8; text-decoration:none; font-size:13px; flex:1; }
+      .dg-recurso-link:hover { text-decoration:underline; }
 
       .dg-summary { display:flex; gap:8px; max-width:640px; margin:0 auto 28px; flex-wrap:wrap; }
       .dg-chip { --c:#888; display:flex; align-items:center; gap:6px; font-size:12px; padding:6px 12px; border-radius:100px; background: var(--panel); border:1px solid var(--panel-border); color: var(--text-dim); font-family:'JetBrains Mono', monospace; }
@@ -2012,11 +2507,14 @@ function Style() {
         .dg-print-total { margin-top:14px; font-family:'JetBrains Mono', monospace; font-size:15px; font-weight:700; color:#0f766e; text-align:right; }
       }
 
-      .dg-plant-outer { max-width:760px; margin:0 auto; padding:10px 4px 56px; perspective:1900px; position:relative; }
-      .dg-plant-outer::after { content:''; position:absolute; left:8%; right:8%; bottom:14px; height:34px; background: radial-gradient(ellipse, rgba(0,0,0,0.55), transparent 70%); filter:blur(4px); z-index:-1; }
-      .dg-plant-grid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr); gap:5px; background:#05070b; padding:5px; border-radius:18px; transform:rotateX(30deg); transform-style:preserve-3d; box-shadow: 0 42px 70px -26px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06); }
-      .dg-room-tile { position:relative; aspect-ratio:auto; min-height:190px; border-radius:0; padding:0; cursor:pointer; border:none; background:#151a26; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); overflow:hidden; transition: box-shadow 0.18s ease, filter 0.18s ease; transform-style:preserve-3d; }
-      .dg-room-tile:hover { box-shadow: inset 0 0 0 3px var(--glow), inset 0 0 30px -8px var(--glow); filter:brightness(1.08); z-index:2; }
+      .dg-plant-outer { max-width:760px; margin:0 auto; padding:14px 4px 64px; perspective:1900px; position:relative; }
+      .dg-plant-outer::after { content:''; position:absolute; left:6%; right:6%; bottom:16px; height:42px; background: radial-gradient(ellipse, rgba(0,0,0,0.6), transparent 72%); filter:blur(5px); z-index:-1; }
+      .dg-plant-grid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr); gap:6px; background:#03050a; padding:6px; border-radius:18px; transform:rotateX(35deg); transform-style:preserve-3d; box-shadow: 0 52px 80px -26px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.06); }
+      .dg-room-tile { position:relative; aspect-ratio:auto; min-height:210px; border-radius:0; padding:0; cursor:pointer; box-sizing:border-box; background:#151a26; overflow:hidden; transition: box-shadow 0.18s ease, filter 0.18s ease, transform 0.18s ease; transform-style:preserve-3d; transform: translateZ(6px);
+        border-top:5px solid rgba(255,255,255,0.14); border-left:5px solid rgba(255,255,255,0.08); border-bottom:5px solid rgba(0,0,0,0.45); border-right:5px solid rgba(0,0,0,0.32);
+        box-shadow: inset 0 22px 26px -14px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(255,255,255,0.03);
+      }
+      .dg-room-tile:hover { transform: translateZ(14px); box-shadow: inset 0 22px 26px -14px rgba(0,0,0,0.65), inset 0 0 0 3px var(--glow), inset 0 0 30px -8px var(--glow); filter:brightness(1.1); z-index:2; }
       .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
       .dg-room-tile:nth-child(3) { border-radius:0 16px 0 0; }
       .dg-room-tile:nth-child(4) { border-radius:0 0 0 16px; }
@@ -2058,7 +2556,7 @@ function Style() {
       .dg-room-tile-lg.dg-room-tile-lg-static { background: repeating-linear-gradient(0deg, #171d2a 0 24px, #151a26 24px 48px); }
 
       @media (max-width:680px) {
-        .dg-plant-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(3,1fr); transform:rotateX(16deg); }
+        .dg-plant-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(3,1fr); transform:rotateX(20deg); }
         .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
         .dg-room-tile:nth-child(2) { border-radius:0 16px 0 0; }
         .dg-room-tile:nth-child(5) { border-radius:0 0 0 16px; }
