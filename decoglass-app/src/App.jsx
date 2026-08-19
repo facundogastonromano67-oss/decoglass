@@ -173,10 +173,12 @@ const SECTOR_SUBPAGES = {
   administracion: [
     { id: "pedidos", label: "Lista de ventas" },
     { id: "finanzas", label: "Finanzas" },
+    { id: "sueldos", label: "Sueldos" },
     { id: "tareas", label: "Tareas" },
   ],
   fabrica: [
     { id: "pedidos", label: "Pedidos de fábrica" },
+    { id: "stock", label: "Stock de espejos" },
     { id: "tareas", label: "Tareas" },
   ],
   postventa: [
@@ -509,6 +511,9 @@ export default function App() {
   const [recursos, setRecursos] = useState(null);
   const [facturas, setFacturas] = useState(null);
   const [reclamos, setReclamos] = useState(null);
+  const [stockEspejos, setStockEspejos] = useState(null);
+  const [empleadosSueldo, setEmpleadosSueldo] = useState(null);
+  const [liquidaciones, setLiquidaciones] = useState(null);
   const [adminKeyExists, setAdminKeyExists] = useState(false);
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
@@ -580,6 +585,18 @@ export default function App() {
       setReclamos(rc ? JSON.parse(rc.value) : []);
     } catch (e) { setReclamos([]); }
     try {
+      const st = await storage.get("stock-espejos", true);
+      setStockEspejos(st ? JSON.parse(st.value) : []);
+    } catch (e) { setStockEspejos([]); }
+    try {
+      const emp = await storage.get("empleados-sueldo", true);
+      setEmpleadosSueldo(emp ? JSON.parse(emp.value) : []);
+    } catch (e) { setEmpleadosSueldo([]); }
+    try {
+      const liq = await storage.get("liquidaciones-sueldo", true);
+      setLiquidaciones(liq ? JSON.parse(liq.value) : []);
+    } catch (e) { setLiquidaciones([]); }
+    try {
       const a = await storage.get("admin-key", true);
       setAdminKeyExists(!!a);
     } catch (e) { setAdminKeyExists(false); }
@@ -595,8 +612,11 @@ export default function App() {
   async function persistVendedores(next) { setVendedores(next); try { await storage.set("vendedores", JSON.stringify(next), true); } catch (e) {} }
   async function persistPedidos(next) { setPedidos(next); try { await storage.set("pedidos", JSON.stringify(next), true); } catch (e) {} }
   async function persistRecursos(next) { setRecursos(next); try { await storage.set("recursos-venta", JSON.stringify(next), true); } catch (e) {} }
+  async function persistEmpleadosSueldo(next) { setEmpleadosSueldo(next); try { await storage.set("empleados-sueldo", JSON.stringify(next), true); } catch (e) {} }
+  async function persistLiquidaciones(next) { setLiquidaciones(next); try { await storage.set("liquidaciones-sueldo", JSON.stringify(next), true); } catch (e) {} }
   async function persistFacturas(next) { setFacturas(next); try { await storage.set("facturas-manuales", JSON.stringify(next), true); } catch (e) {} }
   async function persistReclamos(next) { setReclamos(next); try { await storage.set("reclamos", JSON.stringify(next), true); } catch (e) {} }
+  async function persistStockEspejos(next) { setStockEspejos(next); try { await storage.set("stock-espejos", JSON.stringify(next), true); } catch (e) {} }
   function createIncomeFromPedido(entry) { persistIncomes([entry, ...incomes]); }
 
   function updateSector(id, patch) { persistSectors(sectors.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
@@ -608,7 +628,7 @@ export default function App() {
   const canSeePedidos = !!session;
   const canEditPedidoFull = isAdmin || isVentas;
 
-  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !reclamos) {
+  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !reclamos || !stockEspejos || !empleadosSueldo || !liquidaciones) {
     return (<div style={wrap}><Style /><div className="dg-app dg-loading"><Loader2 className="dg-spin" size={28} /><span>Cargando DECOGLASS...</span></div></div>);
   }
 
@@ -698,6 +718,9 @@ export default function App() {
             recursos={recursos} onChangeRecursos={persistRecursos}
             facturas={facturas} onChangeFacturas={persistFacturas}
             reclamos={reclamos} onChangeReclamos={persistReclamos}
+            stockEspejos={stockEspejos} onChangeStockEspejos={persistStockEspejos}
+            empleadosSueldo={empleadosSueldo} onChangeEmpleadosSueldo={persistEmpleadosSueldo}
+            liquidaciones={liquidaciones} onChangeLiquidaciones={persistLiquidaciones}
           />
         )}
       </div>
@@ -722,6 +745,194 @@ function LockedPage({ label, onLogin }) {
       <p>{label} es información sensible del negocio. Iniciá sesión como admin para verla.</p>
       <button className="dg-btn-primary" onClick={onLogin}><Lock size={14} /> Iniciar sesión</button>
     </div>
+  );
+}
+
+const SUELDOS_SECTORES = ["Oficina/Ventas", "Taller"];
+
+function emptyEmpleadoSueldo() {
+  return { id: uid(), nombre: "", sector: "Oficina/Ventas", valorHora: 0, comisionPct: 0, sueldoBase: 0, complementoFijo: 0, valorHoraExtra: 0, plusSemanal: 0 };
+}
+
+function liquidacionTotal(emp, liq) {
+  if (!emp) return 0;
+  if (emp.sector === "Oficina/Ventas") {
+    return (Number(liq.horas) || 0) * (Number(emp.valorHora) || 0) + (Number(liq.ventasCobradas) || 0) * ((Number(emp.comisionPct) || 0) / 100);
+  }
+  return (Number(emp.sueldoBase) || 0) + (Number(emp.complementoFijo) || 0)
+    + (Number(liq.horasExtra) || 0) * (Number(emp.valorHoraExtra) || 0)
+    + (Number(liq.plusesAplicados) || 0) * (Number(emp.plusSemanal) || 0)
+    - (Number(liq.adelanto) || 0);
+}
+
+function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiquidaciones }) {
+  const [tab, setTab] = useState("liquidaciones");
+  const [editingEmp, setEditingEmp] = useState(null);
+  const [filtroPeriodo, setFiltroPeriodo] = useState("todos");
+
+  const [empleadoId, setEmpleadoId] = useState(empleados[0]?.id || "");
+  const [periodo, setPeriodo] = useState("");
+  const [horas, setHoras] = useState("");
+  const [ventasCobradas, setVentasCobradas] = useState("");
+  const [horasExtra, setHorasExtra] = useState("");
+  const [adelanto, setAdelanto] = useState("");
+  const [plusesAplicados, setPlusesAplicados] = useState("");
+
+  const empSel = empleados.find((e) => e.id === empleadoId);
+  const periodos = [...new Set(liquidaciones.map((l) => l.periodo))];
+
+  function saveEmpleado(emp) {
+    const exists = empleados.some((e) => e.id === emp.id);
+    onChangeEmpleados(exists ? empleados.map((e) => (e.id === emp.id ? emp : e)) : [...empleados, emp]);
+    setEditingEmp(null);
+  }
+  function removeEmpleado(id) { onChangeEmpleados(empleados.filter((e) => e.id !== id)); }
+
+  function addLiquidacion() {
+    if (!empSel || !periodo.trim()) return;
+    onChangeLiquidaciones([{
+      id: uid(), empleadoId, empleadoNombre: empSel.nombre, sector: empSel.sector, periodo: periodo.trim(),
+      horas: Number(horas) || 0, ventasCobradas: Number(ventasCobradas) || 0,
+      horasExtra: Number(horasExtra) || 0, adelanto: Number(adelanto) || 0, plusesAplicados: Number(plusesAplicados) || 0,
+      fecha: new Date().toISOString().slice(0, 10),
+    }, ...liquidaciones]);
+    setHoras(""); setVentasCobradas(""); setHorasExtra(""); setAdelanto(""); setPlusesAplicados("");
+  }
+  function removeLiquidacion(id) { onChangeLiquidaciones(liquidaciones.filter((l) => l.id !== id)); }
+
+  const visibles = liquidaciones.filter((l) => filtroPeriodo === "todos" || l.periodo === filtroPeriodo);
+  const totalPorSector = SUELDOS_SECTORES.map((s) => ({
+    sector: s,
+    total: visibles.filter((l) => l.sector === s).reduce((a, l) => a + liquidacionTotal(empleados.find((e) => e.id === l.empleadoId), l), 0),
+  }));
+  const totalGeneral = totalPorSector.reduce((a, s) => a + s.total, 0);
+
+  return (
+    <div className="dg-page">
+      <div className="dg-quickviews" style={{ marginBottom: 16 }}>
+        <button className={`dg-quickview-btn ${tab === "liquidaciones" ? "dg-quickview-on" : ""}`} onClick={() => setTab("liquidaciones")}>Liquidaciones</button>
+        <button className={`dg-quickview-btn ${tab === "empleados" ? "dg-quickview-on" : ""}`} onClick={() => setTab("empleados")}>Empleados</button>
+      </div>
+
+      {tab === "empleados" && (
+        <>
+          <div className="dg-section-card">
+            <div className="dg-section-header"><UserPlus size={14} /> {editingEmp ? "Editar empleado" : "Nuevo empleado"}</div>
+            <EmpleadoForm empleado={editingEmp || emptyEmpleadoSueldo()} onSave={saveEmpleado} onCancel={() => setEditingEmp(null)} />
+          </div>
+          <div className="dg-task-list">
+            {empleados.length === 0 && <div className="dg-empty">No hay empleados cargados.</div>}
+            {empleados.map((e) => (
+              <div className="dg-task" key={e.id}>
+                <div className="dg-pago-info">
+                  <span>{e.nombre} <span className="dg-badge" style={{ "--bc": e.sector === "Taller" ? "#F5C451" : "#48E0D8" }}>{e.sector}</span></span>
+                  <span className="dg-pago-meta">
+                    {e.sector === "Oficina/Ventas"
+                      ? `Valor hora: ${money(e.valorHora)} · Comisión: ${e.comisionPct}%`
+                      : `Sueldo: ${money(e.sueldoBase)} + ${money(e.complementoFijo)} · HE: ${money(e.valorHoraExtra)} · Plus: ${money(e.plusSemanal)}`}
+                  </span>
+                </div>
+                <button className="dg-icon-btn" onClick={() => setEditingEmp(e)}><Pencil size={14} /></button>
+                <button className="dg-icon-btn dg-task-del" onClick={() => removeEmpleado(e.id)}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tab === "liquidaciones" && (
+        <>
+          <div className="dg-totales">
+            {totalPorSector.map((s) => (
+              <div className="dg-total-card" style={{ "--c": s.sector === "Taller" ? "#F5C451" : "#48E0D8" }} key={s.sector}><span>Total {s.sector}</span><strong>{money(s.total)}</strong></div>
+            ))}
+            <div className="dg-total-card" style={{ "--c": "#52E08A" }}><span>Total general</span><strong>{money(totalGeneral)}</strong></div>
+          </div>
+
+          <div className="dg-section-card">
+            <div className="dg-section-header"><Plus size={14} /> Nueva liquidación</div>
+            <div className="dg-field-grid">
+              <Field label="Empleado">
+                <select value={empleadoId} onChange={(e) => setEmpleadoId(e.target.value)}>
+                  {empleados.map((e) => (<option key={e.id} value={e.id}>{e.nombre} ({e.sector})</option>))}
+                </select>
+              </Field>
+              <Field label="Período"><input value={periodo} onChange={(e) => setPeriodo(e.target.value)} placeholder="Ej: Semana 1 - Agosto 2026" /></Field>
+            </div>
+            {empSel?.sector === "Oficina/Ventas" ? (
+              <div className="dg-field-grid" style={{ marginTop: 12 }}>
+                <Field label="Horas trabajadas"><input type="number" value={horas} onChange={(e) => setHoras(e.target.value)} /></Field>
+                <Field label="Ventas cobradas ($)"><input type="number" value={ventasCobradas} onChange={(e) => setVentasCobradas(e.target.value)} /></Field>
+              </div>
+            ) : (
+              <div className="dg-field-grid" style={{ marginTop: 12 }}>
+                <Field label="Horas extra"><input type="number" value={horasExtra} onChange={(e) => setHorasExtra(e.target.value)} /></Field>
+                <Field label="Adelantos ($)"><input type="number" value={adelanto} onChange={(e) => setAdelanto(e.target.value)} /></Field>
+                <Field label="Semanas con plus"><input type="number" value={plusesAplicados} onChange={(e) => setPlusesAplicados(e.target.value)} /></Field>
+              </div>
+            )}
+            <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addLiquidacion}><Plus size={16} /> Agregar liquidación</button></div>
+          </div>
+
+          <div className="dg-crm-filters">
+            <Filter size={14} />
+            <select value={filtroPeriodo} onChange={(e) => setFiltroPeriodo(e.target.value)}>
+              <option value="todos">Todos los períodos</option>
+              {periodos.map((p) => (<option key={p} value={p}>{p}</option>))}
+            </select>
+          </div>
+
+          <div className="dg-task-list">
+            {visibles.length === 0 && <div className="dg-empty">No hay liquidaciones en esta vista.</div>}
+            {visibles.map((l) => {
+              const emp = empleados.find((e) => e.id === l.empleadoId);
+              return (
+                <div className="dg-task" key={l.id}>
+                  <div className="dg-pago-info">
+                    <span>{l.empleadoNombre} — {l.periodo}</span>
+                    <span className="dg-pago-meta">
+                      {l.sector === "Oficina/Ventas" ? `${l.horas} hs · ${money(l.ventasCobradas)} vendido` : `${l.horasExtra} hs extra · ${money(l.adelanto)} adelanto · ${l.plusesAplicados} plus`}
+                    </span>
+                  </div>
+                  <span className="dg-pago-monto">{money(liquidacionTotal(emp, l))}</span>
+                  <button className="dg-icon-btn dg-task-del" onClick={() => removeLiquidacion(l.id)}><Trash2 size={14} /></button>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function EmpleadoForm({ empleado, onSave, onCancel }) {
+  const [draft, setDraft] = useState(empleado);
+  function set(f, v) { setDraft((d) => ({ ...d, [f]: v })); }
+  return (
+    <>
+      <div className="dg-field-grid">
+        <Field label="Nombre"><input value={draft.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
+        <Field label="Sector"><select value={draft.sector} onChange={(e) => set("sector", e.target.value)}>{SUELDOS_SECTORES.map((s) => (<option key={s}>{s}</option>))}</select></Field>
+      </div>
+      {draft.sector === "Oficina/Ventas" ? (
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="Valor hora"><input type="number" value={draft.valorHora} onChange={(e) => set("valorHora", e.target.value)} /></Field>
+          <Field label="Comisión % (ej: 3)"><input type="number" value={draft.comisionPct} onChange={(e) => set("comisionPct", e.target.value)} /></Field>
+        </div>
+      ) : (
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="Sueldo recibo"><input type="number" value={draft.sueldoBase} onChange={(e) => set("sueldoBase", e.target.value)} /></Field>
+          <Field label="Complemento fijo"><input type="number" value={draft.complementoFijo} onChange={(e) => set("complementoFijo", e.target.value)} /></Field>
+          <Field label="Valor hora extra"><input type="number" value={draft.valorHoraExtra} onChange={(e) => set("valorHoraExtra", e.target.value)} /></Field>
+          <Field label="Plus semanal"><input type="number" value={draft.plusSemanal} onChange={(e) => set("plusSemanal", e.target.value)} /></Field>
+        </div>
+      )}
+      <div className="dg-form-actions">
+        {onCancel && <button className="dg-btn-ghost" onClick={onCancel}>Cancelar</button>}
+        <button className="dg-btn-primary" onClick={() => onSave(draft)}><Save size={14} /> Guardar</button>
+      </div>
+    </>
   );
 }
 
@@ -1424,11 +1635,15 @@ function ReclamosPanel({ reclamos, onChange }) {
 
       <div className="dg-task-list" style={{ marginTop: 14 }}>
         {reclamos.length === 0 && <div className="dg-empty">No hay reclamos cargados todavía.</div>}
-        {reclamos.slice(0, 30).map((r) => (
-          <div className="dg-task" key={r.id}>
+        {reclamos.slice(0, 100).map((r) => (
+          <div className="dg-task dg-reclamo-row" key={r.id}>
             <span className="dg-badge" style={{ "--bc": RECLAMO_COLORS[RECLAMO_TIPOS.indexOf(r.tipo)] || "#8B96A8" }}>{r.tipo}</span>
-            <span>{r.cliente || "Sin cliente"}{r.notas ? ` — ${r.notas}` : ""}</span>
-            <span className="dg-pago-meta" style={{ marginLeft: "auto" }}>{r.fecha}</span>
+            <div className="dg-pago-info">
+              <span>{r.cliente || "Sin cliente"}{r.notas ? ` — ${r.notas}` : ""}</span>
+              {r.solucion && <span className="dg-pago-meta">Solución: {r.solucion}</span>}
+            </div>
+            {r.estado && <span className="dg-badge" style={{ "--bc": r.estado.toLowerCase().includes("final") ? "#52E08A" : "#F5C451" }}>{r.estado}</span>}
+            <span className="dg-pago-meta">{r.fecha}</span>
             <button className="dg-icon-btn dg-task-del" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>
           </div>
         ))}
@@ -1466,6 +1681,55 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                 <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => marcarEntregado(p.id)}><Check size={16} /> Marcar entregado</button>
               </div>
             )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StockEspejosPanel({ stock, onChange, canEdit }) {
+  const [modelo, setModelo] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+  const [espesor, setEspesor] = useState("");
+  const [funciones, setFunciones] = useState("");
+  const [cantidad, setCantidad] = useState("");
+
+  function addItem() {
+    if (!descripcion.trim()) return;
+    onChange([{ id: uid(), modelo: modelo.trim(), descripcion: descripcion.trim(), espesor: espesor.trim(), funciones: funciones.trim(), cantidad: Number(cantidad) || 0 }, ...stock]);
+    setModelo(""); setDescripcion(""); setEspesor(""); setFunciones(""); setCantidad("");
+  }
+  function updateCantidad(id, val) { onChange(stock.map((s) => (s.id === id ? { ...s, cantidad: Number(val) || 0 } : s))); }
+  function removeItem(id) { onChange(stock.filter((s) => s.id !== id)); }
+
+  return (
+    <div className="dg-page">
+      {canEdit && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><Package size={14} /> Agregar modelo al stock</div>
+          <div className="dg-field-grid">
+            <Field label="Modelo / código"><input value={modelo} onChange={(e) => setModelo(e.target.value)} /></Field>
+            <Field label="Descripción"><input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Ej: 70Ø - Esmerilado" /></Field>
+            <Field label="Espesor"><input value={espesor} onChange={(e) => setEspesor(e.target.value)} placeholder="4mm" /></Field>
+          </div>
+          <div className="dg-field-grid" style={{ marginTop: 12 }}>
+            <Field label="Funciones"><input value={funciones} onChange={(e) => setFunciones(e.target.value)} placeholder="Touch 3 tonos + Desempañante" /></Field>
+            <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
+          </div>
+          <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button></div>
+        </div>
+      )}
+      <div className="dg-task-list">
+        {stock.length === 0 && <div className="dg-empty">No hay modelos cargados en stock.</div>}
+        {stock.map((s) => (
+          <div className="dg-task" key={s.id}>
+            <div className="dg-pago-info">
+              <span>{s.modelo ? `#${s.modelo} — ` : ""}{s.descripcion}</span>
+              <span className="dg-pago-meta">{s.espesor || "—"} · {s.funciones || "sin funciones"}</span>
+            </div>
+            <input type="number" className="dg-stock-cantidad" disabled={!canEdit} value={s.cantidad} onChange={(e) => updateCantidad(s.id, e.target.value)} />
+            {canEdit && <button className="dg-icon-btn dg-task-del" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
           </div>
         ))}
       </div>
@@ -2127,7 +2391,8 @@ function SectorPage({
   pedidos, onChangePedidos, vendedores, onChangeVendedores, incomes, onChangeIncomes,
   purchases, onChangePurchases, quoteConfig, onChangeQuoteConfig, quotes, onChangeQuotes,
   leads, onChangeLeads, onCreateIncome, sectors, recursos, onChangeRecursos,
-  facturas, onChangeFacturas, reclamos, onChangeReclamos,
+  facturas, onChangeFacturas, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
+  empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones,
 }) {
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
   const [subpage, setSubpage] = useState(tabs[0].id);
@@ -2195,9 +2460,19 @@ function SectorPage({
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "stock" && sector.id === "fabrica" && (
+        canSeePedidos ? <StockEspejosPanel stock={stockEspejos} onChange={onChangeStockEspejos} canEdit={canEditFabrica} />
+          : <LockedPage label="Stock de espejos" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "finanzas" && (
         isAdmin ? <FinanzasPanel incomes={incomes} purchases={purchases} sectors={sectors} onChangeIncomes={onChangeIncomes} onChangePurchases={onChangePurchases} />
           : <LockedPage label="Finanzas" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "sueldos" && (
+        isAdmin ? <SueldosPanel empleados={empleadosSueldo} onChangeEmpleados={onChangeEmpleadosSueldo} liquidaciones={liquidaciones} onChangeLiquidaciones={onChangeLiquidaciones} />
+          : <LockedPage label="Sueldos" onLogin={onRequestLogin} />
       )}
 
       {subpage === "envios" && sector.id === "postventa" && (
@@ -2463,6 +2738,7 @@ function Style() {
       .dg-lead-actions { display:flex; align-items:center; gap:6px; }
       .dg-lead-estode-select { }
       .dg-lead-estado-select { background:#0F1420; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:5px 8px; font-size:11px; }
+      .dg-stock-cantidad { width:64px; text-align:center; background:#0F1420; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 4px; color:#48E0D8; font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; }
 
       .dg-quickviews { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
       .dg-quickview-btn { background:#161B26; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 13px; font-size:12px; cursor:pointer; white-space:nowrap; }
