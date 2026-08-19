@@ -178,6 +178,7 @@ const SECTOR_SUBPAGES = {
   ],
   fabrica: [
     { id: "pedidos", label: "Pedidos de fábrica" },
+    { id: "materiales", label: "Stock de materiales" },
     { id: "stock", label: "Stock de espejos" },
     { id: "tareas", label: "Tareas" },
   ],
@@ -544,6 +545,46 @@ function getStatus(tasks) {
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function money(n) { return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n || 0); }
+
+const SESSION_KEY = "dg-session-v1";
+function loadSavedSession() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function saveSession(s) {
+  try {
+    if (s) window.localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    else window.localStorage.removeItem(SESSION_KEY);
+  } catch (e) { /* si el navegador lo bloquea, la sesión simplemente no persiste */ }
+}
+
+const MATERIAL_CATEGORIAS = ["Vidrio", "Perfilería", "Iluminación", "Electrónica", "Químicos", "Embalaje", "Ferretería", "Otro"];
+
+const DEFAULT_MATERIALES = [
+  { categoria: "Vidrio", nombre: "Plancha de espejo", unidad: "m²", minimo: 12 },
+  { categoria: "Perfilería", nombre: "Aluminio (perfil)", unidad: "m", minimo: 40 },
+  { categoria: "Iluminación", nombre: "Tira LED 3 tonos", unidad: "u", minimo: 20 },
+  { categoria: "Electrónica", nombre: "Transformador", unidad: "u", minimo: 20 },
+  { categoria: "Electrónica", nombre: "Sensor touch", unidad: "u", minimo: 15 },
+  { categoria: "Electrónica", nombre: "Panel desempañante 30x30", unidad: "u", minimo: 5 },
+  { categoria: "Electrónica", nombre: "Panel desempañante 30x40", unidad: "u", minimo: 5 },
+  { categoria: "Electrónica", nombre: "Panel desempañante 40x60", unidad: "u", minimo: 5 },
+  { categoria: "Electrónica", nombre: "Módulo hora y temperatura", unidad: "u", minimo: 10 },
+  { categoria: "Electrónica", nombre: "Módulo Bluetooth", unidad: "u", minimo: 10 },
+  { categoria: "Electrónica", nombre: "Parlante", unidad: "u", minimo: 10 },
+  { categoria: "Químicos", nombre: "Sellador / silicona", unidad: "ml", minimo: 500 },
+  { categoria: "Químicos", nombre: "Alcohol isopropílico", unidad: "l", minimo: 3 },
+  { categoria: "Embalaje", nombre: "Film burbuja", unidad: "m²", minimo: 50 },
+  { categoria: "Embalaje", nombre: "Film stretch", unidad: "m", minimo: 200 },
+  { categoria: "Embalaje", nombre: "Cinta de embalar", unidad: "u", minimo: 10 },
+  { categoria: "Embalaje", nombre: "Cartón para puntas", unidad: "u", minimo: 40 },
+  { categoria: "Embalaje", nombre: "Madera para cajón (interior)", unidad: "m²", minimo: 10 },
+  { categoria: "Embalaje", nombre: "Telgopor (interior)", unidad: "m²", minimo: 10 },
+  { categoria: "Ferretería", nombre: "Pitones", unidad: "u", minimo: 50 },
+  { categoria: "Ferretería", nombre: "Tarugos", unidad: "u", minimo: 50 },
+];
 function monthLabel(ym) {
   const [y, m] = ym.split("-");
   const names = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -587,13 +628,24 @@ export default function App() {
   const [facturas, setFacturas] = useState(null);
   const [reclamos, setReclamos] = useState(null);
   const [stockEspejos, setStockEspejos] = useState(null);
+  const [stockMateriales, setStockMateriales] = useState(null);
   const [empleadosSueldo, setEmpleadosSueldo] = useState(null);
   const [liquidaciones, setLiquidaciones] = useState(null);
   const [adminKeyExists, setAdminKeyExists] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(() => loadSavedSession());
   const [loginOpen, setLoginOpen] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
+
+  function startSession(s) {
+    setSession(s);
+    saveSession(s);
+    setLoginOpen(false);
+  }
+  function endSession() {
+    setSession(null);
+    saveSession(null);
+  }
 
   useEffect(() => { load(); }, []);
 
@@ -664,6 +716,10 @@ export default function App() {
       setStockEspejos(st ? JSON.parse(st.value) : []);
     } catch (e) { setStockEspejos([]); }
     try {
+      const stm = await storage.get("stock-materiales", true);
+      setStockMateriales(stm ? JSON.parse(stm.value) : []);
+    } catch (e) { setStockMateriales([]); }
+    try {
       const emp = await storage.get("empleados-sueldo", true);
       setEmpleadosSueldo(emp ? JSON.parse(emp.value) : []);
     } catch (e) { setEmpleadosSueldo([]); }
@@ -687,6 +743,7 @@ export default function App() {
   async function persistVendedores(next) { setVendedores(next); try { await storage.set("vendedores", JSON.stringify(next), true); } catch (e) {} }
   async function persistPedidos(next) { setPedidos(next); try { await storage.set("pedidos", JSON.stringify(next), true); } catch (e) {} }
   async function persistRecursos(next) { setRecursos(next); try { await storage.set("recursos-venta", JSON.stringify(next), true); } catch (e) {} }
+  async function persistStockMateriales(next) { setStockMateriales(next); try { await storage.set("stock-materiales", JSON.stringify(next), true); } catch (e) {} }
   async function persistEmpleadosSueldo(next) { setEmpleadosSueldo(next); try { await storage.set("empleados-sueldo", JSON.stringify(next), true); } catch (e) {} }
   async function persistLiquidaciones(next) { setLiquidaciones(next); try { await storage.set("liquidaciones-sueldo", JSON.stringify(next), true); } catch (e) {} }
   async function persistFacturas(next) { setFacturas(next); try { await storage.set("facturas-manuales", JSON.stringify(next), true); } catch (e) {} }
@@ -703,7 +760,7 @@ export default function App() {
   const canSeePedidos = !!session;
   const canEditPedidoFull = isAdmin || isVentas;
 
-  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !reclamos || !stockEspejos || !empleadosSueldo || !liquidaciones) {
+  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !reclamos || !stockEspejos || !stockMateriales || !empleadosSueldo || !liquidaciones) {
     return (<div style={wrap}><Style /><div className="dg-app dg-loading"><Loader2 className="dg-spin" size={28} /><span>Cargando DECOGLASS...</span></div></div>);
   }
 
@@ -724,7 +781,7 @@ export default function App() {
                 {session.role === "admin" ? <ShieldCheck size={14} /> : <User size={14} />}
                 {session.role === "admin" ? "Admin" : sectors.find((s) => s.id === session.sectorId)?.name || "Encargado"}
               </span>
-              <button className="dg-icon-btn" onClick={() => setSession(null)} title="Cerrar sesión"><LogOut size={16} /></button>
+              <button className="dg-icon-btn" onClick={endSession} title="Cerrar sesión"><LogOut size={16} /></button>
             </div>
           ) : (
             <button className="dg-login-btn" onClick={() => setLoginOpen(true)}><Lock size={14} /> Iniciar sesión</button>
@@ -794,6 +851,7 @@ export default function App() {
             facturas={facturas} onChangeFacturas={persistFacturas}
             reclamos={reclamos} onChangeReclamos={persistReclamos}
             stockEspejos={stockEspejos} onChangeStockEspejos={persistStockEspejos}
+            stockMateriales={stockMateriales} onChangeStockMateriales={persistStockMateriales}
             empleadosSueldo={empleadosSueldo} onChangeEmpleadosSueldo={persistEmpleadosSueldo}
             liquidaciones={liquidaciones} onChangeLiquidaciones={persistLiquidaciones}
           />
@@ -806,7 +864,7 @@ export default function App() {
           onClose={() => setLoginOpen(false)}
           onAdminKeyCreated={() => setAdminKeyExists(true)}
           onSectorUpdate={updateSector}
-          onSuccess={(s) => { setSession(s); setLoginOpen(false); }}
+          onSuccess={startSession}
         />
       )}
     </div>
@@ -932,7 +990,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   {empleados.map((e) => (<option key={e.id} value={e.id}>{e.nombre} ({e.sector})</option>))}
                 </select>
               </Field>
-              <Field label="Período"><input value={periodo} onChange={(e) => setPeriodo(e.target.value)} placeholder="Ej: Semana 1 - Agosto 2026" /></Field>
+              <Field label="Período"><input value={periodo} onChange={(e) => setPeriodo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLiquidacion()} placeholder="Ej: Semana 1 - Agosto 2026" /></Field>
             </div>
             {empSel?.sector === "Oficina/Ventas" ? (
               <div className="dg-field-grid" style={{ marginTop: 12 }}>
@@ -1054,7 +1112,7 @@ function RecursosVentaPanel({ recursos, onChange, isAdmin }) {
             <div style={{ flex: 2 }}><label>Título</label><input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Catálogo espejos redondos 2026" /></div>
           </div>
           <label>Link (Google Drive, Dropbox, etc.)</label>
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." />
+          <input value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addRecurso()} placeholder="https://..." />
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addRecurso}><Plus size={16} /> Agregar recurso</button></div>
           <p className="dg-hint" style={{ marginTop: 10 }}>Subí el archivo a Google Drive o Dropbox, compartilo con "cualquiera con el link" y pegá ese link acá.</p>
         </div>
@@ -1184,8 +1242,8 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
 
       <div className="dg-form dg-pago-form">
         <div className="dg-form-row">
-          <div style={{ flex: 2 }}><label>Concepto</label><input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={isIncome ? "Ej: Venta 4 espejos LED redondos" : "Ej: Vidrio importado - contenedor"} /></div>
-          <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></div>
+          <div style={{ flex: 2 }}><label>Concepto</label><input value={concepto} onChange={(e) => setConcepto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEntry()} placeholder={isIncome ? "Ej: Venta 4 espejos LED redondos" : "Ej: Vidrio importado - contenedor"} /></div>
+          <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEntry()} placeholder="0" /></div>
         </div>
         <div className="dg-form-row">
           <div style={{ flex: 1 }}><label>{isIncome ? "Canal" : "Tipo"}</label>
@@ -1642,12 +1700,12 @@ function FacturasManualesPanel({ facturas, onChange, isAdmin }) {
         <div className="dg-section-card">
           <div className="dg-section-header"><FileText size={14} /> Cargar factura a hacer</div>
           <div className="dg-field-grid">
-            <Field label="Nombre / Cliente"><input value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
+            <Field label="Nombre / Cliente"><input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addFactura()} /></Field>
             <Field label="Monto"><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} /></Field>
             <Field label="CUIT"><input value={cuit} onChange={(e) => setCuit(e.target.value)} /></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
-            <Field label="Detalle"><input value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Concepto de la factura" /></Field>
+            <Field label="Detalle"><input value={detalle} onChange={(e) => setDetalle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addFactura()} placeholder="Concepto de la factura" /></Field>
           </div>
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addFactura}><Plus size={16} /> Agregar</button></div>
         </div>
@@ -1711,8 +1769,8 @@ function ReclamosPanel({ reclamos, onChange }) {
         </div>
         {tipo && (
           <div className="dg-quick-inline" style={{ marginTop: 12 }}>
-            <input placeholder="Cliente (opcional)" value={cliente} onChange={(e) => setCliente(e.target.value)} />
-            <input placeholder="Notas (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} />
+            <input placeholder="Cliente (opcional)" value={cliente} onChange={(e) => setCliente(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addReclamo()} />
+            <input placeholder="Notas (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addReclamo()} />
             <button className="dg-btn-ghost" onClick={() => setTipo(null)}>Cancelar</button>
             <button className="dg-btn-primary" onClick={addReclamo}><Check size={14} /> Guardar reclamo: {tipo}</button>
           </div>
@@ -1774,6 +1832,103 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
   );
 }
 
+function StockMaterialesPanel({ stock, onChange, canEdit }) {
+  const [nombre, setNombre] = useState("");
+  const [categoria, setCategoria] = useState(MATERIAL_CATEGORIAS[0]);
+  const [unidad, setUnidad] = useState("u");
+  const [cantidad, setCantidad] = useState("");
+  const [minimo, setMinimo] = useState("");
+  const [filtroCat, setFiltroCat] = useState("todas");
+
+  function addItem() {
+    if (!nombre.trim()) return;
+    onChange([...stock, { id: uid(), nombre: nombre.trim(), categoria, unidad: unidad.trim() || "u", cantidad: Number(cantidad) || 0, minimo: Number(minimo) || 0 }]);
+    setNombre(""); setCantidad(""); setMinimo("");
+  }
+  function update(id, patch) { onChange(stock.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
+  function removeItem(id) { onChange(stock.filter((s) => s.id !== id)); }
+  function cargarLista() {
+    const existentes = new Set(stock.map((s) => s.nombre.toLowerCase()));
+    const nuevos = DEFAULT_MATERIALES.filter((m) => !existentes.has(m.nombre.toLowerCase()))
+      .map((m) => ({ id: uid(), ...m, cantidad: 0 }));
+    onChange([...stock, ...nuevos]);
+  }
+
+  const bajos = stock.filter((s) => Number(s.cantidad) <= Number(s.minimo));
+  const cats = MATERIAL_CATEGORIAS.filter((c) => stock.some((s) => s.categoria === c));
+  const visibles = filtroCat === "todas" ? stock : stock.filter((s) => s.categoria === filtroCat);
+  const porCategoria = cats
+    .filter((c) => filtroCat === "todas" || c === filtroCat)
+    .map((c) => ({ categoria: c, items: visibles.filter((s) => s.categoria === c) }));
+
+  return (
+    <div className="dg-page">
+      {bajos.length > 0 && (
+        <div className="dg-comision-banner" style={{ background: "rgba(241,101,101,0.08)", borderColor: "rgba(241,101,101,0.3)", color: "#F16565" }}>
+          <span><AlertTriangle size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />{bajos.length} material(es) en el mínimo o por debajo — hay que reponer.</span>
+        </div>
+      )}
+
+      {canEdit && stock.length === 0 && (
+        <button className="dg-btn-ghost dg-suggest-btn" onClick={cargarLista}>
+          <Sparkles size={14} /> Cargar la lista de materiales que usamos (21 ítems)
+        </button>
+      )}
+
+      {canEdit && stock.length > 0 && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><PackagePlus size={14} /> Agregar material</div>
+          <div className="dg-field-grid">
+            <Field label="Material"><input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} /></Field>
+            <Field label="Categoría"><select value={categoria} onChange={(e) => setCategoria(e.target.value)}>{MATERIAL_CATEGORIAS.map((c) => (<option key={c}>{c}</option>))}</select></Field>
+            <Field label="Unidad"><input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="u / m / m² / l" /></Field>
+            <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} /></Field>
+            <Field label="Mínimo de alerta"><input type="number" value={minimo} onChange={(e) => setMinimo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} /></Field>
+          </div>
+          <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button></div>
+        </div>
+      )}
+
+      {stock.length > 0 && (
+        <div className="dg-crm-filters">
+          <Filter size={14} />
+          <select value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
+            <option value="todas">Todas las categorías</option>
+            {cats.map((c) => (<option key={c} value={c}>{c}</option>))}
+          </select>
+          {canEdit && <button className="dg-btn-ghost" onClick={cargarLista}><Sparkles size={14} /> Completar faltantes de la lista base</button>}
+        </div>
+      )}
+
+      {stock.length === 0 && <div className="dg-empty">No hay materiales cargados todavía.</div>}
+
+      {porCategoria.map((g) => g.items.length > 0 && (
+        <div className="dg-section-card" key={g.categoria}>
+          <div className="dg-section-header"><Package size={14} /> {g.categoria}</div>
+          <div className="dg-task-list" style={{ marginBottom: 0 }}>
+            {g.items.map((s) => {
+              const bajo = Number(s.cantidad) <= Number(s.minimo);
+              return (
+                <div className="dg-task" key={s.id}>
+                  <div className="dg-pago-info">
+                    <span>{s.nombre}</span>
+                    <span className="dg-pago-meta">mínimo: {s.minimo} {s.unidad}</span>
+                  </div>
+                  {bajo && <span className="dg-badge" style={{ "--bc": "#F16565" }}>Reponer</span>}
+                  <input type="number" className="dg-stock-cantidad" style={bajo ? { color: "#F16565", borderColor: "rgba(241,101,101,0.4)" } : undefined}
+                    disabled={!canEdit} value={s.cantidad} onChange={(e) => update(s.id, { cantidad: Number(e.target.value) || 0 })} />
+                  <span className="dg-stock-unidad">{s.unidad}</span>
+                  {canEdit && <button className="dg-icon-btn dg-task-del" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StockEspejosPanel({ stock, onChange, canEdit }) {
   const [modelo, setModelo] = useState("");
   const [descripcion, setDescripcion] = useState("");
@@ -1796,7 +1951,7 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
           <div className="dg-section-header"><Package size={14} /> Agregar modelo al stock</div>
           <div className="dg-field-grid">
             <Field label="Modelo / código"><input value={modelo} onChange={(e) => setModelo(e.target.value)} /></Field>
-            <Field label="Descripción"><input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Ej: 70Ø - Esmerilado" /></Field>
+            <Field label="Descripción"><input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} placeholder="Ej: 70Ø - Esmerilado" /></Field>
             <Field label="Espesor"><input value={espesor} onChange={(e) => setEspesor(e.target.value)} placeholder="4mm" /></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
@@ -2005,9 +2160,9 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
         </div>
         {quickType && (
           <div className="dg-quick-inline">
-            <input placeholder="Nombre del cliente (opcional)" value={quickNombre} onChange={(e) => setQuickNombre(e.target.value)} autoFocus />
+            <input placeholder="Nombre del cliente (opcional)" value={quickNombre} onChange={(e) => setQuickNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && quickAdd()} autoFocus />
             {quickType === "venta_cerrada" && (
-              <input type="number" placeholder="Monto vendido" value={quickMonto} onChange={(e) => setQuickMonto(e.target.value)} />
+              <input type="number" placeholder="Monto vendido" value={quickMonto} onChange={(e) => setQuickMonto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && quickAdd()} />
             )}
             <button className="dg-btn-ghost" onClick={() => { setQuickType(null); setQuickNombre(""); setQuickMonto(""); }}>Cancelar</button>
             <button className="dg-btn-primary" onClick={quickAdd}><Check size={14} /> Confirmar</button>
@@ -2064,7 +2219,7 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
       {showForm && (
         <div className="dg-form dg-pago-form">
           <div className="dg-form-row">
-            <div style={{ flex: 1 }}><label>Cliente</label><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre" /></div>
+            <div style={{ flex: 1 }}><label>Cliente</label><input value={cliente} onChange={(e) => setCliente(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLead()} placeholder="Nombre" /></div>
             <div style={{ flex: 1 }}><label>Vendedor</label>
               <select value={vendedorLead} onChange={(e) => setVendedorLead(e.target.value)}>{vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}</select>
             </div>
@@ -2082,7 +2237,7 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
             </div>
           </div>
           {estado === "venta_cerrada" && (<><label>Monto vendido</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} /></>)}
-          <label>Notas</label><input value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" />
+          <label>Notas</label><input value={notas} onChange={(e) => setNotas(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLead()} placeholder="Opcional" />
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addLead}><Plus size={16} /> Guardar contacto</button></div>
         </div>
       )}
@@ -2408,11 +2563,11 @@ function LoginModal({ sectors, adminKeyExists, onClose, onAdminKeyCreated, onSec
             {sectorNeedsSetup ? (
               <>
                 <p className="dg-hint">Este sector no tiene encargado configurado. Poné tu nombre y clave.</p>
-                <label>Tu nombre</label><input value={nombre} onChange={(e) => setNombre(e.target.value)} />
-                <label>Clave nueva</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
-                <label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} />
+                <label>Tu nombre</label><input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} />
+                <label>Clave nueva</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} />
+                <label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} />
               </>
-            ) : (<><label>Clave de {sector?.encargado || "encargado"}</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} /></>)}
+            ) : (<><label>Clave de {sector?.encargado || "encargado"}</label><input type="password" autoFocus value={clave} onChange={(e) => setClave(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSector()} /></>)}
             {error && <div className="dg-error">{error}</div>}
             <div className="dg-form-actions"><button className="dg-btn-ghost" onClick={() => setMode("choose")}>Volver</button><button className="dg-btn-primary" onClick={handleSector}>{sectorNeedsSetup ? "Guardar y entrar" : "Entrar"}</button></div>
           </div>
@@ -2490,6 +2645,7 @@ function SectorPage({
   purchases, onChangePurchases, quoteConfig, onChangeQuoteConfig, quotes, onChangeQuotes,
   leads, onChangeLeads, onCreateIncome, sectors, recursos, onChangeRecursos,
   facturas, onChangeFacturas, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
+  stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones,
 }) {
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
@@ -2558,6 +2714,11 @@ function SectorPage({
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "materiales" && sector.id === "fabrica" && (
+        canSeePedidos ? <StockMaterialesPanel stock={stockMateriales} onChange={onChangeStockMateriales} canEdit={canEditFabrica} />
+          : <LockedPage label="Stock de materiales" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "stock" && sector.id === "fabrica" && (
         canSeePedidos ? <StockEspejosPanel stock={stockEspejos} onChange={onChangeStockEspejos} canEdit={canEditFabrica} />
           : <LockedPage label="Stock de espejos" onLogin={onRequestLogin} />
@@ -2602,6 +2763,12 @@ function Style() {
   return (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+      * { -webkit-tap-highlight-color: transparent; }
+      .dg-app ::selection { background: rgba(72,224,216,0.3); }
+      .dg-app ::-webkit-scrollbar { width:9px; height:9px; }
+      .dg-app ::-webkit-scrollbar-track { background: transparent; }
+      .dg-app ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.13); border-radius:100px; }
+      .dg-app ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
       .dg-app { --bg:#0A0D13; --panel: rgba(22,28,40,0.78); --panel-border: rgba(255,255,255,0.08); --text:#E7ECF2; --text-dim:#8B96A8; --cyan:#48E0D8;
         font-family:'Inter', sans-serif; color: var(--text);
         background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(72,224,216,0.08), transparent), var(--bg);
@@ -2617,11 +2784,13 @@ function Style() {
       .dg-brand-sub { font-size:12px; color: var(--text-dim); }
       .dg-session { display:flex; align-items:center; gap:8px; }
       .dg-session-badge { display:flex; align-items:center; gap:6px; font-size:12px; padding:7px 12px; border-radius:100px; background: var(--panel); border:1px solid var(--panel-border); }
-      .dg-login-btn, .dg-btn-primary { display:flex; align-items:center; gap:6px; font-family:'Inter',sans-serif; font-weight:600; font-size:13px; background: linear-gradient(145deg, #48E0D8, #2FB8B0); color:#03181A; border:none; border-radius:10px; padding:9px 14px; cursor:pointer; box-shadow: 0 0 20px rgba(72,224,216,0.3); }
+      .dg-login-btn, .dg-btn-primary { display:flex; align-items:center; gap:6px; font-family:'Inter',sans-serif; font-weight:600; font-size:13px; background: linear-gradient(145deg, #48E0D8, #2FB8B0); color:#03181A; border:none; border-radius:10px; padding:9px 14px; cursor:pointer; box-shadow: 0 2px 14px -2px rgba(72,224,216,0.45); transition: filter .15s ease, transform .1s ease, box-shadow .15s ease; }
+      .dg-login-btn:active, .dg-btn-primary:active { transform: scale(0.97); }
       .dg-login-btn:hover, .dg-btn-primary:hover { filter: brightness(1.08); }
-      .dg-icon-btn { background:transparent; border:none; color:var(--text-dim); cursor:pointer; padding:6px; border-radius:8px; display:flex; }
+      .dg-icon-btn { background:transparent; border:none; color:var(--text-dim); cursor:pointer; padding:6px; border-radius:8px; display:flex; transition: background .15s ease, color .15s ease; }
       .dg-icon-btn:hover { background: rgba(255,255,255,0.06); color:var(--text); }
-      .dg-btn-ghost { background:transparent; border:1px solid var(--panel-border); color:var(--text-dim); border-radius:10px; padding:9px 14px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; }
+      .dg-btn-ghost { background:transparent; border:1px solid var(--panel-border); color:var(--text-dim); border-radius:10px; padding:9px 14px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; transition: color .15s ease, border-color .15s ease, background .15s ease; }
+      .dg-btn-ghost:active { transform: scale(0.98); }
       .dg-btn-ghost:hover { color:var(--text); border-color: rgba(255,255,255,0.2); }
       .dg-inline-btn { padding:4px 10px; font-size:12px; margin-left:8px; }
       .dg-mini-btn { padding:5px 10px; font-size:12px; }
@@ -2639,7 +2808,7 @@ function Style() {
       .dg-sector-page-head { display:flex; align-items:center; gap:12px; margin-bottom:2px; flex-wrap:wrap; }
       .dg-sector-page-title { display:flex; align-items:center; gap:12px; flex:1; }
       .dg-sector-tabs { display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 18px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px; }
-      .dg-sector-tab { background:transparent; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 14px; font-size:12.5px; font-weight:600; cursor:pointer; }
+      .dg-sector-tab { background:transparent; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:8px 15px; font-size:12.5px; font-weight:600; cursor:pointer; transition: all .15s ease; }
       .dg-sector-tab:hover { color:#E7ECF2; }
       .dg-sector-tab-on { background: rgba(72,224,216,0.15); border-color:#48E0D8; color:#48E0D8; }
 
@@ -2674,14 +2843,15 @@ function Style() {
       .dg-locked-page { display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; color: var(--text-dim); padding:60px 20px; background: var(--panel); border:1px solid var(--panel-border); border-radius:16px; }
       .dg-locked-page p { max-width:320px; font-size:13px; }
 
-      .dg-totales { display:flex; gap:10px; margin-bottom:16px; }
+      .dg-totales { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
       .dg-cuenta-totales { margin-top:-6px; }
       .dg-iva-card { background:#161B26; border:1px solid rgba(245,196,81,0.3); border-radius:12px; padding:14px; margin-bottom:16px; }
       .dg-iva-head { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; }
       .dg-iva-head > div { display:flex; align-items:baseline; gap:10px; }
       .dg-iva-amount { font-family:'JetBrains Mono', monospace; font-size:20px; color:#F5C451; }
       .dg-iva-note { font-size:11px; color:#8B96A8; }
-      .dg-total-card { --c:#888; flex:1; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:4px; }
+      .dg-total-card { --c:#888; flex:1; min-width:120px; background:#161B26; border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:13px 14px; display:flex; flex-direction:column; gap:5px; position:relative; overflow:hidden; }
+      .dg-total-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--c); opacity:0.8; }
       .dg-total-card span { font-size:11px; color:#8B96A8; }
       .dg-total-card strong { font-family:'JetBrains Mono', monospace; font-size:16px; color: var(--c); }
 
@@ -2690,7 +2860,8 @@ function Style() {
       .dg-chart-title { font-size:12px; color:#8B96A8; margin-bottom:6px; font-family:'JetBrains Mono', monospace; }
 
       .dg-overlay { position:fixed; inset:0; background: rgba(5,7,11,0.72); backdrop-filter: blur(4px); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50; }
-      .dg-modal { font-family:'Inter', sans-serif; color:#E7ECF2; width:100%; max-width:400px; background:#10141D; border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; }
+      .dg-modal { font-family:'Inter', sans-serif; color:#E7ECF2; width:100%; max-width:400px; background:#10141D; border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
+      @keyframes dg-modal-in { from { opacity:0; transform: translateY(8px) scale(0.99); } to { opacity:1; transform:none; } }
       .dg-modal-lg { max-width:540px; }
       .dg-modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
       .dg-modal-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:17px; }
@@ -2735,7 +2906,8 @@ function Style() {
       .dg-status-bar span { font-size:12px; font-family:'JetBrains Mono', monospace; }
       .dg-task-list { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; max-height:280px; overflow-y:auto; }
       .dg-empty { font-size:13px; color:#8B96A8; padding:14px; text-align:center; border:1px dashed rgba(255,255,255,0.1); border-radius:10px; }
-      .dg-task { display:flex; align-items:center; gap:10px; background:#161B26; border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 12px; font-size:13px; }
+      .dg-task { display:flex; align-items:center; gap:10px; background:#161B26; border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:11px 13px; font-size:13px; transition: border-color .15s ease; }
+      .dg-task:hover { border-color: rgba(255,255,255,0.13); }
       .dg-task-done { text-decoration: line-through; color:#8B96A8; }
       .dg-task-del { margin-left:auto; }
       .dg-checkbox { width:18px; height:18px; min-width:18px; border-radius:6px; border:1.5px solid rgba(255,255,255,0.25); background:transparent; cursor:pointer; }
@@ -2756,7 +2928,8 @@ function Style() {
       .dg-pago-monto { font-family:'JetBrains Mono', monospace; font-size:13px; margin-right:6px; }
       .dg-pago-list { max-height:320px; }
 
-      .dg-section-card { background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:14px 14px 16px; margin-bottom:12px; }
+      .dg-section-card { background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:15px 16px 17px; margin-bottom:14px; transition: border-color .15s ease; }
+      .dg-section-card:hover { border-color: rgba(255,255,255,0.12); }
       .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:#48E0D8; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:12.5px; text-transform:uppercase; letter-spacing:0.4px; }
       .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; }
       .dg-money-row { margin-top:12px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.08); }
@@ -2837,7 +3010,8 @@ function Style() {
       .dg-pedido-orden { font-family:'JetBrains Mono', monospace; font-size:11px; color:#8B96A8; }
       .dg-pedido-card { display:flex; flex-direction:column; gap:8px; width:100%; max-width:100%; text-align:left; background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:12px 14px; color:#E7ECF2; cursor:pointer; font-family:'Inter',sans-serif; min-width:0; box-sizing:border-box; }
       .dg-confirmar-entrega-btn { justify-content:center; text-decoration:none; background: linear-gradient(145deg, #52E08A, #2FB86A); }
-      .dg-pedido-card:hover { border-color:rgba(72,224,216,0.3); }
+      .dg-pedido-card:hover { border-color:rgba(72,224,216,0.35); background: rgba(255,255,255,0.04); transform: translateY(-1px); }
+      .dg-pedido-card { transition: border-color .15s ease, background .15s ease, transform .15s ease; }
       .dg-pedido-card-top { display:flex; align-items:center; gap:10px; min-width:0; }
       .dg-pedido-card-top .dg-lead-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .dg-pedido-badges { display:flex; gap:6px; flex-wrap:wrap; min-width:0; }
@@ -2852,10 +3026,11 @@ function Style() {
       .dg-lead-actions { display:flex; align-items:center; gap:6px; }
       .dg-lead-estode-select { }
       .dg-lead-estado-select { background:#0F1420; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:5px 8px; font-size:11px; }
+      .dg-stock-unidad { font-size:11px; color:#8B96A8; min-width:26px; }
       .dg-stock-cantidad { width:64px; text-align:center; background:#0F1420; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 4px; color:#48E0D8; font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; }
 
       .dg-quickviews { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
-      .dg-quickview-btn { background:#161B26; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 13px; font-size:12px; cursor:pointer; white-space:nowrap; }
+      .dg-quickview-btn { background:#161B26; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 13px; font-size:12px; cursor:pointer; white-space:nowrap; transition: all .15s ease; }
       .dg-quickview-btn:hover { color:#E7ECF2; }
       .dg-quickview-on { background: rgba(72,224,216,0.15); border-color:#48E0D8; color:#48E0D8; font-weight:600; }
       .dg-comision-banner { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background: rgba(245,196,81,0.08); border:1px solid rgba(245,196,81,0.3); border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#F5C451; }
