@@ -12,26 +12,28 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell
 } from "recharts";
+import sectorScenes from "./assets/sector-scenes.png";
 
 const ICONS = { Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones };
 const METODO_ICONS = { "Retira": Building2, "Envío": Truck, "Envío flex": Truck, "Interior": Truck, "Colocación": Wrench, "Otro": Package };
 const QUICK_ICONS = { MessageCircle, Check, ShoppingCart };
 
 const SECTOR_VISUAL = {
-  marketing:      { accent: "#E8739E", pattern: "arcs" },
-  ventas:         { accent: "#5BB8E0", pattern: "bars" },
-  administracion: { accent: "#7C8FE8", pattern: "ledger" },
-  fabrica:        { accent: "#9098A8", pattern: "hazard" },
-  postventa:      { accent: "#B583DE", pattern: "rings" },
-  logistica:      { accent: "#4FA0D8", pattern: "lanes" },
+  marketing:      { accent: "#E8739E", position: "0% 0%" },
+  ventas:         { accent: "#5BB8E0", position: "50% 0%" },
+  administracion: { accent: "#7C8FE8", position: "100% 0%" },
+  fabrica:        { accent: "#9098A8", position: "0% 100%" },
+  postventa:      { accent: "#B583DE", position: "50% 100%" },
+  logistica:      { accent: "#4FA0D8", position: "100% 100%" },
 };
 
 function RoomScene({ sector }) {
-  const visual = SECTOR_VISUAL[sector.id] || { accent: "#4FC3C0", pattern: "arcs" };
+  const visual = SECTOR_VISUAL[sector.id] || { accent: "#4FC3C0", position: "50% 50%" };
   const Icon = ICONS[sector.icon];
   return (
     <div className="dg-room-scene" style={{ "--accent": visual.accent }}>
-      <div className={`dg-scene-pattern dg-scene-pattern-${visual.pattern}`} />
+      <div className="dg-scene-image" style={{ backgroundImage: `url(${sectorScenes})`, backgroundPosition: visual.position }} />
+      <div className="dg-scene-shade" />
       {Icon && <Icon className="dg-scene-watermark" />}
     </div>
   );
@@ -856,11 +858,18 @@ export default function App() {
 
         {!activeSector && (
           <>
-            <div className="dg-summary">
-              {["green", "yellow", "red", "gray"].map((k) => (
-                <div className="dg-chip" key={k} style={{ "--c": STATUS[k].glow }}><span className="dg-chip-dot" />{counts[k] || 0} {STATUS[k].label}</div>
-              ))}
-            </div>
+            <section className="dg-overview-head">
+              <div className="dg-overview-copy">
+                <span className="dg-eyebrow">Centro de operaciones</span>
+                <h1>Estado del edificio</h1>
+                <p>Entrá a un sector para ver su trabajo, responsables y herramientas.</p>
+              </div>
+              <div className="dg-summary" aria-label="Resumen de estados">
+                {["green", "yellow", "red", "gray"].map((k) => (
+                  <div className="dg-chip" key={k} style={{ "--c": STATUS[k].glow }}><span className="dg-chip-dot" />{counts[k] || 0} {STATUS[k].label}</div>
+                ))}
+              </div>
+            </section>
             <div className="dg-plant-outer">
               <div className="dg-plant-grid">
                 {sectors.map((sector, i) => {
@@ -1971,6 +1980,53 @@ function emptyPedido(prefill) {
   };
 }
 
+function textoComparable(value) {
+  return String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function partesDetallePedido(detalle) {
+  return String(detalle ?? "").split(/\s*(?:[·|;,]|\+(?=\s*[A-Za-zÁÉÍÓÚáéíóúÑñ]))\s*/).filter(Boolean);
+}
+
+function esFuncionDesempanante(value) {
+  return /^desempanante(?:\s*(?:220v?|touch|t))?$/.test(textoComparable(value));
+}
+
+function pedidoTieneDesempanante(pedido) {
+  const value = textoComparable(pedido?.desemp);
+  return ["desempanante", "si", "true", "220", "220v", "touch", "t"].includes(value)
+    || partesDetallePedido(pedido?.grabado).some(esFuncionDesempanante);
+}
+
+function pedidoTipoDesempanante(pedido) {
+  const value = textoComparable(`${pedido?.desempTipo || ""} ${pedido?.desemp || ""} ${pedido?.grabado || ""}`);
+  return /(?:^|\s)(?:touch|t)(?:\s|$)/.test(value) ? "Touch" : "220";
+}
+
+function normalizarPedidoFunciones(pedido) {
+  const tieneDesempanante = pedidoTieneDesempanante(pedido);
+  return {
+    ...pedido,
+    desemp: tieneDesempanante ? "Desempañante" : "No",
+    desempTipo: tieneDesempanante ? pedidoTipoDesempanante(pedido) : (pedido?.desempTipo || "220"),
+  };
+}
+
+function funcionesPedido(pedido, incluirPulido = false) {
+  const funciones = [
+    { on: pedido?.touch === "Touch", label: "TOUCH" },
+    { on: pedidoTieneDesempanante(pedido), label: pedidoTipoDesempanante(pedido) === "Touch" ? "DESEMPAÑANTE T" : "DESEMPAÑANTE 220" },
+    { on: pedido?.horaTemp === "Hora y Temperatura", label: "HORA Y TEMP" },
+    { on: pedido?.bluetooth && pedido.bluetooth !== "No", label: String(pedido.bluetooth).toUpperCase() },
+    { on: incluirPulido && pedido?.pulido === "Sí", label: "PULIDO" },
+  ];
+  return funciones.filter((funcion) => funcion.on && funcion.label);
+}
+
+function detalleFabrica(pedido) {
+  return partesDetallePedido(pedido?.grabado).filter((parte) => !esFuncionDesempanante(parte)).join(" · ");
+}
+
 const QUICK_VIEWS = [
   { id: "todos", label: "Activos" },
   { id: "historial", label: "Historial (entregados)" },
@@ -2061,6 +2117,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   function nextOrden() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
 
   function savePedido(pedido, opts) {
+    pedido = normalizarPedidoFunciones(pedido);
     const exists = pedidos.some((p) => p.id === pedido.id);
     let withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
     if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
@@ -2323,7 +2380,7 @@ function Field({ label, computed, error, children }) {
 }
 
 function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete }) {
-  const [draft, setDraft] = useState(pedido);
+  const [draft, setDraft] = useState(() => normalizarPedidoFunciones(pedido));
   const [intentoGuardar, setIntentoGuardar] = useState(false);
   const readOnly = !canEditFull && !canEditEstadoOnly;
   const saldo = (Number(draft.monto) || 0) - (Number(draft.anticipo) || 0);
@@ -2854,28 +2911,13 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
   function cancelar(id) { if (window.confirm("¿Cancelar este pedido?")) setEstado(id, "Cancelado"); }
   function borrar(id) { if (window.confirm("¿Borrar este pedido definitivamente? No se puede deshacer.")) onChange(pedidos.filter((p) => p.id !== id)); }
 
-  const funcionesTexto = (p) => {
-    const f = [];
-    if (p.touch === "Touch") f.push("Touch");
-    if (p.desemp === "Desempañante") f.push("Desempañante");
-    if (p.horaTemp === "Hora y Temperatura") f.push("Hora/Temp");
-    if (p.bluetooth !== "No") f.push(p.bluetooth);
-    return f.length ? f.join(" · ") : "Sin funciones extra";
-  };
-
   const grupos = agrupado === "semana" ? groupByWeek(visibles, "fecha") : groupByMonth(visibles, "fecha");
 
   const renderCard = (p) => {
     const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
-    const funciones = [
-      { on: p.touch === "Touch", label: "TOUCH" },
-      { on: p.desemp === "Desempañante", label: p.desempTipo === "Touch" ? "DESEMPAÑANTE T" : "DESEMPAÑANTE 220" },
-      { on: p.horaTemp === "Hora y Temperatura", label: "HORA Y TEMP" },
-      { on: p.bluetooth !== "No", label: p.bluetooth ? p.bluetooth.toUpperCase() : "" },
-      { on: p.pulido === "Sí", label: "PULIDO" },
-    ].filter((f) => f.on && f.label);
-    const observaciones = p.grabado || "";
+    const funciones = funcionesPedido(p, true);
+    const observaciones = detalleFabrica(p);
     return (
       <div className={`dg-pedido-card dg-fabrica-card dg-fab-${entrega.clase}`} key={p.id}>
         <div className="dg-fab-head">
@@ -3708,7 +3750,7 @@ function Style() {
       .dg-spin { animation: dg-spin 1s linear infinite; color:#4FC3C0; }
       @keyframes dg-spin { to { transform: rotate(360deg); } }
 
-      .dg-header { display:flex; align-items:center; justify-content:space-between; max-width:680px; margin:0 auto 16px; gap:12px; flex-wrap:wrap; }
+      .dg-header { display:flex; align-items:center; justify-content:space-between; max-width:960px; margin:0 auto 18px; gap:12px; flex-wrap:wrap; }
       .dg-brand { display:flex; align-items:center; gap:12px; }
       .dg-brand-mark { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:15px; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: linear-gradient(145deg, rgba(79,195,192,0.18), rgba(79,195,192,0.04)); border:1px solid rgba(79,195,192,0.35); color:#4FC3C0; box-shadow: 0 0 18px rgba(79,195,192,0.25); }
       .dg-brand-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:18px; letter-spacing:0.5px; }
@@ -3726,7 +3768,7 @@ function Style() {
       .dg-inline-btn { padding:4px 10px; font-size:12px; margin-left:8px; }
       .dg-mini-btn { padding:5px 10px; font-size:12px; }
 
-      .dg-nav { display:flex; gap:6px; max-width:680px; margin:0 auto 22px; background: var(--panel); border:1px solid var(--panel-border); border-radius:12px; padding:4px; }
+      .dg-nav { display:flex; gap:6px; max-width:960px; margin:0 auto 26px; background: var(--panel); border:1px solid var(--panel-border); border-radius:12px; padding:4px; }
       .dg-nav-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:transparent; border:none; color:var(--text-dim); font-family:'Inter',sans-serif; font-size:13px; font-weight:600; padding:9px; border-radius:9px; cursor:pointer; }
       .dg-nav-on { background: rgba(79,195,192,0.14); color:#4FC3C0; }
       .dg-nav-breadcrumb { justify-content:flex-start; }
@@ -3773,7 +3815,12 @@ function Style() {
       .dg-month-count { margin-left:auto; font-family:'JetBrains Mono', monospace; font-size:11px; color:#8B96A8; background:#1A1F2B; padding:2px 8px; border-radius:100px; }
       .dg-month-items { display:flex; flex-direction:column; gap:8px; padding:10px; }
 
-      .dg-summary { display:flex; gap:8px; max-width:640px; margin:0 auto 28px; flex-wrap:wrap; }
+      .dg-overview-head { max-width:960px; margin:0 auto 18px; padding:22px 24px; box-sizing:border-box; display:flex; align-items:flex-end; justify-content:space-between; gap:24px; background:linear-gradient(135deg, rgba(79,195,192,0.09), rgba(22,28,40,0.56) 48%, rgba(255,255,255,0.02)); border:1px solid rgba(255,255,255,0.08); border-radius:18px; box-shadow:0 18px 50px -34px rgba(0,0,0,0.85); }
+      .dg-overview-copy { min-width:0; }
+      .dg-eyebrow { display:block; margin-bottom:6px; color:#4FC3C0; font-size:10.5px; font-weight:700; letter-spacing:1.25px; text-transform:uppercase; }
+      .dg-overview-copy h1 { margin:0; font-family:'Space Grotesk',sans-serif; font-size:24px; line-height:1.1; letter-spacing:-0.35px; }
+      .dg-overview-copy p { margin:8px 0 0; max-width:470px; color:var(--text-dim); font-size:12.5px; line-height:1.5; }
+      .dg-summary { display:flex; justify-content:flex-end; gap:7px; margin:0; flex-wrap:wrap; }
       .dg-chip { --c:#888; display:flex; align-items:center; gap:6px; font-size:12px; padding:6px 12px; border-radius:100px; background: var(--panel); border:1px solid var(--panel-border); color: var(--text-dim); font-family:'JetBrains Mono', monospace; }
       .dg-chip-dot { width:7px; height:7px; border-radius:50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
 
@@ -4126,41 +4173,23 @@ function Style() {
         .dg-print-total { margin-top:14px; font-family:'JetBrains Mono', monospace; font-size:15px; font-weight:700; color:#0f766e; text-align:right; }
       }
 
-      .dg-plant-outer { max-width:760px; margin:0 auto; padding:14px 4px 64px; perspective:1900px; position:relative; }
-      .dg-plant-outer::after { content:''; position:absolute; left:6%; right:6%; bottom:16px; height:42px; background: radial-gradient(ellipse, rgba(0,0,0,0.6), transparent 72%); filter:blur(5px); z-index:-1; }
-      .dg-plant-grid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr); gap:6px; background:#03050a; padding:6px; border-radius:18px; transform:rotateX(35deg); transform-style:preserve-3d; box-shadow: 0 52px 80px -26px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.06); }
-      .dg-room-tile { position:relative; aspect-ratio:auto; min-height:210px; border-radius:0; padding:0; cursor:pointer; box-sizing:border-box; background:#181D28; overflow:hidden; transition: box-shadow 0.18s ease, filter 0.18s ease, transform 0.18s ease; transform-style:preserve-3d; transform: translateZ(6px);
-        border-top:5px solid rgba(255,255,255,0.14); border-left:5px solid rgba(255,255,255,0.08); border-bottom:5px solid rgba(0,0,0,0.45); border-right:5px solid rgba(0,0,0,0.32);
-        box-shadow: inset 0 22px 26px -14px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(255,255,255,0.03);
-      }
-      .dg-room-tile:hover { transform: translateZ(14px); box-shadow: inset 0 22px 26px -14px rgba(0,0,0,0.65), inset 0 0 0 3px var(--glow), inset 0 0 30px -8px var(--glow); filter:brightness(1.1); z-index:2; }
-      .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
-      .dg-room-tile:nth-child(3) { border-radius:0 16px 0 0; }
-      .dg-room-tile:nth-child(4) { border-radius:0 0 0 16px; }
-      .dg-room-tile:nth-child(6) { border-radius:0 0 16px 0; }
+      .dg-plant-outer { max-width:960px; margin:0 auto; padding:0 0 64px; position:relative; }
+      .dg-plant-outer::after { display:none; }
+      .dg-plant-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-template-rows:repeat(2,1fr); gap:14px; background:transparent; padding:0; }
+      .dg-room-tile { position:relative; aspect-ratio:4/3; min-height:0; border-radius:18px; padding:0; cursor:pointer; box-sizing:border-box; background:#181D28; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow:0 18px 36px -26px rgba(0,0,0,0.95); transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+      .dg-room-tile:hover { transform:translateY(-4px); border-color:color-mix(in srgb, var(--glow) 62%, rgba(255,255,255,0.12)); box-shadow:0 22px 45px -24px rgba(0,0,0,0.95), 0 0 0 1px color-mix(in srgb, var(--glow) 25%, transparent); z-index:2; }
+      .dg-room-tile:nth-child(1), .dg-room-tile:nth-child(3), .dg-room-tile:nth-child(4), .dg-room-tile:nth-child(6) { border-radius:18px; }
       .dg-room-tile-oficina { background: #181D28; }
       .dg-room-tile-fabrica { background: #1A1F27; }
       .dg-room-tile-despacho { background: #1A1F27; }
 
-      .dg-room-scene { position:absolute; inset:0; background: radial-gradient(circle at 30% 22%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 62%); }
-      .dg-scene-pattern { position:absolute; inset:0; opacity:0.55; }
-      .dg-scene-pattern-arcs { background: repeating-radial-gradient(circle at 88% 12%, transparent 0 9px, color-mix(in srgb, var(--accent) 32%, transparent) 9px 10.5px, transparent 10.5px 20px); }
-      .dg-scene-pattern-bars {
-        background-repeat:no-repeat;
-        background-image:
-          linear-gradient(color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 30%, transparent)),
-          linear-gradient(color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 30%, transparent)),
-          linear-gradient(color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 30%, transparent));
-        background-size: 9% 26%, 9% 42%, 9% 60%;
-        background-position: right 16% bottom 12%, right 27% bottom 12%, right 38% bottom 12%;
-      }
-      .dg-scene-pattern-ledger { background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent) 26%, transparent) 0 1px, transparent 1px 15px); }
-      .dg-scene-pattern-hazard { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--accent) 20%, transparent) 0 10px, transparent 10px 20px); }
-      .dg-scene-pattern-rings { background: repeating-radial-gradient(circle at 50% 58%, transparent 0 13px, color-mix(in srgb, var(--accent) 30%, transparent) 13px 14.5px, transparent 14.5px 26px); }
-      .dg-scene-pattern-lanes { background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 26%, transparent) 0 18px, transparent 18px 38px); }
-      .dg-scene-watermark { position:absolute; right:-8%; bottom:-12%; width:58%; height:58%; color: var(--accent); opacity:0.24; stroke-width:1.3; }
+      .dg-room-scene { position:absolute; inset:0; background:#111722; }
+      .dg-scene-image { position:absolute; inset:0; background-repeat:no-repeat; background-size:300% 200%; filter:saturate(.86) contrast(1.04); transform:scale(1.015); transition:transform .45s ease, filter .3s ease; }
+      .dg-room-tile:hover .dg-scene-image { transform:scale(1.055); filter:saturate(1) contrast(1.05); }
+      .dg-scene-shade { position:absolute; inset:0; background:linear-gradient(180deg, rgba(4,7,12,0.04) 0%, rgba(4,7,12,0.2) 43%, rgba(4,7,12,0.92) 100%), linear-gradient(130deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 45%); }
+      .dg-scene-watermark { display:none; }
 
-      .dg-room-plate { position:absolute; left:6%; right:6%; bottom:7%; display:flex; align-items:center; gap:7px; background: rgba(8,10,15,0.82); border:1px solid var(--glow); border-radius:10px; padding:8px 10px; box-shadow:0 0 14px -2px var(--glow); backdrop-filter: blur(2px); }
+      .dg-room-plate { position:absolute; left:12px; right:12px; bottom:12px; display:flex; align-items:center; gap:8px; background:rgba(8,11,17,0.78); border:1px solid color-mix(in srgb, var(--glow) 54%, rgba(255,255,255,0.1)); border-radius:12px; padding:10px 11px; box-shadow:0 12px 30px -18px rgba(0,0,0,0.95); backdrop-filter:blur(14px); }
       .dg-room-plate-num { font-family:'JetBrains Mono', monospace; font-size:10px; color:#8B96A8; }
       .dg-room-plate-icon { --glow:#4FC3C0; width:26px; height:26px; min-width:26px; border-radius:7px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 18%, transparent); color: var(--glow); }
       .dg-room-plate-text { display:flex; flex-direction:column; min-width:0; flex:1; }
@@ -4170,10 +4199,13 @@ function Style() {
 
       @media (max-width:680px) {
         .dg-app { padding:16px 12px 48px; }
+        .dg-overview-head { align-items:flex-start; flex-direction:column; gap:16px; padding:18px; }
+        .dg-overview-copy h1 { font-size:21px; }
+        .dg-summary { justify-content:flex-start; }
         .dg-plant-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(3,1fr); transform:none; gap:8px; box-shadow:none; padding:0; background:transparent; }
         .dg-plant-outer { perspective:none; padding:0 0 24px; }
         .dg-plant-outer::after { display:none; }
-        .dg-room-tile { min-height:150px; border-radius:14px !important; border-width:3px; border-color: rgba(255,255,255,0.1); transform:none; box-shadow: 0 6px 16px -8px rgba(0,0,0,0.6); }
+        .dg-room-tile { min-height:150px; border-radius:14px !important; border-width:1px; border-color: rgba(255,255,255,0.1); transform:none; box-shadow: 0 6px 16px -8px rgba(0,0,0,0.6); }
         .dg-room-tile:hover { transform:none; }
         .dg-room-plate { left:5%; right:5%; bottom:5%; padding:6px 8px; gap:5px; }
         .dg-room-plate-icon { width:22px; height:22px; min-width:22px; }
@@ -4212,11 +4244,7 @@ function Style() {
         .dg-anotador { flex-direction:column; align-items:stretch; gap:4px; }
         .dg-anotador label { min-width:0; }
         .dg-sueldo-topbar > * { flex:1 1 auto; }
-        .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
-        .dg-room-tile:nth-child(2) { border-radius:0 16px 0 0; }
-        .dg-room-tile:nth-child(5) { border-radius:0 0 0 16px; }
-        .dg-room-tile:nth-child(6) { border-radius:0 0 16px 0; }
-        .dg-room-tile:nth-child(3), .dg-room-tile:nth-child(4) { border-radius:0; }
+        .dg-room-tile:nth-child(1), .dg-room-tile:nth-child(2), .dg-room-tile:nth-child(3), .dg-room-tile:nth-child(4), .dg-room-tile:nth-child(5), .dg-room-tile:nth-child(6) { border-radius:14px; }
         .dg-form-row { flex-direction:column; }
         .dg-charts { flex-direction:column; }
         .dg-quote-grid { flex-direction:column; }
@@ -4225,10 +4253,16 @@ function Style() {
       }
       @media (max-width:420px) {
         .dg-field-grid { grid-template-columns:1fr; }
-        .dg-plant-grid { grid-template-columns:1fr; grid-template-rows:none; }
-        .dg-room-tile { min-height:118px; }
+        .dg-plant-grid { grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:repeat(3,1fr); }
+        .dg-room-tile { min-height:150px; aspect-ratio:1/1; }
+        .dg-room-plate { left:7px; right:7px; bottom:7px; padding:7px; }
+        .dg-room-plate-pct { display:none; }
         .dg-quick-buttons { grid-template-columns:1fr !important; }
         .dg-total-card { min-width:100%; }
+      }
+      @media (max-width:340px) {
+        .dg-plant-grid { grid-template-columns:1fr; grid-template-rows:none; }
+        .dg-room-tile { min-height:190px; aspect-ratio:4/3; }
       }
       @media (prefers-reduced-motion: reduce) {
         .dg-spin { animation:none; }
