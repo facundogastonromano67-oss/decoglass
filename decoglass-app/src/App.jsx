@@ -2898,7 +2898,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
         <div className="dg-fab-funciones">
           {funciones.length === 0
             ? <span className="dg-fab-nofunc">Sin funciones extra</span>
-            : funciones.map((f) => (<span className="dg-fab-func" key={f.label}>{f.label}</span>))}
+            : funciones.map((f, i) => (<span className="dg-fab-func" key={i} style={{ background: "rgba(91,201,139,0.14)", border: "1px solid rgba(91,201,139,0.45)", color: "#5BC98B" }}>{f.label}</span>))}
         </div>
 
         {observaciones && (
