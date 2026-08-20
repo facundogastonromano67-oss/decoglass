@@ -158,6 +158,15 @@ const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Fac
 const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Pasado a fábrica", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
+const ENTREGA_ESTILO = {
+  "Interior": { clase: "interior", color: "#B583DE", icono: "🚚" },
+  "Envío flex": { clase: "flex", color: "#E5B54F", icono: "⚡" },
+  "Envío": { clase: "envio", color: "#4FC3C0", icono: "🚚" },
+  "Colocación": { clase: "coloca", color: "#7C8FE8", icono: "🔧" },
+  "Retira": { clase: "retira", color: "#8B96A8", icono: "🏢" },
+  default: { clase: "otro", color: "#8B96A8", icono: "📦" },
+};
+
 const ENVIO_METODOS = ["Envío", "Envío flex", "Interior", "Colocación"];
 
 const SECTOR_SUBPAGES = {
@@ -1962,7 +1971,8 @@ function emptyPedido(prefill) {
 }
 
 const QUICK_VIEWS = [
-  { id: "todos", label: "Todos" },
+  { id: "todos", label: "Activos" },
+  { id: "historial", label: "Historial (entregados)" },
   { id: "verificados", label: "Verificados → listos para fábrica" },
   { id: "facturar", label: "Pendiente de facturar" },
   { id: "envios", label: "Envíos de la semana" },
@@ -2032,10 +2042,13 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const canEditEstadoOnly = !canEditFull && ["fabrica", "logistica", "postventa"].includes(sessionSectorId);
 
   let visibles = pedidos.slice();
-  if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado");
+  if (quickView === "historial") visibles = visibles.filter((p) => p.estado === "Entregado" || p.estado === "Cancelado");
+  else if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado");
   else if (quickView === "facturar") visibles = visibles.filter((p) => !p.facturado);
   else if (quickView === "envios") visibles = visibles.filter((p) => ENVIO_METODOS.includes(p.metodo) && p.estado !== "Entregado");
-  else visibles = visibles.filter((p) => filtroEstado === "todos" || p.estado === filtroEstado);
+  else visibles = visibles
+    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
+    .filter((p) => filtroEstado === "todos" || p.estado === filtroEstado);
 
   visibles = visibles
     .filter((p) => filtroVendedor === "todos" || p.vendedor === filtroVendedor)
@@ -2091,6 +2104,16 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     } else {
       setOpenPedido(null); setCreating(false);
     }
+  }
+  function marcarEntregado(p) {
+    const saldo = pedidoSaldo(p);
+    if (saldo > 0 && !window.confirm(`Este pedido todavía tiene ${money(saldo)} de saldo pendiente.\n\nAl marcarlo entregado se va a registrar ese saldo como ingreso cobrado. ¿Confirmás?`)) return;
+    savePedido({ ...p, estado: "Entregado" });
+    if (onRegistrar) onRegistrar("Marcó entregado", `#${p.orden} — ${p.cliente}`);
+  }
+  function reabrir(p) {
+    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Espejo listo" } : x)));
+    if (onRegistrar) onRegistrar("Reabrió un pedido", `#${p.orden} — ${p.cliente}`);
   }
   function removePedido(id) {
     const p = pedidos.find((x) => x.id === id);
@@ -2164,6 +2187,16 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                 <a className="dg-btn-primary dg-confirmar-entrega-btn" href={waEntrega} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
                   <MessageCircle size={14} /> Confirmar entrega por WhatsApp
                 </a>
+              )}
+              {canEditFull && p.estado !== "Entregado" && p.estado !== "Cancelado" && (
+                <button className="dg-btn-entregado" onClick={(e) => { e.stopPropagation(); marcarEntregado(p); }}>
+                  <CheckCircle2 size={14} /> Marcar entregado y archivar
+                </button>
+              )}
+              {p.estado === "Entregado" && canEditFull && (
+                <button className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); reabrir(p); }}>
+                  <RotateCcw size={13} /> Reabrir pedido
+                </button>
               )}
               {p.estado === "Espejo listo" && !p.celular && (
                 <p className="dg-hint" style={{ marginTop: 8 }}>Sin celular cargado — no se puede armar el link de WhatsApp.</p>
@@ -2804,8 +2837,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
   const [busqueda, setBusqueda] = useState("");
   const [agrupado, setAgrupado] = useState("mes");
 
-  const activos = pedidos.filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado");
-  let visibles = filtroEstado === "activos" ? activos : filtroEstado === "demorados" ? pedidos.filter((p) => p.demorado) : pedidos;
+  // Fábrica solo ve pedidos ya verificados por PostVenta. Los "Sin pasar a fábrica" no aparecen.
+  const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
+  const activos = enFabrica.filter((p) => p.estado !== "Entregado");
+  let visibles = filtroEstado === "activos" ? activos : filtroEstado === "demorados" ? enFabrica.filter((p) => p.demorado) : enFabrica;
   visibles = visibles
     .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
@@ -2828,14 +2863,43 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
 
   const renderCard = (p) => {
     const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
+    const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
+    const funciones = [
+      { on: p.touch === "Touch", label: "TOUCH" },
+      { on: p.desemp === "Desempañante", label: "DESEMPAÑANTE" },
+      { on: p.horaTemp === "Hora y Temperatura", label: "HORA Y TEMP" },
+      { on: p.bluetooth !== "No", label: p.bluetooth ? p.bluetooth.toUpperCase() : "" },
+      { on: p.pulido === "Sí", label: "PULIDO" },
+    ].filter((f) => f.on && f.label);
     return (
-      <div className="dg-pedido-card dg-fabrica-card" key={p.id}>
-        <div className="dg-pedido-card-top">
-          <span className="dg-pedido-orden">#{p.orden}</span>
-          <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
+      <div className={`dg-pedido-card dg-fabrica-card dg-fab-${entrega.clase}`} key={p.id}>
+        <div className="dg-fab-head">
+          <span className="dg-fab-orden">#{p.orden}</span>
+          <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}</span>
+          <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{entrega.icono} {p.metodo}</span>
         </div>
-        <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.tipo}{p.grabado ? ` (${p.grabado})` : ""}</div>
-        <div className="dg-pago-meta">{funcionesTexto(p)}</div>
+
+        <div className="dg-fab-medida">
+          <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
+          {Number(p.cant) > 1 && <span className="dg-fab-cant">× {p.cant} unidades</span>}
+        </div>
+
+        <div className="dg-fab-specs">
+          <div><span>Forma</span><strong>{p.forma}</strong></div>
+          <div><span>Tipo</span><strong>{p.tipo}</strong></div>
+          <div><span>Tono de luz</span><strong className="dg-fab-tono">{p.tono || "—"}</strong></div>
+        </div>
+
+        {p.grabado && (
+          <div className="dg-fab-grabado"><strong>Grabado / detalle:</strong> {p.grabado}</div>
+        )}
+
+        <div className="dg-fab-funciones">
+          {funciones.length === 0
+            ? <span className="dg-fab-nofunc">Sin funciones extra</span>
+            : funciones.map((f) => (<span className="dg-fab-func" key={f.label}>{f.label}</span>))}
+        </div>
+
         <div className="dg-pedido-badges">
           <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
           {p.demorado && <span className="dg-badge" style={{ "--bc": "#E06A6A" }}><AlertTriangle size={12} /> Demorado</span>}
@@ -2869,6 +2933,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
           <button className={agrupado === "mes" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("mes")}>Mes</button>
           <button className={agrupado === "semana" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("semana")}>Semana</button>
         </div>
+      </div>
+
+      <div className="dg-fab-leyenda">
+        <span style={{ "--ec": "#B583DE" }}>Interior</span>
+        <span style={{ "--ec": "#E5B54F" }}>Envío flex</span>
+        <span style={{ "--ec": "#4FC3C0" }}>Envío</span>
+        <span style={{ "--ec": "#7C8FE8" }}>Colocación</span>
+        <span style={{ "--ec": "#8B96A8" }}>Retira</span>
       </div>
 
       {visibles.length === 0 && <div className="dg-empty">No hay pedidos en esta vista.</div>}
@@ -3827,6 +3899,55 @@ function Style() {
       .dg-save-error span { color:#8B96A8; font-size:11.5px; }
       @media (max-width:680px) { .dg-save-toast { left:12px; right:12px; bottom:12px; max-width:none; } }
 
+      .dg-fab-leyenda { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+      .dg-fab-leyenda span { --ec:#8B96A8; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px;
+        padding:4px 10px; border-radius:100px; border-left:3px solid var(--ec); background: rgba(255,255,255,0.03); color:#8B96A8; }
+
+      /* ---- FICHA TECNICA DE FABRICA ---- */
+      .dg-fabrica-card { border-left-width:4px !important; }
+      .dg-fab-interior { border-left-color:#B583DE !important; background: linear-gradient(90deg, rgba(181,131,222,0.09), rgba(255,255,255,0.025) 40%) !important; }
+      .dg-fab-flex { border-left-color:#E5B54F !important; background: linear-gradient(90deg, rgba(229,181,79,0.1), rgba(255,255,255,0.025) 40%) !important; }
+      .dg-fab-envio { border-left-color:#4FC3C0 !important; }
+      .dg-fab-coloca { border-left-color:#7C8FE8 !important; }
+      .dg-fab-retira { border-left-color: rgba(255,255,255,0.12) !important; }
+
+      .dg-fab-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+      .dg-fab-orden { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#4FC3C0; }
+      .dg-fab-cliente { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:15px; flex:1; min-width:0; }
+      .dg-fab-entrega { --ec:#8B96A8; display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:700;
+        text-transform:uppercase; letter-spacing:0.3px; padding:5px 11px; border-radius:100px;
+        background: color-mix(in srgb, var(--ec) 18%, transparent); color: var(--ec);
+        border:1px solid color-mix(in srgb, var(--ec) 50%, transparent); white-space:nowrap; }
+
+      .dg-fab-medida { display:flex; align-items:baseline; gap:8px; margin:4px 0 2px; }
+      .dg-fab-medida strong { font-family:'JetBrains Mono', monospace; font-size:27px; font-weight:700; color:#E7ECF2; letter-spacing:-0.5px; }
+      .dg-fab-medida small { font-size:12px; color:#8B96A8; }
+      .dg-fab-cant { margin-left:6px; font-size:12px; font-weight:700; color:#E5B54F; background: rgba(229,181,79,0.14);
+        border:1px solid rgba(229,181,79,0.4); border-radius:6px; padding:3px 8px; }
+
+      .dg-fab-specs { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+      .dg-fab-specs > div { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:9px; padding:8px 10px; }
+      .dg-fab-specs span { display:block; font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:#7A8699; margin-bottom:3px; }
+      .dg-fab-specs strong { font-size:13px; font-weight:600; color:#E7ECF2; }
+      .dg-fab-tono { color:#E5B54F !important; }
+
+      .dg-fab-grabado { font-size:12.5px; color:#E7ECF2; background: rgba(79,195,192,0.08);
+        border:1px solid rgba(79,195,192,0.28); border-radius:9px; padding:9px 11px; }
+      .dg-fab-grabado strong { color:#4FC3C0; font-size:11px; text-transform:uppercase; letter-spacing:0.3px; }
+
+      .dg-fab-funciones { display:flex; gap:6px; flex-wrap:wrap; }
+      .dg-fab-func { font-size:10.5px; font-weight:700; letter-spacing:0.4px; padding:5px 10px; border-radius:7px;
+        background: rgba(91,201,139,0.14); border:1px solid rgba(91,201,139,0.45); color:#5BC98B; }
+      .dg-fab-nofunc { font-size:11.5px; color:#5B6576; font-style:italic; }
+
+      @media (max-width:680px) {
+        .dg-fab-medida strong { font-size:24px; }
+        .dg-fab-specs { grid-template-columns:1fr 1fr; }
+      }
+      @media (max-width:420px) {
+        .dg-fab-specs { grid-template-columns:1fr; }
+      }
+
       /* ---- PLANILLA DE SUELDOS ---- */
       .dg-sueldo-topbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
       .dg-periodo-sel { display:flex; align-items:center; gap:8px; background:#1A1F2B; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:7px 12px; font-size:13px; color:#8B96A8; }
@@ -3945,6 +4066,10 @@ function Style() {
       .dg-pedido-list { max-height:none; }
       .dg-pedido-orden { font-family:'JetBrains Mono', monospace; font-size:11px; color:#8B96A8; }
       .dg-pedido-card { display:flex; flex-direction:column; gap:8px; width:100%; max-width:100%; text-align:left; background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:12px 14px; color:#E7ECF2; cursor:pointer; font-family:'Inter',sans-serif; min-width:0; box-sizing:border-box; }
+      .dg-btn-entregado { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; background: rgba(91,201,139,0.12);
+        border:1px solid rgba(91,201,139,0.45); color:#5BC98B; border-radius:10px; padding:10px; font-size:12.5px; font-weight:600;
+        cursor:pointer; font-family:'Inter',sans-serif; transition: all .15s ease; }
+      .dg-btn-entregado:hover { background: rgba(91,201,139,0.2); }
       .dg-confirmar-entrega-btn { justify-content:center; text-decoration:none; background: linear-gradient(145deg, #5BC98B, #2FB86A); }
       .dg-pedido-card:hover { border-color:rgba(79,195,192,0.35); background: rgba(255,255,255,0.04); transform: translateY(-1px); }
       .dg-pedido-card { transition: border-color .15s ease, background .15s ease, transform .15s ease; }
