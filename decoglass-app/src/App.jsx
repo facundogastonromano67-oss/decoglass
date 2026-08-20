@@ -1031,22 +1031,79 @@ function liquidacionTotal(emp, liq) {
     - (Number(liq.adelanto) || 0);
 }
 
+const SEMANAS = [1, 2, 3, 4, 5];
+const MESES_NOM = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+function periodoActual() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function periodoLabel(per) {
+  const [y, m] = per.split("-");
+  return `${MESES_NOM[parseInt(m, 10) - 1]} ${y}`;
+}
+function periodosCercanos() {
+  const out = [];
+  const d = new Date();
+  for (let i = 3; i >= -1; i--) {
+    const dt = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    out.push(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return out.reverse();
+}
+function celdaVacia() { return { horas: "", ventas: "", he: "", adelanto: "", plus: false }; }
+function filaVacia(empleadoId, periodo) {
+  const semanas = {};
+  SEMANAS.forEach((n) => { semanas[n] = celdaVacia(); });
+  return { id: uid(), empleadoId, periodo, semanas, nota: "" };
+}
+const nnum = (v) => Number(v) || 0;
+
+function totalesFila(emp, fila) {
+  const sem = fila?.semanas || {};
+  const horas = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.horas), 0);
+  const ventas = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.ventas), 0);
+  const he = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.he), 0);
+  const adelantos = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.adelanto), 0);
+  const pluses = SEMANAS.filter((n) => sem[n]?.plus).length;
+  const pagoHoras = horas * nnum(emp?.valorHora);
+  const pagoComision = ventas * (nnum(emp?.comisionPct) / 100);
+  const pagoHE = he * nnum(emp?.valorHoraExtra);
+  const pagoPlus = pluses * nnum(emp?.plusSemanal);
+  const total = emp?.sector === "Taller"
+    ? nnum(emp?.sueldoBase) + nnum(emp?.complementoFijo) + pagoHE + pagoPlus - adelantos
+    : pagoHoras + pagoComision;
+  return { horas, ventas, he, adelantos, pluses, pagoHoras, pagoComision, pagoHE, pagoPlus, total };
+}
+
 function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiquidaciones }) {
-  const [tab, setTab] = useState("liquidaciones");
+  const [periodo, setPeriodo] = useState(periodoActual());
+  const [verEmpleados, setVerEmpleados] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
-  const [filtroPeriodo, setFiltroPeriodo] = useState("todos");
 
-  const [empleadoId, setEmpleadoId] = useState(empleados[0]?.id || "");
-  const [periodo, setPeriodo] = useState("");
-  const [horas, setHoras] = useState("");
-  const [ventasCobradas, setVentasCobradas] = useState("");
-  const [horasExtra, setHorasExtra] = useState("");
-  const [adelanto, setAdelanto] = useState("");
-  const [plusesAplicados, setPlusesAplicados] = useState("");
+  const oficina = empleados.filter((e) => e.sector === "Oficina/Ventas");
+  const taller = empleados.filter((e) => e.sector === "Taller");
 
-  const empSel = empleados.find((e) => e.id === empleadoId);
-  const periodos = [...new Set(liquidaciones.map((l) => l.periodo))];
-
+  function filaDe(empId) {
+    return liquidaciones.find((l) => l.empleadoId === empId && l.periodo === periodo && l.semanas) || null;
+  }
+  function setCelda(empId, semana, campo, valor) {
+    const existe = filaDe(empId);
+    if (existe) {
+      onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id
+        ? { ...l, semanas: { ...l.semanas, [semana]: { ...celdaVacia(), ...l.semanas[semana], [campo]: valor } } }
+        : l)));
+    } else {
+      const nueva = filaVacia(empId, periodo);
+      nueva.semanas[semana] = { ...celdaVacia(), [campo]: valor };
+      onChangeLiquidaciones([nueva, ...liquidaciones]);
+    }
+  }
+  function setNota(empId, nota) {
+    const existe = filaDe(empId);
+    if (existe) onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id ? { ...l, nota } : l)));
+    else onChangeLiquidaciones([{ ...filaVacia(empId, periodo), nota }, ...liquidaciones]);
+  }
   function saveEmpleado(emp) {
     const exists = empleados.some((e) => e.id === emp.id);
     onChangeEmpleados(exists ? empleados.map((e) => (e.id === emp.id ? emp : e)) : [...empleados, emp]);
@@ -1054,48 +1111,43 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
   }
   function removeEmpleado(id) { onChangeEmpleados(empleados.filter((e) => e.id !== id)); }
 
-  function addLiquidacion() {
-    if (!empSel || !periodo.trim()) return;
-    onChangeLiquidaciones([{
-      id: uid(), empleadoId, empleadoNombre: empSel.nombre, sector: empSel.sector, periodo: periodo.trim(),
-      horas: Number(horas) || 0, ventasCobradas: Number(ventasCobradas) || 0,
-      horasExtra: Number(horasExtra) || 0, adelanto: Number(adelanto) || 0, plusesAplicados: Number(plusesAplicados) || 0,
-      fecha: new Date().toISOString().slice(0, 10),
-    }, ...liquidaciones]);
-    setHoras(""); setVentasCobradas(""); setHorasExtra(""); setAdelanto(""); setPlusesAplicados("");
-  }
-  function removeLiquidacion(id) { onChangeLiquidaciones(liquidaciones.filter((l) => l.id !== id)); }
-
-  const visibles = liquidaciones.filter((l) => filtroPeriodo === "todos" || l.periodo === filtroPeriodo);
-  const totalPorSector = SUELDOS_SECTORES.map((s) => ({
-    sector: s,
-    total: visibles.filter((l) => l.sector === s).reduce((a, l) => a + liquidacionTotal(empleados.find((e) => e.id === l.empleadoId), l), 0),
-  }));
-  const totalGeneral = totalPorSector.reduce((a, s) => a + s.total, 0);
+  const totOficina = oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).total, 0);
+  const totTaller = taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).total, 0);
 
   return (
     <div className="dg-page">
-      <div className="dg-quickviews" style={{ marginBottom: 16 }}>
-        <button className={`dg-quickview-btn ${tab === "liquidaciones" ? "dg-quickview-on" : ""}`} onClick={() => setTab("liquidaciones")}>Liquidaciones</button>
-        <button className={`dg-quickview-btn ${tab === "empleados" ? "dg-quickview-on" : ""}`} onClick={() => setTab("empleados")}>Empleados</button>
+      <div className="dg-sueldo-topbar">
+        <div className="dg-periodo-sel">
+          <span>Mes:</span>
+          <select value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
+            {periodosCercanos().map((p) => (<option key={p} value={p}>{periodoLabel(p)}</option>))}
+          </select>
+        </div>
+        <button className="dg-btn-ghost" onClick={() => setVerEmpleados((v) => !v)}>
+          <Settings2 size={14} /> {verEmpleados ? "Ocultar" : "Editar"} empleados y valores
+        </button>
+        <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir</button>
       </div>
 
-      {tab === "empleados" && (
-        <>
-          <div className="dg-section-card">
-            <div className="dg-section-header"><UserPlus size={14} /> {editingEmp ? "Editar empleado" : "Nuevo empleado"}</div>
-            <EmpleadoForm empleado={editingEmp || emptyEmpleadoSueldo()} onSave={saveEmpleado} onCancel={() => setEditingEmp(null)} />
-          </div>
-          <div className="dg-task-list">
-            {empleados.length === 0 && <div className="dg-empty">No hay empleados cargados.</div>}
+      <div className="dg-totales">
+        <div className="dg-total-card" style={{ "--c": "#48E0D8" }}><span>Total Oficina / Ventas</span><strong>{money(totOficina)}</strong></div>
+        <div className="dg-total-card" style={{ "--c": "#F5C451" }}><span>Total Taller</span><strong>{money(totTaller)}</strong></div>
+        <div className="dg-total-card" style={{ "--c": "#52E08A" }}><span>Total del mes</span><strong>{money(totOficina + totTaller)}</strong></div>
+      </div>
+
+      {verEmpleados && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><UserPlus size={14} /> {editingEmp ? "Editar empleado" : "Nuevo empleado"}</div>
+          <EmpleadoForm key={editingEmp?.id || "nuevo"} empleado={editingEmp || emptyEmpleadoSueldo()} onSave={saveEmpleado} onCancel={editingEmp ? () => setEditingEmp(null) : null} />
+          <div className="dg-task-list" style={{ marginTop: 14, marginBottom: 0 }}>
             {empleados.map((e) => (
               <div className="dg-task" key={e.id}>
                 <div className="dg-pago-info">
                   <span>{e.nombre} <span className="dg-badge" style={{ "--bc": e.sector === "Taller" ? "#F5C451" : "#48E0D8" }}>{e.sector}</span></span>
                   <span className="dg-pago-meta">
                     {e.sector === "Oficina/Ventas"
-                      ? `Valor hora: ${money(e.valorHora)} · Comisión: ${e.comisionPct}%`
-                      : `Sueldo: ${money(e.sueldoBase)} + ${money(e.complementoFijo)} · HE: ${money(e.valorHoraExtra)} · Plus: ${money(e.plusSemanal)}`}
+                      ? `${money(e.valorHora)}/hora · ${e.comisionPct}% comisión`
+                      : `${money(e.sueldoBase)} + ${money(e.complementoFijo)} · HE ${money(e.valorHoraExtra)} · plus ${money(e.plusSemanal)}`}
                   </span>
                 </div>
                 <button className="dg-icon-btn" onClick={() => setEditingEmp(e)}><Pencil size={14} /></button>
@@ -1103,73 +1155,126 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
 
-      {tab === "liquidaciones" && (
-        <>
-          <div className="dg-totales">
-            {totalPorSector.map((s) => (
-              <div className="dg-total-card" style={{ "--c": s.sector === "Taller" ? "#F5C451" : "#48E0D8" }} key={s.sector}><span>Total {s.sector}</span><strong>{money(s.total)}</strong></div>
-            ))}
-            <div className="dg-total-card" style={{ "--c": "#52E08A" }}><span>Total general</span><strong>{money(totalGeneral)}</strong></div>
+      {/* ---- OFICINA / VENTAS ---- */}
+      <div className="dg-sueldo-block">
+        <div className="dg-sueldo-title">Oficina / Ventas — liquidación semanal por hora</div>
+        {oficina.length === 0 ? <div className="dg-empty">No hay empleados de Oficina/Ventas cargados.</div> : (
+          <div className="dg-tabla-scroll">
+            <table className="dg-tabla">
+              <thead>
+                <tr>
+                  <th className="dg-sticky-col">Empleado</th>
+                  <th>Valor hora</th><th>Com. %</th>
+                  {SEMANAS.map((n) => (<th key={n} className="dg-th-semana">S{n}<small>hs / ventas</small></th>))}
+                  <th>Total hs</th><th>$ Horas</th><th>$ Comisión</th><th className="dg-th-total">TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {oficina.map((e) => {
+                  const fila = filaDe(e.id); const t = totalesFila(e, fila);
+                  return (
+                    <tr key={e.id}>
+                      <td className="dg-sticky-col dg-td-nombre">{e.nombre}</td>
+                      <td className="dg-td-ref">{money(e.valorHora)}</td>
+                      <td className="dg-td-ref">{e.comisionPct}%</td>
+                      {SEMANAS.map((n) => (
+                        <td key={n} className="dg-td-semana">
+                          <input type="number" className="dg-celda" placeholder="hs" value={fila?.semanas?.[n]?.horas ?? ""} onChange={(ev) => setCelda(e.id, n, "horas", ev.target.value)} />
+                          <input type="number" className="dg-celda dg-celda-sec" placeholder="$ vta" value={fila?.semanas?.[n]?.ventas ?? ""} onChange={(ev) => setCelda(e.id, n, "ventas", ev.target.value)} />
+                        </td>
+                      ))}
+                      <td className="dg-td-calc">{t.horas}</td>
+                      <td className="dg-td-calc">{money(t.pagoHoras)}</td>
+                      <td className="dg-td-calc">{money(t.pagoComision)}</td>
+                      <td className="dg-td-total">{money(t.total)}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="dg-tr-total">
+                  <td className="dg-sticky-col">TOTAL</td><td /><td />
+                  {SEMANAS.map((n) => (
+                    <td key={n} className="dg-td-calc">{oficina.reduce((a, e) => a + nnum(filaDe(e.id)?.semanas?.[n]?.horas), 0)} hs</td>
+                  ))}
+                  <td className="dg-td-calc">{oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).horas, 0)}</td>
+                  <td className="dg-td-calc">{money(oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoHoras, 0))}</td>
+                  <td className="dg-td-calc">{money(oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoComision, 0))}</td>
+                  <td className="dg-td-total">{money(totOficina)}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
+        )}
+        {oficina.map((e) => (
+          <div className="dg-anotador" key={e.id}>
+            <label>Anotador {e.nombre}</label>
+            <input value={filaDe(e.id)?.nota ?? ""} onChange={(ev) => setNota(e.id, ev.target.value)} placeholder="Ej: le debo 2,5 hs de la semana 3..." />
+          </div>
+        ))}
+      </div>
 
-          <div className="dg-section-card">
-            <div className="dg-section-header"><Plus size={14} /> Nueva liquidación</div>
-            <EnterFlow onSubmit={addLiquidacion} autoFocus={false}>
-            <div className="dg-field-grid">
-              <Field label="Empleado">
-                <select value={empleadoId} onChange={(e) => setEmpleadoId(e.target.value)}>
-                  {empleados.map((e) => (<option key={e.id} value={e.id}>{e.nombre} ({e.sector})</option>))}
-                </select>
-              </Field>
-              <Field label="Período"><input value={periodo} onChange={(e) => setPeriodo(e.target.value)} placeholder="Ej: Semana 1 - Agosto 2026" /></Field>
-            </div>
-            {empSel?.sector === "Oficina/Ventas" ? (
-              <div className="dg-field-grid" style={{ marginTop: 12 }}>
-                <Field label="Horas trabajadas"><input type="number" value={horas} onChange={(e) => setHoras(e.target.value)} /></Field>
-                <Field label="Ventas cobradas ($)"><input type="number" value={ventasCobradas} onChange={(e) => setVentasCobradas(e.target.value)} /></Field>
-              </div>
-            ) : (
-              <div className="dg-field-grid" style={{ marginTop: 12 }}>
-                <Field label="Horas extra"><input type="number" value={horasExtra} onChange={(e) => setHorasExtra(e.target.value)} /></Field>
-                <Field label="Adelantos ($)"><input type="number" value={adelanto} onChange={(e) => setAdelanto(e.target.value)} /></Field>
-                <Field label="Semanas con plus"><input type="number" value={plusesAplicados} onChange={(e) => setPlusesAplicados(e.target.value)} /></Field>
-              </div>
-            )}
-            </EnterFlow>
-            <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addLiquidacion}><Plus size={16} /> Agregar liquidación</button></div>
+      {/* ---- TALLER ---- */}
+      <div className="dg-sueldo-block">
+        <div className="dg-sueldo-title">Taller — sueldo mensual + horas extra y plus semanal</div>
+        {taller.length === 0 ? <div className="dg-empty">No hay empleados de Taller cargados.</div> : (
+          <div className="dg-tabla-scroll">
+            <table className="dg-tabla">
+              <thead>
+                <tr>
+                  <th className="dg-sticky-col">Empleado</th>
+                  <th>Sueldo</th><th>Complem.</th>
+                  {SEMANAS.map((n) => (<th key={n} className="dg-th-semana">S{n}<small>HE / adel. / plus</small></th>))}
+                  <th>Tot HE</th><th>$ HE</th><th>$ Plus</th><th>Adelantos</th><th className="dg-th-total">TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {taller.map((e) => {
+                  const fila = filaDe(e.id); const t = totalesFila(e, fila);
+                  return (
+                    <tr key={e.id}>
+                      <td className="dg-sticky-col dg-td-nombre">{e.nombre}</td>
+                      <td className="dg-td-ref">{money(e.sueldoBase)}</td>
+                      <td className="dg-td-ref">{money(e.complementoFijo)}</td>
+                      {SEMANAS.map((n) => (
+                        <td key={n} className="dg-td-semana">
+                          <input type="number" className="dg-celda" placeholder="HE" value={fila?.semanas?.[n]?.he ?? ""} onChange={(ev) => setCelda(e.id, n, "he", ev.target.value)} />
+                          <input type="number" className="dg-celda dg-celda-sec" placeholder="adel." value={fila?.semanas?.[n]?.adelanto ?? ""} onChange={(ev) => setCelda(e.id, n, "adelanto", ev.target.value)} />
+                          <button className={`dg-celda-plus ${fila?.semanas?.[n]?.plus ? "dg-celda-plus-on" : ""}`}
+                            title="Plus semanal" onClick={() => setCelda(e.id, n, "plus", !fila?.semanas?.[n]?.plus)}>plus</button>
+                        </td>
+                      ))}
+                      <td className="dg-td-calc">{t.he}</td>
+                      <td className="dg-td-calc">{money(t.pagoHE)}</td>
+                      <td className="dg-td-calc">{money(t.pagoPlus)}</td>
+                      <td className="dg-td-calc dg-td-neg">−{money(t.adelantos)}</td>
+                      <td className="dg-td-total">{money(t.total)}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="dg-tr-total">
+                  <td className="dg-sticky-col">TOTAL</td><td /><td />
+                  {SEMANAS.map((n) => (
+                    <td key={n} className="dg-td-calc">{taller.reduce((a, e) => a + nnum(filaDe(e.id)?.semanas?.[n]?.he), 0)} hs</td>
+                  ))}
+                  <td className="dg-td-calc">{taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).he, 0)}</td>
+                  <td className="dg-td-calc">{money(taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoHE, 0))}</td>
+                  <td className="dg-td-calc">{money(taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoPlus, 0))}</td>
+                  <td className="dg-td-calc dg-td-neg">−{money(taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).adelantos, 0))}</td>
+                  <td className="dg-td-total">{money(totTaller)}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-
-          <div className="dg-crm-filters">
-            <Filter size={14} />
-            <select value={filtroPeriodo} onChange={(e) => setFiltroPeriodo(e.target.value)}>
-              <option value="todos">Todos los períodos</option>
-              {periodos.map((p) => (<option key={p} value={p}>{p}</option>))}
-            </select>
+        )}
+        {taller.map((e) => (
+          <div className="dg-anotador" key={e.id}>
+            <label>Anotador {e.nombre}</label>
+            <input value={filaDe(e.id)?.nota ?? ""} onChange={(ev) => setNota(e.id, ev.target.value)} placeholder="Ej: el plus de la semana 4 ya lo cobró..." />
           </div>
-
-          <div className="dg-task-list">
-            {visibles.length === 0 && <div className="dg-empty">No hay liquidaciones en esta vista.</div>}
-            {visibles.map((l) => {
-              const emp = empleados.find((e) => e.id === l.empleadoId);
-              return (
-                <div className="dg-task" key={l.id}>
-                  <div className="dg-pago-info">
-                    <span>{l.empleadoNombre} — {l.periodo}</span>
-                    <span className="dg-pago-meta">
-                      {l.sector === "Oficina/Ventas" ? `${l.horas} hs · ${money(l.ventasCobradas)} vendido` : `${l.horasExtra} hs extra · ${money(l.adelanto)} adelanto · ${l.plusesAplicados} plus`}
-                    </span>
-                  </div>
-                  <span className="dg-pago-monto">{money(liquidacionTotal(emp, l))}</span>
-                  <button className="dg-icon-btn dg-task-del" onClick={() => removeLiquidacion(l.id)}><Trash2 size={14} /></button>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+        ))}
+      </div>
     </div>
   );
 }
@@ -3246,6 +3351,44 @@ function Style() {
       .dg-field input:focus, .dg-field select:focus { border-color:#48E0D8; box-shadow: 0 0 0 3px rgba(72,224,216,0.12); }
       .dg-field input:disabled, .dg-field select:disabled { opacity:0.5; cursor:not-allowed; }
       .dg-comision-info { display:flex; align-items:center; gap:6px; font-size:12px; color:#8B96A8; background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:9px; padding:10px; }
+      /* ---- PLANILLA DE SUELDOS ---- */
+      .dg-sueldo-topbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+      .dg-periodo-sel { display:flex; align-items:center; gap:8px; background:#161B26; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:7px 12px; font-size:13px; color:#8B96A8; }
+      .dg-periodo-sel select { background:transparent; border:none; color:#48E0D8; font-weight:700; font-size:13px; outline:none; }
+      .dg-sueldo-block { margin-bottom:26px; }
+      .dg-sueldo-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:14px; color:#E7ECF2; margin-bottom:10px; padding-left:10px; border-left:3px solid #48E0D8; }
+      .dg-tabla-scroll { overflow-x:auto; border:1px solid rgba(255,255,255,0.08); border-radius:12px; background:#12161f; }
+      .dg-tabla { border-collapse:separate; border-spacing:0; width:100%; font-size:12px; }
+      .dg-tabla th { background:#191f2b; color:#8B96A8; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;
+        padding:9px 8px; text-align:center; white-space:nowrap; border-bottom:1px solid rgba(255,255,255,0.1); }
+      .dg-tabla th small { display:block; font-size:8.5px; font-weight:500; text-transform:none; letter-spacing:0; color:#5B6576; margin-top:2px; }
+      .dg-th-semana { min-width:82px; }
+      .dg-th-total { background:#1d2530 !important; color:#48E0D8 !important; }
+      .dg-tabla td { padding:6px 8px; text-align:center; border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:middle; }
+      .dg-tabla tbody tr:hover td { background: rgba(255,255,255,0.02); }
+      .dg-sticky-col { position:sticky; left:0; z-index:2; background:#12161f; text-align:left !important; min-width:96px; box-shadow: 2px 0 6px -3px rgba(0,0,0,0.7); }
+      .dg-tabla thead .dg-sticky-col { background:#191f2b; z-index:3; }
+      .dg-td-nombre { font-weight:600; color:#E7ECF2; font-size:12.5px; }
+      .dg-td-ref { color:#8B96A8; font-family:'JetBrains Mono', monospace; font-size:11px; white-space:nowrap; }
+      .dg-td-calc { font-family:'JetBrains Mono', monospace; font-size:11.5px; color:#C3CBD8; white-space:nowrap; }
+      .dg-td-neg { color:#F16565; }
+      .dg-td-total { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#52E08A; background: rgba(82,224,138,0.06); white-space:nowrap; }
+      .dg-td-semana { padding:5px 6px !important; }
+      .dg-celda { width:58px; background:#0F1420; border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:5px 4px;
+        color:#E7ECF2; font-family:'JetBrains Mono', monospace; font-size:11.5px; text-align:center; outline:none; display:block; margin:0 auto 3px; }
+      .dg-celda:focus { border-color:#48E0D8; box-shadow: 0 0 0 2px rgba(72,224,216,0.15); }
+      .dg-celda-sec { color:#8B96A8; font-size:10.5px; }
+      .dg-celda-plus { width:58px; display:block; margin:0 auto; background:#0F1420; border:1px solid rgba(255,255,255,0.1); border-radius:6px;
+        padding:3px; font-size:9px; font-weight:700; text-transform:uppercase; color:#5B6576; cursor:pointer; }
+      .dg-celda-plus-on { background: rgba(82,224,138,0.18); border-color:#52E08A; color:#52E08A; }
+      .dg-tr-total td { background:#191f2b !important; font-weight:700; border-top:2px solid rgba(72,224,216,0.3); border-bottom:none; }
+      .dg-tr-total .dg-sticky-col { background:#191f2b !important; color:#48E0D8; font-size:11px; letter-spacing:0.5px; }
+      .dg-anotador { display:flex; align-items:center; gap:10px; margin-top:8px; }
+      .dg-anotador label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; color:#7A8699; min-width:130px; }
+      .dg-anotador input { flex:1; background: rgba(245,196,81,0.05); border:1px solid rgba(245,196,81,0.2); border-radius:8px;
+        padding:7px 10px; color:#E7ECF2; font-size:12px; outline:none; }
+      .dg-anotador input:focus { border-color:#F5C451; }
+
       .dg-comision-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
       .dg-comision-toggle { display:flex; align-items:center; gap:8px; background:transparent; border:none; color:#E7ECF2; cursor:pointer; padding:0; flex:1; min-width:0; text-align:left; font-family:'Inter',sans-serif; flex-wrap:wrap; }
       .dg-comision-nombre { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:15px; }
@@ -3457,6 +3600,10 @@ function Style() {
         .dg-total-card { min-width:calc(50% - 4px); }
         .dg-room-strip { height:56px; }
         .dg-task-table-row { padding:14px 12px; font-size:14px; }
+        .dg-celda, .dg-celda-plus { width:52px; }
+        .dg-anotador { flex-direction:column; align-items:stretch; gap:4px; }
+        .dg-anotador label { min-width:0; }
+        .dg-sueldo-topbar > * { flex:1 1 auto; }
         .dg-room-tile:nth-child(1) { border-radius:16px 0 0 0; }
         .dg-room-tile:nth-child(2) { border-radius:0 16px 0 0; }
         .dg-room-tile:nth-child(5) { border-radius:0 0 0 16px; }
