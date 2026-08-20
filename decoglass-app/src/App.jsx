@@ -155,7 +155,6 @@ const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
 const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
 const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
-const COMISION_OPTIONS = ["No", "Liquidar", "Sí", "No aplica"];
 const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Pasado a fábrica", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
@@ -173,6 +172,7 @@ const SECTOR_SUBPAGES = {
   administracion: [
     { id: "pedidos", label: "Lista de ventas" },
     { id: "finanzas", label: "Finanzas" },
+    { id: "comisiones", label: "Comisiones" },
     { id: "sueldos", label: "Sueldos" },
     { id: "tareas", label: "Tareas" },
   ],
@@ -750,6 +750,7 @@ export default function App() {
   async function persistReclamos(next) { setReclamos(next); try { await storage.set("reclamos", JSON.stringify(next), true); } catch (e) {} }
   async function persistStockEspejos(next) { setStockEspejos(next); try { await storage.set("stock-espejos", JSON.stringify(next), true); } catch (e) {} }
   function createIncomeFromPedido(entry) { persistIncomes([entry, ...incomes]); }
+  function createPurchaseEntry(entry) { persistPurchases([entry, ...purchases]); }
 
   function updateSector(id, patch) { persistSectors(sectors.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
 
@@ -846,6 +847,7 @@ export default function App() {
             quotes={quotes} onChangeQuotes={persistQuotes}
             leads={leads} onChangeLeads={persistLeads}
             onCreateIncome={createIncomeFromPedido}
+            onCreatePurchase={createPurchaseEntry}
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
             facturas={facturas} onChangeFacturas={persistFacturas}
@@ -877,6 +879,137 @@ function LockedPage({ label, onLogin }) {
       <Lock size={24} />
       <p>{label} es información sensible del negocio. Iniciá sesión como admin para verla.</p>
       <button className="dg-btn-primary" onClick={onLogin}><Lock size={14} /> Iniciar sesión</button>
+    </div>
+  );
+}
+
+function ComisionesPanel({ pedidos, onChangePedidos, empleados, onCreatePurchase }) {
+  const [vendedorAbierto, setVendedorAbierto] = useState(null);
+  const [verPagadas, setVerPagadas] = useState(false);
+  const [aviso, setAviso] = useState(null);
+
+  const elegibles = pedidos.filter(comisionElegible);
+  const pendientes = elegibles.filter((p) => !p.comisionPagada);
+  const pagadas = elegibles.filter((p) => p.comisionPagada);
+  const lista = verPagadas ? pagadas : pendientes;
+
+  // agrupar por vendedor
+  const porVendedor = {};
+  for (const p of lista) {
+    const v = String(p.vendedor).trim();
+    if (!porVendedor[v]) porVendedor[v] = [];
+    porVendedor[v].push(p);
+  }
+  const grupos = Object.entries(porVendedor)
+    .map(([vendedor, items]) => ({
+      vendedor, items,
+      pct: porcentajeVendedor(vendedor, empleados),
+      totalVendido: items.reduce((a, p) => a + comisionBase(p), 0),
+      totalComision: items.reduce((a, p) => a + (verPagadas ? Number(p.comisionLiquidadaMonto) || 0 : comisionMonto(p, empleados)), 0),
+    }))
+    .sort((a, b) => b.totalComision - a.totalComision);
+
+  const totalGeneral = grupos.reduce((a, g) => a + g.totalComision, 0);
+  const sinPorcentaje = grupos.filter((g) => g.pct === 0);
+
+  function liquidar(grupo) {
+    const monto = grupo.totalComision;
+    if (monto <= 0) return;
+    const ids = grupo.items.map((p) => p.id);
+    const montos = {};
+    grupo.items.forEach((p) => { montos[p.id] = comisionMonto(p, empleados); });
+    onChangePedidos(pedidos.map((p) => (ids.includes(p.id)
+      ? { ...p, comisionPagada: true, comisionLiquidadaMonto: montos[p.id], comisionFechaPago: new Date().toISOString().slice(0, 10) }
+      : p)));
+    if (onCreatePurchase) {
+      onCreatePurchase({
+        id: uid(), concepto: `Comisiones ${grupo.vendedor} — ${grupo.items.length} pedido(s)`,
+        monto, tipo: "sueldos", proveedor: grupo.vendedor, sectorId: "ventas",
+        fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
+      });
+    }
+    setAviso(`Liquidaste ${money(monto)} a ${grupo.vendedor}. Se registró como gasto en Compras → Sueldos.`);
+    setTimeout(() => setAviso(null), 5000);
+  }
+
+  function excluir(id) { onChangePedidos(pedidos.map((p) => (p.id === id ? { ...p, comisionExcluida: true } : p))); }
+  function revertir(id) { onChangePedidos(pedidos.map((p) => (p.id === id ? { ...p, comisionPagada: false, comisionLiquidadaMonto: 0 } : p))); }
+
+  return (
+    <div className="dg-page">
+      <p className="dg-hint" style={{ marginBottom: 14 }}>
+        Un pedido entra acá automáticamente cuando queda <strong>totalmente cobrado</strong> (saldo $0) y tiene vendedor asignado.
+        La comisión se calcula sobre el monto <strong>sin contar el envío</strong>, con el % de cada vendedor cargado en Sueldos.
+      </p>
+
+      {aviso && <div className="dg-comision-banner" style={{ background: "rgba(82,224,138,0.1)", borderColor: "rgba(82,224,138,0.35)", color: "#52E08A" }}><Check size={15} /> {aviso}</div>}
+
+      {sinPorcentaje.length > 0 && !verPagadas && (
+        <div className="dg-comision-banner">
+          <AlertTriangle size={15} />
+          <span>
+            {sinPorcentaje.map((g) => g.vendedor).join(", ")} no tiene% de comisión cargado en <strong>Sueldos → Empleados</strong>, así que su comisión da $0.
+          </span>
+        </div>
+      )}
+
+      <div className="dg-quickviews" style={{ marginBottom: 14 }}>
+        <button className={`dg-quickview-btn ${!verPagadas ? "dg-quickview-on" : ""}`} onClick={() => setVerPagadas(false)}>A liquidar ({pendientes.length})</button>
+        <button className={`dg-quickview-btn ${verPagadas ? "dg-quickview-on" : ""}`} onClick={() => setVerPagadas(true)}>Ya pagadas ({pagadas.length})</button>
+      </div>
+
+      <div className="dg-totales">
+        <div className="dg-total-card" style={{ "--c": verPagadas ? "#52E08A" : "#F5C451" }}>
+          <span>{verPagadas ? "Total pagado en comisiones" : "Total a pagar en comisiones"}</span>
+          <strong>{money(totalGeneral)}</strong>
+        </div>
+        <div className="dg-total-card" style={{ "--c": "#48E0D8" }}><span>Pedidos involucrados</span><strong>{lista.length}</strong></div>
+      </div>
+
+      {grupos.length === 0 && (
+        <div className="dg-empty">{verPagadas ? "Todavía no liquidaste ninguna comisión." : "No hay comisiones pendientes. Un pedido aparece acá cuando su saldo llega a $0."}</div>
+      )}
+
+      {grupos.map((g) => (
+        <div className="dg-section-card" key={g.vendedor}>
+          <div className="dg-comision-head">
+            <button className="dg-comision-toggle" onClick={() => setVendedorAbierto(vendedorAbierto === g.vendedor ? null : g.vendedor)}>
+              <ChevronRight size={15} className={vendedorAbierto === g.vendedor ? "dg-chev-open" : ""} />
+              <span className="dg-comision-nombre">{g.vendedor}</span>
+              <span className="dg-badge" style={{ "--bc": g.pct > 0 ? "#48E0D8" : "#F16565" }}>{g.pct}%</span>
+              <span className="dg-pago-meta">{g.items.length} pedido(s) · {money(g.totalVendido)} vendido</span>
+            </button>
+            <div className="dg-comision-total">
+              <strong>{money(g.totalComision)}</strong>
+              {!verPagadas && g.totalComision > 0 && (
+                <button className="dg-btn-primary" onClick={() => liquidar(g)}><CircleDollarSign size={14} /> Liquidar</button>
+              )}
+            </div>
+          </div>
+
+          {vendedorAbierto === g.vendedor && (
+            <div className="dg-task-list" style={{ marginTop: 12, marginBottom: 0 }}>
+              {g.items.map((p) => (
+                <div className="dg-task" key={p.id}>
+                  <span className="dg-pedido-orden">#{p.orden}</span>
+                  <div className="dg-pago-info">
+                    <span>{p.cliente}</span>
+                    <span className="dg-pago-meta">
+                      {money(p.monto)}{Number(p.costoEnvio) > 0 ? ` − ${money(p.costoEnvio)} envío` : ""} = {money(comisionBase(p))} base · {p.fecha}
+                    </span>
+                  </div>
+                  <span className="dg-pago-monto" style={{ color: "#F5C451" }}>
+                    {money(verPagadas ? p.comisionLiquidadaMonto : comisionMonto(p, empleados))}
+                  </span>
+                  {verPagadas
+                    ? <button className="dg-icon-btn" title="Marcar como no pagada" onClick={() => revertir(p.id)}><RotateCcw size={14} /></button>
+                    : <button className="dg-icon-btn dg-task-del" title="Este pedido no lleva comisión" onClick={() => excluir(p.id)}><XCircle size={14} /></button>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1305,7 +1438,8 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false,
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false,
+    comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
   };
 }
 
@@ -1313,12 +1447,38 @@ const QUICK_VIEWS = [
   { id: "todos", label: "Todos" },
   { id: "verificados", label: "Verificados → listos para fábrica" },
   { id: "facturar", label: "Pendiente de facturar" },
-  { id: "comision_candidatos", label: "Comisión: candidatos a liquidar" },
-  { id: "comision_liquidar", label: "Comisión: a pagar" },
   { id: "envios", label: "Envíos de la semana" },
 ];
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
+
+// --- COMISIONES ---
+// Base de cálculo: monto total del pedido MENOS el costo del envío.
+function comisionBase(p) {
+  return Math.max(0, (Number(p.monto) || 0) - (Number(p.costoEnvio) || 0));
+}
+// Un pedido da derecho a comisión cuando está totalmente cobrado (saldo $0),
+// tiene vendedor asignado, no está cancelado y no fue excluido a mano.
+function comisionElegible(p) {
+  if (p.comisionExcluida) return false;
+  if (p.estado === "Cancelado") return false;
+  if (!p.vendedor || !String(p.vendedor).trim()) return false;
+  if ((Number(p.monto) || 0) <= 0) return false;
+  return pedidoSaldo(p) <= 0;
+}
+// Busca el % del vendedor en la ficha de empleados (tolera "Dou" vs "Douglas").
+function porcentajeVendedor(nombre, empleados) {
+  if (!nombre) return 0;
+  const n = String(nombre).trim().toLowerCase();
+  const emp = (empleados || []).find((e) => {
+    const en = String(e.nombre || "").trim().toLowerCase();
+    return en === n || en.startsWith(n) || n.startsWith(en);
+  });
+  return emp ? Number(emp.comisionPct) || 0 : 0;
+}
+function comisionMonto(p, empleados) {
+  return comisionBase(p) * (porcentajeVendedor(p.vendedor, empleados) / 100);
+}
 
 // Campos que no pueden faltar al pasar un pedido. Devuelve { campo: "motivo" }
 function validarPedido(p) {
@@ -1356,8 +1516,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
   let visibles = pedidos.slice();
   if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado");
   else if (quickView === "facturar") visibles = visibles.filter((p) => !p.facturado);
-  else if (quickView === "comision_candidatos") visibles = visibles.filter((p) => p.comision === "No" && pedidoSaldo(p) === 0);
-  else if (quickView === "comision_liquidar") visibles = visibles.filter((p) => p.comision === "Liquidar");
   else if (quickView === "envios") visibles = visibles.filter((p) => ENVIO_METODOS.includes(p.metodo) && p.estado !== "Entregado");
   else visibles = visibles.filter((p) => filtroEstado === "todos" || p.estado === filtroEstado);
 
@@ -1366,7 +1524,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
     .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
 
-  const totalComision = visibles.reduce((a, p) => a + (Number(p.monto) || 0), 0);
+  const totalVisible = visibles.reduce((a, p) => a + (Number(p.monto) || 0), 0);
 
   function nextOrden() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
 
@@ -1416,7 +1574,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
     }
   }
   function removePedido(id) { onChange(pedidos.filter((p) => p.id !== id)); setOpenPedido(null); }
-  function bulkSetComision(ids, val) { onChange(pedidos.map((p) => (ids.includes(p.id) ? { ...p, comision: val } : p))); }
 
   const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
   const grupoCounts = pedidos.reduce((acc, p) => { const g = p.grupoId || p.id; acc[g] = (acc[g] || 0) + 1; return acc; }, {});
@@ -1429,18 +1586,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
         ))}
       </div>
 
-      {quickView === "comision_candidatos" && visibles.length > 0 && canEditFull && (
-        <div className="dg-comision-banner">
-          <span>{visibles.length} pedido(s) saldados y sin liquidar — {money(totalComision)} en total.</span>
-          <button className="dg-btn-primary" onClick={() => bulkSetComision(visibles.map((p) => p.id), "Liquidar")}>Marcar todos como "Liquidar"</button>
-        </div>
-      )}
-      {quickView === "comision_liquidar" && visibles.length > 0 && canEditFull && (
-        <div className="dg-comision-banner">
-          <span>A pagar: {visibles.length} pedido(s) — {money(totalComision)} en total{filtroVendedor !== "todos" ? ` de ${filtroVendedor}` : ""}.</span>
-          <button className="dg-btn-primary" onClick={() => bulkSetComision(visibles.map((p) => p.id), "Sí")}>Marcar todos como pagados</button>
-        </div>
-      )}
 
       <div className="dg-crm-filters">
         <Filter size={14} />
@@ -1488,7 +1633,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
                   <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
                 </span>
                 <span className="dg-badge" style={{ "--bc": "#8B96A8" }}><MetodoIcon size={12} /> {p.metodo}</span>
-                {p.comision === "Liquidar" && <span className="dg-badge" style={{ "--bc": "#F5C451" }}>Liquidar comisión</span>}
+                {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "#F5C451" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
                 {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "#48E0D8" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
               </div>
               {waEntrega && (
@@ -1544,9 +1689,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, sessionSector
             ))}
           </tbody>
         </table>
-        {(quickView === "comision_candidatos" || quickView === "comision_liquidar") && (
-          <div className="dg-print-total">Total: {money(totalComision)}</div>
-        )}
+        <div className="dg-print-total">Total: {money(totalVisible)}</div>
       </div>
     </div>
   );
@@ -1706,7 +1849,15 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 {draft.facturado ? <Check size={14} /> : null} {draft.facturado ? "Facturado" : "Sin facturar"}
               </button>
             </Field>
-            <Field label="Comisión"><select disabled={!canEditFull} value={draft.comision} onChange={(e) => set("comision", e.target.value)}>{COMISION_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Comisión">
+              <div className="dg-comision-info">
+                {draft.comisionPagada
+                  ? <><CheckCircle2 size={13} /> Ya liquidada</>
+                  : comisionElegible(draft)
+                  ? <><CircleDollarSign size={13} /> Lista para liquidar</>
+                  : <>Se habilita al cobrar todo</>}
+              </div>
+            </Field>
           </div>
           <div className="dg-field-grid dg-money-row">
             <Field label="Monto" error={err("monto")}><input type="number" disabled={!canEditFull} value={draft.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
@@ -1736,6 +1887,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
             <Field label="Dirección / detalle de entrega" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Dirección, costo de envío..." /></Field>
             <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} /></Field>
+            <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
             <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
           </div>
         </div>
@@ -2791,7 +2943,7 @@ function SectorPage({
   leads, onChangeLeads, onCreateIncome, sectors, recursos, onChangeRecursos,
   facturas, onChangeFacturas, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
   stockMateriales, onChangeStockMateriales,
-  empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones,
+  empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
 }) {
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
   const [subpage, setSubpage] = useState(tabs[0].id);
@@ -2872,6 +3024,11 @@ function SectorPage({
       {subpage === "finanzas" && (
         isAdmin ? <FinanzasPanel incomes={incomes} purchases={purchases} sectors={sectors} onChangeIncomes={onChangeIncomes} onChangePurchases={onChangePurchases} />
           : <LockedPage label="Finanzas" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "comisiones" && (
+        isAdmin ? <ComisionesPanel pedidos={pedidos} onChangePedidos={onChangePedidos} empleados={empleadosSueldo} onCreatePurchase={onCreatePurchase} />
+          : <LockedPage label="Comisiones" onLogin={onRequestLogin} />
       )}
 
       {subpage === "sueldos" && (
@@ -3088,6 +3245,13 @@ function Style() {
       }
       .dg-field input:focus, .dg-field select:focus { border-color:#48E0D8; box-shadow: 0 0 0 3px rgba(72,224,216,0.12); }
       .dg-field input:disabled, .dg-field select:disabled { opacity:0.5; cursor:not-allowed; }
+      .dg-comision-info { display:flex; align-items:center; gap:6px; font-size:12px; color:#8B96A8; background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:9px; padding:10px; }
+      .dg-comision-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+      .dg-comision-toggle { display:flex; align-items:center; gap:8px; background:transparent; border:none; color:#E7ECF2; cursor:pointer; padding:0; flex:1; min-width:0; text-align:left; font-family:'Inter',sans-serif; flex-wrap:wrap; }
+      .dg-comision-nombre { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:15px; }
+      .dg-comision-total { display:flex; align-items:center; gap:10px; }
+      .dg-comision-total strong { font-family:'JetBrains Mono', monospace; font-size:17px; color:#F5C451; }
+      .dg-chev-open { transform: rotate(90deg); }
       .dg-validacion-banner { display:flex; gap:10px; align-items:flex-start; background: rgba(241,101,101,0.1); border:1px solid rgba(241,101,101,0.35); border-radius:12px; padding:12px 14px; margin-bottom:14px; color:#F16565; font-size:12.5px; }
       .dg-validacion-banner strong { display:block; margin-bottom:4px; font-size:13px; }
       .dg-validacion-banner ul { margin:0; padding-left:16px; }
