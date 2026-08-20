@@ -174,8 +174,6 @@ const SECTOR_SUBPAGES = {
     { id: "finanzas", label: "Finanzas" },
     { id: "comisiones", label: "Comisiones" },
     { id: "sueldos", label: "Sueldos" },
-    { id: "accesos", label: "Accesos" },
-    { id: "respaldo", label: "Respaldo" },
     { id: "tareas", label: "Tareas" },
   ],
   fabrica: [
@@ -640,6 +638,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(() => loadSavedSession());
   const [loginOpen, setLoginOpen] = useState(false);
+  const [ajustesOpen, setAjustesOpen] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
 
   function startSession(s) {
@@ -830,6 +829,7 @@ export default function App() {
                 {session.role === "admin" ? <ShieldCheck size={14} /> : <User size={14} />}
                 {session.role === "admin" ? (session.nombre || "Admin") : sectors.find((s) => s.id === session.sectorId)?.name || "Encargado"}
               </span>
+              {isAdmin && <button className="dg-icon-btn" onClick={() => setAjustesOpen(true)} title="Ajustes del sistema"><Settings2 size={17} /></button>}
               <button className="dg-icon-btn" onClick={endSession} title="Cerrar sesión"><LogOut size={16} /></button>
             </div>
           ) : (
@@ -910,6 +910,17 @@ export default function App() {
         )}
       </div>
 
+      {ajustesOpen && isAdmin && (
+        <AjustesModal
+          onClose={() => setAjustesOpen(false)}
+          admins={admins} onChangeAdmins={persistAdmins} session={session}
+          sectors={sectors} onSectorUpdate={updateSector}
+          vendedores={vendedores} onChangeVendedores={persistVendedores}
+          auditoria={auditoria}
+          datos={{ pedidos, incomes, purchases, leads, reclamos, facturas, stockEspejos, stockMateriales, liquidaciones, empleados: empleadosSueldo, sectors, recursos, quotes, admins, auditoria }}
+        />
+      )}
+
       <SaveIndicator state={saveState} onDismiss={() => setSaveState({ estado: "idle" })} />
 
       {loginOpen && (
@@ -954,6 +965,124 @@ function LockedPage({ label, onLogin }) {
       <Lock size={24} />
       <p>{label} es información sensible del negocio. Iniciá sesión como admin para verla.</p>
       <button className="dg-btn-primary" onClick={onLogin}><Lock size={14} /> Iniciar sesión</button>
+    </div>
+  );
+}
+
+function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, onSectorUpdate, vendedores, onChangeVendedores, datos, auditoria }) {
+  const [tab, setTab] = useState("accesos");
+  const [verClaves, setVerClaves] = useState(false);
+
+  const tabs = [
+    { id: "accesos", label: "Administradores", icon: ShieldCheck },
+    { id: "usuarios", label: "Usuarios y claves", icon: Users },
+    { id: "respaldo", label: "Respaldo y datos", icon: Save },
+    { id: "actividad", label: "Actividad", icon: ClipboardList },
+  ];
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-ajustes" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-sector-page-title">
+            <div className="dg-modal-icon" style={{ "--glow": "#4FC3C0" }}><Settings2 size={19} /></div>
+            <div>
+              <div className="dg-modal-title">Ajustes del sistema</div>
+              <div className="dg-modal-sub">Solo administradores · sesión de {session?.nombre || "Admin"}</div>
+            </div>
+          </div>
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="dg-sector-tabs">
+          {tabs.map((t) => {
+            const Ic = t.icon;
+            return (
+              <button key={t.id} className={`dg-sector-tab ${tab === t.id ? "dg-sector-tab-on" : ""}`} onClick={() => setTab(t.id)}>
+                <Ic size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />{t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {tab === "accesos" && <AdminsPanel admins={admins} onChange={onChangeAdmins} session={session} />}
+
+        {tab === "usuarios" && (
+          <div className="dg-page">
+            <p className="dg-hint" style={{ marginBottom: 14 }}>
+              Acá ves quién tiene acceso a cada sector y podés restablecer su clave si se la olvidó (queda libre para que la configure de nuevo al entrar).
+            </p>
+            <button className="dg-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setVerClaves((v) => !v)}>
+              {verClaves ? <XCircle size={14} /> : <ShieldCheck size={14} />} {verClaves ? "Ocultar" : "Mostrar"} las claves
+            </button>
+
+            <div className="dg-section-card">
+              <div className="dg-section-header"><ShieldCheck size={14} /> Administradores</div>
+              <div className="dg-task-list" style={{ marginBottom: 0 }}>
+                {admins.map((a) => (
+                  <div className="dg-task" key={a.id}>
+                    <div className="dg-pago-info">
+                      <span>{a.nombre}{a.nombre === session?.nombre ? " (vos)" : ""}</span>
+                      <span className="dg-pago-meta">{verClaves ? `Clave: ${a.clave}` : "Clave: ••••••••"}</span>
+                    </div>
+                    <span className="dg-badge" style={{ "--bc": "#4FC3C0" }}>Acceso total</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="dg-section-card">
+              <div className="dg-section-header"><Building2 size={14} /> Encargados de sector</div>
+              <div className="dg-task-list" style={{ marginBottom: 0 }}>
+                {sectors.map((sec) => (
+                  <div className="dg-task" key={sec.id}>
+                    <div className="dg-pago-info">
+                      <span>{sec.name}</span>
+                      <span className="dg-pago-meta">
+                        {sec.encargado || "Sin encargado"} · {sec.clave ? (verClaves ? `Clave: ${sec.clave}` : "Clave: ••••••••") : "Sin clave configurada"}
+                      </span>
+                    </div>
+                    {sec.clave && (
+                      <button className="dg-btn-ghost dg-mini-btn" onClick={() => onSectorUpdate(sec.id, { clave: null })}>
+                        <RotateCcw size={13} /> Restablecer
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="dg-section-card">
+              <div className="dg-section-header"><Users size={14} /> Vendedores del CRM</div>
+              <div className="dg-vendedores-chips">
+                {vendedores.map((v) => (
+                  <span key={v} className="dg-vendedor-chip">{v}<button onClick={() => onChangeVendedores(vendedores.filter((x) => x !== v))}><X size={11} /></button></span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "respaldo" && <RespaldoPanel datos={datos} auditoria={[]} />}
+
+        {tab === "actividad" && (
+          <div className="dg-page">
+            <p className="dg-hint" style={{ marginBottom: 14 }}>Últimos movimientos del sistema: quién cargó, editó o borró cada cosa.</p>
+            {auditoria.length === 0 ? <div className="dg-empty">Todavía no hay movimientos registrados.</div> : (
+              <div className="dg-task-list">
+                {auditoria.slice(0, 100).map((a) => (
+                  <div className="dg-task" key={a.id}>
+                    <div className="dg-pago-info">
+                      <span>{a.accion}{a.detalle ? ` — ${a.detalle}` : ""}</span>
+                      <span className="dg-pago-meta">{a.quien} · {new Date(a.fecha).toLocaleString("es-AR")}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2666,7 +2795,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit }) {
         </div>
         {canEdit && (
           <div className="dg-fabrica-actions">
-            <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => setEstado(p.id, "Espejo listo")}><Check size={15} /> Listo</button>
+            {p.estado === "Espejo listo"
+              ? <button className="dg-fabrica-btn dg-fabrica-btn-undo" onClick={() => setEstado(p.id, "Pasado a fábrica")}><RotateCcw size={15} /> Desmarcar</button>
+              : <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => setEstado(p.id, "Espejo listo")}><Check size={15} /> Listo</button>}
             <button className={`dg-fabrica-btn dg-fabrica-btn-demora ${p.demorado ? "dg-fabrica-btn-demora-on" : ""}`} onClick={() => toggleDemorado(p.id)}><AlertTriangle size={15} /> {p.demorado ? "Sin demora" : "Demorado"}</button>
             <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => cancelar(p.id)}><XCircle size={15} /> Cancelar</button>
             <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => borrar(p.id)}><Trash2 size={15} /> Borrar</button>
@@ -3201,7 +3332,7 @@ function LoginModal({ sectors, adminKeyExists, onClose, onAdminKeyCreated, onSec
         <div className="dg-modal-head"><div className="dg-modal-title">Iniciar sesión</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
         {mode === "choose" && (
           <div className="dg-choice-grid">
-            <button className="dg-choice-btn" onClick={() => setMode("admin")}><ShieldCheck size={20} /><div>Soy Facundo (Admin)</div><span>Tareas, encargados, ingresos y compras</span></button>
+            <button className="dg-choice-btn" onClick={() => setMode("admin")}><ShieldCheck size={20} /><div>Soy administrador</div><span>Acceso total: finanzas, sueldos y ajustes</span></button>
             <button className="dg-choice-btn" onClick={() => setMode("sector")}><User size={20} /><div>Soy encargado de un sector</div><span>Actualizo mis propias tareas</span></button>
           </div>
         )}
@@ -3394,16 +3525,6 @@ function SectorPage({
           : <LockedPage label="Comisiones" onLogin={onRequestLogin} />
       )}
 
-      {subpage === "respaldo" && (
-        isAdmin ? <RespaldoPanel datos={{ pedidos, incomes, purchases, leads, reclamos, facturas, stockEspejos, stockMateriales, liquidaciones, empleados: empleadosSueldo, sectors, recursos, quotes }} auditoria={auditoria} />
-          : <LockedPage label="Respaldo" onLogin={onRequestLogin} />
-      )}
-
-      {subpage === "accesos" && (
-        isAdmin ? <AdminsPanel admins={admins} onChange={onChangeAdmins} session={session} />
-          : <LockedPage label="Accesos" onLogin={onRequestLogin} />
-      )}
-
       {subpage === "sueldos" && (
         isAdmin ? <SueldosPanel empleados={empleadosSueldo} onChangeEmpleados={onChangeEmpleadosSueldo} liquidaciones={liquidaciones} onChangeLiquidaciones={onChangeLiquidaciones} />
           : <LockedPage label="Sueldos" onLogin={onRequestLogin} />
@@ -3495,6 +3616,7 @@ function Style() {
       .dg-fabrica-btn { min-width:0; display:flex; align-items:center; justify-content:center; gap:5px; padding:9px 6px; border-radius:9px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid rgba(255,255,255,0.1); background:#1A1F2B; color:#8B96A8; white-space:nowrap; }
       .dg-fabrica-btn-listo:hover { border-color:#5BC98B; color:#5BC98B; }
       .dg-fabrica-btn-demora:hover { border-color:#E5B54F; color:#E5B54F; }
+      .dg-fabrica-btn-undo { border-color: rgba(229,181,79,0.5); color:#E5B54F; }
       .dg-fabrica-btn-demora-on { background: rgba(224,106,106,0.14); border-color:#E06A6A; color:#E06A6A; }
       .dg-fabrica-btn-cancel:hover { border-color:#E06A6A; color:#E06A6A; }
       .dg-recurso-link { display:flex; align-items:center; gap:8px; color:#4FC3C0; text-decoration:none; font-size:13px; flex:1; }
@@ -3619,6 +3741,9 @@ function Style() {
       .dg-field input:focus, .dg-field select:focus { border-color:#4FC3C0; box-shadow: 0 0 0 3px rgba(79,195,192,0.12); }
       .dg-field input:disabled, .dg-field select:disabled { opacity:0.5; cursor:not-allowed; }
       .dg-comision-info { display:flex; align-items:center; gap:6px; font-size:12px; color:#8B96A8; background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:9px; padding:10px; }
+      .dg-modal-ajustes { max-width:820px; }
+      .dg-modal-ajustes .dg-page { max-width:none; }
+      .dg-vendedores-chips { display:flex; gap:6px; flex-wrap:wrap; }
       .dg-export-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:8px; }
       .dg-export-grid .dg-btn-ghost { justify-content:flex-start; font-size:12px; }
       .dg-export-grid .dg-btn-ghost:disabled { opacity:0.4; cursor:not-allowed; }
