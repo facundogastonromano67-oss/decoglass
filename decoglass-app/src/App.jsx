@@ -2870,12 +2870,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
     const funciones = [
       { on: p.touch === "Touch", label: "TOUCH" },
+      { on: p.desemp === "Desempañante", label: p.desempTipo === "Touch" ? "DESEMPAÑANTE T" : "DESEMPAÑANTE 220" },
       { on: p.horaTemp === "Hora y Temperatura", label: "HORA Y TEMP" },
       { on: p.bluetooth !== "No", label: p.bluetooth ? p.bluetooth.toUpperCase() : "" },
       { on: p.pulido === "Sí", label: "PULIDO" },
     ].filter((f) => f.on && f.label);
-    const desempLabel = p.desemp === "Desempañante" ? (p.desempTipo === "Touch" ? "Desempañante Touch (T)" : "Desempañante 220V") : null;
-    const observaciones = [desempLabel, p.grabado].filter(Boolean).join(" · ");
+    const observaciones = p.grabado || "";
     return (
       <div className={`dg-pedido-card dg-fabrica-card dg-fab-${entrega.clase}`} key={p.id}>
         <div className="dg-fab-head">
