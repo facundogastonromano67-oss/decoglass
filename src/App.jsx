@@ -6,7 +6,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -185,6 +185,11 @@ const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Fac
 const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Pasado a fábrica", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
+const TALLER_PROCESOS = [
+  { id: "simples", label: "Simples", description: "Corte, pulido y armado estándar", color: "#4FC3C0" },
+  { id: "esmerilados", label: "Esmerilados", description: "Grabado o esmerilado antes del armado", color: "#E5B54F" },
+  { id: "biselados", label: "Biselados", description: "Proceso de biselado y terminación especial", color: "#B583DE" },
+];
 const ENTREGA_ESTILO = {
   "Interior": { clase: "interior", color: "#B583DE", icono: "🚚" },
   "Envío flex": { clase: "flex", color: "#E5B54F", icono: "⚡" },
@@ -305,6 +310,14 @@ function groupByWeek(items, dateField) {
 
 function MonthAccordion({ groups, renderItem, defaultOpenCount = 1 }) {
   const [openKeys, setOpenKeys] = useState(() => new Set(groups.slice(0, defaultOpenCount).map((g) => g.key)));
+  const groupKeySignature = groups.map((g) => g.key).join("|");
+  useEffect(() => {
+    if (groups.length === 0) return;
+    setOpenKeys((prev) => {
+      if (groups.some((g) => prev.has(g.key))) return prev;
+      return new Set(groups.slice(0, defaultOpenCount).map((g) => g.key));
+    });
+  }, [groupKeySignature, defaultOpenCount]);
   function toggle(key) {
     setOpenKeys((prev) => {
       const next = new Set(prev);
@@ -2032,13 +2045,20 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false,
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
   };
 }
 
 function textoComparable(value) {
   return String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function pedidoProcesoTaller(pedido) {
+  const descripcion = textoComparable(`${pedido?.tipo || ""} ${pedido?.grabado || ""}`);
+  if (descripcion.includes("bisel") || pedido?.estado === "Pedir biselado") return "biselados";
+  if (descripcion.includes("esmeril") || /(?:^|\s)esm\.?($|\s)/.test(descripcion)) return "esmerilados";
+  return "simples";
 }
 
 function partesDetallePedido(detalle) {
@@ -2152,6 +2172,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const [creating, setCreating] = useState(false);
   const [nextDraft, setNextDraft] = useState(null);
   const [agrupado, setAgrupado] = useState("mes");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
 
   const canEditEstadoOnly = !canEditFull && ["fabrica", "logistica", "postventa"].includes(sessionSectorId);
 
@@ -2165,19 +2187,36 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     .filter((p) => filtroEstado === "todos" || p.estado === filtroEstado);
 
   visibles = visibles
+    .filter((p) => !fechaDesde || (p.fecha && p.fecha >= fechaDesde))
+    .filter((p) => !fechaHasta || (p.fecha && p.fecha <= fechaHasta))
     .filter((p) => filtroVendedor === "todos" || p.vendedor === filtroVendedor)
-    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
+    .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
 
   const totalVisible = visibles.reduce((a, p) => a + (Number(p.monto) || 0), 0);
+  const restaurablesVisibles = visibles.filter((p) => p.estado === "Entregado" || p.estado === "Cancelado");
 
   function nextOrden() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
 
   function savePedido(pedido, opts) {
     pedido = normalizarPedidoFunciones(pedido);
     const exists = pedidos.some((p) => p.id === pedido.id);
+    const previous = pedidos.find((p) => p.id === pedido.id);
     let withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
     if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
+    if (withOrden.estado === "Espejo listo" && previous && previous.estado !== "Espejo listo" && previous.estado !== "Entregado") {
+      withOrden = { ...withOrden, clienteAvisado: false, clienteAvisadoFecha: "" };
+    }
+    if (withOrden.estado === "Entregado") {
+      if (previous?.estado !== "Espejo listo" && previous?.estado !== "Entregado") {
+        window.alert("Antes de entregarlo, el taller debe guardar el pedido como “Espejo listo”.");
+        return;
+      }
+      if (!withOrden.clienteAvisado) {
+        window.alert("Antes de archivar el pedido, marcá que el cliente ya fue avisado de que el espejo está listo.");
+        return;
+      }
+    }
 
     // Cuánto plata entró realmente por este pedido:
     // si ya se entregó, se cobró todo; si no, solo el anticipo.
@@ -2221,6 +2260,14 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     }
   }
   function marcarEntregado(p) {
+    if (p.estado !== "Espejo listo") {
+      window.alert("Primero el taller debe marcar el espejo como listo.");
+      return;
+    }
+    if (!p.clienteAvisado) {
+      window.alert("Antes de entregarlo, confirmá que el cliente ya fue avisado.");
+      return;
+    }
     const saldo = pedidoSaldo(p);
     if (saldo > 0 && !window.confirm(`Este pedido todavía tiene ${money(saldo)} de saldo pendiente.\n\nAl marcarlo entregado se va a registrar ese saldo como ingreso cobrado. ¿Confirmás?`)) return;
     savePedido({ ...p, estado: "Entregado" });
@@ -2235,6 +2282,29 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     onChange(pedidos.filter((x) => x.id !== id));
     if (onRegistrar && p) onRegistrar("Borró un pedido", `#${p.orden} — ${p.cliente} — ${money(p.monto)}`);
     setOpenPedido(null);
+  }
+  function marcarClienteAvisado(p) {
+    const fechaAviso = new Date().toISOString();
+    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, clienteAvisado: true, clienteAvisadoFecha: fechaAviso } : x)));
+    if (onRegistrar) onRegistrar("Avisó al cliente", `#${p.orden} — ${p.cliente} — espejo listo`);
+  }
+  function restaurarVisibles() {
+    if (restaurablesVisibles.length === 0) return;
+    if (!window.confirm(`Se van a restaurar ${restaurablesVisibles.length} pedido(s) de esta vista.\n\nLos entregados volverán a “Espejo listo” y los cancelados a “Sin pasar a fábrica”. ¿Continuar?`)) return;
+    const ids = new Set(restaurablesVisibles.map((p) => p.id));
+    onChange(pedidos.map((p) => {
+      if (!ids.has(p.id)) return p;
+      if (p.estado === "Entregado") return { ...p, estado: "Espejo listo" };
+      return { ...p, estado: "Sin pasar a fábrica", clienteAvisado: false, clienteAvisadoFecha: "" };
+    }));
+    if (onRegistrar) onRegistrar("Restauró pedidos en masa", `${restaurablesVisibles.length} pedido(s) según filtros`);
+  }
+  function borrarVisibles() {
+    if (visibles.length === 0) return;
+    if (!window.confirm(`Vas a borrar definitivamente ${visibles.length} pedido(s) que coinciden con los filtros actuales.\n\nEsta acción no se puede deshacer. ¿Confirmás?`)) return;
+    const ids = new Set(visibles.map((p) => p.id));
+    onChange(pedidos.filter((p) => !ids.has(p.id)));
+    if (onRegistrar) onRegistrar("Borró pedidos en masa", `${visibles.length} pedido(s) según filtros`);
   }
 
   const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
@@ -2272,12 +2342,33 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         )}
       </div>
 
+      <div className="dg-date-filter-bar">
+        <span><CalendarDays size={14} /> Fecha del pedido</span>
+        <label>Desde<input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} /></label>
+        <label>Hasta<input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} /></label>
+        {(fechaDesde || fechaHasta) && <button className="dg-btn-ghost dg-mini-btn" onClick={() => { setFechaDesde(""); setFechaHasta(""); }}><X size={13} /> Limpiar fechas</button>}
+      </div>
+
+      {canEditFull && puedeBorrar && (
+        <div className="dg-bulk-bar">
+          <div>
+            <strong>Acciones masivas</strong>
+            <span>Se aplican a los {visibles.length} resultados visibles con los filtros actuales.</span>
+          </div>
+          <div className="dg-bulk-actions">
+            <button className="dg-btn-ghost" disabled={restaurablesVisibles.length === 0} onClick={restaurarVisibles}><RotateCcw size={14} /> Restaurar archivados ({restaurablesVisibles.length})</button>
+            <button className="dg-btn-danger" disabled={visibles.length === 0} onClick={borrarVisibles}><Trash2 size={14} /> Borrar resultados ({visibles.length})</button>
+          </div>
+        </div>
+      )}
+
       {(() => {
         const renderCard = (p) => {
           const saldo = pedidoSaldo(p);
           const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
           const MetodoIcon = METODO_ICONS[p.metodo] || Package;
-          const waEntrega = p.estado === "Espejo listo" ? entregaWaLink(p) : null;
+          const estaListo = p.estado === "Espejo listo";
+          const waEntrega = estaListo ? entregaWaLink(p) : null;
           return (
             <div className="dg-pedido-card" key={p.id} onClick={() => setOpenPedido(p)}>
               <div className="dg-pedido-card-top">
@@ -2298,14 +2389,26 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                 {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "#E5B54F" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
                 {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "#4FC3C0" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
               </div>
-              {waEntrega && (
-                <a className="dg-btn-primary dg-confirmar-entrega-btn" href={waEntrega} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
-                  <MessageCircle size={14} /> Confirmar entrega por WhatsApp
-                </a>
+              {estaListo && (
+                <div className={`dg-client-notice ${p.clienteAvisado ? "dg-client-notice-done" : ""}`} onClick={(e) => e.stopPropagation()}>
+                  <div>
+                    <span>Paso 1 · Avisar al cliente</span>
+                    <strong>{p.clienteAvisado ? "Cliente avisado" : "El espejo está listo para comunicar"}</strong>
+                  </div>
+                  {!p.clienteAvisado && waEntrega && (
+                    <a className="dg-btn-primary dg-confirmar-entrega-btn" href={waEntrega} target="_blank" rel="noopener noreferrer">
+                      <MessageCircle size={14} /> Abrir WhatsApp
+                    </a>
+                  )}
+                  {!p.clienteAvisado && canEditFull && (
+                    <button className="dg-btn-ghost" onClick={() => marcarClienteAvisado(p)}><Check size={14} /> Confirmar que ya fue avisado</button>
+                  )}
+                  {p.clienteAvisado && <span className="dg-client-notice-badge"><CheckCircle2 size={13} /> Aviso confirmado</span>}
+                </div>
               )}
-              {canEditFull && p.estado !== "Entregado" && p.estado !== "Cancelado" && (
+              {canEditFull && estaListo && p.clienteAvisado && (
                 <button className="dg-btn-entregado" onClick={(e) => { e.stopPropagation(); marcarEntregado(p); }}>
-                  <CheckCircle2 size={14} /> Marcar entregado y archivar
+                  <CheckCircle2 size={14} /> Paso 2 · Marcar entregado y archivar
                 </button>
               )}
               {p.estado === "Entregado" && canEditFull && (
@@ -2313,8 +2416,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                   <RotateCcw size={13} /> Reabrir pedido
                 </button>
               )}
-              {p.estado === "Espejo listo" && !p.celular && (
-                <p className="dg-hint" style={{ marginTop: 8 }}>Sin celular cargado — no se puede armar el link de WhatsApp.</p>
+              {estaListo && !p.celular && !p.clienteAvisado && (
+                <p className="dg-hint" style={{ marginTop: 8 }}>Sin celular cargado: avisale por otro medio y después confirmá el aviso.</p>
               )}
             </div>
           );
@@ -2441,6 +2544,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   const [intentoGuardar, setIntentoGuardar] = useState(false);
   const readOnly = !canEditFull && !canEditEstadoOnly;
   const saldo = (Number(draft.monto) || 0) - (Number(draft.anticipo) || 0);
+  const puedeMarcarEntregado = draft.estado === "Entregado" || (pedido.estado === "Espejo listo" && draft.clienteAvisado);
+  const estadoOptions = ESTADO_PEDIDO_OPTIONS.filter((estado) => estado !== "Entregado" || puedeMarcarEntregado);
 
   const errores = validarPedido(draft);
   const cantErrores = Object.keys(errores).length;
@@ -2555,7 +2660,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         <div className="dg-section-card">
           <div className="dg-section-header"><Truck size={14} /> Entrega</div>
           <div className="dg-field-grid">
-            <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => set("estado", e.target.value)}>{ESTADO_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => set("estado", e.target.value)}>{estadoOptions.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Listo para (fecha)"><input type="date" disabled={readOnly} value={draft.listo} onChange={(e) => set("listo", e.target.value)} /></Field>
             <Field label="Método de entrega" error={err("metodo")}><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
@@ -2607,6 +2712,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   function copiar(p) {
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje(p)).then(() => { setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); });
   }
+  function marcarClienteAvisado(p) {
+    update(p.id, { clienteAvisado: true, clienteAvisadoFecha: new Date().toISOString() });
+  }
 
   return (
     <div className="dg-page">
@@ -2632,8 +2740,14 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
               <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
               {p.estado === "Espejo listo" && entregaWaLink(p) && (
                 <a className="dg-btn-primary dg-confirmar-entrega-btn" href={entregaWaLink(p)} target="_blank" rel="noopener noreferrer">
-                  <MessageCircle size={14} /> Confirmar entrega por WhatsApp
+                  <MessageCircle size={14} /> Avisar que el espejo está listo
                 </a>
+              )}
+              {canEdit && p.estado === "Espejo listo" && !p.clienteAvisado && (
+                <button className="dg-btn-ghost" onClick={() => marcarClienteAvisado(p)}><Check size={14} /> Confirmar que ya fue avisado</button>
+              )}
+              {p.estado === "Espejo listo" && p.clienteAvisado && (
+                <span className="dg-client-notice-badge"><CheckCircle2 size={13} /> Cliente avisado</span>
               )}
               {canEdit && !p.envioConfirmado && (
                 <button className="dg-btn-primary" onClick={() => update(p.id, { envioConfirmado: true })}><CheckCircle2 size={14} /> Confirmar envío</button>
@@ -2766,11 +2880,17 @@ function ReclamosPanel({ reclamos, onChange }) {
 
 function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
   const confirmados = pedidos
-    .filter((p) => ENVIO_METODOS.includes(p.metodo) && p.envioConfirmado && p.estado !== "Entregado")
+    .filter((p) => ENVIO_METODOS.includes(p.metodo) && p.envioConfirmado && p.estado === "Espejo listo")
     .sort((a, b) => (a.listo || "9999").localeCompare(b.listo || "9999"));
 
   function toggle(id, field) { onChange(pedidos.map((p) => (p.id === id ? { ...p, [field]: !p[field] } : p))); }
-  function marcarEntregado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, estado: "Entregado" } : p))); }
+  function marcarEntregado(pedido) {
+    if (!pedido.clienteAvisado) {
+      window.alert("Antes de marcarlo entregado, PostVenta debe confirmar que el cliente ya fue avisado.");
+      return;
+    }
+    onChange(pedidos.map((p) => (p.id === pedido.id ? { ...p, estado: "Entregado" } : p)));
+  }
 
   return (
     <div className="dg-page">
@@ -2790,7 +2910,9 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                 <button className={`dg-fabrica-btn ${p.envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => toggle(p.id, "envioPagado")}>
                   <CircleDollarSign size={16} /> {p.envioPagado ? "Envío pagado ✓" : "Marcar envío pagado"}
                 </button>
-                <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => marcarEntregado(p.id)}><Check size={16} /> Marcar entregado</button>
+                {p.clienteAvisado
+                  ? <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => marcarEntregado(p)}><Check size={16} /> Marcar entregado</button>
+                  : <span className="dg-flow-pending"><MessageCircle size={13} /> Falta avisar al cliente</span>}
               </div>
             )}
           </div>
@@ -2954,16 +3076,29 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
   const [agrupado, setAgrupado] = useState("mes");
+  const [proceso, setProceso] = useState("simples");
 
   // Fábrica solo ve pedidos ya verificados por PostVenta. Los "Sin pasar a fábrica" no aparecen.
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
   const activos = enFabrica.filter((p) => p.estado !== "Entregado");
-  let visibles = filtroEstado === "activos" ? activos : filtroEstado === "demorados" ? enFabrica.filter((p) => p.demorado) : enFabrica;
-  visibles = visibles
-    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
+  let baseVisibles = filtroEstado === "activos" ? activos : filtroEstado === "demorados" ? enFabrica.filter((p) => p.demorado) : enFabrica;
+  baseVisibles = baseVisibles
+    .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
+  const procesoCounts = TALLER_PROCESOS.reduce((acc, item) => {
+    acc[item.id] = baseVisibles.filter((p) => pedidoProcesoTaller(p) === item.id).length;
+    return acc;
+  }, {});
+  let visibles = baseVisibles
+    .filter((p) => pedidoProcesoTaller(p) === proceso)
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
 
-  function setEstado(id, estado) { onChange(pedidos.map((p) => (p.id === id ? { ...p, estado } : p))); }
+  function setEstado(id, estado) {
+    onChange(pedidos.map((p) => {
+      if (p.id !== id) return p;
+      if (estado === "Espejo listo" && p.estado !== "Espejo listo") return { ...p, estado, clienteAvisado: false, clienteAvisadoFecha: "" };
+      return { ...p, estado };
+    }));
+  }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); }
   function cancelar(id) { if (window.confirm("¿Cancelar este pedido?")) setEstado(id, "Cancelado"); }
   function borrar(id) { if (window.confirm("¿Borrar este pedido definitivamente? No se puede deshacer.")) onChange(pedidos.filter((p) => p.id !== id)); }
@@ -2973,6 +3108,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
   const renderCard = (p) => {
     const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
+    const procesoInfo = TALLER_PROCESOS.find((item) => item.id === pedidoProcesoTaller(p));
     const funciones = funcionesPedido(p, true);
     const observaciones = detalleFabrica(p);
     return (
@@ -3005,9 +3141,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
         )}
 
         <div className="dg-pedido-badges">
+          <span className="dg-badge" style={{ "--bc": procesoInfo?.color || "#8B96A8" }}>{procesoInfo?.label || "Simple"}</span>
           <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
           {p.demorado && <span className="dg-badge" style={{ "--bc": "#E06A6A" }}><AlertTriangle size={12} /> Demorado</span>}
           {p.listo && <span className="dg-badge dg-badge-entrega"><Truck size={12} /> Entrega: {p.listo}</span>}
+          {p.clienteAvisado && <span className="dg-badge" style={{ "--bc": "#5BC98B" }}><MessageCircle size={12} /> Cliente avisado</span>}
         </div>
         {canEdit && (
           <div className="dg-fabrica-actions">
@@ -3016,7 +3154,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
               : <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => setEstado(p.id, "Espejo listo")}><Check size={15} /> Listo</button>}
             <button className={`dg-fabrica-btn dg-fabrica-btn-demora ${p.demorado ? "dg-fabrica-btn-demora-on" : ""}`} onClick={() => toggleDemorado(p.id)}><AlertTriangle size={15} /> {p.demorado ? "Sin demora" : "Demorado"}</button>
             <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => cancelar(p.id)}><XCircle size={15} /> Cancelar</button>
-            <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => borrar(p.id)}><Trash2 size={15} /> Borrar</button>
+            {puedeBorrar && <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => borrar(p.id)}><Trash2 size={15} /> Borrar</button>}
           </div>
         )}
       </div>
@@ -3025,6 +3163,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
 
   return (
     <div className="dg-page">
+      <div className="dg-process-tabs" role="tablist" aria-label="Proceso de fabricación">
+        {TALLER_PROCESOS.map((item) => (
+          <button key={item.id} role="tab" aria-selected={proceso === item.id} className={proceso === item.id ? "dg-process-tab-on" : ""} style={{ "--pc": item.color }} onClick={() => setProceso(item.id)}>
+            <span>{item.label}<small>{procesoCounts[item.id] || 0}</small></span>
+            <em>{item.description}</em>
+          </button>
+        ))}
+      </div>
       <div className="dg-crm-filters">
         <Filter size={14} />
         <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
@@ -4462,6 +4608,38 @@ function Style() {
       .dg-locked-page p { max-width:none; margin:0; color:#8C9AAD; }
       .dg-locked-icon { width:48px; height:48px; min-width:48px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(80,214,208,.22); border-radius:13px; background:rgba(80,214,208,.08); color:#50D6D0; }
 
+      .dg-date-filter-bar { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:-5px 0 12px; padding:10px 12px; border:1px solid rgba(226,232,240,.09); border-radius:11px; background:rgba(18,25,36,.55); }
+      .dg-date-filter-bar > span { display:flex; align-items:center; gap:6px; margin-right:3px; color:#9EACBC; font-size:10.5px; font-weight:600; }
+      .dg-date-filter-bar label { display:flex; align-items:center; gap:6px; color:#748297; font-size:9.5px; text-transform:uppercase; letter-spacing:.45px; }
+      .dg-date-filter-bar input { min-height:34px; padding:6px 8px; border:1px solid rgba(226,232,240,.11); border-radius:8px; background:#0E151F; color:#DCE5EE; color-scheme:dark; font-size:11px; }
+      .dg-bulk-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; padding:13px 14px; border:1px solid rgba(229,181,79,.2); border-radius:12px; background:linear-gradient(90deg,rgba(229,181,79,.055),rgba(18,25,36,.72)); }
+      .dg-bulk-bar > div:first-child { display:flex; flex-direction:column; gap:2px; min-width:220px; }
+      .dg-bulk-bar strong { color:#E8EDF3; font-size:12px; }
+      .dg-bulk-bar span { color:#8492A5; font-size:10.5px; }
+      .dg-bulk-actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; flex-wrap:wrap; }
+      .dg-btn-danger { min-height:40px; display:flex; align-items:center; gap:6px; padding:9px 14px; border:1px solid rgba(224,106,106,.35); border-radius:10px; background:rgba(224,106,106,.09); color:#F19A9A; font-size:12px; font-weight:600; cursor:pointer; }
+      .dg-btn-danger:hover { border-color:rgba(224,106,106,.58); background:rgba(224,106,106,.15); }
+      .dg-btn-primary:disabled, .dg-btn-ghost:disabled, .dg-btn-danger:disabled { opacity:.42; cursor:not-allowed; box-shadow:none; }
+
+      .dg-client-notice { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; padding:10px; border:1px solid rgba(229,181,79,.2); border-radius:11px; background:rgba(229,181,79,.045); }
+      .dg-client-notice > div { display:flex; flex:1; min-width:190px; flex-direction:column; }
+      .dg-client-notice > div span { color:#9B8965; font-size:8.5px; font-weight:700; letter-spacing:.65px; text-transform:uppercase; }
+      .dg-client-notice > div strong { margin-top:2px; color:#DCE4EC; font-size:11.5px; }
+      .dg-client-notice .dg-btn-primary, .dg-client-notice .dg-btn-ghost { min-height:34px; padding:7px 10px; font-size:10.5px; }
+      .dg-client-notice-done { border-color:rgba(91,201,139,.24); background:rgba(91,201,139,.055); }
+      .dg-client-notice-badge { min-height:30px; display:inline-flex; align-items:center; gap:6px; padding:6px 9px; border:1px solid rgba(91,201,139,.3); border-radius:8px; background:rgba(91,201,139,.09); color:#72D9A0 !important; font-size:10.5px !important; font-weight:600; }
+      .dg-btn-entregado { margin-top:8px; }
+      .dg-flow-pending { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px dashed rgba(229,181,79,.3); border-radius:8px; color:#C4A96D; font-size:10.5px; }
+
+      .dg-process-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+      .dg-process-tabs button { --pc:#4FC3C0; min-height:70px; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; padding:11px 13px; border:1px solid rgba(226,232,240,.09); border-radius:12px; background:rgba(18,25,36,.72); color:#95A3B5; text-align:left; cursor:pointer; transition:border-color .15s ease,background .15s ease; }
+      .dg-process-tabs button:hover { border-color:color-mix(in srgb,var(--pc) 38%,rgba(255,255,255,.1)); }
+      .dg-process-tabs button > span { width:100%; display:flex; align-items:center; justify-content:space-between; color:#D8E0E9; font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:600; }
+      .dg-process-tabs button small { min-width:25px; padding:2px 6px; border-radius:100px; background:rgba(255,255,255,.055); color:#94A3B8; font-family:'JetBrains Mono',monospace; font-size:9px; text-align:center; }
+      .dg-process-tabs button em { margin-top:4px; color:#748297; font-size:9.5px; font-style:normal; line-height:1.35; }
+      .dg-process-tabs .dg-process-tab-on { border-color:color-mix(in srgb,var(--pc) 52%,rgba(255,255,255,.1)); background:color-mix(in srgb,var(--pc) 8%,rgba(18,25,36,.82)); box-shadow:inset 3px 0 0 var(--pc); }
+      .dg-process-tabs .dg-process-tab-on > span { color:var(--pc); }
+
       @media (max-width:900px) {
         .dg-header-context { align-items:flex-start; margin-left:auto; }
         .dg-header-date { display:none; }
@@ -4506,6 +4684,17 @@ function Style() {
         .dg-sector-tab { flex:0 0 auto; min-height:38px; }
         .dg-locked-page { min-height:300px; flex-direction:column; align-items:center; padding:30px 20px; text-align:center; }
         .dg-locked-page > div:nth-child(2) { max-width:330px; }
+        .dg-date-filter-bar { align-items:stretch; }
+        .dg-date-filter-bar > span { width:100%; }
+        .dg-date-filter-bar label { flex:1 1 calc(50% - 5px); flex-direction:column; align-items:flex-start; }
+        .dg-date-filter-bar input { width:100%; font-size:16px; }
+        .dg-bulk-bar { align-items:stretch; flex-direction:column; }
+        .dg-bulk-actions { justify-content:stretch; }
+        .dg-bulk-actions button { flex:1 1 100%; justify-content:center; }
+        .dg-process-tabs { grid-template-columns:1fr; gap:6px; }
+        .dg-process-tabs button { min-height:57px; }
+        .dg-client-notice { align-items:stretch; }
+        .dg-client-notice > div, .dg-client-notice .dg-btn-primary, .dg-client-notice .dg-btn-ghost, .dg-client-notice-badge { width:100%; justify-content:center; }
       }
       @media (max-width:340px) {
         .dg-building-floor .dg-plant-grid { grid-template-columns:1fr; }

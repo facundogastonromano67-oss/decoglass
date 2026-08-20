@@ -1,40 +1,30 @@
-# DECOGLASS · Sistema de gestión V2
+# DECOGLASS · Actualización V3
 
-Versión reorganizada de la aplicación interna de DECOGLASS. Mantiene el edificio interactivo como navegación principal y unifica el resto de la experiencia con una interfaz profesional, clara y adaptable a escritorio y celular.
+Esta carpeta contiene el código fuente actualizado de la aplicación.
 
-## Puesta en marcha
+## Para actualizar la app existente
 
-1. Copiar `.env.example` como `.env`.
-2. Completar `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` con los datos del proyecto.
-3. Instalar dependencias y ejecutar la app:
+Subí el contenido de esta carpeta a la raíz del repositorio de GitHub, reemplazando los archivos anteriores. Si la aplicación actual ya funciona conectada a Supabase, **no hay que cambiar nada en Supabase**.
+
+El archivo `.env.example` es solamente una referencia para instalaciones nuevas o pruebas locales. No es necesario completarlo para actualizar la aplicación publicada y no se debe subir un archivo `.env` personal al repositorio.
+
+## Cambios incluidos
+
+- Acciones masivas sobre pedidos filtrados.
+- Rango de fechas desde/hasta para pedidos.
+- Restauración masiva de pedidos entregados o cancelados.
+- Borrado masivo con confirmación y cantidad visible.
+- Taller separado en Simples, Esmerilados y Biselados.
+- Clasificación automática de pedidos existentes según su tipo.
+- Secuencia obligatoria: espejo listo → cliente avisado → entregado y archivado.
+- Indicador persistente de cliente avisado.
+- Adaptación de las nuevas herramientas a celular.
+
+## Para ejecutar localmente —opcional—
 
 ```bash
 npm install
 npm run dev
 ```
 
-Para generar una versión de producción:
-
-```bash
-npm run build
-```
-
-El directorio `dist/` incluido corresponde a la compilación verificada de esta entrega.
-
-## Qué incluye esta versión
-
-- Edificio operativo organizado en planta alta y planta baja.
-- Imágenes ambientales propias para los seis sectores.
-- Nueva portada con resumen de estados y jerarquía más limpia.
-- Cabecera, navegación contextual y pantallas de sector rediseñadas.
-- Pestañas con iconos y nombre del espacio de trabajo activo.
-- Formularios, tarjetas, botones, modales y estados bloqueados unificados.
-- Diseño responsive en dos columnas para el edificio en celular.
-- Retorno automático al inicio de la pantalla al cambiar de sector.
-- Desempañante mostrado como aviso verde junto con las demás funciones y eliminado del detalle técnico.
-
-## Alcance
-
-Por decisión del proyecto, esta iteración no incorpora una nueva capa de seguridad. Conserva el esquema de acceso existente, adecuado al uso interno planteado para un equipo pequeño.
-
-No se publicó ningún cambio en GitHub. Este paquete es una copia local lista para revisar, ejecutar y luego integrar al repositorio cuando se decida.
+Solamente para esta modalidad local se crea un archivo `.env` a partir de `.env.example` y se colocan allí las variables del proyecto existente.
