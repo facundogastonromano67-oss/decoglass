@@ -151,6 +151,7 @@ const FORMA_OPTIONS = ["Rectangular", "Pastilla", "Circular", "P. Curvas", "Oval
 const TIPO_PEDIDO_OPTIONS = ["Simple", "Importado", "Esm.", "Sin led", "Biselado"];
 const TOUCH_OPTIONS = ["Touch", "No"];
 const DESEMP_OPTIONS = ["Desempañante", "No"];
+const DESEMP_TIPO_OPTIONS = ["220", "Touch"];
 const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
 const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
@@ -1963,7 +1964,7 @@ function emptyPedido(prefill) {
     id: uid(), orden: null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
     vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
-    touch: "No", desemp: "No", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
+    touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false,
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
@@ -2387,6 +2388,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <div className="dg-field-grid">
             <Field label="Touch"><select disabled={!canEditFull} value={draft.touch} onChange={(e) => set("touch", e.target.value)}>{TOUCH_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Desempañante"><select disabled={!canEditFull} value={draft.desemp} onChange={(e) => set("desemp", e.target.value)}>{DESEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            {draft.desemp === "Desempañante" && (
+              <Field label="Tipo de desempañante"><select disabled={!canEditFull} value={draft.desempTipo || "220"} onChange={(e) => set("desempTipo", e.target.value)}>{DESEMP_TIPO_OPTIONS.map((o) => (<option key={o} value={o}>{o === "220" ? "220V (enchufe)" : "Touch (T)"}</option>))}</select></Field>
+            )}
             <Field label="Hora / Temp"><select disabled={!canEditFull} value={draft.horaTemp} onChange={(e) => set("horaTemp", e.target.value)}>{HORATEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Bluetooth"><select disabled={!canEditFull} value={draft.bluetooth} onChange={(e) => set("bluetooth", e.target.value)}>{BLUETOOTH_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Tono de luz"><select disabled={!canEditFull} value={draft.tono} onChange={(e) => set("tono", e.target.value)}>{TONO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
@@ -2866,11 +2870,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
     const funciones = [
       { on: p.touch === "Touch", label: "TOUCH" },
-      { on: p.desemp === "Desempañante", label: "DESEMPAÑANTE" },
       { on: p.horaTemp === "Hora y Temperatura", label: "HORA Y TEMP" },
       { on: p.bluetooth !== "No", label: p.bluetooth ? p.bluetooth.toUpperCase() : "" },
       { on: p.pulido === "Sí", label: "PULIDO" },
     ].filter((f) => f.on && f.label);
+    const desempLabel = p.desemp === "Desempañante" ? (p.desempTipo === "Touch" ? "Desempañante Touch (T)" : "Desempañante 220V") : null;
+    const observaciones = [desempLabel, p.grabado].filter(Boolean).join(" · ");
     return (
       <div className={`dg-pedido-card dg-fabrica-card dg-fab-${entrega.clase}`} key={p.id}>
         <div className="dg-fab-head">
@@ -2890,15 +2895,15 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
           <div><span>Tono de luz</span><strong className="dg-fab-tono">{p.tono || "—"}</strong></div>
         </div>
 
-        {p.grabado && (
-          <div className="dg-fab-grabado"><strong>Grabado / detalle:</strong> {p.grabado}</div>
-        )}
-
         <div className="dg-fab-funciones">
           {funciones.length === 0
             ? <span className="dg-fab-nofunc">Sin funciones extra</span>
             : funciones.map((f) => (<span className="dg-fab-func" key={f.label}>{f.label}</span>))}
         </div>
+
+        {observaciones && (
+          <div className="dg-fab-grabado"><strong>Observaciones:</strong> {observaciones}</div>
+        )}
 
         <div className="dg-pedido-badges">
           <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
@@ -3591,19 +3596,14 @@ function SectorPage({
 
   return (
     <div className="dg-sector-page">
-      <div className="dg-sector-page-head">
-        <button className="dg-back-btn" onClick={onBack}><ArrowLeft size={15} /> Edificio</button>
-        <div className="dg-sector-page-title">
-          <div className="dg-modal-icon" style={{ "--glow": glow }}>{Icon && <Icon size={20} />}</div>
-          <div>
-            <div className="dg-modal-title">{sector.name}</div>
-            <div className="dg-modal-sub">Piso {String(index + 1).padStart(2, "0")} · {sector.encargado || "Sin encargado"}</div>
-          </div>
+      <div className="dg-sector-page-head-v2">
+        <button className="dg-back-circle" onClick={onBack} title="Volver al edificio"><ArrowLeft size={19} /></button>
+        <div className="dg-sector-page-title-v2">
+          <div className="dg-modal-icon" style={{ "--glow": glow }}>{Icon && <Icon size={18} />}</div>
+          <span className="dg-sector-page-name">{sector.name}</span>
         </div>
         <div className="dg-status-pill" style={{ "--glow": glow }}>{pct === null ? "Sin tareas" : `${pct}% hoy`}</div>
       </div>
-
-      <div className="dg-room-strip" style={{ "--glow": glow }}><RoomScene sector={sector} /></div>
 
       {tabs.length > 1 && (
         <div className="dg-sector-tabs">
@@ -3738,6 +3738,13 @@ function Style() {
       .dg-sector-page { max-width:760px; margin:0 auto; min-width:0; }
       .dg-sector-page-head { display:flex; align-items:center; gap:12px; margin-bottom:2px; flex-wrap:wrap; }
       .dg-sector-page-title { display:flex; align-items:center; gap:12px; flex:1; }
+      .dg-sector-page-head-v2 { display:flex; align-items:center; gap:14px; margin-bottom:18px; }
+      .dg-back-circle { display:flex; align-items:center; justify-content:center; width:38px; height:38px; min-width:38px;
+        border-radius:50%; background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); color:#C3CBD8; cursor:pointer;
+        transition: all .15s ease; }
+      .dg-back-circle:hover { background: rgba(79,195,192,0.15); border-color: rgba(79,195,192,0.4); color:#4FC3C0; transform: translateX(-2px); }
+      .dg-sector-page-title-v2 { display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
+      .dg-sector-page-name { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:17px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .dg-sector-tabs { display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 18px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px; }
       .dg-sector-tab { background:transparent; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:8px 15px; font-size:12.5px; font-weight:600; cursor:pointer; transition: all .15s ease; }
       .dg-sector-tab:hover { color:#E7ECF2; }
