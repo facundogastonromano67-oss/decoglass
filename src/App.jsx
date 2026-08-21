@@ -210,6 +210,40 @@ function esPedidoConEnvio(pedido) {
   return ENVIO_METODOS.includes(pedido?.metodo);
 }
 
+function costoEnvioPedido(pedido) {
+  return Math.max(0, Number(pedido?.costoEnvio) || 0);
+}
+
+function envioPendientePedido(pedido) {
+  return esPedidoConEnvio(pedido) && !pedido?.envioPagado ? costoEnvioPedido(pedido) : 0;
+}
+
+function totalPendientePedido(pedido) {
+  return Math.max(0, pedidoSaldo(pedido)) + envioPendientePedido(pedido);
+}
+
+function detalleCobroEntrega(pedido) {
+  const saldoEspejo = Math.max(0, pedidoSaldo(pedido));
+  if (!esPedidoConEnvio(pedido)) {
+    return saldoEspejo > 0 ? `💰 Saldo pendiente: ${money(saldoEspejo)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+  }
+
+  const costoEnvio = costoEnvioPedido(pedido);
+  const envioPendiente = envioPendientePedido(pedido);
+  const total = totalPendientePedido(pedido);
+  const lineas = [
+    saldoEspejo > 0 ? `🪞 Saldo del espejo: ${money(saldoEspejo)}` : "🪞 Espejo: saldado",
+    costoEnvio > 0
+      ? pedido?.envioPagado
+        ? `🚚 Envío: ${money(costoEnvio)} (pagado)`
+        : `🚚 Envío pendiente: ${money(costoEnvio)}`
+      : "🚚 Envío: monto a confirmar",
+  ];
+  if (total > 0) lineas.push(`💰 ${costoEnvio > 0 ? "Total a pagar" : "Total parcial"}: ${money(total)}`);
+  else lineas.push("💰 No queda saldo pendiente.");
+  return lineas.join("\n");
+}
+
 function pedidoFueVerificado(pedido) {
   return Boolean(pedido) && pedido.estado !== "Sin pasar a fábrica" && pedido.estado !== "Cancelado";
 }
@@ -380,8 +414,7 @@ function entregaWaLink(p) {
   const base = waLink(p.celular);
   if (!base) return null;
   const nombre = p.cliente ? ` ${p.cliente}` : "";
-  const saldo = pedidoSaldo(p);
-  const saldoTexto = saldo > 0 ? `💰 Saldo pendiente: ${money(saldo)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+  const saldoTexto = detalleCobroEntrega(p);
   let cuerpo;
   if (p.metodo === "Retira") {
     cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo para retirar. ¿Coordinamos un día y horario?\n\n${saldoTexto}`;
@@ -3002,8 +3035,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   }
 
   function mensaje(p) {
-    const saldo = pedidoSaldo(p);
-    const saldoTexto = saldo > 0 ? `💰 Saldo pendiente: ${money(saldo)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+    const saldoTexto = detalleCobroEntrega(p);
     return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\nEspejo ${p.ancho}×${p.alto} cm\n📞 Teléfono: ${p.celular || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto: ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha estimada: ${p.listo || "a coordinar"}\n\n${saldoTexto}\n\n¿Podés confirmarnos que estos datos son correctos?`;
   }
   function copiar(p) {
@@ -3049,6 +3081,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                 </div>
               </EnterFlow>
             </details>
+            <div className={`dg-shipping-total-preview ${costoEnvioPedido(p) > 0 ? "" : "dg-shipping-total-missing"}`}>
+              <span>{costoEnvioPedido(p) > 0 ? "Total a confirmar con el cliente" : "Total parcial · falta cargar el envío"}</span>
+              <strong>{money(totalPendientePedido(p))}</strong>
+            </div>
             <div className="dg-quote-actions dg-shipping-copy">
               <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
             </div>
@@ -3276,7 +3312,10 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
     .map((grupo) => ({ ...grupo, pedidos: grupo.pedidos.sort((a, b) => (a.orden || 0) - (b.orden || 0)) }))
     .sort((a, b) => (a.pedidos[0]?.listo || "9999").localeCompare(b.pedidos[0]?.listo || "9999"));
 
-  function toggle(id, field) { onChange(pedidos.map((p) => (p.id === id ? { ...p, [field]: !p[field] } : p))); }
+  function setEnvioPagadoGrupo(items, pagado) {
+    const ids = new Set(items.map((p) => p.id));
+    onChange(pedidos.map((p) => (ids.has(p.id) ? { ...p, envioPagado: pagado } : p)));
+  }
   function marcarEntregado(pedido) {
     if (!pedido.clienteAvisado || !pedido.envioConfirmado || pedido.estado !== "Espejo listo") {
       window.alert("PostVenta debe confirmar al cliente y el envío antes de habilitar la entrega.");
@@ -3290,16 +3329,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
   }
   function controlesEspejo(p) {
     return (
-      <>
-        {canEdit && (
-          <div className="dg-fabrica-actions dg-logistics-payment">
-            <button className={`dg-fabrica-btn ${p.envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => toggle(p.id, "envioPagado")}>
-              <CircleDollarSign size={16} /> {p.envioPagado ? "Envío pagado ✓" : "Marcar envío pagado"}
-            </button>
-          </div>
-        )}
-        <FlujoPedido pedido={p} canEdit={canEdit} onEntregar={marcarEntregado} />
-      </>
+      <FlujoPedido pedido={p} canEdit={canEdit} onEntregar={marcarEntregado} />
     );
   }
 
@@ -3317,6 +3347,11 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
           const piso = datoEntrega(items, "piso", "Sin piso / timbre");
           const fecha = datoEntrega(items, "listo", "Sin fecha");
           const saldo = items.reduce((total, p) => total + Math.max(0, pedidoSaldo(p)), 0);
+          const costoEnvio = items.reduce((mayor, p) => Math.max(mayor, costoEnvioPedido(p)), 0);
+          const pedidosConCosto = items.filter((p) => costoEnvioPedido(p) > 0);
+          const envioPagado = costoEnvio > 0 && pedidosConCosto.every((p) => Boolean(p.envioPagado));
+          const envioPendiente = envioPagado ? 0 : costoEnvio;
+          const totalACobrar = saldo + envioPendiente;
           const medidas = items.map((p) => `${p.ancho}×${p.alto} cm`).join(" · ");
           const ordenes = items.map((p) => `#${p.orden}`).join(" · ");
           return (
@@ -3332,7 +3367,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                   <span><User size={13} /> Nombre</span>
                   <strong>{nombre}</strong>
                 </div>
-                <div className="dg-logistics-datum">
+                <div className="dg-logistics-datum dg-logistics-phone">
                   <span><Phone size={13} /> Teléfono</span>
                   <strong>{telefono}</strong>
                 </div>
@@ -3340,7 +3375,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                   <span><MapPin size={13} /> Dirección</span>
                   <strong>{direccion}</strong>
                 </div>
-                <div className="dg-logistics-datum">
+                <div className="dg-logistics-datum dg-logistics-floor">
                   <span><Building2 size={13} /> Piso / Timbre</span>
                   <strong>{piso}</strong>
                 </div>
@@ -3352,8 +3387,27 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                 <div className={`dg-logistics-datum dg-logistics-balance ${saldo > 0 ? "dg-logistics-balance-pending" : "dg-logistics-balance-paid"}`}>
                   <span><CircleDollarSign size={13} /> Saldo restante</span>
                   <strong>{saldo > 0 ? money(saldo) : "Saldado"}</strong>
+                  <small>Solo espejos</small>
+                </div>
+                <div className={`dg-logistics-datum dg-logistics-shipping ${costoEnvio <= 0 ? "dg-logistics-shipping-missing" : envioPagado ? "dg-logistics-shipping-paid" : "dg-logistics-shipping-pending"}`}>
+                  <span><Truck size={13} /> Monto del envío</span>
+                  <strong>{costoEnvio > 0 ? money(costoEnvio) : "Sin cargar"}</strong>
+                  <small>{costoEnvio <= 0 ? "Falta definir cuánto se paga al flete" : envioPagado ? "Envío pagado" : "Pendiente de pago"}</small>
+                </div>
+                <div className={`dg-logistics-datum dg-logistics-total ${totalACobrar > 0 ? "dg-logistics-balance-pending" : "dg-logistics-balance-paid"}`}>
+                  <span><CircleDollarSign size={13} /> Total a cobrar</span>
+                  <strong>{totalACobrar > 0 ? money(totalACobrar) : "Saldado"}</strong>
+                  <small>{envioPendiente > 0 ? "Incluye el envío pendiente" : "No suma un envío ya pagado"}</small>
                 </div>
               </div>
+
+              {canEdit && costoEnvio > 0 && (
+                <div className="dg-logistics-shipping-action">
+                  <button className={`dg-fabrica-btn ${envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => setEnvioPagadoGrupo(items, !envioPagado)}>
+                    <CircleDollarSign size={16} /> {envioPagado ? `Envío pagado · ${money(costoEnvio)}` : `Marcar envío pagado · ${money(costoEnvio)}`}
+                  </button>
+                </div>
+              )}
 
               {items.length > 1 ? (
                 <div className="dg-logistics-mirrors">
@@ -5376,6 +5430,11 @@ function Style() {
       .dg-shipping-field .dg-field { gap:3px; }
       .dg-shipping-field .dg-field label { font-size:8.5px; }
       .dg-shipping-field .dg-field input { min-width:0; min-height:39px; padding:7px 9px; font-size:12px; }
+      .dg-shipping-total-preview { min-height:36px; display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:7px; padding:7px 9px; border:1px solid rgba(var(--dg-accent-rgb),.2); border-radius:9px; background:rgba(var(--dg-accent-rgb),.06); }
+      .dg-shipping-total-preview > span { color:var(--dg-text-dim); font-size:9px; font-weight:650; }
+      .dg-shipping-total-preview > strong { color:var(--dg-accent-2); font-family:'JetBrains Mono',monospace; font-size:12px; white-space:nowrap; }
+      .dg-shipping-total-missing { border-color:rgba(var(--dg-warning-rgb),.24); background:rgba(var(--dg-warning-rgb),.06); }
+      .dg-shipping-total-missing > strong { color:var(--dg-warning); }
       .dg-shipping-copy { margin-top:7px; }
       .dg-shipping-copy .dg-btn-ghost { min-height:34px; padding:7px 10px; font-size:10px; }
 
@@ -5393,16 +5452,23 @@ function Style() {
       .dg-logistics-datum > small { overflow:hidden; color:var(--dg-text-dim); font-size:9px; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
       .dg-logistics-name { grid-column:1; grid-row:1; }
       .dg-logistics-name > strong { font-size:20px; }
-      .dg-logistics-data > .dg-logistics-datum:nth-child(2) { grid-column:2; grid-row:1; }
+      .dg-logistics-phone { grid-column:2; grid-row:1; }
       .dg-logistics-address { grid-column:1 / 3; grid-row:2; }
       .dg-logistics-address > strong { font-size:17px; }
-      .dg-logistics-data > .dg-logistics-datum:nth-child(4) { grid-column:3; grid-row:1; }
+      .dg-logistics-floor { grid-column:3; grid-row:1; }
       .dg-logistics-mirror-total { grid-column:1 / 3; grid-row:3; }
       .dg-logistics-mirror-total > strong { font-size:18px; }
-      .dg-logistics-balance { grid-column:3; grid-row:2 / 4; }
-      .dg-logistics-balance > strong { font-family:'JetBrains Mono',monospace; font-size:19px; }
+      .dg-logistics-balance { grid-column:3; grid-row:3; }
+      .dg-logistics-shipping { grid-column:3; grid-row:2; }
+      .dg-logistics-total { grid-column:1 / -1; grid-row:4; min-height:72px; }
+      .dg-logistics-balance > strong, .dg-logistics-shipping > strong, .dg-logistics-total > strong { font-family:'JetBrains Mono',monospace; font-size:19px; }
+      .dg-logistics-total > strong { font-size:23px; }
       .dg-logistics-balance-pending > strong { color:var(--dg-danger); }
       .dg-logistics-balance-paid > strong { color:var(--dg-success); }
+      .dg-logistics-shipping-pending > strong, .dg-logistics-shipping-missing > strong { color:var(--dg-warning); }
+      .dg-logistics-shipping-paid > strong { color:var(--dg-success); }
+      .dg-logistics-shipping-action { padding:0 10px 10px; background:var(--dg-order-info); }
+      .dg-logistics-shipping-action .dg-fabrica-btn { width:100%; min-height:38px; padding:8px 10px; font-size:10.5px; }
       .dg-logistics-mirrors, .dg-logistics-single { padding:9px 10px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.11); background:var(--dg-order-flow); }
       .dg-logistics-mirrors { display:flex; flex-direction:column; gap:6px; }
       .dg-logistics-mirror { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:9px; background:var(--dg-surface); }
@@ -5415,8 +5481,6 @@ function Style() {
       .dg-logistics-mirror-body { padding:0 8px 8px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
       .dg-logistics-single-head { display:flex; align-items:center; gap:8px; margin-bottom:7px; padding:0 2px; }
       .dg-logistics-single-head > strong { color:var(--dg-text); font-size:11px; }
-      .dg-logistics-payment { margin:7px 0; }
-      .dg-logistics-payment .dg-fabrica-btn { min-height:34px; padding:7px 9px; font-size:10px; }
       .dg-logistics-card .dg-order-flow { border:1px solid rgba(var(--dg-line-rgb),.12); border-top:2px solid rgba(var(--dg-accent-rgb),.42); border-radius:9px; }
 
       .dg-process-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
@@ -5560,17 +5624,23 @@ function Style() {
         .dg-logistics-head > time { grid-column:2; grid-row:1 / 3; }
         .dg-logistics-data { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; padding:8px; }
         .dg-logistics-name { grid-column:1 / -1; grid-row:1; }
-        .dg-logistics-data > .dg-logistics-datum:nth-child(2) { grid-column:1; grid-row:2; }
-        .dg-logistics-data > .dg-logistics-datum:nth-child(4) { grid-column:2; grid-row:2; }
+        .dg-logistics-phone { grid-column:1; grid-row:2; }
+        .dg-logistics-floor { grid-column:2; grid-row:2; }
         .dg-logistics-address { grid-column:1 / -1; grid-row:3; }
         .dg-logistics-mirror-total { grid-column:1 / -1; grid-row:4; }
-        .dg-logistics-balance { grid-column:1 / -1; grid-row:5; min-height:61px; }
+        .dg-logistics-balance { grid-column:1; grid-row:5; min-height:68px; }
+        .dg-logistics-shipping { grid-column:2; grid-row:5; min-height:68px; }
+        .dg-logistics-total { grid-column:1 / -1; grid-row:6; min-height:68px; }
         .dg-logistics-datum { min-height:61px; padding:8px 9px; }
+        .dg-logistics-datum > small { white-space:normal; }
         .dg-logistics-datum > strong { font-size:15px; }
         .dg-logistics-name > strong { font-size:21px; }
         .dg-logistics-address > strong { font-size:18px; }
         .dg-logistics-mirror-total > strong { font-size:18px; }
-        .dg-logistics-balance > strong { font-size:22px; }
+        .dg-logistics-balance > strong, .dg-logistics-shipping > strong { font-size:17px; }
+        .dg-logistics-total > strong { font-size:23px; }
+        .dg-logistics-shipping-action { padding:0 8px 8px; }
+        .dg-logistics-shipping-action .dg-fabrica-btn { min-width:0; min-height:38px; padding:8px; font-size:10.5px; }
         .dg-logistics-mirror > summary { grid-template-columns:auto minmax(0,1fr) auto 16px; gap:6px; padding:7px 8px; }
       }
       @media (max-width:520px) {
