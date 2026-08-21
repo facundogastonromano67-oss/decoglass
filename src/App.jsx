@@ -1621,9 +1621,10 @@ function ComisionesPanel({ pedidos, onChangePedidos, empleados, onCreatePurchase
     if (monto <= 0) return;
     const ids = grupo.items.map((p) => p.id);
     const montos = {};
+    const empleado = (empleados || []).find((emp) => vendedorCoincideConEmpleado(grupo.vendedor, emp));
     grupo.items.forEach((p) => { montos[p.id] = comisionMonto(p, empleados); });
     onChangePedidos(pedidos.map((p) => (ids.includes(p.id)
-      ? { ...p, comisionPagada: true, comisionLiquidadaMonto: montos[p.id], comisionFechaPago: new Date().toISOString().slice(0, 10) }
+      ? { ...p, comisionPagada: true, comisionLiquidadaMonto: montos[p.id], comisionFechaPago: new Date().toISOString().slice(0, 10), comisionEmpleadoId: empleado?.id || null }
       : p)));
     if (onCreatePurchase) {
       onCreatePurchase({
@@ -1759,11 +1760,11 @@ function celdaVacia() { return { horas: "", ventas: "", he: "", adelanto: "", pl
 function filaVacia(empleadoId, periodo) {
   const semanas = {};
   SEMANAS.forEach((n) => { semanas[n] = celdaVacia(); });
-  return { id: uid(), empleadoId, periodo, semanas, nota: "" };
+  return { id: uid(), empleadoId, periodo, semanas, ajusteComision: "", nota: "" };
 }
 const nnum = (v) => Number(v) || 0;
 
-function totalesFila(emp, fila) {
+function totalesFila(emp, fila, comisionAutomatica = 0) {
   const sem = fila?.semanas || {};
   const horas = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.horas), 0);
   const ventas = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.ventas), 0);
@@ -1771,16 +1772,21 @@ function totalesFila(emp, fila) {
   const adelantos = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.adelanto), 0);
   const pluses = SEMANAS.filter((n) => sem[n]?.plus).length;
   const pagoHoras = horas * nnum(emp?.valorHora);
-  const pagoComision = ventas * (nnum(emp?.comisionPct) / 100);
+  const comisionManualAnterior = ventas * (nnum(emp?.comisionPct) / 100);
+  const tieneAjusteExplicito = fila && Object.prototype.hasOwnProperty.call(fila, "ajusteComision");
+  const ajusteComision = tieneAjusteExplicito
+    ? nnum(fila.ajusteComision)
+    : (nnum(comisionAutomatica) > 0 ? 0 : comisionManualAnterior);
+  const pagoComision = nnum(comisionAutomatica);
   const pagoHE = he * nnum(emp?.valorHoraExtra);
   const pagoPlus = pluses * nnum(emp?.plusSemanal);
   const total = emp?.sector === "Taller"
     ? nnum(emp?.sueldoBase) + nnum(emp?.complementoFijo) + pagoHE + pagoPlus - adelantos
-    : pagoHoras + pagoComision;
-  return { horas, ventas, he, adelantos, pluses, pagoHoras, pagoComision, pagoHE, pagoPlus, total };
+    : pagoHoras + pagoComision + ajusteComision;
+  return { horas, ventas, he, adelantos, pluses, pagoHoras, pagoComision, ajusteComision, pagoHE, pagoPlus, total };
 }
 
-function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiquidaciones }) {
+function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiquidaciones, pedidos }) {
   const [periodo, setPeriodo] = useState(periodoActual());
   const [verEmpleados, setVerEmpleados] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
@@ -1808,14 +1814,26 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
     if (existe) onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id ? { ...l, nota } : l)));
     else onChangeLiquidaciones([{ ...filaVacia(empId, periodo), nota }, ...liquidaciones]);
   }
+  function setCampoFila(empId, campo, valor) {
+    const existe = filaDe(empId);
+    if (existe) onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id ? { ...l, [campo]: valor } : l)));
+    else onChangeLiquidaciones([{ ...filaVacia(empId, periodo), [campo]: valor }, ...liquidaciones]);
+  }
   function saveEmpleado(emp) {
     const exists = empleados.some((e) => e.id === emp.id);
     onChangeEmpleados(exists ? empleados.map((e) => (e.id === emp.id ? emp : e)) : [...empleados, emp]);
     setEditingEmp(null);
   }
   function removeEmpleado(id) { onChangeEmpleados(empleados.filter((e) => e.id !== id)); }
+  function editarEmpleado(emp) {
+    setEditingEmp(emp);
+    setVerEmpleados(true);
+    requestAnimationFrame(() => document.querySelector(".dg-sueldo-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
 
-  const totOficina = oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).total, 0);
+  const comisionesPorEmpleado = Object.fromEntries(oficina.map((emp) => [emp.id, resumenComisionesLiquidadas(pedidos, emp, periodo)]));
+  const totalEmpleado = (emp) => totalesFila(emp, filaDe(emp.id), comisionesPorEmpleado[emp.id]?.total || 0);
+  const totOficina = oficina.reduce((a, e) => a + totalEmpleado(e).total, 0);
   const totTaller = taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).total, 0);
 
   return (
@@ -1828,7 +1846,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
           </select>
         </div>
         <button className="dg-btn-ghost" onClick={() => setVerEmpleados((v) => !v)}>
-          <Settings2 size={14} /> {verEmpleados ? "Ocultar" : "Editar"} empleados y valores
+          <Settings2 size={14} /> {verEmpleados ? "Ocultar configuración" : "Configurar sueldos y valores"}
         </button>
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir</button>
       </div>
@@ -1840,8 +1858,9 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
       </div>
 
       {verEmpleados && (
-        <div className="dg-section-card">
-          <div className="dg-section-header"><UserPlus size={14} /> {editingEmp ? "Editar empleado" : "Nuevo empleado"}</div>
+        <div className="dg-section-card dg-sueldo-editor">
+          <div className="dg-section-header"><UserPlus size={14} /> {editingEmp ? `Editar valores de ${editingEmp.nombre}` : "Nuevo empleado y valores salariales"}</div>
+          <p className="dg-hint dg-sueldo-editor-hint">Podés actualizar valor hora, porcentaje de comisión, sueldo, complemento, horas extra y plus. Los nuevos importes se guardan en la ficha del empleado.</p>
           <EmpleadoForm key={editingEmp?.id || "nuevo"} empleado={editingEmp || emptyEmpleadoSueldo()} onSave={saveEmpleado} onCancel={editingEmp ? () => setEditingEmp(null) : null} />
           <div className="dg-task-list" style={{ marginTop: 14, marginBottom: 0 }}>
             {empleados.map((e) => (
@@ -1854,7 +1873,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                       : `${money(e.sueldoBase)} + ${money(e.complementoFijo)} · HE ${money(e.valorHoraExtra)} · plus ${money(e.plusSemanal)}`}
                   </span>
                 </div>
-                <button className="dg-icon-btn" onClick={() => setEditingEmp(e)}><Pencil size={14} /></button>
+                <button className="dg-icon-btn" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={14} /></button>
                 <button className="dg-icon-btn dg-task-del" onClick={() => removeEmpleado(e.id)}><Trash2 size={14} /></button>
               </div>
             ))}
@@ -1865,6 +1884,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
       {/* ---- OFICINA / VENTAS ---- */}
       <div className="dg-sueldo-block">
         <div className="dg-sueldo-title">Oficina / Ventas — liquidación semanal por hora</div>
+        <p className="dg-hint dg-sueldo-auto-note"><CircleDollarSign size={13} /><span>Las comisiones aparecen automáticamente en el mes en que se presiona <strong>Liquidar</strong> desde la sección Comisiones.</span></p>
         {oficina.length === 0 ? <div className="dg-empty">No hay empleados de Oficina/Ventas cargados.</div> : (
           <div className="dg-tabla-scroll">
             <table className="dg-tabla">
@@ -1872,27 +1892,29 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                 <tr>
                   <th className="dg-sticky-col">Empleado</th>
                   <th>Valor hora</th><th>Com. %</th>
-                  {SEMANAS.map((n) => (<th key={n} className="dg-th-semana">S{n}<small>hs / ventas</small></th>))}
-                  <th>Total hs</th><th>$ Horas</th><th>$ Comisión</th><th className="dg-th-total">TOTAL</th>
+                  {SEMANAS.map((n) => (<th key={n} className="dg-th-semana">S{n}<small>horas</small></th>))}
+                  <th>Total hs</th><th>$ Horas</th><th>$ Comisiones<small>liquidadas</small></th><th>Ajuste<small>manual</small></th><th className="dg-th-total">TOTAL</th>
                 </tr>
               </thead>
               <tbody>
                 {oficina.map((e) => {
-                  const fila = filaDe(e.id); const t = totalesFila(e, fila);
+                  const fila = filaDe(e.id);
+                  const resumenComision = comisionesPorEmpleado[e.id] || { cantidad: 0, total: 0 };
+                  const t = totalEmpleado(e);
                   return (
                     <tr key={e.id}>
-                      <td className="dg-sticky-col dg-td-nombre">{e.nombre}</td>
+                      <td className="dg-sticky-col dg-td-nombre"><span>{e.nombre}</span><button className="dg-sueldo-row-edit" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={12} /></button></td>
                       <td className="dg-td-ref">{money(e.valorHora)}</td>
                       <td className="dg-td-ref">{e.comisionPct}%</td>
                       {SEMANAS.map((n) => (
                         <td key={n} className="dg-td-semana">
                           <input type="number" className="dg-celda" placeholder="hs" value={fila?.semanas?.[n]?.horas ?? ""} onChange={(ev) => setCelda(e.id, n, "horas", ev.target.value)} />
-                          <input type="number" className="dg-celda dg-celda-sec" placeholder="$ vta" value={fila?.semanas?.[n]?.ventas ?? ""} onChange={(ev) => setCelda(e.id, n, "ventas", ev.target.value)} />
                         </td>
                       ))}
                       <td className="dg-td-calc">{t.horas}</td>
                       <td className="dg-td-calc">{money(t.pagoHoras)}</td>
-                      <td className="dg-td-calc">{money(t.pagoComision)}</td>
+                      <td className="dg-td-calc dg-td-comision-auto"><strong>{money(t.pagoComision)}</strong><small>{resumenComision.cantidad > 0 ? `${resumenComision.cantidad} pedido(s)` : "Sin liquidar"}</small></td>
+                      <td className="dg-td-ajuste"><input type="number" className="dg-celda dg-celda-ajuste" placeholder="$ 0" value={fila?.ajusteComision ?? (t.ajusteComision || "")} onChange={(ev) => setCampoFila(e.id, "ajusteComision", ev.target.value)} /></td>
                       <td className="dg-td-total">{money(t.total)}</td>
                     </tr>
                   );
@@ -1902,9 +1924,10 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   {SEMANAS.map((n) => (
                     <td key={n} className="dg-td-calc">{oficina.reduce((a, e) => a + nnum(filaDe(e.id)?.semanas?.[n]?.horas), 0)} hs</td>
                   ))}
-                  <td className="dg-td-calc">{oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).horas, 0)}</td>
-                  <td className="dg-td-calc">{money(oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoHoras, 0))}</td>
-                  <td className="dg-td-calc">{money(oficina.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoComision, 0))}</td>
+                  <td className="dg-td-calc">{oficina.reduce((a, e) => a + totalEmpleado(e).horas, 0)}</td>
+                  <td className="dg-td-calc">{money(oficina.reduce((a, e) => a + totalEmpleado(e).pagoHoras, 0))}</td>
+                  <td className="dg-td-calc">{money(oficina.reduce((a, e) => a + totalEmpleado(e).pagoComision, 0))}</td>
+                  <td className="dg-td-calc">{money(oficina.reduce((a, e) => a + totalEmpleado(e).ajusteComision, 0))}</td>
                   <td className="dg-td-total">{money(totOficina)}</td>
                 </tr>
               </tbody>
@@ -1938,7 +1961,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   const fila = filaDe(e.id); const t = totalesFila(e, fila);
                   return (
                     <tr key={e.id}>
-                      <td className="dg-sticky-col dg-td-nombre">{e.nombre}</td>
+                      <td className="dg-sticky-col dg-td-nombre"><span>{e.nombre}</span><button className="dg-sueldo-row-edit" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={12} /></button></td>
                       <td className="dg-td-ref">{money(e.sueldoBase)}</td>
                       <td className="dg-td-ref">{money(e.complementoFijo)}</td>
                       {SEMANAS.map((n) => (
@@ -1994,15 +2017,15 @@ function EmpleadoForm({ empleado, onSave, onCancel }) {
       </div>
       {draft.sector === "Oficina/Ventas" ? (
         <div className="dg-field-grid" style={{ marginTop: 12 }}>
-          <Field label="Valor hora"><input type="number" value={draft.valorHora} onChange={(e) => set("valorHora", e.target.value)} /></Field>
-          <Field label="Comisión % (ej: 3)"><input type="number" value={draft.comisionPct} onChange={(e) => set("comisionPct", e.target.value)} /></Field>
+          <Field label="Valor hora"><input type="number" min="0" step="0.01" value={draft.valorHora} onChange={(e) => set("valorHora", e.target.value)} /></Field>
+          <Field label="Comisión % (ej: 3)"><input type="number" min="0" step="0.01" value={draft.comisionPct} onChange={(e) => set("comisionPct", e.target.value)} /></Field>
         </div>
       ) : (
         <div className="dg-field-grid" style={{ marginTop: 12 }}>
-          <Field label="Sueldo recibo"><input type="number" value={draft.sueldoBase} onChange={(e) => set("sueldoBase", e.target.value)} /></Field>
-          <Field label="Complemento fijo"><input type="number" value={draft.complementoFijo} onChange={(e) => set("complementoFijo", e.target.value)} /></Field>
-          <Field label="Valor hora extra"><input type="number" value={draft.valorHoraExtra} onChange={(e) => set("valorHoraExtra", e.target.value)} /></Field>
-          <Field label="Plus semanal"><input type="number" value={draft.plusSemanal} onChange={(e) => set("plusSemanal", e.target.value)} /></Field>
+          <Field label="Sueldo de recibo"><input type="number" min="0" step="0.01" value={draft.sueldoBase} onChange={(e) => set("sueldoBase", e.target.value)} /></Field>
+          <Field label="Complemento fijo"><input type="number" min="0" step="0.01" value={draft.complementoFijo} onChange={(e) => set("complementoFijo", e.target.value)} /></Field>
+          <Field label="Valor hora extra"><input type="number" min="0" step="0.01" value={draft.valorHoraExtra} onChange={(e) => set("valorHoraExtra", e.target.value)} /></Field>
+          <Field label="Plus semanal"><input type="number" min="0" step="0.01" value={draft.plusSemanal} onChange={(e) => set("plusSemanal", e.target.value)} /></Field>
         </div>
       )}
       <div className="dg-form-actions">
@@ -2248,7 +2271,7 @@ function emptyPedido(prefill) {
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
-    comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
+    comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
   };
 }
 
@@ -2549,18 +2572,33 @@ function comisionElegible(p) {
   if ((Number(p.monto) || 0) <= 0) return false;
   return pedidoSaldo(p) <= 0;
 }
-// Busca el % del vendedor en la ficha de empleados (tolera "Dou" vs "Douglas").
+// Relaciona el nombre usado en Pedidos con la ficha de Sueldos (tolera "Dou" vs "Douglas").
+function vendedorCoincideConEmpleado(nombreVendedor, empleado) {
+  const vendedor = String(nombreVendedor || "").trim().toLowerCase();
+  const nombre = String(empleado?.nombre || "").trim().toLowerCase();
+  return !!vendedor && !!nombre && (nombre === vendedor || nombre.startsWith(vendedor) || vendedor.startsWith(nombre));
+}
 function porcentajeVendedor(nombre, empleados) {
   if (!nombre) return 0;
-  const n = String(nombre).trim().toLowerCase();
-  const emp = (empleados || []).find((e) => {
-    const en = String(e.nombre || "").trim().toLowerCase();
-    return en === n || en.startsWith(n) || n.startsWith(en);
-  });
+  const emp = (empleados || []).find((e) => vendedorCoincideConEmpleado(nombre, e));
   return emp ? Number(emp.comisionPct) || 0 : 0;
 }
 function comisionMonto(p, empleados) {
   return comisionBase(p) * (porcentajeVendedor(p.vendedor, empleados) / 100);
+}
+
+function resumenComisionesLiquidadas(pedidos, empleado, periodo) {
+  const items = (pedidos || []).filter((pedido) => {
+    const perteneceAlEmpleado = pedido?.comisionEmpleadoId === empleado?.id
+      || vendedorCoincideConEmpleado(pedido?.vendedor, empleado);
+    if (!pedido?.comisionPagada || !perteneceAlEmpleado) return false;
+    const fechaLiquidacion = String(pedido.comisionFechaPago || pedido.fecha || "");
+    return fechaLiquidacion.startsWith(periodo);
+  });
+  return {
+    cantidad: items.length,
+    total: items.reduce((suma, pedido) => suma + (Number(pedido.comisionLiquidadaMonto) || 0), 0),
+  };
 }
 
 // Campos que no pueden faltar al pasar un pedido. Devuelve { campo: "motivo" }
@@ -4733,7 +4771,7 @@ function SectorPage({
       )}
 
       {subpage === "sueldos" && (
-        isAdmin ? <SueldosPanel empleados={empleadosSueldo} onChangeEmpleados={onChangeEmpleadosSueldo} liquidaciones={liquidaciones} onChangeLiquidaciones={onChangeLiquidaciones} />
+        isAdmin ? <SueldosPanel empleados={empleadosSueldo} onChangeEmpleados={onChangeEmpleadosSueldo} liquidaciones={liquidaciones} onChangeLiquidaciones={onChangeLiquidaciones} pedidos={pedidos} />
           : <LockedPage label="Sueldos" onLogin={onRequestLogin} />
       )}
 
@@ -5112,8 +5150,12 @@ function Style() {
       .dg-sueldo-topbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
       .dg-periodo-sel { display:flex; align-items:center; gap:8px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:10px; padding:7px 12px; font-size:13px; color:var(--dg-text-dim); }
       .dg-periodo-sel select { background:transparent; border:none; color:var(--dg-accent); font-weight:700; font-size:13px; outline:none; }
+      .dg-sueldo-editor { scroll-margin-top:14px; }
+      .dg-sueldo-editor-hint { margin:-2px 0 12px; }
       .dg-sueldo-block { margin-bottom:26px; }
       .dg-sueldo-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:14px; color:var(--dg-text); margin-bottom:10px; padding-left:10px; border-left:3px solid var(--dg-accent); }
+      .dg-sueldo-auto-note { display:flex; align-items:flex-start; gap:6px; margin:-2px 0 9px; padding:7px 9px; border:1px solid rgba(var(--dg-success-rgb),.16); border-radius:8px; background:rgba(var(--dg-success-rgb),.045); color:var(--dg-text-dim); line-height:1.35; }
+      .dg-sueldo-auto-note svg { flex:0 0 auto; margin-top:1px; color:var(--dg-success); }
       .dg-tabla-scroll { overflow-x:auto; border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; background:var(--dg-surface-2); }
       .dg-tabla { border-collapse:separate; border-spacing:0; width:100%; font-size:12px; }
       .dg-tabla th { background:var(--dg-surface-2); color:var(--dg-text-dim); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;
@@ -5126,8 +5168,13 @@ function Style() {
       .dg-sticky-col { position:sticky; left:0; z-index:2; background:var(--dg-surface-2); text-align:left !important; min-width:96px; box-shadow: 2px 0 6px -3px rgba(0,0,0,0.7); }
       .dg-tabla thead .dg-sticky-col { background:var(--dg-surface-2); z-index:3; }
       .dg-td-nombre { font-weight:600; color:var(--dg-text); font-size:12.5px; }
+      .dg-sueldo-row-edit { width:24px; height:24px; display:inline-flex; align-items:center; justify-content:center; margin-left:5px; padding:0; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:6px; background:var(--dg-surface); color:var(--dg-text-faint); cursor:pointer; vertical-align:middle; }
+      .dg-sueldo-row-edit:hover { border-color:rgba(var(--dg-accent-rgb),.34); color:var(--dg-accent); }
       .dg-td-ref { color:var(--dg-text-dim); font-family:'JetBrains Mono', monospace; font-size:11px; white-space:nowrap; }
       .dg-td-calc { font-family:'JetBrains Mono', monospace; font-size:11.5px; color:var(--dg-text-dim); white-space:nowrap; }
+      .dg-td-comision-auto strong { display:block; color:var(--dg-success); font-size:11.5px; }
+      .dg-td-comision-auto small { display:block; margin-top:2px; color:var(--dg-text-faint); font-family:'Inter',sans-serif; font-size:8px; font-weight:600; }
+      .dg-td-ajuste { min-width:78px; }
       .dg-td-neg { color:var(--dg-danger); }
       .dg-td-total { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:var(--dg-success); background: rgba(var(--dg-success-rgb),0.06); white-space:nowrap; }
       .dg-td-semana { padding:5px 6px !important; }
@@ -5135,6 +5182,7 @@ function Style() {
         color:var(--dg-text); font-family:'JetBrains Mono', monospace; font-size:11.5px; text-align:center; outline:none; display:block; margin:0 auto 3px; }
       .dg-celda:focus { border-color:var(--dg-accent); box-shadow: 0 0 0 2px rgba(var(--dg-accent-rgb),0.15); }
       .dg-celda-sec { color:var(--dg-text-dim); font-size:10.5px; }
+      .dg-celda-ajuste { width:68px; margin:0 auto; color:var(--dg-warning); }
       .dg-celda-plus { width:58px; display:block; margin:0 auto; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:6px;
         padding:3px; font-size:9px; font-weight:700; text-transform:uppercase; color:var(--dg-text-faint); cursor:pointer; }
       .dg-celda-plus-on { background: rgba(var(--dg-success-rgb),0.18); border-color:var(--dg-success); color:var(--dg-success); }
