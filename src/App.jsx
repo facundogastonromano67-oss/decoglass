@@ -2848,7 +2848,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           const { principal: p, espejos } = grupo;
           const cantidadEspejos = espejos.length;
           const saldo = espejos.reduce((total, espejo) => total + Math.max(0, pedidoSaldo(espejo)), 0);
-          const montoTotal = espejos.reduce((total, espejo) => total + (Number(espejo.monto) || 0), 0);
           const metodos = [...new Set(espejos.map((espejo) => espejo.metodo || "A confirmar"))];
           const metodoLabel = metodos.length === 1 ? metodos[0] : "Entrega mixta";
           const MetodoIcon = metodos.length === 1 ? (METODO_ICONS[metodoLabel] || Package) : Package;
@@ -2857,13 +2856,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
             if (!anterior) return actual;
             return (actual.numero / actual.total) < (anterior.numero / anterior.total) ? actual : anterior;
           }, null);
-          const listos = espejos.filter(pedidoEstaListo).length;
-          const facturados = espejos.filter((espejo) => espejo.facturado).length;
-          const estados = [...new Set(espejos.map((espejo) => espejo.estado))];
-          const stage = estados.length === 1
-            ? (ESTADO_STAGE[estados[0]] || { stage: estados[0], color: "var(--dg-text-dim)" })
-            : { stage: `${listos}/${cantidadEspejos} espejos listos`, color: listos === cantidadEspejos ? "var(--dg-success)" : "var(--dg-warning)" };
-          const medidas = espejos.map((espejo) => `${espejo.ancho}×${espejo.alto}`).join(" · ");
           return (
             <details className="dg-pedido-card dg-order-card dg-order-disclosure dg-order-group-card" key={grupo.key}>
               <summary className="dg-order-compact" aria-label={`Abrir pedido de ${p.cliente || "cliente sin nombre"}`}>
@@ -2891,53 +2883,34 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               </summary>
 
               <div className="dg-order-expanded">
-                <div className="dg-order-summary dg-order-group-summary">
-                  <div className="dg-order-summary-label">Pedido completo</div>
-                  <div className="dg-pedido-card-top">
-                    <span className="dg-pedido-orden">#{p.orden}</span>
-                    <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
-                    <span className="dg-pago-monto">{montoTotal ? money(montoTotal) : "—"}</span>
-                  </div>
-                  <div className="dg-pago-meta">{cantidadEspejos} {cantidadEspejos === 1 ? "espejo" : "espejos"} · {medidas} cm · {p.vendedor || "—"} · {p.fecha}</div>
-                  <div className="dg-pedido-badges">
-                    <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
-                    <span className="dg-badge" style={{ "--bc": facturados === cantidadEspejos ? "var(--dg-success)" : "var(--dg-danger)" }}>
-                      {facturados === cantidadEspejos ? <CheckCircle2 size={12} /> : <XCircle size={12} />} Facturación {facturados}/{cantidadEspejos}
-                    </span>
-                    <span className="dg-badge" style={{ "--bc": saldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
-                      <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
-                    </span>
-                    <span className="dg-badge" style={{ "--bc": "var(--dg-text-dim)" }}><MetodoIcon size={12} /> {metodoLabel}</span>
-                    <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}><PackagePlus size={12} /> {cantidadEspejos} {cantidadEspejos === 1 ? "espejo" : "espejos"}</span>
-                  </div>
-                </div>
                 <div className="dg-order-mirror-list">
                   {espejos.map((espejo, index) => {
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
                     const espejoStage = ESTADO_STAGE[espejo.estado] || { stage: espejo.estado, color: "var(--dg-text-dim)" };
-                    const extras = funcionesPedido(espejo, true).map((funcion) => funcion.label).join(" · ");
+                    const funciones = funcionesPedido(espejo, true);
                     return (
                       <details className="dg-order-mirror" key={espejo.id}>
                         <summary>
                           <span className="dg-order-mirror-index">Espejo {index + 1}</span>
                           <span className="dg-order-mirror-main">
-                            <strong>{espejo.ancho}×{espejo.alto} cm · {espejo.forma}</strong>
-                            <small>{espejo.tipo || "Simple"}{extras ? ` · ${extras}` : ""}</small>
+                            <strong>{espejo.ancho}×{espejo.alto} cm</strong>
+                            <small>{espejo.forma} · {espejo.tipo || "Simple"}</small>
                           </span>
                           <span className="dg-order-mirror-state" style={{ "--mirror-color": espejoStage.color }}>{espejoStage.stage}</span>
                           <span className={`dg-order-mirror-balance ${espejoSaldo > 0 ? "dg-order-balance-pending" : "dg-order-balance-paid"}`}>{espejoSaldo > 0 ? money(espejoSaldo) : "Saldado"}</span>
                           <ChevronRight size={16} />
                         </summary>
                         <div className="dg-order-mirror-body">
-                          <div className="dg-pedido-badges dg-order-mirror-badges">
-                            <span className="dg-badge" style={{ "--bc": espejoStage.color }}>{espejoStage.stage}</span>
-                            <span className="dg-badge" style={{ "--bc": espejo.facturado ? "var(--dg-success)" : "var(--dg-danger)" }}>
+                          <div className="dg-order-mirror-meta">
+                            <span className={`dg-order-mirror-invoice ${espejo.facturado ? "dg-order-mirror-invoice-on" : "dg-order-mirror-invoice-off"}`}>
                               {espejo.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {espejo.facturado ? "Facturado" : "Sin facturar"}
                             </span>
-                            <span className="dg-badge" style={{ "--bc": espejoSaldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
-                              <CircleDollarSign size={12} /> {espejoSaldo > 0 ? `${money(espejoSaldo)} pendiente` : "Saldado"}
-                            </span>
-                            {comisionElegible(espejo) && !espejo.comisionPagada && <span className="dg-badge" style={{ "--bc": "var(--dg-warning)" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
+                            <div className="dg-order-mirror-functions">
+                              {funciones.length > 0
+                                ? funciones.map((funcion) => <span key={funcion.label}>{funcion.label}</span>)
+                                : <small>Sin funciones extra</small>}
+                            </div>
+                            {comisionElegible(espejo) && !espejo.comisionPagada && <span className="dg-order-mirror-commission"><CircleDollarSign size={12} /> Comisión a liquidar</span>}
                           </div>
                           <FlujoPedido
                             pedido={espejo}
@@ -5629,14 +5602,13 @@ function Style() {
       .dg-order-balance-paid strong { color:var(--dg-success); }
       .dg-order-disclosure-chevron { color:var(--dg-text-faint); transition:transform .18s ease,color .18s ease; }
       .dg-order-disclosure[open] .dg-order-disclosure-chevron { transform:rotate(90deg); color:var(--dg-accent); }
-      .dg-order-expanded { overflow:hidden; border-top:1px solid rgba(var(--dg-line-rgb),.13); }
+      .dg-order-expanded { overflow:hidden; border-top:1px solid rgba(var(--dg-line-rgb),.13); background:var(--dg-order-flow); }
       .dg-order-detail-actions { display:flex; justify-content:flex-end; gap:6px; padding:8px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-order-flow); }
       .dg-order-detail-actions .dg-btn-ghost { min-height:31px; padding:6px 9px; font-size:9px; }
       .dg-order-expanded-hint { margin:0; padding:0 10px 9px; background:var(--dg-order-flow); }
-      .dg-order-group-summary { border-bottom:1px solid rgba(var(--dg-line-rgb),.12); }
-      .dg-order-mirror-list { display:flex; flex-direction:column; gap:7px; padding:8px; background:var(--dg-order-flow); }
+      .dg-order-mirror-list { display:flex; flex-direction:column; gap:6px; padding:7px; }
       .dg-order-mirror { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:10px; background:var(--dg-order-info); }
-      .dg-order-mirror > summary { min-height:54px; display:grid; grid-template-columns:72px minmax(170px,1fr) minmax(105px,auto) minmax(95px,auto) 16px; align-items:center; gap:8px; padding:7px 10px; list-style:none; cursor:pointer; }
+      .dg-order-mirror > summary { min-height:50px; display:grid; grid-template-columns:72px minmax(170px,1fr) minmax(105px,auto) minmax(95px,auto) 16px; align-items:center; gap:8px; padding:6px 10px; list-style:none; cursor:pointer; }
       .dg-order-mirror > summary:hover { background:rgba(var(--dg-line-rgb),.035); }
       .dg-order-mirror-index { color:var(--dg-accent); font-size:8px; font-weight:750; letter-spacing:.65px; text-transform:uppercase; }
       .dg-order-mirror-main { min-width:0; display:flex; flex-direction:column; gap:2px; }
@@ -5647,7 +5619,15 @@ function Style() {
       .dg-order-mirror > summary > svg { color:var(--dg-text-faint); transition:transform .18s ease,color .18s ease; }
       .dg-order-mirror[open] > summary > svg { transform:rotate(90deg); color:var(--dg-accent); }
       .dg-order-mirror-body { overflow:hidden; border-top:1px solid rgba(var(--dg-line-rgb),.11); }
-      .dg-order-mirror-badges { padding:8px 10px; background:var(--dg-order-info); }
+      .dg-order-mirror-meta { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:6px 9px; background:var(--dg-order-info); }
+      .dg-order-mirror-invoice,
+      .dg-order-mirror-commission { min-height:22px; display:inline-flex; align-items:center; gap:4px; padding:3px 7px; border:1px solid currentColor; border-radius:100px; font-size:8px; font-weight:700; line-height:1; white-space:nowrap; }
+      .dg-order-mirror-invoice-on { background:color-mix(in srgb,var(--dg-success) 9%,transparent); color:var(--dg-success); }
+      .dg-order-mirror-invoice-off { background:color-mix(in srgb,var(--dg-danger) 9%,transparent); color:var(--dg-danger); }
+      .dg-order-mirror-functions { min-width:140px; flex:1; display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
+      .dg-order-mirror-functions > span { min-height:22px; display:inline-flex; align-items:center; padding:3px 7px; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:100px; background:rgba(var(--dg-line-rgb),.035); color:var(--dg-text-dim); font-size:8px; font-weight:650; line-height:1; white-space:nowrap; }
+      .dg-order-mirror-functions > small { padding:0 3px; color:var(--dg-text-faint); font-size:8px; font-style:italic; }
+      .dg-order-mirror-commission { background:color-mix(in srgb,var(--dg-warning) 9%,transparent); color:var(--dg-warning); }
       .dg-order-mirror .dg-order-flow { border-top:1px solid rgba(var(--dg-accent-rgb),.32); }
 
       /* PostVenta: los cinco campos de coordinación permanecen disponibles sin ocupar toda la tarjeta. */
@@ -5844,19 +5824,18 @@ function Style() {
         .dg-order-compact-client strong { font-size:13px; }
         .dg-order-compact-step strong { white-space:normal; line-height:1.15; }
         .dg-order-compact-balance strong { font-size:10px; }
-        .dg-order-summary { padding:9px 10px 8px; }
         .dg-order-flow { padding:7px 9px 8px; }
-        .dg-order-summary > .dg-pedido-badges { flex-wrap:nowrap; overflow-x:auto; padding-bottom:1px; scrollbar-width:none; }
-        .dg-order-summary > .dg-pedido-badges::-webkit-scrollbar { display:none; }
         .dg-order-mirror-list { gap:6px; padding:7px; }
-        .dg-order-mirror > summary { grid-template-columns:minmax(0,1fr) auto 16px; grid-template-rows:auto auto auto; gap:3px 7px; min-height:76px; padding:7px 9px; }
+        .dg-order-mirror > summary { grid-template-columns:minmax(0,1fr) auto 16px; grid-template-rows:auto auto auto; gap:2px 7px; min-height:68px; padding:6px 9px; }
         .dg-order-mirror-index { grid-column:1; grid-row:1; }
         .dg-order-mirror-balance { grid-column:2; grid-row:1; }
         .dg-order-mirror-main { grid-column:1 / 3; grid-row:2; }
         .dg-order-mirror-state { grid-column:1 / 3; grid-row:3; }
         .dg-order-mirror > summary > svg { grid-column:3; grid-row:1 / 4; align-self:center; }
         .dg-order-mirror-main strong { font-size:10.5px; }
-        .dg-order-mirror-badges { flex-wrap:nowrap; overflow-x:auto; padding:7px 8px; scrollbar-width:none; }
+        .dg-order-mirror-meta { flex-wrap:nowrap; overflow-x:auto; padding:6px 8px; scrollbar-width:none; }
+        .dg-order-mirror-meta::-webkit-scrollbar { display:none; }
+        .dg-order-mirror-functions { min-width:max-content; flex-wrap:nowrap; }
         .dg-pedido-card:not(.dg-fabrica-card) .dg-pago-meta { font-size:10px; line-height:1.25; }
         .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; line-height:1.15; }
         .dg-fabrica-btn-next { grid-column:1 / -1; font-size:11px; }
