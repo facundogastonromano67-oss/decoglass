@@ -3498,82 +3498,86 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const menuOpen = menuAbierto === p.id;
     return (
       <div className={`dg-fab-card dg-fab-${entrega.clase}`} key={p.id}>
-        <div className="dg-fab-head">
-          <span className="dg-fab-orden">{p.orden}</span>
-          <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}</span>
-          <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span>
-        </div>
-
-        <div className="dg-fab-medida">
-          <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
-          {Number(p.cant) > 1 && <span className="dg-fab-cant">× {p.cant}</span>}
-        </div>
-
-        <div className="dg-fab-linea">{p.forma} · {p.tipo} · <span className="dg-fab-tono">{p.tono || "—"}</span> · <span className="dg-fab-proceso" style={{ color: procesoInfo?.color }}>{procesoInfo?.label || "Simple"}</span></div>
-
-        <div className="dg-fab-steps" aria-label="Avance de producción">
-          {PRODUCCION_PASOS.map((paso, index) => {
-            const completado = index < produccionCompletada;
-            const actual = index === produccionCompletada;
-            return (
-              <span key={paso.id} className={`dg-fab-step ${completado ? "dg-fab-step-done" : ""}${actual ? " dg-fab-step-current" : ""}`}>
-                {completado ? <Check size={11} /> : <em>{index + 1}</em>}{paso.label}
-              </span>
-            );
-          })}
-        </div>
-
-        {funciones.length > 0 && (
-          <div className="dg-fab-funciones">
-            {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
+        <div className="dg-fab-zona-datos">
+          <div className="dg-fab-head">
+            <span className="dg-fab-orden">{p.orden}</span>
+            <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}</span>
+            <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span>
           </div>
-        )}
 
-        {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+          <div className="dg-fab-medida">
+            <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
+            {Number(p.cant) > 1 && <span className="dg-fab-cant">× {p.cant}</span>}
+          </div>
 
-        {terminado && (
-          <details className="dg-fab-audit">
-            <summary><ClipboardList size={12} /> Registro de fabricación</summary>
-            <div>
-              {PRODUCCION_PASOS.map((paso) => {
-                const fecha = p[paso.fechaCampo] || (paso.id === "embalado" ? p.produccionListaFecha : "");
-                return (
-                  <span key={paso.id}>
-                    <strong>{paso.label}</strong>
-                    <time>{fechaHoraProduccion(fecha)}</time>
-                    <small>{p[paso.responsableCampo] || "Responsable sin registrar"}</small>
-                  </span>
-                );
-              })}
-            </div>
-          </details>
-        )}
+          <div className="dg-fab-linea">{p.forma} · {p.tipo} · <span className="dg-fab-tono">{p.tono || "—"}</span> · <span className="dg-fab-proceso" style={{ color: procesoInfo?.color }}>{procesoInfo?.label || "Simple"}</span></div>
 
-        <div className="dg-fab-foot">
-          <span className="dg-fab-foot-txt">
-            {stage.stage}{p.listo ? ` · entrega ${p.listo}` : ""}
-            {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
-            {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
-          </span>
-          {canEdit && (
-            <div className="dg-fab-acciones">
-              {!terminado && <button className="dg-fab-btn-listo" onClick={() => avanzarProduccion(p.id)}><Check size={14} /> {proximoPaso?.accion}</button>}
-              <div className="dg-fab-menu-wrap">
-                <button className="dg-icon-btn" aria-label="Más acciones" onClick={() => setMenuAbierto(menuOpen ? null : p.id)}><MoreVertical size={16} /></button>
-                {menuOpen && (
-                  <>
-                    <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
-                    <div className="dg-fab-menu">
-                      {terminado && <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>}
-                      <button onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
-                      <button onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
-                      {puedeBorrar && <button className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
-                    </div>
-                  </>
-                )}
-              </div>
+          {funciones.length > 0 && (
+            <div className="dg-fab-funciones">
+              {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
             </div>
           )}
+
+          {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+        </div>
+
+        <div className="dg-fab-zona-proceso">
+          <div className="dg-fab-steps" aria-label="Avance de producción">
+            {PRODUCCION_PASOS.map((paso, index) => {
+              const completado = index < produccionCompletada;
+              const actual = index === produccionCompletada;
+              return (
+                <span key={paso.id} className={`dg-fab-step ${completado ? "dg-fab-step-done" : ""}${actual ? " dg-fab-step-current" : ""}`}>
+                  {completado ? <Check size={11} /> : <em>{index + 1}</em>}{paso.label}
+                </span>
+              );
+            })}
+          </div>
+
+          {terminado && (
+            <details className="dg-fab-audit">
+              <summary><ClipboardList size={12} /> Registro de fabricación</summary>
+              <div>
+                {PRODUCCION_PASOS.map((paso) => {
+                  const fecha = p[paso.fechaCampo] || (paso.id === "embalado" ? p.produccionListaFecha : "");
+                  return (
+                    <span key={paso.id}>
+                      <strong>{paso.label}</strong>
+                      <time>{fechaHoraProduccion(fecha)}</time>
+                      <small>{p[paso.responsableCampo] || "Responsable sin registrar"}</small>
+                    </span>
+                  );
+                })}
+              </div>
+            </details>
+          )}
+
+          <div className="dg-fab-foot">
+            <span className="dg-fab-foot-txt">
+              {stage.stage}{p.listo ? ` · entrega ${p.listo}` : ""}
+              {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
+              {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
+            </span>
+            {canEdit && (
+              <div className="dg-fab-acciones">
+                {!terminado && <button className="dg-fab-btn-listo" onClick={() => avanzarProduccion(p.id)}><Check size={14} /> {proximoPaso?.accion}</button>}
+                <div className="dg-fab-menu-wrap">
+                  <button className="dg-icon-btn" aria-label="Más acciones" onClick={() => setMenuAbierto(menuOpen ? null : p.id)}><MoreVertical size={16} /></button>
+                  {menuOpen && (
+                    <>
+                      <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
+                      <div className="dg-fab-menu">
+                        {terminado && <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>}
+                        <button onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
+                        <button onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
+                        {puedeBorrar && <button className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -4377,9 +4381,9 @@ function Style() {
       .dg-app ::-webkit-scrollbar-thumb { background: rgba(var(--dg-line-rgb),0.13); border-radius:100px; }
       .dg-app ::-webkit-scrollbar-thumb:hover { background: rgba(var(--dg-line-rgb),0.22); }
       .dg-app {
-        --dg-bg:#100D0B; --dg-surface:#1C1917; --dg-surface-2:#241F19; --dg-surface-3:#2C261F;
-        --dg-line-rgb:238,226,210;
-        --dg-text:#F5F0EA; --dg-text-dim:#A89E92; --dg-text-faint:#756B60;
+        --dg-bg:#0C0C0D; --dg-surface:#19191A; --dg-surface-2:#212122; --dg-surface-3:#29292A;
+        --dg-line-rgb:235,235,233;
+        --dg-text:#F1F1EF; --dg-text-dim:#9C9C99; --dg-text-faint:#6E6E6B;
         --dg-accent:#F2622F; --dg-accent-rgb:242,98,47; --dg-accent-2:#FF8352; --dg-on-accent:#FFFFFF;
         --dg-success:#7FA35C; --dg-success-rgb:127,163,92;
         --dg-warning:#D9A441; --dg-warning-rgb:217,164,65;
@@ -4388,12 +4392,12 @@ function Style() {
         --bg:var(--dg-bg); --panel:rgba(var(--dg-line-rgb),.035); --panel-border:rgba(var(--dg-line-rgb),.1); --text:var(--dg-text); --text-dim:var(--dg-text-dim);
         font-family:'Inter', sans-serif; color: var(--text);
         color-scheme:dark;
-        background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(var(--dg-accent-rgb),.08),transparent),var(--bg);
+        background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(var(--dg-accent-rgb),.06),transparent),var(--bg);
         min-height:100vh; padding:28px 16px 60px; box-sizing:border-box; transition: background .2s ease, color .2s ease; }
       .dg-app[data-theme="light"] {
-        --dg-bg:#F7F2E9; --dg-surface:#FFFDF9; --dg-surface-2:#EFE6D8; --dg-surface-3:#E8DECD;
-        --dg-line-rgb:53,47,40;
-        --dg-text:#2B2722; --dg-text-dim:#6F665C; --dg-text-faint:#89806F;
+        --dg-bg:#F5F5F4; --dg-surface:#FFFFFF; --dg-surface-2:#EBEBEA; --dg-surface-3:#E2E2E0;
+        --dg-line-rgb:30,30,29;
+        --dg-text:#212120; --dg-text-dim:#68686A; --dg-text-faint:#87867F;
         --dg-accent:#C1501F; --dg-accent-rgb:193,80,31; --dg-accent-2:#A6431A; --dg-on-accent:#FFFFFF;
         --dg-success:#4E673D; --dg-success-rgb:78,103,61;
         --dg-warning:#805515; --dg-warning-rgb:128,85,21;
@@ -4627,13 +4631,16 @@ function Style() {
 
       /* ---- FICHA DE FABRICA v3: un solo borde, checklist minimalista, menu de acciones ---- */
       .dg-fab-lista { display:flex; flex-direction:column; gap:10px; }
-      .dg-fab-card { position:relative; background: rgba(var(--dg-line-rgb),0.02); border:0.5px solid rgba(var(--dg-line-rgb),0.08);
-        border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:10px; padding:14px 16px; }
+      .dg-fab-card { position:relative; background: var(--dg-surface); border:0.5px solid rgba(var(--dg-line-rgb),0.08);
+        border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:10px; padding:0; overflow:hidden; }
       .dg-fab-interior { border-left-color:#A66A75; }
       .dg-fab-flex { border-left-color:var(--dg-warning); }
       .dg-fab-envio { border-left-color:var(--dg-accent); }
       .dg-fab-coloca { border-left-color:#8A9161; }
       .dg-fab-retira { border-left-color: rgba(var(--dg-line-rgb),0.15); }
+
+      .dg-fab-zona-datos { background: var(--dg-surface); padding:14px 16px 12px; }
+      .dg-fab-zona-proceso { background: var(--dg-bg); padding:12px 16px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.09); }
 
       .dg-fab-head { display:flex; align-items:baseline; gap:9px; margin-bottom:6px; }
       .dg-fab-orden { font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dg-text-faint); }
@@ -4698,7 +4705,8 @@ function Style() {
 
       @media (max-width:680px) {
         .dg-fab-medida strong { font-size:21px; }
-        .dg-fab-card { padding:12px 13px; }
+        .dg-fab-zona-datos { padding:12px 13px 10px; }
+        .dg-fab-zona-proceso { padding:10px 13px 12px; }
         .dg-fab-steps { gap:10px; }
       }
       @media (max-width:420px) {
