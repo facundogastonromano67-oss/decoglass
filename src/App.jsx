@@ -723,6 +723,13 @@ function breakdownBy(entries, field, labels) {
   return Object.entries(totals).map(([k, v]) => ({ name: labels[k] || k, value: v }));
 }
 
+const SHARED_SYNC_KEYS = [
+  "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
+  "vendedores", "pedidos", "recursos-venta", "facturas-manuales", "reclamos",
+  "stock-espejos", "stock-materiales", "empleados-sueldo", "liquidaciones-sueldo",
+  "auditoria", "admins",
+];
+
 export default function App() {
   const [sectors, setSectors] = useState(null);
   const [purchases, setPurchases] = useState(null);
@@ -743,6 +750,7 @@ export default function App() {
   const [admins, setAdmins] = useState([]);
   const [auditoria, setAuditoria] = useState([]);
   const [saveState, setSaveState] = useState({ estado: "idle" });
+  const [syncState, setSyncState] = useState("connecting");
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(() => loadSavedSession());
   const [theme, setTheme] = useState(() => {
@@ -765,6 +773,9 @@ export default function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
+  const syncVersionsRef = useRef({});
+  const syncRefreshingRef = useRef(false);
+  const localWritesRef = useRef({});
 
   function startSession(s) {
     setSession(s);
@@ -787,6 +798,102 @@ export default function App() {
     const t = setTimeout(() => setSaveState({ estado: "idle" }), 1800);
     return () => clearTimeout(t);
   }, [saveState]);
+
+  function applySharedRow(row) {
+    if (!row?.key || typeof row.value !== "string" || !SHARED_SYNC_KEYS.includes(row.key)) return;
+
+    const knownVersion = syncVersionsRef.current[row.key];
+    if (row.updated_at && knownVersion && row.updated_at <= knownVersion) return;
+
+    // Mientras esta pantalla está guardando una versión propia, no deja que
+    // un aviso anterior pise el cambio optimista que la persona acaba de hacer.
+    const localValue = localWritesRef.current[row.key];
+    if (localValue && localValue !== row.value) return;
+
+    let parsed;
+    try { parsed = JSON.parse(row.value); } catch (error) { return; }
+    if (row.key === "pedidos" && Array.isArray(parsed)) parsed = normalizarOrdenesPorGrupo(parsed);
+
+    const setters = {
+      sectors: setSectors,
+      payments: setPurchases,
+      incomes: setIncomes,
+      "quote-config": setQuoteConfig,
+      quotes: setQuotes,
+      leads: setLeads,
+      vendedores: setVendedores,
+      pedidos: setPedidos,
+      "recursos-venta": setRecursos,
+      "facturas-manuales": setFacturas,
+      reclamos: setReclamos,
+      "stock-espejos": setStockEspejos,
+      "stock-materiales": setStockMateriales,
+      "empleados-sueldo": setEmpleadosSueldo,
+      "liquidaciones-sueldo": setLiquidaciones,
+      auditoria: setAuditoria,
+      admins: setAdmins,
+    };
+
+    setters[row.key]?.(parsed);
+    if (row.key === "admins") setAdminKeyExists(Array.isArray(parsed) && parsed.length > 0);
+    if (row.updated_at) syncVersionsRef.current[row.key] = row.updated_at;
+  }
+
+  async function refreshSharedData(full = false) {
+    if (syncRefreshingRef.current) return;
+    syncRefreshingRef.current = true;
+    try {
+      if (full) {
+        const rows = await storage.getMany(SHARED_SYNC_KEYS);
+        rows.forEach(applySharedRow);
+        return;
+      }
+
+      const versions = await storage.getVersions(SHARED_SYNC_KEYS);
+      const changedKeys = versions
+        .filter((row) => !syncVersionsRef.current[row.key] || row.updated_at > syncVersionsRef.current[row.key])
+        .map((row) => row.key);
+      if (!changedKeys.length) return;
+
+      const rows = await storage.getMany(changedKeys);
+      rows.forEach(applySharedRow);
+    } catch (error) {
+      // Si no hay conexión, conserva la información ya visible y vuelve a
+      // intentar en el siguiente ciclo automático.
+    } finally {
+      syncRefreshingRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    if (loading) return undefined;
+
+    let active = true;
+    const unsubscribe = storage.subscribe(
+      (row) => { if (active) applySharedRow(row); },
+      (status) => {
+        if (!active) return;
+        setSyncState(status === "SUBSCRIBED" ? "live" : status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED" ? "fallback" : "connecting");
+      }
+    );
+
+    refreshSharedData(true);
+    const interval = window.setInterval(() => refreshSharedData(false), 4000);
+    const refreshNow = () => refreshSharedData(false);
+    const refreshWhenVisible = () => { if (document.visibilityState === "visible") refreshNow(); };
+    window.addEventListener("focus", refreshNow);
+    window.addEventListener("online", refreshNow);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      active = false;
+      unsubscribe();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshNow);
+      window.removeEventListener("online", refreshNow);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loading]);
 
   async function load() {
     let loadedSectors = DEFAULT_SECTORS;
@@ -836,7 +943,12 @@ export default function App() {
     } catch (e) { setVendedores(DEFAULT_VENDEDORES); }
     try {
       const p = await storage.get("pedidos", true);
-      setPedidos(p ? JSON.parse(p.value) : []);
+      const pedidosGuardados = p ? JSON.parse(p.value) : [];
+      const pedidosNormalizados = normalizarOrdenesPorGrupo(pedidosGuardados);
+      setPedidos(pedidosNormalizados);
+      if (JSON.stringify(pedidosNormalizados) !== JSON.stringify(pedidosGuardados)) {
+        try { await storage.set("pedidos", JSON.stringify(pedidosNormalizados), true); } catch (error) {}
+      }
     } catch (e) { setPedidos([]); }
     try {
       const r = await storage.get("recursos-venta", true);
@@ -887,12 +999,17 @@ export default function App() {
 
   // Guardado con aviso: si falla, la persona se entera en vez de perder el dato en silencio.
   async function guardar(clave, valor, aplicarEnPantalla, revertir) {
+    const serialized = JSON.stringify(valor);
+    localWritesRef.current[clave] = serialized;
     aplicarEnPantalla();
     setSaveState({ estado: "guardando" });
     try {
-      await storage.set(clave, JSON.stringify(valor), true);
+      const saved = await storage.set(clave, serialized, true);
+      if (saved?.updated_at) syncVersionsRef.current[clave] = saved.updated_at;
+      delete localWritesRef.current[clave];
       setSaveState({ estado: "ok", ts: Date.now() });
     } catch (e) {
+      delete localWritesRef.current[clave];
       setSaveState({ estado: "error", clave, mensaje: "No se pudo guardar. Revisá la conexión.", reintentar: () => guardar(clave, valor, aplicarEnPantalla, revertir) });
     }
   }
@@ -982,7 +1099,7 @@ export default function App() {
             <div><div className="dg-brand-title">DECOGLASS</div><div className="dg-brand-sub">Gestión de sectores · Espejos LED</div></div>
           </div>
           <div className="dg-header-context" aria-label="Estado de la plataforma">
-            <span className="dg-live-label"><span className="dg-live-dot" /> Operación interna</span>
+            <span className="dg-live-label"><span className="dg-live-dot" /> {syncState === "live" ? "Sincronización en vivo" : syncState === "fallback" ? "Actualización automática" : "Conectando..."}</span>
             <span className="dg-header-date">{dateLabel}</span>
           </div>
           <button
@@ -2125,7 +2242,7 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
 
 function emptyPedido(prefill) {
   return {
-    id: uid(), orden: null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
+    id: uid(), orden: prefill?.orden || null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
     vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
@@ -2133,6 +2250,47 @@ function emptyPedido(prefill) {
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
   };
+}
+
+function pedidoGroupKey(pedido) {
+  return pedido?.grupoId ? `grupo:${pedido.grupoId}` : `pedido:${pedido?.id}`;
+}
+
+function normalizarOrdenesPorGrupo(items) {
+  const ordenPorGrupo = new Map();
+  items.forEach((pedido) => {
+    if (!pedido?.grupoId) return;
+    const orden = Number(pedido.orden);
+    if (!Number.isFinite(orden) || orden <= 0) return;
+    const key = pedidoGroupKey(pedido);
+    const actual = ordenPorGrupo.get(key);
+    if (!actual || orden < actual) ordenPorGrupo.set(key, orden);
+  });
+
+  return items.map((pedido) => {
+    const ordenGrupo = ordenPorGrupo.get(pedidoGroupKey(pedido));
+    return ordenGrupo && pedido.orden !== ordenGrupo ? { ...pedido, orden: ordenGrupo } : pedido;
+  });
+}
+
+function agruparEspejosPorPedido(items) {
+  const grupos = new Map();
+  items.forEach((pedido) => {
+    const key = pedidoGroupKey(pedido);
+    if (!grupos.has(key)) grupos.set(key, []);
+    grupos.get(key).push(pedido);
+  });
+
+  return Array.from(grupos.entries()).map(([key, espejos]) => {
+    const principal = espejos.find((pedido) => pedido.grupoId && pedido.id === pedido.grupoId) || espejos[0];
+    return {
+      key,
+      orden: principal?.orden,
+      fecha: principal?.fecha || espejos[0]?.fecha,
+      principal,
+      espejos,
+    };
+  });
 }
 
 function textoComparable(value) {
@@ -2456,8 +2614,19 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
 
+  // Si un espejo del pedido coincide con los filtros, la tarjeta conserva
+  // todos los espejos de ese mismo número de orden para no partir el pedido.
+  const gruposCoincidentes = new Set(visibles.map(pedidoGroupKey));
+  visibles = pedidos
+    .filter((pedido) => gruposCoincidentes.has(pedidoGroupKey(pedido)))
+    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+  const pedidosAgrupadosVisibles = agruparEspejosPorPedido(visibles)
+    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+
   const totalVisible = visibles.reduce((a, p) => a + (Number(p.monto) || 0), 0);
   const restaurablesVisibles = visibles.filter((p) => p.estado === "Entregado" || p.estado === "Cancelado");
+  const cantidadPedidosVisibles = pedidosAgrupadosVisibles.length;
+  const cantidadPedidosRestaurables = new Set(restaurablesVisibles.map(pedidoGroupKey)).size;
 
   function nextOrden() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
 
@@ -2465,7 +2634,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     pedido = normalizarPedidoFunciones(pedido);
     const exists = pedidos.some((p) => p.id === pedido.id);
     const previous = pedidos.find((p) => p.id === pedido.id);
-    let withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
+    const ordenDelGrupo = pedido.grupoId
+      ? pedidos
+        .filter((p) => p.grupoId === pedido.grupoId && Number(p.orden) > 0)
+        .reduce((menor, p) => menor === null || Number(p.orden) < menor ? Number(p.orden) : menor, null)
+      : null;
+    let withOrden = { ...pedido, orden: ordenDelGrupo || pedido.orden || nextOrden() };
     if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
     if (previous?.estado === "Sin pasar a fábrica" && pedidoFueVerificado(withOrden)) {
       withOrden = { ...withOrden, pedidoVerificadoFecha: withOrden.pedidoVerificadoFecha || new Date().toISOString() };
@@ -2514,7 +2688,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       });
       toSave = { ...withOrden, montoRegistrado: cobradoAhora };
     }
-    onChange(exists ? pedidos.map((p) => (p.id === pedido.id ? toSave : p)) : [...pedidos, toSave]);
+    const pedidosActualizados = exists ? pedidos.map((p) => (p.id === pedido.id ? toSave : p)) : [...pedidos, toSave];
+    onChange(normalizarOrdenesPorGrupo(pedidosActualizados));
     if (onRegistrar) onRegistrar(exists ? "Editó un pedido" : "Cargó un pedido", `#${toSave.orden} — ${toSave.cliente} — ${money(toSave.monto)}`);
 
     if (opts?.addAnother) {
@@ -2522,7 +2697,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       setCreating(false);
       setTimeout(() => {
         setNextDraft(emptyPedido({
-          grupoId: toSave.grupoId, cliente: toSave.cliente, celular: toSave.celular, dniCuit: toSave.dniCuit,
+          orden: toSave.orden, grupoId: toSave.grupoId, cliente: toSave.cliente, celular: toSave.celular, dniCuit: toSave.dniCuit,
           vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, detalleEntrega: toSave.detalleEntrega,
         }));
       }, 0);
@@ -2582,25 +2757,24 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   }
   function restaurarVisibles() {
     if (restaurablesVisibles.length === 0) return;
-    if (!window.confirm(`Se van a restaurar ${restaurablesVisibles.length} pedido(s) de esta vista.\n\nLos entregados volverán a “Espejo listo” y los cancelados a “Sin pasar a fábrica”. ¿Continuar?`)) return;
+    if (!window.confirm(`Se van a restaurar ${cantidadPedidosRestaurables} pedido(s), con ${restaurablesVisibles.length} espejo(s).\n\nLos entregados volverán a “Espejo listo” y los cancelados a “Sin pasar a fábrica”. ¿Continuar?`)) return;
     const ids = new Set(restaurablesVisibles.map((p) => p.id));
     onChange(pedidos.map((p) => {
       if (!ids.has(p.id)) return p;
       if (p.estado === "Entregado") return { ...p, estado: "Espejo listo", entregadoFecha: "" };
       return { ...p, estado: "Sin pasar a fábrica", clienteAvisado: false, clienteAvisadoFecha: "" };
     }));
-    if (onRegistrar) onRegistrar("Restauró pedidos en masa", `${restaurablesVisibles.length} pedido(s) según filtros`);
+    if (onRegistrar) onRegistrar("Restauró pedidos en masa", `${cantidadPedidosRestaurables} pedido(s) · ${restaurablesVisibles.length} espejo(s)`);
   }
   function borrarVisibles() {
     if (visibles.length === 0) return;
-    if (!window.confirm(`Vas a borrar definitivamente ${visibles.length} pedido(s) que coinciden con los filtros actuales.\n\nEsta acción no se puede deshacer. ¿Confirmás?`)) return;
+    if (!window.confirm(`Vas a borrar definitivamente ${cantidadPedidosVisibles} pedido(s), que contienen ${visibles.length} espejo(s).\n\nEsta acción no se puede deshacer. ¿Confirmás?`)) return;
     const ids = new Set(visibles.map((p) => p.id));
     onChange(pedidos.filter((p) => !ids.has(p.id)));
-    if (onRegistrar) onRegistrar("Borró pedidos en masa", `${visibles.length} pedido(s) según filtros`);
+    if (onRegistrar) onRegistrar("Borró pedidos en masa", `${cantidadPedidosVisibles} pedido(s) · ${visibles.length} espejo(s)`);
   }
 
   const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
-  const grupoCounts = pedidos.reduce((acc, p) => { const g = p.grupoId || p.id; acc[g] = (acc[g] || 0) + 1; return acc; }, {});
   const VISTAS_PRINCIPALES = ["todos", "historial", "envios"];
   const vistasSecundarias = QUICK_VIEWS.filter((v) => !VISTAS_PRINCIPALES.includes(v.id));
   const enSecundaria = vistasSecundarias.some((v) => v.id === quickView);
@@ -2644,7 +2818,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       <details className="dg-order-tools-details">
         <summary>
           <span><CalendarDays size={14} /> Fechas y acciones masivas</span>
-          <small>{fechaDesde || fechaHasta ? "Filtro de fecha activo" : `${visibles.length} pedidos en esta vista`}</small>
+          <small>{fechaDesde || fechaHasta ? "Filtro de fecha activo" : `${cantidadPedidosVisibles} pedidos · ${visibles.length} espejos`}</small>
         </summary>
         <div className="dg-order-tools-content">
           <div className="dg-date-filter-bar">
@@ -2658,11 +2832,11 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
             <div className="dg-bulk-bar">
               <div>
                 <strong>Acciones masivas</strong>
-                <span>Se aplican a los {visibles.length} resultados visibles con los filtros actuales.</span>
+                <span>Se aplican a {cantidadPedidosVisibles} pedidos completos ({visibles.length} espejos).</span>
               </div>
               <div className="dg-bulk-actions">
-                <button className="dg-btn-ghost" disabled={restaurablesVisibles.length === 0} onClick={restaurarVisibles}><RotateCcw size={14} /> Restaurar archivados ({restaurablesVisibles.length})</button>
-                <button className="dg-btn-danger" disabled={visibles.length === 0} onClick={borrarVisibles}><Trash2 size={14} /> Borrar resultados ({visibles.length})</button>
+                <button className="dg-btn-ghost" disabled={restaurablesVisibles.length === 0} onClick={restaurarVisibles}><RotateCcw size={14} /> Restaurar pedidos ({cantidadPedidosRestaurables})</button>
+                <button className="dg-btn-danger" disabled={visibles.length === 0} onClick={borrarVisibles}><Trash2 size={14} /> Borrar pedidos ({cantidadPedidosVisibles})</button>
               </div>
             </div>
           )}
@@ -2670,29 +2844,44 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       </details>
 
       {(() => {
-        const renderCard = (p) => {
-          const saldo = pedidoSaldo(p);
-          const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "var(--dg-text-dim)" };
-          const MetodoIcon = METODO_ICONS[p.metodo] || Package;
-          const paso = resumenPasoPedido(p);
+        const renderCard = (grupo) => {
+          const { principal: p, espejos } = grupo;
+          const cantidadEspejos = espejos.length;
+          const saldo = espejos.reduce((total, espejo) => total + Math.max(0, pedidoSaldo(espejo)), 0);
+          const montoTotal = espejos.reduce((total, espejo) => total + (Number(espejo.monto) || 0), 0);
+          const metodos = [...new Set(espejos.map((espejo) => espejo.metodo || "A confirmar"))];
+          const metodoLabel = metodos.length === 1 ? metodos[0] : "Entrega mixta";
+          const MetodoIcon = metodos.length === 1 ? (METODO_ICONS[metodoLabel] || Package) : Package;
+          const pasos = espejos.map(resumenPasoPedido);
+          const paso = pasos.reduce((anterior, actual) => {
+            if (!anterior) return actual;
+            return (actual.numero / actual.total) < (anterior.numero / anterior.total) ? actual : anterior;
+          }, null);
+          const listos = espejos.filter(pedidoEstaListo).length;
+          const facturados = espejos.filter((espejo) => espejo.facturado).length;
+          const estados = [...new Set(espejos.map((espejo) => espejo.estado))];
+          const stage = estados.length === 1
+            ? (ESTADO_STAGE[estados[0]] || { stage: estados[0], color: "var(--dg-text-dim)" })
+            : { stage: `${listos}/${cantidadEspejos} espejos listos`, color: listos === cantidadEspejos ? "var(--dg-success)" : "var(--dg-warning)" };
+          const medidas = espejos.map((espejo) => `${espejo.ancho}×${espejo.alto}`).join(" · ");
           return (
-            <details className="dg-pedido-card dg-order-card dg-order-disclosure" key={p.id}>
+            <details className="dg-pedido-card dg-order-card dg-order-disclosure dg-order-group-card" key={grupo.key}>
               <summary className="dg-order-compact" aria-label={`Abrir pedido de ${p.cliente || "cliente sin nombre"}`}>
                 <span className="dg-order-compact-item dg-order-compact-client">
                   <small>Nombre</small>
                   <strong><i>#{p.orden}</i> {p.cliente || "Sin nombre"}</strong>
                 </span>
                 <span className="dg-order-compact-item dg-order-compact-measure">
-                  <small>Medida</small>
-                  <strong>{p.ancho}×{p.alto} cm</strong>
+                  <small>{cantidadEspejos === 1 ? "Medida" : "Espejos"}</small>
+                  <strong>{cantidadEspejos === 1 ? `${p.ancho}×${p.alto} cm` : `${cantidadEspejos} espejos`}</strong>
                 </span>
                 <span className="dg-order-compact-item dg-order-compact-method">
                   <small>Método</small>
-                  <strong><MetodoIcon size={12} /> {p.metodo || "A confirmar"}</strong>
+                  <strong><MetodoIcon size={12} /> {metodoLabel}</strong>
                 </span>
                 <span className="dg-order-compact-item dg-order-compact-step">
                   <small>Paso</small>
-                  <strong>{paso.numero}/{paso.total} · {paso.label}</strong>
+                  <strong>{paso?.numero}/{paso?.total} · {paso?.label}</strong>
                 </span>
                 <span className={`dg-order-compact-item dg-order-compact-balance ${saldo > 0 ? "dg-order-balance-pending" : "dg-order-balance-paid"}`}>
                   <small>Saldo restante</small>
@@ -2702,57 +2891,89 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               </summary>
 
               <div className="dg-order-expanded">
-                <div className="dg-order-summary">
-                  <div className="dg-order-summary-label">Datos completos del espejo</div>
+                <div className="dg-order-summary dg-order-group-summary">
+                  <div className="dg-order-summary-label">Pedido completo</div>
                   <div className="dg-pedido-card-top">
                     <span className="dg-pedido-orden">#{p.orden}</span>
                     <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
-                    <span className="dg-pago-monto">{p.monto ? money(p.monto) : "—"}</span>
+                    <span className="dg-pago-monto">{montoTotal ? money(montoTotal) : "—"}</span>
                   </div>
-                  <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.vendedor || "—"} · {p.fecha}</div>
+                  <div className="dg-pago-meta">{cantidadEspejos} {cantidadEspejos === 1 ? "espejo" : "espejos"} · {medidas} cm · {p.vendedor || "—"} · {p.fecha}</div>
                   <div className="dg-pedido-badges">
                     <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
-                    <span className="dg-badge" style={{ "--bc": p.facturado ? "var(--dg-success)" : "var(--dg-danger)" }}>
-                      {p.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {p.facturado ? "Facturado" : "Sin facturar"}
+                    <span className="dg-badge" style={{ "--bc": facturados === cantidadEspejos ? "var(--dg-success)" : "var(--dg-danger)" }}>
+                      {facturados === cantidadEspejos ? <CheckCircle2 size={12} /> : <XCircle size={12} />} Facturación {facturados}/{cantidadEspejos}
                     </span>
                     <span className="dg-badge" style={{ "--bc": saldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
                       <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
                     </span>
-                    <span className="dg-badge" style={{ "--bc": "var(--dg-text-dim)" }}><MetodoIcon size={12} /> {p.metodo}</span>
-                    {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "var(--dg-warning)" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
-                    {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
+                    <span className="dg-badge" style={{ "--bc": "var(--dg-text-dim)" }}><MetodoIcon size={12} /> {metodoLabel}</span>
+                    <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}><PackagePlus size={12} /> {cantidadEspejos} {cantidadEspejos === 1 ? "espejo" : "espejos"}</span>
                   </div>
                 </div>
-                <FlujoPedido
-                  pedido={p}
-                  canEdit={canEditFull}
-                  onVerificar={marcarVerificado}
-                  onClienteConfirmado={marcarClienteAvisado}
-                  onEnvioConfirmado={marcarEnvioConfirmado}
-                  onEntregar={marcarEntregado}
-                />
-                <div className="dg-order-detail-actions">
-                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => setOpenPedido(p)}>
-                    <Pencil size={13} /> {canEditFull ? "Ver o editar ficha completa" : "Ver ficha completa"}
-                  </button>
-                  {p.estado === "Entregado" && canEditFull && (
-                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => reabrir(p)}>
-                      <RotateCcw size={13} /> Reabrir pedido
-                    </button>
-                  )}
+                <div className="dg-order-mirror-list">
+                  {espejos.map((espejo, index) => {
+                    const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
+                    const espejoStage = ESTADO_STAGE[espejo.estado] || { stage: espejo.estado, color: "var(--dg-text-dim)" };
+                    const extras = funcionesPedido(espejo, true).map((funcion) => funcion.label).join(" · ");
+                    return (
+                      <details className="dg-order-mirror" key={espejo.id}>
+                        <summary>
+                          <span className="dg-order-mirror-index">Espejo {index + 1}</span>
+                          <span className="dg-order-mirror-main">
+                            <strong>{espejo.ancho}×{espejo.alto} cm · {espejo.forma}</strong>
+                            <small>{espejo.tipo || "Simple"}{extras ? ` · ${extras}` : ""}</small>
+                          </span>
+                          <span className="dg-order-mirror-state" style={{ "--mirror-color": espejoStage.color }}>{espejoStage.stage}</span>
+                          <span className={`dg-order-mirror-balance ${espejoSaldo > 0 ? "dg-order-balance-pending" : "dg-order-balance-paid"}`}>{espejoSaldo > 0 ? money(espejoSaldo) : "Saldado"}</span>
+                          <ChevronRight size={16} />
+                        </summary>
+                        <div className="dg-order-mirror-body">
+                          <div className="dg-pedido-badges dg-order-mirror-badges">
+                            <span className="dg-badge" style={{ "--bc": espejoStage.color }}>{espejoStage.stage}</span>
+                            <span className="dg-badge" style={{ "--bc": espejo.facturado ? "var(--dg-success)" : "var(--dg-danger)" }}>
+                              {espejo.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {espejo.facturado ? "Facturado" : "Sin facturar"}
+                            </span>
+                            <span className="dg-badge" style={{ "--bc": espejoSaldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
+                              <CircleDollarSign size={12} /> {espejoSaldo > 0 ? `${money(espejoSaldo)} pendiente` : "Saldado"}
+                            </span>
+                            {comisionElegible(espejo) && !espejo.comisionPagada && <span className="dg-badge" style={{ "--bc": "var(--dg-warning)" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
+                          </div>
+                          <FlujoPedido
+                            pedido={espejo}
+                            canEdit={canEditFull}
+                            onVerificar={marcarVerificado}
+                            onClienteConfirmado={marcarClienteAvisado}
+                            onEnvioConfirmado={marcarEnvioConfirmado}
+                            onEntregar={marcarEntregado}
+                          />
+                          <div className="dg-order-detail-actions">
+                            <button className="dg-btn-ghost dg-mini-btn" onClick={() => setOpenPedido(espejo)}>
+                              <Pencil size={13} /> {canEditFull ? "Ver o editar este espejo" : "Ver este espejo"}
+                            </button>
+                            {espejo.estado === "Entregado" && canEditFull && (
+                              <button className="dg-btn-ghost dg-mini-btn" onClick={() => reabrir(espejo)}>
+                                <RotateCcw size={13} /> Reabrir espejo
+                              </button>
+                            )}
+                          </div>
+                          {pedidoEstaListo(espejo) && !espejo.celular && !espejo.clienteAvisado && (
+                            <p className="dg-hint dg-order-expanded-hint">Sin celular cargado: avisale por otro medio y después confirmá el aviso.</p>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
-                {pedidoEstaListo(p) && !p.celular && !p.clienteAvisado && (
-                  <p className="dg-hint dg-order-expanded-hint">Sin celular cargado: avisale por otro medio y después confirmá el aviso.</p>
-                )}
               </div>
             </details>
           );
         };
-        const grupos = agrupado === "semana" ? groupByWeek(visibles, "fecha") : groupByMonth(visibles, "fecha");
+        const grupos = agrupado === "semana" ? groupByWeek(pedidosAgrupadosVisibles, "fecha") : groupByMonth(pedidosAgrupadosVisibles, "fecha");
         return (
           <>
-            {visibles.length === 0 && <div className="dg-empty">No hay pedidos en esta vista.</div>}
-            {visibles.length > 0 && <MonthAccordion groups={grupos} renderItem={renderCard} />}
+            {pedidosAgrupadosVisibles.length === 0 && <div className="dg-empty">No hay pedidos en esta vista.</div>}
+            {pedidosAgrupadosVisibles.length > 0 && <MonthAccordion groups={grupos} renderItem={renderCard} />}
           </>
         );
       })()}
@@ -2773,7 +2994,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         <div className="dg-print-head">
           <div className="dg-print-brand">DECOGLASS</div>
           <div className="dg-print-sub">
-            {activeViewLabel}{filtroVendedor !== "todos" ? ` · Vendedor: ${filtroVendedor}` : ""} — {new Date().toLocaleDateString("es-AR")} · {visibles.length} pedido(s)
+            {activeViewLabel}{filtroVendedor !== "todos" ? ` · Vendedor: ${filtroVendedor}` : ""} — {new Date().toLocaleDateString("es-AR")} · {cantidadPedidosVisibles} pedido(s) · {visibles.length} espejo(s)
           </div>
         </div>
         <table className="dg-print-table">
@@ -3353,7 +3574,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
           const envioPendiente = envioPagado ? 0 : costoEnvio;
           const totalACobrar = saldo + envioPendiente;
           const medidas = items.map((p) => `${p.ancho}×${p.alto} cm`).join(" · ");
-          const ordenes = items.map((p) => `#${p.orden}`).join(" · ");
+          const ordenes = [...new Set(items.map((p) => p.orden))].map((orden) => `#${orden}`).join(" · ");
           return (
             <article className="dg-section-card dg-logistics-card" key={grupo.key}>
               <div className="dg-logistics-head">
@@ -5390,6 +5611,7 @@ function Style() {
       /* Pedidos: una fila operativa corta y el detalle completo solo al desplegar. */
       .dg-order-disclosure { display:block; cursor:default; }
       .dg-order-disclosure > summary::-webkit-details-marker,
+      .dg-order-mirror > summary::-webkit-details-marker,
       .dg-shipping-editor > summary::-webkit-details-marker,
       .dg-logistics-mirror > summary::-webkit-details-marker { display:none; }
       .dg-order-compact { display:grid; grid-template-columns:minmax(180px,1.4fr) minmax(92px,.7fr) minmax(112px,.8fr) minmax(175px,1.2fr) minmax(125px,.8fr) 18px; align-items:center; gap:10px; min-height:61px; padding:9px 12px; list-style:none; background:var(--dg-order-info); cursor:pointer; }
@@ -5411,6 +5633,22 @@ function Style() {
       .dg-order-detail-actions { display:flex; justify-content:flex-end; gap:6px; padding:8px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-order-flow); }
       .dg-order-detail-actions .dg-btn-ghost { min-height:31px; padding:6px 9px; font-size:9px; }
       .dg-order-expanded-hint { margin:0; padding:0 10px 9px; background:var(--dg-order-flow); }
+      .dg-order-group-summary { border-bottom:1px solid rgba(var(--dg-line-rgb),.12); }
+      .dg-order-mirror-list { display:flex; flex-direction:column; gap:7px; padding:8px; background:var(--dg-order-flow); }
+      .dg-order-mirror { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:10px; background:var(--dg-order-info); }
+      .dg-order-mirror > summary { min-height:54px; display:grid; grid-template-columns:72px minmax(170px,1fr) minmax(105px,auto) minmax(95px,auto) 16px; align-items:center; gap:8px; padding:7px 10px; list-style:none; cursor:pointer; }
+      .dg-order-mirror > summary:hover { background:rgba(var(--dg-line-rgb),.035); }
+      .dg-order-mirror-index { color:var(--dg-accent); font-size:8px; font-weight:750; letter-spacing:.65px; text-transform:uppercase; }
+      .dg-order-mirror-main { min-width:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-order-mirror-main strong { overflow:hidden; color:var(--dg-text); font-size:11px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-order-mirror-main small { overflow:hidden; color:var(--dg-text-dim); font-size:8.5px; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-order-mirror-state { width:max-content; max-width:100%; padding:3px 7px; border:1px solid color-mix(in srgb,var(--mirror-color) 38%,transparent); border-radius:100px; background:color-mix(in srgb,var(--mirror-color) 10%,transparent); color:var(--mirror-color); font-size:8px; font-weight:700; white-space:nowrap; }
+      .dg-order-mirror-balance { color:var(--dg-text-dim); font-family:'JetBrains Mono',monospace; font-size:9.5px; font-weight:650; text-align:right; white-space:nowrap; }
+      .dg-order-mirror > summary > svg { color:var(--dg-text-faint); transition:transform .18s ease,color .18s ease; }
+      .dg-order-mirror[open] > summary > svg { transform:rotate(90deg); color:var(--dg-accent); }
+      .dg-order-mirror-body { overflow:hidden; border-top:1px solid rgba(var(--dg-line-rgb),.11); }
+      .dg-order-mirror-badges { padding:8px 10px; background:var(--dg-order-info); }
+      .dg-order-mirror .dg-order-flow { border-top:1px solid rgba(var(--dg-accent-rgb),.32); }
 
       /* PostVenta: los cinco campos de coordinación permanecen disponibles sin ocupar toda la tarjeta. */
       .dg-pedido-list { max-height:none; overflow:visible; }
@@ -5610,6 +5848,15 @@ function Style() {
         .dg-order-flow { padding:7px 9px 8px; }
         .dg-order-summary > .dg-pedido-badges { flex-wrap:nowrap; overflow-x:auto; padding-bottom:1px; scrollbar-width:none; }
         .dg-order-summary > .dg-pedido-badges::-webkit-scrollbar { display:none; }
+        .dg-order-mirror-list { gap:6px; padding:7px; }
+        .dg-order-mirror > summary { grid-template-columns:minmax(0,1fr) auto 16px; grid-template-rows:auto auto auto; gap:3px 7px; min-height:76px; padding:7px 9px; }
+        .dg-order-mirror-index { grid-column:1; grid-row:1; }
+        .dg-order-mirror-balance { grid-column:2; grid-row:1; }
+        .dg-order-mirror-main { grid-column:1 / 3; grid-row:2; }
+        .dg-order-mirror-state { grid-column:1 / 3; grid-row:3; }
+        .dg-order-mirror > summary > svg { grid-column:3; grid-row:1 / 4; align-self:center; }
+        .dg-order-mirror-main strong { font-size:10.5px; }
+        .dg-order-mirror-badges { flex-wrap:nowrap; overflow-x:auto; padding:7px 8px; scrollbar-width:none; }
         .dg-pedido-card:not(.dg-fabrica-card) .dg-pago-meta { font-size:10px; line-height:1.25; }
         .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; line-height:1.15; }
         .dg-fabrica-btn-next { grid-column:1 / -1; font-size:11px; }
