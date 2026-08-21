@@ -10,7 +10,11 @@ Cada pedido tiene tres controles secuenciales:
 
 El botón principal muestra únicamente el próximo trabajo. Al marcar `Embalado`, el estado cambia automáticamente a `Espejo listo` y se habilita el flujo de confirmación con el cliente.
 
+Al mismo tiempo, el pedido desaparece de `En producción` y pasa al `Historial de terminados` de Fábrica.
+
 Los pedidos terminados pueden reabrirse desde Fábrica; vuelven al último control antes del embalado y se limpian las confirmaciones posteriores para evitar inconsistencias.
+
+El historial muestra la fecha, hora y responsable que marcó cada una de las tres etapas. Los registros anteriores a esta versión se conservan y se identifican como `Responsable sin registrar` cuando no exista ese dato.
 
 ## Estados
 

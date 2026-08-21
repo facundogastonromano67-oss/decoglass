@@ -1,4 +1,4 @@
-# DECOGLASS · Actualización V5
+# DECOGLASS · Actualización V6
 
 Esta carpeta contiene el código fuente actualizado de la aplicación.
 
@@ -10,6 +10,9 @@ En Vercel, `Root Directory` debe quedar vacío o configurado como `./` para que 
 
 ## Cambios incluidos
 
+- Al completar `Embalado`, el pedido sale de `En producción` y pasa automáticamente al historial de Fábrica.
+- Historial de terminados con fecha, hora y responsable de Cortado, Armado y Embalado.
+- Posibilidad de reabrir una producción desde el historial cuando haya que corregir o rehacer un espejo.
 - Checklist secuencial de Fábrica: Cortado → Armado → Embalado.
 - Al completar Embalado, el pedido pasa automáticamente a `Espejo listo`.
 - El estado `Pasado a fábrica` fue retirado de formularios y filtros; los datos antiguos se interpretan como `Verificado`.

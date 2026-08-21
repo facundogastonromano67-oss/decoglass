@@ -191,9 +191,9 @@ const TALLER_PROCESOS = [
   { id: "biselados", label: "Biselados", description: "Proceso de biselado y terminación especial", color: "#B583DE" },
 ];
 const PRODUCCION_PASOS = [
-  { id: "cortado", label: "Cortado", accion: "Marcar cortado", fechaCampo: "produccionCortadoFecha" },
-  { id: "armado", label: "Armado", accion: "Marcar armado", fechaCampo: "produccionArmadoFecha" },
-  { id: "embalado", label: "Embalado", accion: "Marcar embalado", fechaCampo: "produccionEmbaladoFecha" },
+  { id: "cortado", label: "Cortado", accion: "Marcar cortado", fechaCampo: "produccionCortadoFecha", responsableCampo: "produccionCortadoPor" },
+  { id: "armado", label: "Armado", accion: "Marcar armado", fechaCampo: "produccionArmadoFecha", responsableCampo: "produccionArmadoPor" },
+  { id: "embalado", label: "Embalado", accion: "Marcar embalado", fechaCampo: "produccionEmbaladoFecha", responsableCampo: "produccionEmbaladoPor" },
 ];
 const ENTREGA_ESTILO = {
   "Interior": { clase: "interior", color: "#B583DE", icono: "🚚" },
@@ -2071,7 +2071,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionArmadoFecha: "", produccionEmbaladoFecha: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
   };
 }
@@ -3276,7 +3276,7 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
   );
 }
 
-function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) {
+function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar }) {
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
   const [agrupado, setAgrupado] = useState("mes");
@@ -3284,8 +3284,16 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
 
   // Fábrica solo ve pedidos ya verificados por PostVenta. Los "Sin pasar a fábrica" no aparecen.
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
-  const activos = enFabrica.filter((p) => p.estado !== "Entregado");
-  let baseVisibles = filtroEstado === "activos" ? activos : filtroEstado === "demorados" ? enFabrica.filter((p) => p.demorado) : enFabrica;
+  const activos = enFabrica.filter((p) => !pedidoEstaListo(p));
+  const historial = enFabrica.filter((p) => pedidoEstaListo(p));
+  const demorados = activos.filter((p) => p.demorado);
+  let baseVisibles = filtroEstado === "activos"
+    ? activos
+    : filtroEstado === "historial"
+      ? historial
+      : filtroEstado === "demorados"
+        ? demorados
+        : enFabrica;
   baseVisibles = baseVisibles
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
   const procesoCounts = TALLER_PROCESOS.reduce((acc, item) => {
@@ -3310,6 +3318,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
   }
   function avanzarProduccion(id) {
     const ahora = new Date().toISOString();
+    const pedidoActual = pedidos.find((p) => p.id === id);
+    const pasoActual = PRODUCCION_PASOS[pasosProduccionCompletados(pedidoActual)];
+    const responsable = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
     onChange(pedidos.map((p) => {
       if (p.id !== id) return p;
       const completados = pasosProduccionCompletados(p);
@@ -3321,6 +3332,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
         estado: p.estado === "Pasado a fábrica" ? "Verificado" : p.estado,
         produccionEtapa: paso.id,
         [paso.fechaCampo]: ahora,
+        [paso.responsableCampo]: responsable,
       };
       if (!esUltimoPaso) return actualizado;
       return {
@@ -3333,25 +3345,36 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
         envioConfirmadoFecha: "",
       };
     }));
+    if (onRegistrar && pedidoActual && pasoActual) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${pasoActual.label}`);
   }
   function reabrirProduccion(id) {
+    const pedidoActual = pedidos.find((p) => p.id === id);
     onChange(pedidos.map((p) => (p.id === id ? {
       ...p,
       estado: "Verificado",
       produccionEtapa: "armado",
       produccionEmbaladoFecha: "",
+      produccionEmbaladoPor: "",
       produccionListaFecha: "",
       clienteAvisado: false,
       clienteAvisadoFecha: "",
       envioConfirmado: false,
       envioConfirmadoFecha: "",
+      entregadoFecha: "",
     } : p)));
+    if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — vuelve a embalado`);
   }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); }
   function cancelar(id) { if (window.confirm("¿Cancelar este pedido?")) setEstado(id, "Cancelado"); }
   function borrar(id) { if (window.confirm("¿Borrar este pedido definitivamente? No se puede deshacer.")) onChange(pedidos.filter((p) => p.id !== id)); }
 
   const grupos = agrupado === "semana" ? groupByWeek(visibles, "fecha") : groupByMonth(visibles, "fecha");
+  const fechaHoraProduccion = (value) => {
+    if (!value) return "Sin registro";
+    const fecha = new Date(value);
+    if (Number.isNaN(fecha.getTime())) return "Sin registro";
+    return fecha.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+  };
 
   const renderCard = (p) => {
     const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
@@ -3392,6 +3415,24 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
             );
           })}
         </div>
+
+        {pedidoEstaListo(p) && (
+          <div className="dg-production-audit">
+            <span className="dg-production-audit-title"><ClipboardList size={12} /> Registro de fabricación</span>
+            <div>
+              {PRODUCCION_PASOS.map((paso) => {
+                const fecha = p[paso.fechaCampo] || (paso.id === "embalado" ? p.produccionListaFecha : "");
+                return (
+                  <span key={paso.id}>
+                    <strong>{paso.label}</strong>
+                    <time>{fechaHoraProduccion(fecha)}</time>
+                    <small>{p[paso.responsableCampo] || "Responsable sin registrar"}</small>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="dg-fab-funciones">
           {funciones.length === 0
@@ -3438,9 +3479,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
       <div className="dg-crm-filters">
         <Filter size={14} />
         <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
-          <option value="activos">Pedidos activos</option>
-          <option value="demorados">Solo demorados</option>
-          <option value="todos">Todos</option>
+          <option value="activos">En producción ({activos.length})</option>
+          <option value="historial">Historial de terminados ({historial.length})</option>
+          <option value="demorados">Solo demorados ({demorados.length})</option>
+          <option value="todos">Todos ({enFabrica.length})</option>
         </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
         <div className="dg-periodo-toggle">
@@ -3457,7 +3499,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
         <span style={{ "--ec": "#8B96A8" }}>Retira</span>
       </div>
 
-      {visibles.length === 0 && <div className="dg-empty">No hay pedidos en esta vista.</div>}
+      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay pedidos terminados en este proceso." : "No hay pedidos pendientes en esta vista."}</div>}
       {visibles.length > 0 && <MonthAccordion groups={grupos} renderItem={renderCard} />}
     </div>
   );
@@ -4162,7 +4204,7 @@ function SectorPage({
       )}
 
       {subpage === "pedidos" && sector.id === "fabrica" && (
-        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} />
+        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} />
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
 
@@ -4486,6 +4528,13 @@ function Style() {
       .dg-production-checklist .dg-production-done i { border-color:rgba(91,201,139,.35); background:rgba(91,201,139,.1); }
       .dg-production-checklist .dg-production-current { background:rgba(79,195,192,.08); color:#64D7D2; }
       .dg-production-checklist .dg-production-current i { border-color:rgba(79,195,192,.42); }
+      .dg-production-audit { padding:8px; border:1px solid rgba(91,201,139,.16); border-radius:10px; background:rgba(91,201,139,.035); }
+      .dg-production-audit-title { display:flex; align-items:center; gap:5px; margin-bottom:6px; color:#72D9A0; font-size:9px; font-weight:700; letter-spacing:.35px; text-transform:uppercase; }
+      .dg-production-audit > div { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
+      .dg-production-audit > div > span { min-width:0; display:flex; flex-direction:column; gap:1px; padding:5px 6px; border-radius:7px; background:rgba(7,11,17,.35); }
+      .dg-production-audit strong { color:#B9C6D4; font-size:8.5px; }
+      .dg-production-audit time { color:#8C9AAD; font-family:'JetBrains Mono',monospace; font-size:8px; white-space:nowrap; }
+      .dg-production-audit small { overflow:hidden; color:#667589; font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
       .dg-fabrica-actions { grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; margin-top:5px; }
       .dg-fabrica-btn { min-width:0; min-height:35px; padding:7px 6px; font-size:10.5px; line-height:1.15; white-space:normal; overflow-wrap:anywhere; }
       .dg-fabrica-btn-next { grid-column:1 / -1; border-color:rgba(91,201,139,.38); background:rgba(91,201,139,.1); color:#72D9A0; font-size:11.5px; }
@@ -4501,6 +4550,11 @@ function Style() {
         .dg-fab-specs > div { min-width:0; padding:7px; }
         .dg-fab-specs span { margin-bottom:2px; font-size:8px; }
         .dg-fab-specs strong { display:block; overflow-wrap:anywhere; font-size:10.5px; line-height:1.2; }
+        .dg-production-audit { padding:6px; }
+        .dg-production-audit > div { grid-template-columns:1fr; gap:3px; }
+        .dg-production-audit > div > span { display:grid; grid-template-columns:52px max-content minmax(0,1fr); align-items:center; gap:6px; padding:4px 6px; }
+        .dg-production-audit time, .dg-production-audit small { font-size:7.5px; }
+        .dg-production-audit small { text-align:right; }
         .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; }
       }
       @media (max-width:420px) {
