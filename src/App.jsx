@@ -727,7 +727,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.dgTheme = theme;
     document.documentElement.style.colorScheme = theme;
-    document.body.style.backgroundColor = theme === "dark" ? "#171411" : "#F4EFE6";
+    document.body.style.backgroundColor = theme === "dark" ? "#0C0C0D" : "#E6E3DE";
   }, [theme]);
   const [loginOpen, setLoginOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
@@ -2296,6 +2296,7 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
 
   return (
     <div className={`dg-order-flow ${conEnvio ? "dg-order-flow-five" : "dg-order-flow-four"}`} onClick={(e) => e.stopPropagation()}>
+      <div className="dg-order-flow-title">Proceso del pedido</div>
       <div className="dg-order-flow-nav">
         <div className="dg-order-flow-label">
           <span>{conEnvio ? "Envío" : "Retiro"}</span>
@@ -2594,25 +2595,33 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         )}
       </div>
 
-      <div className="dg-date-filter-bar">
-        <span><CalendarDays size={14} /> Fecha del pedido</span>
-        <label>Desde<input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} /></label>
-        <label>Hasta<input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} /></label>
-        {(fechaDesde || fechaHasta) && <button className="dg-btn-ghost dg-mini-btn" onClick={() => { setFechaDesde(""); setFechaHasta(""); }}><X size={13} /> Limpiar fechas</button>}
-      </div>
+      <details className="dg-order-tools-details">
+        <summary>
+          <span><CalendarDays size={14} /> Fechas y acciones masivas</span>
+          <small>{fechaDesde || fechaHasta ? "Filtro de fecha activo" : `${visibles.length} pedidos en esta vista`}</small>
+        </summary>
+        <div className="dg-order-tools-content">
+          <div className="dg-date-filter-bar">
+            <span><CalendarDays size={14} /> Fecha del pedido</span>
+            <label>Desde<input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} /></label>
+            <label>Hasta<input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} /></label>
+            {(fechaDesde || fechaHasta) && <button className="dg-btn-ghost dg-mini-btn" onClick={() => { setFechaDesde(""); setFechaHasta(""); }}><X size={13} /> Limpiar fechas</button>}
+          </div>
 
-      {canEditFull && puedeBorrar && (
-        <div className="dg-bulk-bar">
-          <div>
-            <strong>Acciones masivas</strong>
-            <span>Se aplican a los {visibles.length} resultados visibles con los filtros actuales.</span>
-          </div>
-          <div className="dg-bulk-actions">
-            <button className="dg-btn-ghost" disabled={restaurablesVisibles.length === 0} onClick={restaurarVisibles}><RotateCcw size={14} /> Restaurar archivados ({restaurablesVisibles.length})</button>
-            <button className="dg-btn-danger" disabled={visibles.length === 0} onClick={borrarVisibles}><Trash2 size={14} /> Borrar resultados ({visibles.length})</button>
-          </div>
+          {canEditFull && puedeBorrar && (
+            <div className="dg-bulk-bar">
+              <div>
+                <strong>Acciones masivas</strong>
+                <span>Se aplican a los {visibles.length} resultados visibles con los filtros actuales.</span>
+              </div>
+              <div className="dg-bulk-actions">
+                <button className="dg-btn-ghost" disabled={restaurablesVisibles.length === 0} onClick={restaurarVisibles}><RotateCcw size={14} /> Restaurar archivados ({restaurablesVisibles.length})</button>
+                <button className="dg-btn-danger" disabled={visibles.length === 0} onClick={borrarVisibles}><Trash2 size={14} /> Borrar resultados ({visibles.length})</button>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </details>
 
       {(() => {
         const renderCard = (p) => {
@@ -2621,23 +2630,26 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           const MetodoIcon = METODO_ICONS[p.metodo] || Package;
           return (
             <div className="dg-pedido-card dg-order-card" key={p.id} onClick={() => setOpenPedido(p)}>
-              <div className="dg-pedido-card-top">
-                <span className="dg-pedido-orden">#{p.orden}</span>
-                <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
-                <span className="dg-pago-monto">{p.monto ? money(p.monto) : "—"}</span>
-              </div>
-              <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.vendedor || "—"} · {p.fecha}</div>
-              <div className="dg-pedido-badges">
-                <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
-                <span className="dg-badge" style={{ "--bc": p.facturado ? "var(--dg-success)" : "var(--dg-danger)" }}>
-                  {p.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {p.facturado ? "Facturado" : "Sin facturar"}
-                </span>
-                <span className="dg-badge" style={{ "--bc": saldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
-                  <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
-                </span>
-                <span className="dg-badge" style={{ "--bc": "var(--dg-text-dim)" }}><MetodoIcon size={12} /> {p.metodo}</span>
-                {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "var(--dg-warning)" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
-                {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
+              <div className="dg-order-summary">
+                <div className="dg-order-summary-label">Datos del espejo</div>
+                <div className="dg-pedido-card-top">
+                  <span className="dg-pedido-orden">#{p.orden}</span>
+                  <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
+                  <span className="dg-pago-monto">{p.monto ? money(p.monto) : "—"}</span>
+                </div>
+                <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.vendedor || "—"} · {p.fecha}</div>
+                <div className="dg-pedido-badges">
+                  <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
+                  <span className="dg-badge" style={{ "--bc": p.facturado ? "var(--dg-success)" : "var(--dg-danger)" }}>
+                    {p.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {p.facturado ? "Facturado" : "Sin facturar"}
+                  </span>
+                  <span className="dg-badge" style={{ "--bc": saldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
+                    <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
+                  </span>
+                  <span className="dg-badge" style={{ "--bc": "var(--dg-text-dim)" }}><MetodoIcon size={12} /> {p.metodo}</span>
+                  {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "var(--dg-warning)" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
+                  {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
+                </div>
               </div>
               <FlujoPedido
                 pedido={p}
@@ -4231,7 +4243,7 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
 }
 
 function SectorPage({
-  sector, index, session, isAdmin, onUpdate, onRequestLogin, onBack,
+  sector, session, isAdmin, onUpdate, onRequestLogin,
   pedidos, onChangePedidos, vendedores, onChangeVendedores, incomes, onChangeIncomes,
   purchases, onChangePurchases, quoteConfig, onChangeQuoteConfig, quotes, onChangeQuotes,
   leads, onChangeLeads, onCreateIncome, sectors, recursos, onChangeRecursos,
@@ -4243,10 +4255,8 @@ function SectorPage({
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
   const [subpage, setSubpage] = useState(tabs[0].id);
   const Icon = ICONS[sector.icon];
-  const { key, pct } = getStatus(sector.tasks);
+  const { key } = getStatus(sector.tasks);
   const glow = STATUS[key].glow;
-  const activeTab = tabs.find((tab) => tab.id === subpage) || tabs[0];
-
   const isVentasSession = session?.role === "sector" && session.sectorId === "ventas";
   const esEncargado = session?.role === "sector" && session.tipo !== "operario";
   const puedeBorrar = isAdmin || esEncargado; // los operarios no borran registros
@@ -4262,9 +4272,7 @@ function SectorPage({
     <div className="dg-sector-page">
       <section className="dg-sector-hero" style={{ "--glow": glow }}>
         <RoomScene sector={sector} />
-        <button className="dg-sector-hero-back" onClick={onBack} title="Volver al edificio"><ArrowLeft size={17} /> Edificio</button>
         <div className="dg-sector-hero-content">
-          <span className="dg-sector-hero-eyebrow">Sector {String(index + 1).padStart(2, "0")}</span>
           <div className="dg-sector-hero-title">
             <div className="dg-sector-hero-icon">{Icon && <Icon size={22} />}</div>
             <div><h1>{sector.name}</h1><p>{SECTOR_DESCRIPTIONS[sector.id]}</p></div>
@@ -4274,24 +4282,18 @@ function SectorPage({
             <span style={{ "--glow": glow }}><i /> {STATUS[key].label}</span>
           </div>
         </div>
-        <div className="dg-sector-hero-progress">
-          <span>Progreso de hoy</span>
-          <strong>{pct === null ? "—" : `${pct}%`}</strong>
-          <div><i style={{ width: `${pct || 0}%` }} /></div>
-        </div>
       </section>
 
-      <div className="dg-sector-workbar">
-        <div><span>Espacio de trabajo</span><strong>{activeTab.label}</strong></div>
-        {tabs.length > 1 && (
+      {tabs.length > 1 && (
+        <div className="dg-sector-workbar">
           <div className="dg-sector-tabs" role="tablist" aria-label={`Herramientas de ${sector.name}`}>
             {tabs.map((t) => {
               const TabIcon = SUBPAGE_ICONS[t.id] || FileText;
               return <button key={t.id} role="tab" aria-selected={subpage === t.id} className={`dg-sector-tab ${subpage === t.id ? "dg-sector-tab-on" : ""}`} onClick={() => setSubpage(t.id)}><TabIcon size={14} />{t.label}</button>;
             })}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {subpage === "tareas" && (
         <SectorTasksPanel sector={sector} session={session} isAdmin={isAdmin} onUpdate={onUpdate} onRequestLogin={onRequestLogin} />
@@ -4382,6 +4384,7 @@ function Style() {
       .dg-app ::-webkit-scrollbar-thumb:hover { background: rgba(var(--dg-line-rgb),0.22); }
       .dg-app {
         --dg-bg:#0C0C0D; --dg-surface:#19191A; --dg-surface-2:#212122; --dg-surface-3:#29292A;
+        --dg-order-info:#242425; --dg-order-flow:#141415;
         --dg-line-rgb:235,235,233;
         --dg-text:#F1F1EF; --dg-text-dim:#9C9C99; --dg-text-faint:#6E6E6B;
         --dg-accent:#F2622F; --dg-accent-rgb:242,98,47; --dg-accent-2:#FF8352; --dg-on-accent:#FFFFFF;
@@ -4395,9 +4398,10 @@ function Style() {
         background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(var(--dg-accent-rgb),.06),transparent),var(--bg);
         min-height:100vh; padding:28px 16px 60px; box-sizing:border-box; transition: background .2s ease, color .2s ease; }
       .dg-app[data-theme="light"] {
-        --dg-bg:#F5F5F4; --dg-surface:#FFFFFF; --dg-surface-2:#EBEBEA; --dg-surface-3:#E2E2E0;
-        --dg-line-rgb:30,30,29;
-        --dg-text:#212120; --dg-text-dim:#68686A; --dg-text-faint:#87867F;
+        --dg-bg:#E6E3DE; --dg-surface:#FAF9F6; --dg-surface-2:#FFFFFF; --dg-surface-3:#DCD8D1;
+        --dg-order-info:#FFFFFF; --dg-order-flow:#DDD8D0;
+        --dg-line-rgb:35,34,31;
+        --dg-text:#1F1F1D; --dg-text-dim:#5D5C57; --dg-text-faint:#74716A;
         --dg-accent:#C1501F; --dg-accent-rgb:193,80,31; --dg-accent-2:#A6431A; --dg-on-accent:#FFFFFF;
         --dg-success:#4E673D; --dg-success-rgb:78,103,61;
         --dg-warning:#805515; --dg-warning-rgb:128,85,21;
@@ -5022,7 +5026,7 @@ function Style() {
       .dg-chip-dot { width:6px; height:6px; box-shadow:0 0 7px color-mix(in srgb, var(--c) 70%, transparent); }
 
       .dg-plant-outer { max-width:1180px; margin:0 auto; padding:0 0 28px; }
-      .dg-building-shell { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.11); border-radius:24px; background:var(--dg-surface); box-shadow:0 26px 70px -52px var(--dg-shadow); }
+      .dg-building-shell { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.15); border-radius:24px; background:var(--dg-surface); box-shadow:0 18px 46px -38px var(--dg-shadow); }
       .dg-building-head { min-height:70px; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 20px; border-bottom:1px solid rgba(var(--dg-line-rgb),.08); background:linear-gradient(90deg, rgba(var(--dg-accent-rgb),.055), transparent 48%); }
       .dg-building-head > div { display:flex; flex-direction:column; gap:1px; }
       .dg-building-kicker { color:var(--dg-text-faint); font-size:9.5px; font-weight:700; letter-spacing:1.35px; text-transform:uppercase; }
@@ -5038,9 +5042,9 @@ function Style() {
       .dg-building-foot .dg-live-dot { width:5px; height:5px; box-shadow:none; }
       .dg-room-tile { aspect-ratio:16/9; border-radius:14px !important; border-color:rgba(var(--dg-line-rgb),.105); background:var(--dg-bg); box-shadow:none; text-align:left; }
       .dg-room-tile:hover { transform:translateY(-2px); border-color:color-mix(in srgb, var(--glow) 58%, rgba(var(--dg-line-rgb),.12)); box-shadow:0 16px 34px -24px rgba(0,0,0,.9); }
-      .dg-scene-image { filter:grayscale(1) sepia(.18) saturate(.72) contrast(1.05) brightness(.83); }
-      .dg-room-tile:hover .dg-scene-image { transform:scale(1.045); filter:grayscale(1) sepia(.16) saturate(.82) contrast(1.06) brightness(.88); }
-      .dg-scene-shade { background:linear-gradient(180deg,rgba(8,6,4,.03),rgba(8,6,4,.18) 40%,rgba(8,6,4,.94) 100%),linear-gradient(125deg,color-mix(in srgb,var(--accent) 9%,transparent),transparent 48%); }
+      .dg-scene-image { filter:grayscale(1) sepia(.1) saturate(.76) contrast(.74) brightness(1.32); }
+      .dg-room-tile:hover .dg-scene-image { transform:scale(1.045); filter:grayscale(1) sepia(.08) saturate(.82) contrast(.78) brightness(1.38); }
+      .dg-scene-shade { background:linear-gradient(180deg,rgba(8,6,4,0),rgba(8,6,4,.025) 52%,rgba(8,6,4,.44) 100%),linear-gradient(125deg,color-mix(in srgb,var(--accent) 5%,transparent),transparent 54%); }
       .dg-room-plate { left:10px; right:10px; bottom:9px; gap:8px; padding:9px 10px; border:0; border-top:1px solid color-mix(in srgb,var(--glow) 45%,rgba(var(--dg-line-rgb),.08)); border-radius:10px; background:rgba(12,9,7,.76); box-shadow:none; }
       .dg-room-plate-num { color:#AFA394; font-size:9px; }
       .dg-room-plate-icon { width:25px; height:25px; min-width:25px; border-radius:50%; }
@@ -5050,32 +5054,30 @@ function Style() {
       .dg-room-enter { top:9px; right:9px; width:28px; height:28px; background:rgba(12,9,7,.72); border:1px solid rgba(238,226,210,.16); color:#F3EDE4; }
 
       .dg-sector-page, .dg-page { max-width:1120px; }
-      .dg-sector-hero { position:relative; min-height:230px; display:flex; align-items:flex-end; gap:24px; overflow:hidden; margin-bottom:14px; padding:22px; border:1px solid rgba(var(--dg-line-rgb),.11); border-radius:20px; background:var(--dg-bg); }
+      .dg-sector-hero { position:relative; min-height:148px; display:flex; align-items:flex-end; gap:18px; overflow:hidden; margin-bottom:10px; padding:18px 20px; border:1px solid rgba(var(--dg-line-rgb),.15); border-radius:16px; background:var(--dg-bg); }
       .dg-sector-hero .dg-room-scene { position:absolute; inset:0; }
-      .dg-sector-hero .dg-scene-image { filter:grayscale(1) sepia(.2) saturate(.68) contrast(1.04) brightness(.6); background-size:300% 200%; }
-      .dg-sector-hero .dg-scene-shade { background:linear-gradient(90deg,rgba(9,7,5,.96) 0%,rgba(9,7,5,.77) 47%,rgba(9,7,5,.33) 100%),linear-gradient(0deg,rgba(9,7,5,.8),transparent 65%); }
+      .dg-sector-hero .dg-scene-image { filter:grayscale(1) sepia(.1) saturate(.76) contrast(.72) brightness(1.28); background-size:300% 200%; }
+      .dg-sector-hero .dg-scene-shade { background:linear-gradient(90deg,rgba(9,7,5,.76) 0%,rgba(9,7,5,.48) 52%,rgba(9,7,5,.12) 100%),linear-gradient(0deg,rgba(9,7,5,.46),transparent 72%); }
       .dg-sector-hero-back { position:absolute; z-index:2; top:16px; left:16px; min-height:34px; display:flex; align-items:center; gap:7px; padding:7px 10px; border:1px solid rgba(238,226,210,.18); border-radius:9px; background:rgba(12,9,7,.62); color:#E6DCCF; font-size:11px; font-weight:600; cursor:pointer; backdrop-filter:blur(10px); }
       .dg-sector-hero-back:hover { color:#fff; border-color:rgba(var(--dg-accent-rgb),.45); }
       .dg-sector-hero-content { position:relative; z-index:2; flex:1; min-width:0; }
       .dg-sector-hero-eyebrow { display:block; margin-bottom:7px; color:#B8AB9A; font-family:'JetBrains Mono',monospace; font-size:9.5px; letter-spacing:1.3px; text-transform:uppercase; }
-      .dg-sector-hero-title { display:flex; align-items:center; gap:12px; }
-      .dg-sector-hero-icon { width:42px; height:42px; min-width:42px; display:flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--glow) 46%,rgba(var(--dg-line-rgb),.1)); border-radius:12px; background:color-mix(in srgb,var(--glow) 13%,rgba(12,9,7,.8)); color:var(--glow); }
-      .dg-sector-hero-title h1 { margin:0; color:#F3EDE4; font-family:'Space Grotesk',sans-serif; font-size:clamp(26px,4vw,38px); line-height:1; letter-spacing:-.75px; }
-      .dg-sector-hero-title p { margin:6px 0 0; color:#C7BAA9; font-size:12px; }
-      .dg-sector-hero-meta { display:flex; gap:8px; flex-wrap:wrap; margin-top:15px; }
-      .dg-sector-hero-meta span { min-height:27px; display:flex; align-items:center; gap:6px; padding:5px 9px; border:1px solid rgba(var(--dg-line-rgb),.11); border-radius:8px; background:rgba(7,6,5,.5); color:#D8CDBC; font-size:10.5px; backdrop-filter:blur(8px); }
+      .dg-sector-hero-title { display:flex; align-items:center; gap:10px; }
+      .dg-sector-hero-icon { width:36px; height:36px; min-width:36px; display:flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--glow) 46%,rgba(238,226,210,.14)); border-radius:10px; background:color-mix(in srgb,var(--glow) 12%,rgba(12,9,7,.7)); color:var(--glow); }
+      .dg-sector-hero-title h1 { margin:0; color:#F3EDE4; font-family:'Space Grotesk',sans-serif; font-size:clamp(24px,3vw,31px); line-height:1; letter-spacing:-.6px; text-shadow:0 1px 12px rgba(0,0,0,.45); }
+      .dg-sector-hero-title p { margin:4px 0 0; color:#E0D8CD; font-size:11px; text-shadow:0 1px 10px rgba(0,0,0,.5); }
+      .dg-sector-hero-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+      .dg-sector-hero-meta span { min-height:24px; display:flex; align-items:center; gap:5px; padding:4px 8px; border:1px solid rgba(238,226,210,.14); border-radius:7px; background:rgba(7,6,5,.42); color:#E2DBD2; font-size:9.5px; backdrop-filter:blur(8px); }
       .dg-sector-hero-meta i { width:6px; height:6px; border-radius:50%; background:var(--glow); }
       .dg-sector-hero-progress { position:relative; z-index:2; width:160px; align-self:flex-end; padding:13px; border:1px solid rgba(238,226,210,.14); border-radius:12px; background:rgba(12,9,7,.65); backdrop-filter:blur(12px); }
       .dg-sector-hero-progress > span { color:#AFA394; font-size:9.5px; text-transform:uppercase; letter-spacing:.75px; }
       .dg-sector-hero-progress > strong { display:block; margin:3px 0 10px; color:var(--glow); font-family:'JetBrains Mono',monospace; font-size:22px; }
       .dg-sector-hero-progress > div { height:4px; overflow:hidden; border-radius:10px; background:rgba(var(--dg-line-rgb),.09); }
       .dg-sector-hero-progress > div i { display:block; height:100%; border-radius:inherit; background:var(--glow); }
-      .dg-sector-workbar { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:16px; padding:10px 12px; border:1px solid rgba(var(--dg-line-rgb),.09); border-radius:13px; background:var(--dg-surface); }
-      .dg-sector-workbar > div:first-child { min-width:126px; display:flex; flex-direction:column; padding-left:2px; }
-      .dg-sector-workbar > div:first-child span { color:var(--dg-text-faint); font-size:9px; letter-spacing:.8px; text-transform:uppercase; }
-      .dg-sector-workbar > div:first-child strong { margin-top:1px; color:var(--dg-text); font-size:12px; }
-      .dg-sector-workbar .dg-sector-tabs { flex:1; justify-content:flex-end; flex-wrap:wrap; gap:5px; margin:0; padding:0; border:0; }
-      .dg-sector-tab { min-height:34px; display:flex; align-items:center; gap:6px; padding:7px 10px; border:1px solid transparent; border-radius:8px; color:var(--dg-text-faint); font-size:10.5px; background:transparent; }
+      .dg-sector-workbar { display:flex; align-items:center; margin-bottom:12px; padding:5px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:11px; background:var(--dg-surface); }
+      .dg-sector-workbar .dg-sector-tabs { width:100%; display:flex; justify-content:flex-start; flex-wrap:nowrap; gap:3px; margin:0; padding:0; overflow-x:auto; border:0; scrollbar-width:none; }
+      .dg-sector-workbar .dg-sector-tabs::-webkit-scrollbar { display:none; }
+      .dg-sector-tab { flex:0 0 auto; min-height:32px; display:flex; align-items:center; gap:5px; padding:6px 9px; border:1px solid transparent; border-radius:7px; color:var(--dg-text-faint); font-size:10px; background:transparent; }
       .dg-sector-tab:hover { color:var(--dg-text); background:rgba(var(--dg-line-rgb),.035); }
       .dg-sector-tab-on { color:var(--dg-accent-2); border-color:rgba(var(--dg-accent-rgb),.22); background:rgba(var(--dg-accent-rgb),.095); }
 
@@ -5101,6 +5103,17 @@ function Style() {
       .dg-locked-page p { max-width:none; margin:0; color:var(--dg-text-faint); }
       .dg-locked-icon { width:48px; height:48px; min-width:48px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(var(--dg-accent-rgb),.22); border-radius:13px; background:rgba(var(--dg-accent-rgb),.08); color:var(--dg-accent); }
 
+      .dg-order-tools-details { margin:0 0 12px; overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.13); border-radius:11px; background:var(--dg-surface); }
+      .dg-order-tools-details > summary { min-height:40px; display:flex; align-items:center; gap:10px; padding:8px 11px; color:var(--dg-text-dim); cursor:pointer; list-style:none; }
+      .dg-order-tools-details > summary::-webkit-details-marker { display:none; }
+      .dg-order-tools-details > summary::after { content:"+"; margin-left:auto; color:var(--dg-accent); font-size:16px; line-height:1; }
+      .dg-order-tools-details[open] > summary::after { content:"−"; }
+      .dg-order-tools-details > summary > span { display:flex; align-items:center; gap:6px; color:var(--dg-text); font-size:10.5px; font-weight:600; }
+      .dg-order-tools-details > summary > small { color:var(--dg-text-faint); font-size:9px; }
+      .dg-order-tools-content { padding:0 10px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.09); }
+      .dg-order-tools-content .dg-date-filter-bar { margin:10px 0 0; }
+      .dg-order-tools-content .dg-bulk-bar { margin:8px 0 0; }
+
       .dg-date-filter-bar { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:-5px 0 12px; padding:10px 12px; border:1px solid rgba(var(--dg-line-rgb),.09); border-radius:11px; background:var(--dg-surface); }
       .dg-date-filter-bar > span { display:flex; align-items:center; gap:6px; margin-right:3px; color:var(--dg-text-dim); font-size:10.5px; font-weight:600; }
       .dg-date-filter-bar label { display:flex; align-items:center; gap:6px; color:var(--dg-text-faint); font-size:9.5px; text-transform:uppercase; letter-spacing:.45px; }
@@ -5124,8 +5137,10 @@ function Style() {
       .dg-btn-entregado { margin-top:8px; }
       .dg-flow-pending { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px dashed rgba(var(--dg-warning-rgb),.3); border-radius:8px; color:var(--dg-warning); font-size:10.5px; }
 
-      .dg-order-card { gap:6px; padding:13px 14px 11px; border-radius:11px; background:var(--dg-surface-2); border-color:rgba(var(--dg-line-rgb),.095); box-shadow:0 7px 24px -22px var(--dg-shadow); }
-      .dg-order-card:hover { transform:none; background:var(--dg-surface-2); border-color:rgba(var(--dg-accent-rgb),.34); }
+      .dg-order-card { gap:0; overflow:hidden; padding:0; border-radius:12px; background:var(--dg-order-info); border-color:rgba(var(--dg-line-rgb),.18); box-shadow:0 8px 24px -22px var(--dg-shadow); }
+      .dg-order-card:hover { transform:none; background:var(--dg-order-info); border-color:rgba(var(--dg-accent-rgb),.48); }
+      .dg-order-summary { display:flex; flex-direction:column; gap:5px; padding:10px 12px 9px; background:var(--dg-order-info); }
+      .dg-order-summary-label, .dg-order-flow-title { color:var(--dg-accent); font-size:7.5px; font-weight:750; letter-spacing:.85px; line-height:1; text-transform:uppercase; }
       .dg-order-card .dg-pedido-card-top { min-height:24px; }
       .dg-order-card .dg-pedido-orden { color:var(--dg-accent); }
       .dg-order-card .dg-lead-name { font-family:'Space Grotesk',sans-serif; font-size:14px; font-weight:600; }
@@ -5133,8 +5148,9 @@ function Style() {
       .dg-order-card .dg-pago-meta { color:var(--dg-text-dim); font-size:10px; }
       .dg-order-card .dg-pedido-badges { gap:5px; }
       .dg-order-card .dg-badge { padding:3px 7px; font-size:9px; }
-      .dg-order-flow { width:100%; margin-top:2px; overflow:hidden; border:0; border-top:1px solid rgba(var(--dg-line-rgb),.09); border-radius:0; background:transparent; }
-      .dg-order-flow-nav { min-height:32px; display:grid; grid-template-columns:minmax(100px,1fr) auto minmax(100px,1fr); gap:8px; align-items:center; padding:5px 0 3px; border:0; background:transparent; }
+      .dg-order-flow { width:100%; margin:0; overflow:hidden; padding:7px 10px 8px; border:0; border-top:2px solid rgba(var(--dg-accent-rgb),.42); border-radius:0; background:var(--dg-order-flow); }
+      .dg-order-flow-title { margin:0 0 3px; color:var(--dg-text-dim); }
+      .dg-order-flow-nav { min-height:30px; display:grid; grid-template-columns:minmax(100px,1fr) auto minmax(100px,1fr); gap:8px; align-items:center; padding:2px 0 3px; border:0; background:transparent; }
       .dg-order-flow-label { min-width:0; display:flex; align-items:baseline; gap:6px; }
       .dg-order-flow-label span { color:var(--dg-text-faint); font-size:8px; font-weight:750; letter-spacing:.6px; text-transform:uppercase; }
       .dg-order-flow-label strong { color:var(--dg-text-dim); font-family:'JetBrains Mono',monospace; font-size:9px; white-space:nowrap; }
@@ -5149,7 +5165,7 @@ function Style() {
       .dg-order-flow-arrows button:hover:not(:disabled) { border-color:rgba(var(--dg-accent-rgb),.36); color:var(--dg-accent-2); }
       .dg-order-flow-arrows button:disabled { opacity:.25; cursor:not-allowed; }
       .dg-order-flow-slide { animation:dg-order-step-in .16s ease; }
-      .dg-order-step { min-width:0; min-height:0; display:flex; flex-direction:column; padding:5px 0 1px; border:0; border-radius:0; background:transparent; }
+      .dg-order-step { min-width:0; min-height:0; display:flex; flex-direction:column; padding:5px 0 0; border:0; border-radius:0; background:transparent; }
       .dg-order-step-done { border-color:transparent; background:transparent; }
       .dg-order-step-active { border-color:transparent; background:transparent; box-shadow:none; }
       .dg-order-step-pending { opacity:.68; }
@@ -5184,6 +5200,35 @@ function Style() {
       .dg-process-tabs .dg-process-tab-on { border-color:color-mix(in srgb,var(--pc) 52%,rgba(var(--dg-line-rgb),.1)); background:color-mix(in srgb,var(--pc) 8%,var(--dg-surface-2)); box-shadow:inset 3px 0 0 var(--pc); }
       .dg-process-tabs .dg-process-tab-on > span { color:var(--pc); }
 
+      /* Contraste del tema claro: fondo de aplicación, superficies y controles se distinguen con claridad. */
+      .dg-app[data-theme="light"] .dg-building-shell,
+      .dg-app[data-theme="light"] .dg-sector-hero,
+      .dg-app[data-theme="light"] .dg-sector-workbar,
+      .dg-app[data-theme="light"] .dg-section-card,
+      .dg-app[data-theme="light"] .dg-quick-actions,
+      .dg-app[data-theme="light"] .dg-task-table-wrap,
+      .dg-app[data-theme="light"] .dg-chart-card,
+      .dg-app[data-theme="light"] .dg-total-card,
+      .dg-app[data-theme="light"] .dg-month-group,
+      .dg-app[data-theme="light"] .dg-date-filter-bar,
+      .dg-app[data-theme="light"] .dg-bulk-bar {
+        border-color:rgba(var(--dg-line-rgb),.18);
+        box-shadow:0 10px 28px -25px rgba(35,34,31,.4);
+      }
+      .dg-app[data-theme="light"] .dg-building-head { background:#F0EEE9; border-bottom-color:rgba(var(--dg-line-rgb),.16); }
+      .dg-app[data-theme="light"] .dg-building-floor { background:#FCFBF8; }
+      .dg-app[data-theme="light"] .dg-building-ground { background:#F1EFEA; border-top-color:rgba(var(--dg-line-rgb),.16); }
+      .dg-app[data-theme="light"] .dg-room-tile { border-color:rgba(var(--dg-line-rgb),.22); box-shadow:0 7px 18px -16px rgba(35,34,31,.58); }
+      .dg-app[data-theme="light"] .dg-field input,
+      .dg-app[data-theme="light"] .dg-field select,
+      .dg-app[data-theme="light"] .dg-form input,
+      .dg-app[data-theme="light"] .dg-form select,
+      .dg-app[data-theme="light"] .dg-inline-input,
+      .dg-app[data-theme="light"] .dg-pedido-search,
+      .dg-app[data-theme="light"] textarea { background:#FFFFFF; border-color:rgba(var(--dg-line-rgb),.2); }
+      .dg-app[data-theme="light"] .dg-order-card { border-color:rgba(var(--dg-line-rgb),.24); box-shadow:0 5px 14px -12px rgba(35,34,31,.52); }
+      .dg-app[data-theme="light"] .dg-order-flow { border-top-color:rgba(var(--dg-accent-rgb),.55); }
+
       @media (max-width:900px) {
         .dg-header-context { align-items:flex-start; margin-left:auto; }
         .dg-header-date { display:none; }
@@ -5193,7 +5238,7 @@ function Style() {
         .dg-floor-label { flex-direction:row; align-items:center; gap:8px; padding:0 2px; }
         .dg-floor-label strong { font-size:14px; }
         .dg-floor-label span { margin:0; }
-        .dg-sector-workbar { align-items:flex-start; flex-direction:column; }
+        .dg-sector-workbar { align-items:center; flex-direction:row; }
         .dg-sector-workbar .dg-sector-tabs { width:100%; justify-content:flex-start; }
       }
       @media (max-width:680px) {
@@ -5218,14 +5263,25 @@ function Style() {
         .dg-room-plate-name { font-size:10.5px; }
         .dg-room-plate-sub { font-size:8.5px; }
         .dg-room-enter { display:none; }
-        .dg-sector-hero { min-height:265px; padding:18px; }
-        .dg-sector-hero .dg-scene-shade { background:linear-gradient(0deg,rgba(9,7,5,.96) 0%,rgba(9,7,5,.68) 65%,rgba(9,7,5,.35) 100%); }
-        .dg-sector-hero-content { padding-top:44px; }
-        .dg-sector-hero-title h1 { font-size:27px; }
+        .dg-sector-hero { min-height:138px; padding:15px; }
+        .dg-sector-hero .dg-scene-shade { background:linear-gradient(0deg,rgba(9,7,5,.72) 0%,rgba(9,7,5,.34) 66%,rgba(9,7,5,.1) 100%); }
+        .dg-sector-hero-content { padding-top:0; }
+        .dg-sector-hero-title h1 { font-size:24px; }
         .dg-sector-hero-progress { display:none; }
-        .dg-sector-workbar { padding:10px; }
-        .dg-sector-workbar .dg-sector-tabs { flex-wrap:nowrap; overflow-x:auto; padding-bottom:2px; }
-        .dg-sector-tab { flex:0 0 auto; min-height:38px; }
+        .dg-sector-workbar { padding:4px; }
+        .dg-sector-workbar .dg-sector-tabs { flex-wrap:nowrap; overflow-x:auto; padding-bottom:0; }
+        .dg-sector-tab { flex:0 0 auto; min-height:34px; }
+        .dg-quickviews { gap:5px; margin-bottom:8px; padding-bottom:0 !important; }
+        .dg-quickview-btn, .dg-quickview-mas { min-height:32px; padding:6px 10px; font-size:10.5px; }
+        .dg-crm-filters { gap:6px; margin-bottom:8px; }
+        .dg-crm-filters > svg { display:none; }
+        .dg-crm-filters > select { flex:1 1 calc(50% - 3px); width:calc(50% - 3px); min-width:0; }
+        .dg-crm-filters > .dg-pedido-search { flex:1 1 calc(60% - 3px); width:auto; min-width:0; }
+        .dg-crm-filters > .dg-periodo-toggle { flex:1 1 calc(40% - 3px); justify-content:center; }
+        .dg-crm-filters > .dg-btn-ghost, .dg-crm-filters > .dg-btn-primary { flex:1 1 calc(50% - 3px); justify-content:center; margin-left:0 !important; }
+        .dg-order-tools-details { margin-bottom:8px; }
+        .dg-order-tools-details > summary { min-height:38px; padding:7px 10px; }
+        .dg-order-tools-details > summary > small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .dg-locked-page { min-height:300px; flex-direction:column; align-items:center; padding:30px 20px; text-align:center; }
         .dg-locked-page > div:nth-child(2) { max-width:330px; }
         .dg-date-filter-bar { align-items:stretch; }
@@ -5242,8 +5298,11 @@ function Style() {
         .dg-month-items { gap:6px; padding:7px; }
         .dg-month-header { padding:9px 11px; }
         .dg-pedido-card:not(.dg-fabrica-card) { gap:5px; padding:9px 10px; }
-        .dg-pedido-card:not(.dg-fabrica-card) > .dg-pedido-badges { flex-wrap:nowrap; overflow-x:auto; padding-bottom:1px; scrollbar-width:none; }
-        .dg-pedido-card:not(.dg-fabrica-card) > .dg-pedido-badges::-webkit-scrollbar { display:none; }
+        .dg-order-card { gap:0 !important; padding:0 !important; }
+        .dg-order-summary { padding:9px 10px 8px; }
+        .dg-order-flow { padding:7px 9px 8px; }
+        .dg-order-summary > .dg-pedido-badges { flex-wrap:nowrap; overflow-x:auto; padding-bottom:1px; scrollbar-width:none; }
+        .dg-order-summary > .dg-pedido-badges::-webkit-scrollbar { display:none; }
         .dg-pedido-card:not(.dg-fabrica-card) .dg-pago-meta { font-size:10px; line-height:1.25; }
         .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; line-height:1.15; }
         .dg-fabrica-btn-next { grid-column:1 / -1; font-size:11px; }
