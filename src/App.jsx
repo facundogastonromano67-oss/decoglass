@@ -201,6 +201,18 @@ const ENTREGA_ESTILO = {
 
 const ENVIO_METODOS = ["Envío", "Envío flex", "Interior", "Colocación"];
 
+function esPedidoConEnvio(pedido) {
+  return ENVIO_METODOS.includes(pedido?.metodo);
+}
+
+function pedidoFueVerificado(pedido) {
+  return Boolean(pedido) && pedido.estado !== "Sin pasar a fábrica" && pedido.estado !== "Cancelado";
+}
+
+function pedidoEstaListo(pedido) {
+  return pedido?.estado === "Espejo listo" || pedido?.estado === "Entregado";
+}
+
 const SECTOR_SUBPAGES = {
   marketing: [{ id: "tareas", label: "Tareas" }],
   ventas: [
@@ -2045,7 +2057,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "",
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
   };
 }
@@ -2113,6 +2125,113 @@ const QUICK_VIEWS = [
 ];
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
+
+function PasoPedido({ numero, titulo, detalle, estado = "pending", children }) {
+  const estadoLabel = estado === "done" ? "Completado" : estado === "active" ? "En curso" : "Pendiente";
+  return (
+    <div className={`dg-order-step dg-order-step-${estado}`}>
+      <div className="dg-order-step-head">
+        <span className="dg-order-step-number">{estado === "done" ? <Check size={13} /> : numero}</span>
+        <div><small>Paso {numero}</small><strong>{titulo}</strong></div>
+        <span className="dg-order-step-state">{estadoLabel}</span>
+      </div>
+      <p>{detalle}</p>
+      {children && <div className="dg-order-step-actions">{children}</div>}
+    </div>
+  );
+}
+
+function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar }) {
+  if (pedido.estado === "Cancelado") {
+    return <div className="dg-order-flow-cancelled"><XCircle size={14} /> Pedido cancelado · el flujo quedó detenido</div>;
+  }
+
+  const conEnvio = esPedidoConEnvio(pedido);
+  const entregado = pedido.estado === "Entregado";
+  const verificado = pedidoFueVerificado(pedido) || entregado;
+  const listo = pedidoEstaListo(pedido);
+  const clienteConfirmado = Boolean(pedido.clienteAvisado) || entregado;
+  const envioConfirmado = !conEnvio || Boolean(pedido.envioConfirmado) || entregado;
+  const confirmacionCompleta = clienteConfirmado && envioConfirmado;
+  const waEntrega = listo && !entregado ? entregaWaLink(pedido) : null;
+
+  return (
+    <div className={`dg-order-flow ${conEnvio ? "dg-order-flow-five" : "dg-order-flow-four"}`} onClick={(e) => e.stopPropagation()}>
+      <PasoPedido
+        numero={1}
+        titulo={verificado ? "Pedido verificado" : "Verificar pedido"}
+        detalle={verificado ? "Los datos fueron revisados y el pedido ya está habilitado para fábrica." : "Confirmá que medidas, modelo, funciones y entrega estén correctamente cargados."}
+        estado={verificado ? "done" : "active"}
+      >
+        {canEdit && !verificado && onVerificar && (
+          <button className="dg-step-action" onClick={() => onVerificar(pedido)}><CheckCircle2 size={13} /> Verificar pedido</button>
+        )}
+      </PasoPedido>
+
+      <PasoPedido
+        numero={2}
+        titulo={listo ? "Producción terminada" : "Esperando producción"}
+        detalle={listo ? "Fábrica confirmó que el espejo está listo." : verificado ? "El pedido está visible en fábrica y espera ser marcado como listo." : "Se habilita después de verificar el pedido."}
+        estado={listo ? "done" : verificado ? "active" : "pending"}
+      />
+
+      <PasoPedido
+        numero={3}
+        titulo={confirmacionCompleta ? (conEnvio ? "Cliente y envío confirmados" : "Retiro confirmado con el cliente") : conEnvio ? "Confirmación con el cliente" : "Coordinar retiro con el cliente"}
+        detalle={!listo
+          ? "Se habilita cuando fábrica marque el espejo como listo."
+          : confirmacionCompleta
+            ? conEnvio ? "El cliente confirmó los datos y el envío quedó coordinado." : "El cliente confirmó el retiro del espejo."
+            : conEnvio ? "Confirmá primero los datos con el cliente y luego dejá asentado que el envío quedó coordinado." : "Avisale al cliente que el espejo está listo y confirmá el retiro."}
+        estado={confirmacionCompleta ? "done" : listo ? "active" : "pending"}
+      >
+        {listo && !entregado && waEntrega && !clienteConfirmado && (
+          <a className="dg-step-whatsapp" href={waEntrega} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> Abrir WhatsApp</a>
+        )}
+        {canEdit && listo && !entregado && !clienteConfirmado && onClienteConfirmado && (
+          <button className="dg-step-action" onClick={() => onClienteConfirmado(pedido)}><Check size={13} /> Cliente confirmado</button>
+        )}
+        {clienteConfirmado && !entregado && <span className="dg-step-check"><CheckCircle2 size={12} /> Cliente confirmado</span>}
+        {conEnvio && canEdit && listo && !entregado && !envioConfirmado && onEnvioConfirmado && (
+          <button className="dg-step-action dg-step-action-primary" disabled={!clienteConfirmado} onClick={() => onEnvioConfirmado(pedido)}><Truck size={13} /> Envío confirmado</button>
+        )}
+        {conEnvio && envioConfirmado && !entregado && <span className="dg-step-check"><CheckCircle2 size={12} /> Envío confirmado</span>}
+      </PasoPedido>
+
+      {conEnvio ? (
+        <>
+          <PasoPedido
+            numero={4}
+            titulo={envioConfirmado ? "Disponible para el fletero" : "Esperando confirmación de envío"}
+            detalle={envioConfirmado ? "El pedido ya aparece en la lista de Logística para organizar la entrega." : listo ? "PostVenta debe confirmar el envío para habilitarlo en Logística." : "Se habilita después de producción y la coordinación con el cliente."}
+            estado={envioConfirmado ? "done" : listo && clienteConfirmado ? "active" : "pending"}
+          />
+          <PasoPedido
+            numero={5}
+            titulo={entregado ? "Entregado y archivado" : "Confirmar entrega y archivar"}
+            detalle={entregado ? "El fletero confirmó la entrega y el pedido pasó al historial." : envioConfirmado ? "Queda pendiente la confirmación final de entrega." : "Se habilita cuando el envío esté confirmado."}
+            estado={entregado ? "done" : confirmacionCompleta ? "active" : "pending"}
+          >
+            {canEdit && !entregado && confirmacionCompleta && onEntregar && (
+              <button className="dg-step-action dg-step-action-finish" onClick={() => onEntregar(pedido)}><CheckCircle2 size={13} /> Confirmar entrega y archivar</button>
+            )}
+          </PasoPedido>
+        </>
+      ) : (
+        <PasoPedido
+          numero={4}
+          titulo={entregado ? "Entregado y archivado" : "Confirmar entrega y archivar"}
+          detalle={entregado ? "El retiro fue confirmado y el pedido pasó al historial." : clienteConfirmado ? "Cuando el cliente retire el espejo, confirmá la entrega." : "Se habilita después de coordinar el retiro con el cliente."}
+          estado={entregado ? "done" : clienteConfirmado ? "active" : "pending"}
+        >
+          {canEdit && !entregado && clienteConfirmado && onEntregar && (
+            <button className="dg-step-action dg-step-action-finish" onClick={() => onEntregar(pedido)}><CheckCircle2 size={13} /> Confirmar entrega y archivar</button>
+          )}
+        </PasoPedido>
+      )}
+    </div>
+  );
+}
 
 // --- COMISIONES ---
 // Base de cálculo: monto total del pedido MENOS el costo del envío.
@@ -2204,8 +2323,11 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     const previous = pedidos.find((p) => p.id === pedido.id);
     let withOrden = pedido.orden ? pedido : { ...pedido, orden: nextOrden() };
     if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
+    if (previous?.estado === "Sin pasar a fábrica" && pedidoFueVerificado(withOrden)) {
+      withOrden = { ...withOrden, pedidoVerificadoFecha: withOrden.pedidoVerificadoFecha || new Date().toISOString() };
+    }
     if (withOrden.estado === "Espejo listo" && previous && previous.estado !== "Espejo listo" && previous.estado !== "Entregado") {
-      withOrden = { ...withOrden, clienteAvisado: false, clienteAvisadoFecha: "" };
+      withOrden = { ...withOrden, clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "", produccionListaFecha: new Date().toISOString() };
     }
     if (withOrden.estado === "Entregado") {
       if (previous?.estado !== "Espejo listo" && previous?.estado !== "Entregado") {
@@ -2216,6 +2338,11 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         window.alert("Antes de archivar el pedido, marcá que el cliente ya fue avisado de que el espejo está listo.");
         return;
       }
+      if (esPedidoConEnvio(withOrden) && !withOrden.envioConfirmado) {
+        window.alert("Antes de archivar un pedido con envío, PostVenta debe confirmar que el envío quedó coordinado.");
+        return;
+      }
+      if (previous?.estado !== "Entregado") withOrden = { ...withOrden, entregadoFecha: new Date().toISOString() };
     }
 
     // Cuánto plata entró realmente por este pedido:
@@ -2268,13 +2395,22 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       window.alert("Antes de entregarlo, confirmá que el cliente ya fue avisado.");
       return;
     }
+    if (esPedidoConEnvio(p) && !p.envioConfirmado) {
+      window.alert("Antes de entregarlo, confirmá el envío para habilitarlo en la lista del fletero.");
+      return;
+    }
     const saldo = pedidoSaldo(p);
     if (saldo > 0 && !window.confirm(`Este pedido todavía tiene ${money(saldo)} de saldo pendiente.\n\nAl marcarlo entregado se va a registrar ese saldo como ingreso cobrado. ¿Confirmás?`)) return;
     savePedido({ ...p, estado: "Entregado" });
     if (onRegistrar) onRegistrar("Marcó entregado", `#${p.orden} — ${p.cliente}`);
   }
+  function marcarVerificado(p) {
+    if (p.estado !== "Sin pasar a fábrica") return;
+    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Verificado", pedidoVerificadoFecha: new Date().toISOString() } : x)));
+    if (onRegistrar) onRegistrar("Verificó un pedido", `#${p.orden} — ${p.cliente} — habilitado para fábrica`);
+  }
   function reabrir(p) {
-    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Espejo listo" } : x)));
+    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Espejo listo", entregadoFecha: "" } : x)));
     if (onRegistrar) onRegistrar("Reabrió un pedido", `#${p.orden} — ${p.cliente}`);
   }
   function removePedido(id) {
@@ -2284,9 +2420,21 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     setOpenPedido(null);
   }
   function marcarClienteAvisado(p) {
+    if (!pedidoEstaListo(p)) {
+      window.alert("La confirmación con el cliente se habilita cuando fábrica marque el espejo como listo.");
+      return;
+    }
     const fechaAviso = new Date().toISOString();
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, clienteAvisado: true, clienteAvisadoFecha: fechaAviso } : x)));
     if (onRegistrar) onRegistrar("Avisó al cliente", `#${p.orden} — ${p.cliente} — espejo listo`);
+  }
+  function marcarEnvioConfirmado(p) {
+    if (!pedidoEstaListo(p) || !p.clienteAvisado) {
+      window.alert("Primero confirmá con el cliente que los datos del envío sean correctos.");
+      return;
+    }
+    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() } : x)));
+    if (onRegistrar) onRegistrar("Confirmó un envío", `#${p.orden} — ${p.cliente} — visible para Logística`);
   }
   function restaurarVisibles() {
     if (restaurablesVisibles.length === 0) return;
@@ -2294,7 +2442,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     const ids = new Set(restaurablesVisibles.map((p) => p.id));
     onChange(pedidos.map((p) => {
       if (!ids.has(p.id)) return p;
-      if (p.estado === "Entregado") return { ...p, estado: "Espejo listo" };
+      if (p.estado === "Entregado") return { ...p, estado: "Espejo listo", entregadoFecha: "" };
       return { ...p, estado: "Sin pasar a fábrica", clienteAvisado: false, clienteAvisadoFecha: "" };
     }));
     if (onRegistrar) onRegistrar("Restauró pedidos en masa", `${restaurablesVisibles.length} pedido(s) según filtros`);
@@ -2367,8 +2515,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           const saldo = pedidoSaldo(p);
           const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "#8B96A8" };
           const MetodoIcon = METODO_ICONS[p.metodo] || Package;
-          const estaListo = p.estado === "Espejo listo";
-          const waEntrega = estaListo ? entregaWaLink(p) : null;
           return (
             <div className="dg-pedido-card" key={p.id} onClick={() => setOpenPedido(p)}>
               <div className="dg-pedido-card-top">
@@ -2389,34 +2535,20 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                 {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "#E5B54F" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
                 {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "#4FC3C0" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
               </div>
-              {estaListo && (
-                <div className={`dg-client-notice ${p.clienteAvisado ? "dg-client-notice-done" : ""}`} onClick={(e) => e.stopPropagation()}>
-                  <div>
-                    <span>Paso 1 · Avisar al cliente</span>
-                    <strong>{p.clienteAvisado ? "Cliente avisado" : "El espejo está listo para comunicar"}</strong>
-                  </div>
-                  {!p.clienteAvisado && waEntrega && (
-                    <a className="dg-btn-primary dg-confirmar-entrega-btn" href={waEntrega} target="_blank" rel="noopener noreferrer">
-                      <MessageCircle size={14} /> Abrir WhatsApp
-                    </a>
-                  )}
-                  {!p.clienteAvisado && canEditFull && (
-                    <button className="dg-btn-ghost" onClick={() => marcarClienteAvisado(p)}><Check size={14} /> Confirmar que ya fue avisado</button>
-                  )}
-                  {p.clienteAvisado && <span className="dg-client-notice-badge"><CheckCircle2 size={13} /> Aviso confirmado</span>}
-                </div>
-              )}
-              {canEditFull && estaListo && p.clienteAvisado && (
-                <button className="dg-btn-entregado" onClick={(e) => { e.stopPropagation(); marcarEntregado(p); }}>
-                  <CheckCircle2 size={14} /> Paso 2 · Marcar entregado y archivar
-                </button>
-              )}
+              <FlujoPedido
+                pedido={p}
+                canEdit={canEditFull}
+                onVerificar={marcarVerificado}
+                onClienteConfirmado={marcarClienteAvisado}
+                onEnvioConfirmado={marcarEnvioConfirmado}
+                onEntregar={marcarEntregado}
+              />
               {p.estado === "Entregado" && canEditFull && (
                 <button className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); reabrir(p); }}>
                   <RotateCcw size={13} /> Reabrir pedido
                 </button>
               )}
-              {estaListo && !p.celular && !p.clienteAvisado && (
+              {pedidoEstaListo(p) && !p.celular && !p.clienteAvisado && (
                 <p className="dg-hint" style={{ marginTop: 8 }}>Sin celular cargado: avisale por otro medio y después confirmá el aviso.</p>
               )}
             </div>
@@ -2544,7 +2676,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   const [intentoGuardar, setIntentoGuardar] = useState(false);
   const readOnly = !canEditFull && !canEditEstadoOnly;
   const saldo = (Number(draft.monto) || 0) - (Number(draft.anticipo) || 0);
-  const puedeMarcarEntregado = draft.estado === "Entregado" || (pedido.estado === "Espejo listo" && draft.clienteAvisado);
+  const puedeMarcarEntregado = draft.estado === "Entregado" || (pedido.estado === "Espejo listo" && draft.clienteAvisado && (!esPedidoConEnvio(draft) || draft.envioConfirmado));
   const estadoOptions = ESTADO_PEDIDO_OPTIONS.filter((estado) => estado !== "Entregado" || puedeMarcarEntregado);
 
   const errores = validarPedido(draft);
@@ -2697,7 +2829,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   const [copiedId, setCopiedId] = useState(null);
 
   const envios = pedidos
-    .filter((p) => p.metodo === "Envío" || p.metodo === "Envío flex" || p.metodo === "Interior")
+    .filter((p) => esPedidoConEnvio(p))
     .filter((p) => p.estado !== "Entregado")
     .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
@@ -2713,7 +2845,18 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje(p)).then(() => { setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); });
   }
   function marcarClienteAvisado(p) {
+    if (!pedidoEstaListo(p)) {
+      window.alert("Esperá a que fábrica marque el espejo como listo antes de confirmar con el cliente.");
+      return;
+    }
     update(p.id, { clienteAvisado: true, clienteAvisadoFecha: new Date().toISOString() });
+  }
+  function marcarEnvioConfirmado(p) {
+    if (!pedidoEstaListo(p) || !p.clienteAvisado) {
+      window.alert("Primero confirmá con el cliente que los datos del envío sean correctos.");
+      return;
+    }
+    update(p.id, { envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() });
   }
 
   return (
@@ -2738,21 +2881,13 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
             </EnterFlow>
             <div className="dg-quote-actions" style={{ marginTop: 10 }}>
               <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
-              {p.estado === "Espejo listo" && entregaWaLink(p) && (
-                <a className="dg-btn-primary dg-confirmar-entrega-btn" href={entregaWaLink(p)} target="_blank" rel="noopener noreferrer">
-                  <MessageCircle size={14} /> Avisar que el espejo está listo
-                </a>
-              )}
-              {canEdit && p.estado === "Espejo listo" && !p.clienteAvisado && (
-                <button className="dg-btn-ghost" onClick={() => marcarClienteAvisado(p)}><Check size={14} /> Confirmar que ya fue avisado</button>
-              )}
-              {p.estado === "Espejo listo" && p.clienteAvisado && (
-                <span className="dg-client-notice-badge"><CheckCircle2 size={13} /> Cliente avisado</span>
-              )}
-              {canEdit && !p.envioConfirmado && (
-                <button className="dg-btn-primary" onClick={() => update(p.id, { envioConfirmado: true })}><CheckCircle2 size={14} /> Confirmar envío</button>
-              )}
             </div>
+            <FlujoPedido
+              pedido={p}
+              canEdit={canEdit}
+              onClienteConfirmado={marcarClienteAvisado}
+              onEnvioConfirmado={marcarEnvioConfirmado}
+            />
           </div>
         ))}
       </div>
@@ -2880,16 +3015,16 @@ function ReclamosPanel({ reclamos, onChange }) {
 
 function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
   const confirmados = pedidos
-    .filter((p) => ENVIO_METODOS.includes(p.metodo) && p.envioConfirmado && p.estado === "Espejo listo")
+    .filter((p) => esPedidoConEnvio(p) && p.clienteAvisado && p.envioConfirmado && p.estado === "Espejo listo")
     .sort((a, b) => (a.listo || "9999").localeCompare(b.listo || "9999"));
 
   function toggle(id, field) { onChange(pedidos.map((p) => (p.id === id ? { ...p, [field]: !p[field] } : p))); }
   function marcarEntregado(pedido) {
-    if (!pedido.clienteAvisado) {
-      window.alert("Antes de marcarlo entregado, PostVenta debe confirmar que el cliente ya fue avisado.");
+    if (!pedido.clienteAvisado || !pedido.envioConfirmado || pedido.estado !== "Espejo listo") {
+      window.alert("PostVenta debe confirmar al cliente y el envío antes de habilitar la entrega.");
       return;
     }
-    onChange(pedidos.map((p) => (p.id === pedido.id ? { ...p, estado: "Entregado" } : p)));
+    onChange(pedidos.map((p) => (p.id === pedido.id ? { ...p, estado: "Entregado", entregadoFecha: new Date().toISOString() } : p)));
   }
 
   return (
@@ -2910,11 +3045,9 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                 <button className={`dg-fabrica-btn ${p.envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => toggle(p.id, "envioPagado")}>
                   <CircleDollarSign size={16} /> {p.envioPagado ? "Envío pagado ✓" : "Marcar envío pagado"}
                 </button>
-                {p.clienteAvisado
-                  ? <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => marcarEntregado(p)}><Check size={16} /> Marcar entregado</button>
-                  : <span className="dg-flow-pending"><MessageCircle size={13} /> Falta avisar al cliente</span>}
               </div>
             )}
+            <FlujoPedido pedido={p} canEdit={canEdit} onEntregar={marcarEntregado} />
           </div>
         ))}
       </div>
@@ -3095,7 +3228,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
   function setEstado(id, estado) {
     onChange(pedidos.map((p) => {
       if (p.id !== id) return p;
-      if (estado === "Espejo listo" && p.estado !== "Espejo listo") return { ...p, estado, clienteAvisado: false, clienteAvisadoFecha: "" };
+      if (estado === "Espejo listo" && p.estado !== "Espejo listo") {
+        return { ...p, estado, produccionListaFecha: new Date().toISOString(), clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "" };
+      }
+      if (p.estado === "Espejo listo" && estado !== "Espejo listo") {
+        return { ...p, estado, produccionListaFecha: "", clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "" };
+      }
       return { ...p, estado };
     }));
   }
@@ -3150,8 +3288,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
         {canEdit && (
           <div className="dg-fabrica-actions">
             {p.estado === "Espejo listo"
-              ? <button className="dg-fabrica-btn dg-fabrica-btn-undo" onClick={() => setEstado(p.id, "Pasado a fábrica")}><RotateCcw size={15} /> Desmarcar</button>
-              : <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => setEstado(p.id, "Espejo listo")}><Check size={15} /> Listo</button>}
+              ? <button className="dg-fabrica-btn dg-fabrica-btn-undo" onClick={() => setEstado(p.id, "Pasado a fábrica")}><RotateCcw size={15} /> Desmarcar paso 2</button>
+              : <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => setEstado(p.id, "Espejo listo")}><Check size={15} /> Paso 2 · Marcar listo</button>}
             <button className={`dg-fabrica-btn dg-fabrica-btn-demora ${p.demorado ? "dg-fabrica-btn-demora-on" : ""}`} onClick={() => toggleDemorado(p.id)}><AlertTriangle size={15} /> {p.demorado ? "Sin demora" : "Demorado"}</button>
             <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => cancelar(p.id)}><XCircle size={15} /> Cancelar</button>
             {puedeBorrar && <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => borrar(p.id)}><Trash2 size={15} /> Borrar</button>}
@@ -4631,6 +4769,34 @@ function Style() {
       .dg-btn-entregado { margin-top:8px; }
       .dg-flow-pending { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px dashed rgba(229,181,79,.3); border-radius:8px; color:#C4A96D; font-size:10.5px; }
 
+      .dg-order-flow { width:100%; display:grid; gap:7px; margin-top:7px; }
+      .dg-order-flow-four { grid-template-columns:repeat(4,minmax(0,1fr)); }
+      .dg-order-flow-five { grid-template-columns:repeat(5,minmax(0,1fr)); }
+      .dg-order-step { min-width:0; min-height:132px; display:flex; flex-direction:column; padding:10px; border:1px solid rgba(226,232,240,.08); border-radius:11px; background:rgba(12,18,27,.58); }
+      .dg-order-step-done { border-color:rgba(91,201,139,.22); background:linear-gradient(155deg,rgba(91,201,139,.07),rgba(12,18,27,.58) 60%); }
+      .dg-order-step-active { border-color:rgba(79,195,192,.35); background:linear-gradient(155deg,rgba(79,195,192,.09),rgba(12,18,27,.64) 60%); box-shadow:inset 0 2px 0 rgba(79,195,192,.5); }
+      .dg-order-step-pending { opacity:.68; }
+      .dg-order-step-head { display:grid; grid-template-columns:24px minmax(0,1fr); gap:7px; align-items:start; }
+      .dg-order-step-number { width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(148,163,184,.23); border-radius:7px; color:#93A1B3; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; }
+      .dg-order-step-done .dg-order-step-number { border-color:rgba(91,201,139,.4); background:rgba(91,201,139,.12); color:#72D9A0; }
+      .dg-order-step-active .dg-order-step-number { border-color:rgba(79,195,192,.46); background:rgba(79,195,192,.11); color:#64D7D2; }
+      .dg-order-step-head > div { min-width:0; display:flex; flex-direction:column; gap:1px; }
+      .dg-order-step-head small { color:#69778A; font-size:8px; font-weight:700; letter-spacing:.55px; text-transform:uppercase; }
+      .dg-order-step-head strong { color:#DCE4ED; font-family:'Space Grotesk',sans-serif; font-size:10.5px; line-height:1.25; }
+      .dg-order-step-state { grid-column:2; width:max-content; max-width:100%; padding:2px 6px; border-radius:100px; background:rgba(148,163,184,.08); color:#7E8B9D; font-size:7.5px; font-weight:700; letter-spacing:.35px; text-transform:uppercase; }
+      .dg-order-step-done .dg-order-step-state { background:rgba(91,201,139,.1); color:#72D9A0; }
+      .dg-order-step-active .dg-order-step-state { background:rgba(79,195,192,.1); color:#64D7D2; }
+      .dg-order-step > p { margin:8px 0 0; color:#7F8C9E; font-size:9px; line-height:1.42; }
+      .dg-order-step-actions { display:flex; align-items:stretch; gap:5px; flex-wrap:wrap; margin-top:auto; padding-top:9px; }
+      .dg-step-action, .dg-step-whatsapp { min-height:30px; display:flex; flex:1 1 100%; align-items:center; justify-content:center; gap:5px; padding:6px 7px; border:1px solid rgba(148,163,184,.2); border-radius:7px; background:rgba(148,163,184,.07); color:#B8C4D2; font-family:'Inter',sans-serif; font-size:8.5px; font-weight:650; line-height:1.2; text-align:center; text-decoration:none; cursor:pointer; }
+      .dg-step-action:hover, .dg-step-whatsapp:hover { border-color:rgba(79,195,192,.45); color:#65D7D2; }
+      .dg-step-action:disabled { opacity:.36; cursor:not-allowed; }
+      .dg-step-action-primary { border-color:rgba(79,195,192,.34); background:rgba(79,195,192,.1); color:#65D7D2; }
+      .dg-step-action-finish { border-color:rgba(91,201,139,.4); background:rgba(91,201,139,.12); color:#72D9A0; }
+      .dg-step-whatsapp { border-color:rgba(91,201,139,.3); color:#72D9A0; }
+      .dg-step-check { min-height:27px; display:flex; flex:1 1 100%; align-items:center; justify-content:center; gap:4px; color:#72D9A0; font-size:8.5px; font-weight:650; }
+      .dg-order-flow-cancelled { display:flex; align-items:center; gap:6px; margin-top:7px; padding:9px 10px; border:1px solid rgba(224,106,106,.24); border-radius:9px; background:rgba(224,106,106,.07); color:#E98989; font-size:10px; }
+
       .dg-process-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
       .dg-process-tabs button { --pc:#4FC3C0; min-height:70px; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; padding:11px 13px; border:1px solid rgba(226,232,240,.09); border-radius:12px; background:rgba(18,25,36,.72); color:#95A3B5; text-align:left; cursor:pointer; transition:border-color .15s ease,background .15s ease; }
       .dg-process-tabs button:hover { border-color:color-mix(in srgb,var(--pc) 38%,rgba(255,255,255,.1)); }
@@ -4695,6 +4861,12 @@ function Style() {
         .dg-process-tabs button { min-height:57px; }
         .dg-client-notice { align-items:stretch; }
         .dg-client-notice > div, .dg-client-notice .dg-btn-primary, .dg-client-notice .dg-btn-ghost, .dg-client-notice-badge { width:100%; justify-content:center; }
+        .dg-order-flow-four, .dg-order-flow-five { grid-template-columns:repeat(2,minmax(0,1fr)); }
+        .dg-order-step { min-height:122px; }
+      }
+      @media (max-width:520px) {
+        .dg-order-flow-four, .dg-order-flow-five { grid-template-columns:1fr; }
+        .dg-order-step { min-height:0; }
       }
       @media (max-width:340px) {
         .dg-building-floor .dg-plant-grid { grid-template-columns:1fr; }
