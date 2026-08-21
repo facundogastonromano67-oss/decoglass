@@ -2,7 +2,7 @@
 
 ## Recorrido por pasos
 
-Cada tarjeta de pedido muestra ahora el avance completo y bloquea las acciones que todavía no corresponden.
+Cada pedido muestra una sola tarjeta dinámica con el paso operativo actual. Al completar una acción avanza automáticamente; las flechas y los indicadores numerados permiten consultar los demás pasos sin modificar el pedido.
 
 ### Pedidos con retiro — 4 pasos
 
@@ -29,6 +29,7 @@ Cada tarjeta de pedido muestra ahora el avance completo y bloquea las acciones q
 - Retiro y envío mantienen recorridos diferentes sin duplicar estados innecesarios.
 - Los pedidos existentes se interpretan automáticamente desde su estado actual.
 - Los nuevos avances guardan fecha de verificación, producción lista, confirmación de envío y entrega.
+- En escritorio y celular se ve un solo paso por vez para mantener compacta la lista.
 
 ## Sectores sincronizados
 
@@ -42,6 +43,5 @@ Cada tarjeta de pedido muestra ahora el avance completo y bloquea las acciones q
 - Compilación de producción completada.
 - Recorrido de retiro probado hasta la habilitación del archivado.
 - Recorrido de envío probado desde verificación hasta Logística y archivado.
-- Revisión visual de cuatro y cinco pasos en escritorio.
+- Revisión visual del carrusel de cuatro y cinco pasos en escritorio.
 - Revisión responsive en 390 px sin desborde horizontal.
-

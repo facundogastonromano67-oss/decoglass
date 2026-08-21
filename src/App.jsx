@@ -2142,10 +2142,6 @@ function PasoPedido({ numero, titulo, detalle, estado = "pending", children }) {
 }
 
 function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar }) {
-  if (pedido.estado === "Cancelado") {
-    return <div className="dg-order-flow-cancelled"><XCircle size={14} /> Pedido cancelado · el flujo quedó detenido</div>;
-  }
-
   const conEnvio = esPedidoConEnvio(pedido);
   const entregado = pedido.estado === "Entregado";
   const verificado = pedidoFueVerificado(pedido) || entregado;
@@ -2154,81 +2150,139 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
   const envioConfirmado = !conEnvio || Boolean(pedido.envioConfirmado) || entregado;
   const confirmacionCompleta = clienteConfirmado && envioConfirmado;
   const waEntrega = listo && !entregado ? entregaWaLink(pedido) : null;
+  const totalPasos = conEnvio ? 5 : 4;
+  const pasoActual = entregado
+    ? totalPasos - 1
+    : !verificado
+      ? 0
+      : !listo
+        ? 1
+        : !confirmacionCompleta
+          ? 2
+          : totalPasos - 1;
+  const [pasoVisible, setPasoVisible] = useState(pasoActual);
+
+  useEffect(() => {
+    setPasoVisible(pasoActual);
+  }, [pedido.id, pasoActual]);
+
+  if (pedido.estado === "Cancelado") {
+    return <div className="dg-order-flow-cancelled"><XCircle size={14} /> Pedido cancelado · el flujo quedó detenido</div>;
+  }
+
+  const pasos = [
+    <PasoPedido
+      key="verificacion"
+      numero={1}
+      titulo={verificado ? "Pedido verificado" : "Verificar pedido"}
+      detalle={verificado ? "Los datos fueron revisados y el pedido ya está habilitado para fábrica." : "Confirmá que medidas, modelo, funciones y entrega estén correctamente cargados."}
+      estado={verificado ? "done" : "active"}
+    >
+      {canEdit && !verificado && onVerificar && (
+        <button className="dg-step-action" onClick={() => onVerificar(pedido)}><CheckCircle2 size={13} /> Verificar pedido</button>
+      )}
+    </PasoPedido>,
+    <PasoPedido
+      key="produccion"
+      numero={2}
+      titulo={listo ? "Producción terminada" : "Esperando producción"}
+      detalle={listo ? "Fábrica confirmó que el espejo está listo." : verificado ? "El pedido está visible en fábrica y espera ser marcado como listo." : "Se habilita después de verificar el pedido."}
+      estado={listo ? "done" : verificado ? "active" : "pending"}
+    />,
+    <PasoPedido
+      key="confirmacion"
+      numero={3}
+      titulo={confirmacionCompleta ? (conEnvio ? "Cliente y envío confirmados" : "Retiro confirmado con el cliente") : conEnvio ? "Confirmación con el cliente" : "Coordinar retiro con el cliente"}
+      detalle={!listo
+        ? "Se habilita cuando fábrica marque el espejo como listo."
+        : confirmacionCompleta
+          ? conEnvio ? "El cliente confirmó los datos y el envío quedó coordinado." : "El cliente confirmó el retiro del espejo."
+          : conEnvio ? "Confirmá primero los datos con el cliente y luego dejá asentado que el envío quedó coordinado." : "Avisale al cliente que el espejo está listo y confirmá el retiro."}
+      estado={confirmacionCompleta ? "done" : listo ? "active" : "pending"}
+    >
+      {listo && !entregado && waEntrega && !clienteConfirmado && (
+        <a className="dg-step-whatsapp" href={waEntrega} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> Abrir WhatsApp</a>
+      )}
+      {canEdit && listo && !entregado && !clienteConfirmado && onClienteConfirmado && (
+        <button className="dg-step-action" onClick={() => onClienteConfirmado(pedido)}><Check size={13} /> Cliente confirmado</button>
+      )}
+      {clienteConfirmado && !entregado && <span className="dg-step-check"><CheckCircle2 size={12} /> Cliente confirmado</span>}
+      {conEnvio && canEdit && listo && !entregado && !envioConfirmado && onEnvioConfirmado && (
+        <button className="dg-step-action dg-step-action-primary" disabled={!clienteConfirmado} onClick={() => onEnvioConfirmado(pedido)}><Truck size={13} /> Envío confirmado</button>
+      )}
+      {conEnvio && envioConfirmado && !entregado && <span className="dg-step-check"><CheckCircle2 size={12} /> Envío confirmado</span>}
+    </PasoPedido>,
+  ];
+
+  if (conEnvio) {
+    pasos.push(
+      <PasoPedido
+        key="logistica"
+        numero={4}
+        titulo={envioConfirmado ? "Disponible para el fletero" : "Esperando confirmación de envío"}
+        detalle={envioConfirmado ? "El pedido ya aparece en la lista de Logística para organizar la entrega." : listo ? "PostVenta debe confirmar el envío para habilitarlo en Logística." : "Se habilita después de producción y la coordinación con el cliente."}
+        estado={envioConfirmado ? "done" : listo && clienteConfirmado ? "active" : "pending"}
+      />,
+      <PasoPedido
+        key="entrega"
+        numero={5}
+        titulo={entregado ? "Entregado y archivado" : "Confirmar entrega y archivar"}
+        detalle={entregado ? "El fletero confirmó la entrega y el pedido pasó al historial." : envioConfirmado ? "Queda pendiente la confirmación final de entrega." : "Se habilita cuando el envío esté confirmado."}
+        estado={entregado ? "done" : confirmacionCompleta ? "active" : "pending"}
+      >
+        {canEdit && !entregado && confirmacionCompleta && onEntregar && (
+          <button className="dg-step-action dg-step-action-finish" onClick={() => onEntregar(pedido)}><CheckCircle2 size={13} /> Confirmar entrega y archivar</button>
+        )}
+      </PasoPedido>,
+    );
+  } else {
+    pasos.push(
+      <PasoPedido
+        key="entrega"
+        numero={4}
+        titulo={entregado ? "Entregado y archivado" : "Confirmar entrega y archivar"}
+        detalle={entregado ? "El retiro fue confirmado y el pedido pasó al historial." : clienteConfirmado ? "Cuando el cliente retire el espejo, confirmá la entrega." : "Se habilita después de coordinar el retiro con el cliente."}
+        estado={entregado ? "done" : clienteConfirmado ? "active" : "pending"}
+      >
+        {canEdit && !entregado && clienteConfirmado && onEntregar && (
+          <button className="dg-step-action dg-step-action-finish" onClick={() => onEntregar(pedido)}><CheckCircle2 size={13} /> Confirmar entrega y archivar</button>
+        )}
+      </PasoPedido>,
+    );
+  }
 
   return (
     <div className={`dg-order-flow ${conEnvio ? "dg-order-flow-five" : "dg-order-flow-four"}`} onClick={(e) => e.stopPropagation()}>
-      <PasoPedido
-        numero={1}
-        titulo={verificado ? "Pedido verificado" : "Verificar pedido"}
-        detalle={verificado ? "Los datos fueron revisados y el pedido ya está habilitado para fábrica." : "Confirmá que medidas, modelo, funciones y entrega estén correctamente cargados."}
-        estado={verificado ? "done" : "active"}
-      >
-        {canEdit && !verificado && onVerificar && (
-          <button className="dg-step-action" onClick={() => onVerificar(pedido)}><CheckCircle2 size={13} /> Verificar pedido</button>
-        )}
-      </PasoPedido>
-
-      <PasoPedido
-        numero={2}
-        titulo={listo ? "Producción terminada" : "Esperando producción"}
-        detalle={listo ? "Fábrica confirmó que el espejo está listo." : verificado ? "El pedido está visible en fábrica y espera ser marcado como listo." : "Se habilita después de verificar el pedido."}
-        estado={listo ? "done" : verificado ? "active" : "pending"}
-      />
-
-      <PasoPedido
-        numero={3}
-        titulo={confirmacionCompleta ? (conEnvio ? "Cliente y envío confirmados" : "Retiro confirmado con el cliente") : conEnvio ? "Confirmación con el cliente" : "Coordinar retiro con el cliente"}
-        detalle={!listo
-          ? "Se habilita cuando fábrica marque el espejo como listo."
-          : confirmacionCompleta
-            ? conEnvio ? "El cliente confirmó los datos y el envío quedó coordinado." : "El cliente confirmó el retiro del espejo."
-            : conEnvio ? "Confirmá primero los datos con el cliente y luego dejá asentado que el envío quedó coordinado." : "Avisale al cliente que el espejo está listo y confirmá el retiro."}
-        estado={confirmacionCompleta ? "done" : listo ? "active" : "pending"}
-      >
-        {listo && !entregado && waEntrega && !clienteConfirmado && (
-          <a className="dg-step-whatsapp" href={waEntrega} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> Abrir WhatsApp</a>
-        )}
-        {canEdit && listo && !entregado && !clienteConfirmado && onClienteConfirmado && (
-          <button className="dg-step-action" onClick={() => onClienteConfirmado(pedido)}><Check size={13} /> Cliente confirmado</button>
-        )}
-        {clienteConfirmado && !entregado && <span className="dg-step-check"><CheckCircle2 size={12} /> Cliente confirmado</span>}
-        {conEnvio && canEdit && listo && !entregado && !envioConfirmado && onEnvioConfirmado && (
-          <button className="dg-step-action dg-step-action-primary" disabled={!clienteConfirmado} onClick={() => onEnvioConfirmado(pedido)}><Truck size={13} /> Envío confirmado</button>
-        )}
-        {conEnvio && envioConfirmado && !entregado && <span className="dg-step-check"><CheckCircle2 size={12} /> Envío confirmado</span>}
-      </PasoPedido>
-
-      {conEnvio ? (
-        <>
-          <PasoPedido
-            numero={4}
-            titulo={envioConfirmado ? "Disponible para el fletero" : "Esperando confirmación de envío"}
-            detalle={envioConfirmado ? "El pedido ya aparece en la lista de Logística para organizar la entrega." : listo ? "PostVenta debe confirmar el envío para habilitarlo en Logística." : "Se habilita después de producción y la coordinación con el cliente."}
-            estado={envioConfirmado ? "done" : listo && clienteConfirmado ? "active" : "pending"}
-          />
-          <PasoPedido
-            numero={5}
-            titulo={entregado ? "Entregado y archivado" : "Confirmar entrega y archivar"}
-            detalle={entregado ? "El fletero confirmó la entrega y el pedido pasó al historial." : envioConfirmado ? "Queda pendiente la confirmación final de entrega." : "Se habilita cuando el envío esté confirmado."}
-            estado={entregado ? "done" : confirmacionCompleta ? "active" : "pending"}
-          >
-            {canEdit && !entregado && confirmacionCompleta && onEntregar && (
-              <button className="dg-step-action dg-step-action-finish" onClick={() => onEntregar(pedido)}><CheckCircle2 size={13} /> Confirmar entrega y archivar</button>
-            )}
-          </PasoPedido>
-        </>
-      ) : (
-        <PasoPedido
-          numero={4}
-          titulo={entregado ? "Entregado y archivado" : "Confirmar entrega y archivar"}
-          detalle={entregado ? "El retiro fue confirmado y el pedido pasó al historial." : clienteConfirmado ? "Cuando el cliente retire el espejo, confirmá la entrega." : "Se habilita después de coordinar el retiro con el cliente."}
-          estado={entregado ? "done" : clienteConfirmado ? "active" : "pending"}
-        >
-          {canEdit && !entregado && clienteConfirmado && onEntregar && (
-            <button className="dg-step-action dg-step-action-finish" onClick={() => onEntregar(pedido)}><CheckCircle2 size={13} /> Confirmar entrega y archivar</button>
-          )}
-        </PasoPedido>
-      )}
+      <div className="dg-order-flow-nav">
+        <div className="dg-order-flow-label">
+          <span>{conEnvio ? "Envío" : "Retiro"}</span>
+          <strong>Paso {pasoVisible + 1} de {totalPasos}</strong>
+        </div>
+        <div className="dg-order-flow-dots" aria-label="Pasos del pedido">
+          {pasos.map((_, index) => {
+            const completado = entregado ? index <= pasoActual : index < pasoActual;
+            return (
+              <button
+                key={index}
+                type="button"
+                className={`dg-flow-dot${completado ? " dg-flow-dot-done" : ""}${index === pasoActual ? " dg-flow-dot-active" : ""}${index === pasoVisible ? " dg-flow-dot-selected" : ""}`}
+                aria-label={`Ver paso ${index + 1}`}
+                aria-current={index === pasoVisible ? "step" : undefined}
+                onClick={() => setPasoVisible(index)}
+              >
+                {completado ? <Check size={10} /> : index + 1}
+              </button>
+            );
+          })}
+        </div>
+        <div className="dg-order-flow-arrows">
+          <button type="button" aria-label="Paso anterior" disabled={pasoVisible === 0} onClick={() => setPasoVisible((actual) => Math.max(0, actual - 1))}><ArrowLeft size={14} /></button>
+          <button type="button" aria-label="Paso siguiente" disabled={pasoVisible === totalPasos - 1} onClick={() => setPasoVisible((actual) => Math.min(totalPasos - 1, actual + 1))}><ChevronRight size={14} /></button>
+        </div>
+      </div>
+      <div className="dg-order-flow-slide" key={`${pedido.id}-${pasoVisible}`}>
+        {pasos[pasoVisible]}
+      </div>
     </div>
   );
 }
@@ -4769,10 +4823,23 @@ function Style() {
       .dg-btn-entregado { margin-top:8px; }
       .dg-flow-pending { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px dashed rgba(229,181,79,.3); border-radius:8px; color:#C4A96D; font-size:10.5px; }
 
-      .dg-order-flow { width:100%; display:grid; gap:7px; margin-top:7px; }
-      .dg-order-flow-four { grid-template-columns:repeat(4,minmax(0,1fr)); }
-      .dg-order-flow-five { grid-template-columns:repeat(5,minmax(0,1fr)); }
-      .dg-order-step { min-width:0; min-height:132px; display:flex; flex-direction:column; padding:10px; border:1px solid rgba(226,232,240,.08); border-radius:11px; background:rgba(12,18,27,.58); }
+      .dg-order-flow { width:100%; margin-top:7px; overflow:hidden; border:1px solid rgba(226,232,240,.08); border-radius:12px; background:rgba(8,13,20,.32); }
+      .dg-order-flow-nav { min-height:41px; display:grid; grid-template-columns:minmax(110px,1fr) auto minmax(110px,1fr); gap:12px; align-items:center; padding:6px 8px 6px 11px; border-bottom:1px solid rgba(226,232,240,.07); background:rgba(148,163,184,.025); }
+      .dg-order-flow-label { min-width:0; display:flex; align-items:baseline; gap:6px; }
+      .dg-order-flow-label span { color:#68778B; font-size:8px; font-weight:750; letter-spacing:.6px; text-transform:uppercase; }
+      .dg-order-flow-label strong { color:#AEBACA; font-family:'JetBrains Mono',monospace; font-size:9px; white-space:nowrap; }
+      .dg-order-flow-dots { display:flex; align-items:center; justify-content:center; gap:5px; }
+      .dg-flow-dot { width:23px; height:23px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(148,163,184,.18); border-radius:7px; background:rgba(148,163,184,.045); color:#68778A; font-family:'JetBrains Mono',monospace; font-size:8px; font-weight:750; cursor:pointer; transition:border-color .15s ease,background .15s ease,color .15s ease,transform .15s ease; }
+      .dg-flow-dot:hover { border-color:rgba(79,195,192,.36); color:#AFC0D0; }
+      .dg-flow-dot-done { border-color:rgba(91,201,139,.23); background:rgba(91,201,139,.075); color:#72D9A0; }
+      .dg-flow-dot-active { border-color:rgba(79,195,192,.42); background:rgba(79,195,192,.1); color:#64D7D2; }
+      .dg-flow-dot-selected { border-color:#4FC3C0; box-shadow:0 0 0 2px rgba(79,195,192,.12); transform:translateY(-1px); }
+      .dg-order-flow-arrows { display:flex; justify-content:flex-end; gap:4px; }
+      .dg-order-flow-arrows button { width:28px; height:28px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(148,163,184,.16); border-radius:8px; background:rgba(148,163,184,.045); color:#91A0B2; cursor:pointer; }
+      .dg-order-flow-arrows button:hover:not(:disabled) { border-color:rgba(79,195,192,.36); color:#64D7D2; }
+      .dg-order-flow-arrows button:disabled { opacity:.25; cursor:not-allowed; }
+      .dg-order-flow-slide { animation:dg-order-step-in .16s ease; }
+      .dg-order-step { min-width:0; min-height:108px; display:flex; flex-direction:column; padding:11px; border:0; border-radius:0; background:rgba(12,18,27,.52); }
       .dg-order-step-done { border-color:rgba(91,201,139,.22); background:linear-gradient(155deg,rgba(91,201,139,.07),rgba(12,18,27,.58) 60%); }
       .dg-order-step-active { border-color:rgba(79,195,192,.35); background:linear-gradient(155deg,rgba(79,195,192,.09),rgba(12,18,27,.64) 60%); box-shadow:inset 0 2px 0 rgba(79,195,192,.5); }
       .dg-order-step-pending { opacity:.68; }
@@ -4788,7 +4855,7 @@ function Style() {
       .dg-order-step-active .dg-order-step-state { background:rgba(79,195,192,.1); color:#64D7D2; }
       .dg-order-step > p { margin:8px 0 0; color:#7F8C9E; font-size:9px; line-height:1.42; }
       .dg-order-step-actions { display:flex; align-items:stretch; gap:5px; flex-wrap:wrap; margin-top:auto; padding-top:9px; }
-      .dg-step-action, .dg-step-whatsapp { min-height:30px; display:flex; flex:1 1 100%; align-items:center; justify-content:center; gap:5px; padding:6px 7px; border:1px solid rgba(148,163,184,.2); border-radius:7px; background:rgba(148,163,184,.07); color:#B8C4D2; font-family:'Inter',sans-serif; font-size:8.5px; font-weight:650; line-height:1.2; text-align:center; text-decoration:none; cursor:pointer; }
+      .dg-step-action, .dg-step-whatsapp { min-width:138px; min-height:30px; display:flex; flex:0 1 auto; align-items:center; justify-content:center; gap:5px; padding:6px 10px; border:1px solid rgba(148,163,184,.2); border-radius:7px; background:rgba(148,163,184,.07); color:#B8C4D2; font-family:'Inter',sans-serif; font-size:8.5px; font-weight:650; line-height:1.2; text-align:center; text-decoration:none; cursor:pointer; }
       .dg-step-action:hover, .dg-step-whatsapp:hover { border-color:rgba(79,195,192,.45); color:#65D7D2; }
       .dg-step-action:disabled { opacity:.36; cursor:not-allowed; }
       .dg-step-action-primary { border-color:rgba(79,195,192,.34); background:rgba(79,195,192,.1); color:#65D7D2; }
@@ -4796,6 +4863,7 @@ function Style() {
       .dg-step-whatsapp { border-color:rgba(91,201,139,.3); color:#72D9A0; }
       .dg-step-check { min-height:27px; display:flex; flex:1 1 100%; align-items:center; justify-content:center; gap:4px; color:#72D9A0; font-size:8.5px; font-weight:650; }
       .dg-order-flow-cancelled { display:flex; align-items:center; gap:6px; margin-top:7px; padding:9px 10px; border:1px solid rgba(224,106,106,.24); border-radius:9px; background:rgba(224,106,106,.07); color:#E98989; font-size:10px; }
+      @keyframes dg-order-step-in { from { opacity:.35; transform:translateX(5px); } to { opacity:1; transform:translateX(0); } }
 
       .dg-process-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
       .dg-process-tabs button { --pc:#4FC3C0; min-height:70px; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; padding:11px 13px; border:1px solid rgba(226,232,240,.09); border-radius:12px; background:rgba(18,25,36,.72); color:#95A3B5; text-align:left; cursor:pointer; transition:border-color .15s ease,background .15s ease; }
@@ -4861,12 +4929,17 @@ function Style() {
         .dg-process-tabs button { min-height:57px; }
         .dg-client-notice { align-items:stretch; }
         .dg-client-notice > div, .dg-client-notice .dg-btn-primary, .dg-client-notice .dg-btn-ghost, .dg-client-notice-badge { width:100%; justify-content:center; }
-        .dg-order-flow-four, .dg-order-flow-five { grid-template-columns:repeat(2,minmax(0,1fr)); }
-        .dg-order-step { min-height:122px; }
+        .dg-order-step { min-height:108px; }
       }
       @media (max-width:520px) {
-        .dg-order-flow-four, .dg-order-flow-five { grid-template-columns:1fr; }
+        .dg-order-flow-nav { grid-template-columns:minmax(0,1fr) auto; gap:6px 10px; padding:7px 8px; }
+        .dg-order-flow-label { grid-column:1; }
+        .dg-order-flow-arrows { grid-column:2; grid-row:1; }
+        .dg-order-flow-dots { grid-column:1 / -1; grid-row:2; justify-content:flex-start; }
+        .dg-flow-dot { width:25px; height:24px; }
         .dg-order-step { min-height:0; }
+        .dg-order-step-actions { align-items:stretch; }
+        .dg-step-action, .dg-step-whatsapp { min-width:0; flex:1 1 100%; }
       }
       @media (max-width:340px) {
         .dg-building-floor .dg-plant-grid { grid-template-columns:1fr; }
@@ -4874,7 +4947,8 @@ function Style() {
       }
       @media (prefers-reduced-motion: reduce) {
         .dg-spin { animation:none; }
-        .dg-room-tile, .dg-scene-image { transition:none; }
+        .dg-room-tile, .dg-scene-image, .dg-flow-dot { transition:none; }
+        .dg-order-flow-slide { animation:none; }
       }
     `}</style>
   );
