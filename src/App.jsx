@@ -182,13 +182,18 @@ const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
 const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
 const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
-const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Pasado a fábrica", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
+const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
 const TALLER_PROCESOS = [
   { id: "simples", label: "Simples", description: "Corte, pulido y armado estándar", color: "#4FC3C0" },
   { id: "esmerilados", label: "Esmerilados", description: "Grabado o esmerilado antes del armado", color: "#E5B54F" },
   { id: "biselados", label: "Biselados", description: "Proceso de biselado y terminación especial", color: "#B583DE" },
+];
+const PRODUCCION_PASOS = [
+  { id: "cortado", label: "Cortado", accion: "Marcar cortado", fechaCampo: "produccionCortadoFecha" },
+  { id: "armado", label: "Armado", accion: "Marcar armado", fechaCampo: "produccionArmadoFecha" },
+  { id: "embalado", label: "Embalado", accion: "Marcar embalado", fechaCampo: "produccionEmbaladoFecha" },
 ];
 const ENTREGA_ESTILO = {
   "Interior": { clase: "interior", color: "#B583DE", icono: "🚚" },
@@ -211,6 +216,15 @@ function pedidoFueVerificado(pedido) {
 
 function pedidoEstaListo(pedido) {
   return pedido?.estado === "Espejo listo" || pedido?.estado === "Entregado";
+}
+
+function pasosProduccionCompletados(pedido) {
+  if (pedidoEstaListo(pedido)) return PRODUCCION_PASOS.length;
+  const index = PRODUCCION_PASOS.findIndex((paso) => paso.id === pedido?.produccionEtapa);
+  if (index >= 0) return index + 1;
+  // Compatibilidad con pedidos antiguos que usaban estados operativos del Excel.
+  if (pedido?.estado === "Para armar") return 1;
+  return 0;
 }
 
 const SECTOR_SUBPAGES = {
@@ -262,7 +276,7 @@ const METODO_ICON = { "Retira": "Building2", "Envío": "Truck", "Envío flex": "
 const ESTADO_STAGE = {
   "Sin pasar a fábrica": { stage: "Sin verificar", color: "#8B96A8" },
   "Verificado": { stage: "Verificado", color: "#E5B54F" },
-  "Pasado a fábrica": { stage: "Pasado a fábrica", color: "#4FC3C0" },
+  "Pasado a fábrica": { stage: "Verificado", color: "#E5B54F" },
   "Mandar a grabar": { stage: "Para cortar / grabar", color: "#E5B54F" },
   "En grabado": { stage: "Para cortar / grabar", color: "#E5B54F" },
   "Pedir biselado": { stage: "Para cortar / grabar", color: "#E5B54F" },
@@ -2057,7 +2071,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionArmadoFecha: "", produccionEmbaladoFecha: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0,
   };
 }
@@ -2096,6 +2110,7 @@ function normalizarPedidoFunciones(pedido) {
   const tieneDesempanante = pedidoTieneDesempanante(pedido);
   return {
     ...pedido,
+    estado: pedido?.estado === "Pasado a fábrica" ? "Verificado" : pedido?.estado,
     desemp: tieneDesempanante ? "Desempañante" : "No",
     desempTipo: tieneDesempanante ? pedidoTipoDesempanante(pedido) : (pedido?.desempTipo || "220"),
   };
@@ -2150,6 +2165,8 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
   const envioConfirmado = !conEnvio || Boolean(pedido.envioConfirmado) || entregado;
   const confirmacionCompleta = clienteConfirmado && envioConfirmado;
   const waEntrega = listo && !entregado ? entregaWaLink(pedido) : null;
+  const produccionCompletada = pasosProduccionCompletados(pedido);
+  const proximoPasoProduccion = PRODUCCION_PASOS[produccionCompletada];
   const totalPasos = conEnvio ? 5 : 4;
   const pasoActual = entregado
     ? totalPasos - 1
@@ -2185,8 +2202,8 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
     <PasoPedido
       key="produccion"
       numero={2}
-      titulo={listo ? "Producción terminada" : "Esperando producción"}
-      detalle={listo ? "Fábrica confirmó que el espejo está listo." : verificado ? "El pedido está visible en fábrica y espera ser marcado como listo." : "Se habilita después de verificar el pedido."}
+      titulo={listo ? "Producción terminada" : produccionCompletada > 0 ? `Producción · ${produccionCompletada} de 3` : "Esperando producción"}
+      detalle={listo ? "Fábrica completó corte, armado y embalado." : verificado ? `Próximo control del taller: ${proximoPasoProduccion?.label || "producción"}.` : "Se habilita después de verificar el pedido."}
       estado={listo ? "done" : verificado ? "active" : "pending"}
     />,
     <PasoPedido
@@ -2352,12 +2369,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
 
   let visibles = pedidos.slice();
   if (quickView === "historial") visibles = visibles.filter((p) => p.estado === "Entregado" || p.estado === "Cancelado");
-  else if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado");
+  else if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado" || p.estado === "Pasado a fábrica");
   else if (quickView === "facturar") visibles = visibles.filter((p) => !p.facturado);
   else if (quickView === "envios") visibles = visibles.filter((p) => ENVIO_METODOS.includes(p.metodo) && p.estado !== "Entregado");
   else visibles = visibles
     .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
-    .filter((p) => filtroEstado === "todos" || p.estado === filtroEstado);
+    .filter((p) => filtroEstado === "todos" || p.estado === filtroEstado || (filtroEstado === "Verificado" && p.estado === "Pasado a fábrica"));
 
   visibles = visibles
     .filter((p) => !fechaDesde || (p.fecha && p.fecha >= fechaDesde))
@@ -3291,6 +3308,45 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
       return { ...p, estado };
     }));
   }
+  function avanzarProduccion(id) {
+    const ahora = new Date().toISOString();
+    onChange(pedidos.map((p) => {
+      if (p.id !== id) return p;
+      const completados = pasosProduccionCompletados(p);
+      const paso = PRODUCCION_PASOS[completados];
+      if (!paso) return p;
+      const esUltimoPaso = paso.id === "embalado";
+      const actualizado = {
+        ...p,
+        estado: p.estado === "Pasado a fábrica" ? "Verificado" : p.estado,
+        produccionEtapa: paso.id,
+        [paso.fechaCampo]: ahora,
+      };
+      if (!esUltimoPaso) return actualizado;
+      return {
+        ...actualizado,
+        estado: "Espejo listo",
+        produccionListaFecha: ahora,
+        clienteAvisado: false,
+        clienteAvisadoFecha: "",
+        envioConfirmado: false,
+        envioConfirmadoFecha: "",
+      };
+    }));
+  }
+  function reabrirProduccion(id) {
+    onChange(pedidos.map((p) => (p.id === id ? {
+      ...p,
+      estado: "Verificado",
+      produccionEtapa: "armado",
+      produccionEmbaladoFecha: "",
+      produccionListaFecha: "",
+      clienteAvisado: false,
+      clienteAvisadoFecha: "",
+      envioConfirmado: false,
+      envioConfirmadoFecha: "",
+    } : p)));
+  }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); }
   function cancelar(id) { if (window.confirm("¿Cancelar este pedido?")) setEstado(id, "Cancelado"); }
   function borrar(id) { if (window.confirm("¿Borrar este pedido definitivamente? No se puede deshacer.")) onChange(pedidos.filter((p) => p.id !== id)); }
@@ -3303,6 +3359,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
     const procesoInfo = TALLER_PROCESOS.find((item) => item.id === pedidoProcesoTaller(p));
     const funciones = funcionesPedido(p, true);
     const observaciones = detalleFabrica(p);
+    const produccionCompletada = pasosProduccionCompletados(p);
+    const proximoPaso = PRODUCCION_PASOS[produccionCompletada];
     return (
       <div className={`dg-pedido-card dg-fabrica-card dg-fab-${entrega.clase}`} key={p.id}>
         <div className="dg-fab-head">
@@ -3320,6 +3378,19 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
           <div><span>Forma</span><strong>{p.forma}</strong></div>
           <div><span>Tipo</span><strong>{p.tipo}</strong></div>
           <div><span>Tono de luz</span><strong className="dg-fab-tono">{p.tono || "—"}</strong></div>
+        </div>
+
+        <div className="dg-production-checklist" aria-label="Avance de producción">
+          {PRODUCCION_PASOS.map((paso, index) => {
+            const completado = index < produccionCompletada;
+            const actual = index === produccionCompletada;
+            return (
+              <span key={paso.id} className={`${completado ? "dg-production-done" : ""}${actual ? " dg-production-current" : ""}`}>
+                <i>{completado ? <Check size={11} /> : index + 1}</i>
+                <strong>{paso.label}</strong>
+              </span>
+            );
+          })}
         </div>
 
         <div className="dg-fab-funciones">
@@ -3341,9 +3412,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true }) 
         </div>
         {canEdit && (
           <div className="dg-fabrica-actions">
-            {p.estado === "Espejo listo"
-              ? <button className="dg-fabrica-btn dg-fabrica-btn-undo" onClick={() => setEstado(p.id, "Pasado a fábrica")}><RotateCcw size={15} /> Desmarcar paso 2</button>
-              : <button className="dg-fabrica-btn dg-fabrica-btn-listo" onClick={() => setEstado(p.id, "Espejo listo")}><Check size={15} /> Paso 2 · Marcar listo</button>}
+            {produccionCompletada >= PRODUCCION_PASOS.length
+              ? <button className="dg-fabrica-btn dg-fabrica-btn-listo dg-fabrica-btn-next" disabled><CheckCircle2 size={15} /> Producción terminada</button>
+              : <button className="dg-fabrica-btn dg-fabrica-btn-listo dg-fabrica-btn-next" onClick={() => avanzarProduccion(p.id)}><Check size={15} /> {proximoPaso?.accion}</button>}
+            {produccionCompletada >= PRODUCCION_PASOS.length && <button className="dg-fabrica-btn dg-fabrica-btn-undo" onClick={() => reabrirProduccion(p.id)}><RotateCcw size={15} /> Reabrir producción</button>}
             <button className={`dg-fabrica-btn dg-fabrica-btn-demora ${p.demorado ? "dg-fabrica-btn-demora-on" : ""}`} onClick={() => toggleDemorado(p.id)}><AlertTriangle size={15} /> {p.demorado ? "Sin demora" : "Demorado"}</button>
             <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => cancelar(p.id)}><XCircle size={15} /> Cancelar</button>
             {puedeBorrar && <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => borrar(p.id)}><Trash2 size={15} /> Borrar</button>}
@@ -4406,12 +4478,34 @@ function Style() {
         background: rgba(91,201,139,0.14); border:1px solid rgba(91,201,139,0.45); color:#5BC98B; }
       .dg-fab-nofunc { font-size:11.5px; color:#5B6576; font-style:italic; }
 
+      .dg-production-checklist { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; padding:6px; border:1px solid rgba(226,232,240,.08); border-radius:10px; background:rgba(7,11,17,.34); }
+      .dg-production-checklist > span { min-width:0; display:flex; align-items:center; gap:5px; padding:5px 6px; border-radius:7px; color:#6E7B8E; }
+      .dg-production-checklist i { width:19px; height:19px; min-width:19px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(148,163,184,.2); border-radius:6px; color:#77869A; font-family:'JetBrains Mono',monospace; font-size:8px; font-style:normal; }
+      .dg-production-checklist strong { min-width:0; overflow:hidden; color:inherit; font-size:9.5px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-production-checklist .dg-production-done { background:rgba(91,201,139,.07); color:#72D9A0; }
+      .dg-production-checklist .dg-production-done i { border-color:rgba(91,201,139,.35); background:rgba(91,201,139,.1); }
+      .dg-production-checklist .dg-production-current { background:rgba(79,195,192,.08); color:#64D7D2; }
+      .dg-production-checklist .dg-production-current i { border-color:rgba(79,195,192,.42); }
+      .dg-fabrica-actions { grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; margin-top:5px; }
+      .dg-fabrica-btn { min-width:0; min-height:35px; padding:7px 6px; font-size:10.5px; line-height:1.15; white-space:normal; overflow-wrap:anywhere; }
+      .dg-fabrica-btn-next { grid-column:1 / -1; border-color:rgba(91,201,139,.38); background:rgba(91,201,139,.1); color:#72D9A0; font-size:11.5px; }
+      .dg-fabrica-btn-next:disabled { opacity:1; cursor:default; }
+
       @media (max-width:680px) {
         .dg-fab-medida strong { font-size:24px; }
-        .dg-fab-specs { grid-template-columns:1fr 1fr; }
+        .dg-fabrica-card { gap:6px; padding:10px !important; }
+        .dg-fab-head { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:7px; }
+        .dg-fab-cliente { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .dg-fab-entrega { padding:4px 8px; font-size:10px; }
+        .dg-fab-specs { grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
+        .dg-fab-specs > div { min-width:0; padding:7px; }
+        .dg-fab-specs span { margin-bottom:2px; font-size:8px; }
+        .dg-fab-specs strong { display:block; overflow-wrap:anywhere; font-size:10.5px; line-height:1.2; }
+        .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; }
       }
       @media (max-width:420px) {
-        .dg-fab-specs { grid-template-columns:1fr; }
+        .dg-fab-medida strong { font-size:22px; }
+        .dg-production-checklist strong { font-size:8.5px; }
       }
 
       /* ---- PLANILLA DE SUELDOS ---- */
@@ -4823,45 +4917,45 @@ function Style() {
       .dg-btn-entregado { margin-top:8px; }
       .dg-flow-pending { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px dashed rgba(229,181,79,.3); border-radius:8px; color:#C4A96D; font-size:10.5px; }
 
-      .dg-order-flow { width:100%; margin-top:7px; overflow:hidden; border:1px solid rgba(226,232,240,.08); border-radius:12px; background:rgba(8,13,20,.32); }
-      .dg-order-flow-nav { min-height:41px; display:grid; grid-template-columns:minmax(110px,1fr) auto minmax(110px,1fr); gap:12px; align-items:center; padding:6px 8px 6px 11px; border-bottom:1px solid rgba(226,232,240,.07); background:rgba(148,163,184,.025); }
+      .dg-order-flow { width:100%; margin-top:3px; overflow:hidden; border:1px solid rgba(226,232,240,.08); border-radius:10px; background:rgba(8,13,20,.32); }
+      .dg-order-flow-nav { min-height:34px; display:grid; grid-template-columns:minmax(100px,1fr) auto minmax(100px,1fr); gap:8px; align-items:center; padding:4px 6px 4px 9px; border-bottom:1px solid rgba(226,232,240,.07); background:rgba(148,163,184,.025); }
       .dg-order-flow-label { min-width:0; display:flex; align-items:baseline; gap:6px; }
       .dg-order-flow-label span { color:#68778B; font-size:8px; font-weight:750; letter-spacing:.6px; text-transform:uppercase; }
       .dg-order-flow-label strong { color:#AEBACA; font-family:'JetBrains Mono',monospace; font-size:9px; white-space:nowrap; }
       .dg-order-flow-dots { display:flex; align-items:center; justify-content:center; gap:5px; }
-      .dg-flow-dot { width:23px; height:23px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(148,163,184,.18); border-radius:7px; background:rgba(148,163,184,.045); color:#68778A; font-family:'JetBrains Mono',monospace; font-size:8px; font-weight:750; cursor:pointer; transition:border-color .15s ease,background .15s ease,color .15s ease,transform .15s ease; }
+      .dg-flow-dot { width:21px; height:21px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(148,163,184,.18); border-radius:6px; background:rgba(148,163,184,.045); color:#68778A; font-family:'JetBrains Mono',monospace; font-size:8px; font-weight:750; cursor:pointer; transition:border-color .15s ease,background .15s ease,color .15s ease,transform .15s ease; }
       .dg-flow-dot:hover { border-color:rgba(79,195,192,.36); color:#AFC0D0; }
       .dg-flow-dot-done { border-color:rgba(91,201,139,.23); background:rgba(91,201,139,.075); color:#72D9A0; }
       .dg-flow-dot-active { border-color:rgba(79,195,192,.42); background:rgba(79,195,192,.1); color:#64D7D2; }
       .dg-flow-dot-selected { border-color:#4FC3C0; box-shadow:0 0 0 2px rgba(79,195,192,.12); transform:translateY(-1px); }
       .dg-order-flow-arrows { display:flex; justify-content:flex-end; gap:4px; }
-      .dg-order-flow-arrows button { width:28px; height:28px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(148,163,184,.16); border-radius:8px; background:rgba(148,163,184,.045); color:#91A0B2; cursor:pointer; }
+      .dg-order-flow-arrows button { width:25px; height:25px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(148,163,184,.16); border-radius:7px; background:rgba(148,163,184,.045); color:#91A0B2; cursor:pointer; }
       .dg-order-flow-arrows button:hover:not(:disabled) { border-color:rgba(79,195,192,.36); color:#64D7D2; }
       .dg-order-flow-arrows button:disabled { opacity:.25; cursor:not-allowed; }
       .dg-order-flow-slide { animation:dg-order-step-in .16s ease; }
-      .dg-order-step { min-width:0; min-height:108px; display:flex; flex-direction:column; padding:11px; border:0; border-radius:0; background:rgba(12,18,27,.52); }
+      .dg-order-step { min-width:0; min-height:0; display:flex; flex-direction:column; padding:8px 9px; border:0; border-radius:0; background:rgba(12,18,27,.52); }
       .dg-order-step-done { border-color:rgba(91,201,139,.22); background:linear-gradient(155deg,rgba(91,201,139,.07),rgba(12,18,27,.58) 60%); }
       .dg-order-step-active { border-color:rgba(79,195,192,.35); background:linear-gradient(155deg,rgba(79,195,192,.09),rgba(12,18,27,.64) 60%); box-shadow:inset 0 2px 0 rgba(79,195,192,.5); }
       .dg-order-step-pending { opacity:.68; }
-      .dg-order-step-head { display:grid; grid-template-columns:24px minmax(0,1fr); gap:7px; align-items:start; }
-      .dg-order-step-number { width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(148,163,184,.23); border-radius:7px; color:#93A1B3; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; }
+      .dg-order-step-head { display:grid; grid-template-columns:22px minmax(0,1fr) auto; gap:6px; align-items:center; }
+      .dg-order-step-number { width:22px; height:22px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(148,163,184,.23); border-radius:6px; color:#93A1B3; font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; }
       .dg-order-step-done .dg-order-step-number { border-color:rgba(91,201,139,.4); background:rgba(91,201,139,.12); color:#72D9A0; }
       .dg-order-step-active .dg-order-step-number { border-color:rgba(79,195,192,.46); background:rgba(79,195,192,.11); color:#64D7D2; }
       .dg-order-step-head > div { min-width:0; display:flex; flex-direction:column; gap:1px; }
-      .dg-order-step-head small { color:#69778A; font-size:8px; font-weight:700; letter-spacing:.55px; text-transform:uppercase; }
-      .dg-order-step-head strong { color:#DCE4ED; font-family:'Space Grotesk',sans-serif; font-size:10.5px; line-height:1.25; }
-      .dg-order-step-state { grid-column:2; width:max-content; max-width:100%; padding:2px 6px; border-radius:100px; background:rgba(148,163,184,.08); color:#7E8B9D; font-size:7.5px; font-weight:700; letter-spacing:.35px; text-transform:uppercase; }
+      .dg-order-step-head small { display:none; }
+      .dg-order-step-head strong { color:#DCE4ED; font-family:'Space Grotesk',sans-serif; font-size:10.5px; line-height:1.2; }
+      .dg-order-step-state { width:max-content; max-width:100%; padding:2px 6px; border-radius:100px; background:rgba(148,163,184,.08); color:#7E8B9D; font-size:7px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; }
       .dg-order-step-done .dg-order-step-state { background:rgba(91,201,139,.1); color:#72D9A0; }
       .dg-order-step-active .dg-order-step-state { background:rgba(79,195,192,.1); color:#64D7D2; }
-      .dg-order-step > p { margin:8px 0 0; color:#7F8C9E; font-size:9px; line-height:1.42; }
-      .dg-order-step-actions { display:flex; align-items:stretch; gap:5px; flex-wrap:wrap; margin-top:auto; padding-top:9px; }
-      .dg-step-action, .dg-step-whatsapp { min-width:138px; min-height:30px; display:flex; flex:0 1 auto; align-items:center; justify-content:center; gap:5px; padding:6px 10px; border:1px solid rgba(148,163,184,.2); border-radius:7px; background:rgba(148,163,184,.07); color:#B8C4D2; font-family:'Inter',sans-serif; font-size:8.5px; font-weight:650; line-height:1.2; text-align:center; text-decoration:none; cursor:pointer; }
+      .dg-order-step > p { display:-webkit-box; margin:5px 0 0; overflow:hidden; color:#7F8C9E; font-size:8.5px; line-height:1.35; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+      .dg-order-step-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:stretch; gap:5px; margin-top:0; padding-top:6px; }
+      .dg-step-action, .dg-step-whatsapp { min-width:0; min-height:29px; display:flex; align-items:center; justify-content:center; gap:5px; padding:5px 8px; border:1px solid rgba(148,163,184,.2); border-radius:7px; background:rgba(148,163,184,.07); color:#B8C4D2; font-family:'Inter',sans-serif; font-size:8.5px; font-weight:650; line-height:1.15; text-align:center; text-decoration:none; cursor:pointer; }
       .dg-step-action:hover, .dg-step-whatsapp:hover { border-color:rgba(79,195,192,.45); color:#65D7D2; }
       .dg-step-action:disabled { opacity:.36; cursor:not-allowed; }
       .dg-step-action-primary { border-color:rgba(79,195,192,.34); background:rgba(79,195,192,.1); color:#65D7D2; }
       .dg-step-action-finish { border-color:rgba(91,201,139,.4); background:rgba(91,201,139,.12); color:#72D9A0; }
       .dg-step-whatsapp { border-color:rgba(91,201,139,.3); color:#72D9A0; }
-      .dg-step-check { min-height:27px; display:flex; flex:1 1 100%; align-items:center; justify-content:center; gap:4px; color:#72D9A0; font-size:8.5px; font-weight:650; }
+      .dg-step-check { min-width:0; min-height:27px; display:flex; align-items:center; justify-content:center; gap:4px; color:#72D9A0; font-size:8.5px; font-weight:650; text-align:center; }
       .dg-order-flow-cancelled { display:flex; align-items:center; gap:6px; margin-top:7px; padding:9px 10px; border:1px solid rgba(224,106,106,.24); border-radius:9px; background:rgba(224,106,106,.07); color:#E98989; font-size:10px; }
       @keyframes dg-order-step-in { from { opacity:.35; transform:translateX(5px); } to { opacity:1; transform:translateX(0); } }
 
@@ -4929,17 +5023,27 @@ function Style() {
         .dg-process-tabs button { min-height:57px; }
         .dg-client-notice { align-items:stretch; }
         .dg-client-notice > div, .dg-client-notice .dg-btn-primary, .dg-client-notice .dg-btn-ghost, .dg-client-notice-badge { width:100%; justify-content:center; }
-        .dg-order-step { min-height:108px; }
+        .dg-month-items { gap:6px; padding:7px; }
+        .dg-month-header { padding:9px 11px; }
+        .dg-pedido-card:not(.dg-fabrica-card) { gap:5px; padding:9px 10px; }
+        .dg-pedido-card:not(.dg-fabrica-card) > .dg-pedido-badges { flex-wrap:nowrap; overflow-x:auto; padding-bottom:1px; scrollbar-width:none; }
+        .dg-pedido-card:not(.dg-fabrica-card) > .dg-pedido-badges::-webkit-scrollbar { display:none; }
+        .dg-pedido-card:not(.dg-fabrica-card) .dg-pago-meta { font-size:10px; line-height:1.25; }
+        .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; line-height:1.15; }
+        .dg-fabrica-btn-next { grid-column:1 / -1; font-size:11px; }
+        .dg-order-step { min-height:0; }
       }
       @media (max-width:520px) {
-        .dg-order-flow-nav { grid-template-columns:minmax(0,1fr) auto; gap:6px 10px; padding:7px 8px; }
-        .dg-order-flow-label { grid-column:1; }
-        .dg-order-flow-arrows { grid-column:2; grid-row:1; }
-        .dg-order-flow-dots { grid-column:1 / -1; grid-row:2; justify-content:flex-start; }
-        .dg-flow-dot { width:25px; height:24px; }
+        .dg-order-flow-nav { grid-template-columns:minmax(68px,1fr) auto auto; gap:5px; padding:4px 5px 4px 7px; }
+        .dg-order-flow-label { grid-column:auto; }
+        .dg-order-flow-label span { display:none; }
+        .dg-order-flow-arrows { grid-column:auto; grid-row:auto; }
+        .dg-order-flow-dots { grid-column:auto; grid-row:auto; justify-content:center; gap:3px; }
+        .dg-flow-dot { width:20px; height:20px; }
+        .dg-order-flow-arrows button { width:23px; height:23px; }
         .dg-order-step { min-height:0; }
-        .dg-order-step-actions { align-items:stretch; }
-        .dg-step-action, .dg-step-whatsapp { min-width:0; flex:1 1 100%; }
+        .dg-order-step-actions { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:stretch; }
+        .dg-step-action, .dg-step-whatsapp { min-width:0; }
       }
       @media (max-width:340px) {
         .dg-building-floor .dg-plant-grid { grid-template-columns:1fr; }

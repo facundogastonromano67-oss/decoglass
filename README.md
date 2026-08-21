@@ -1,4 +1,4 @@
-# DECOGLASS · Actualización V4
+# DECOGLASS · Actualización V5
 
 Esta carpeta contiene el código fuente actualizado de la aplicación.
 
@@ -10,6 +10,11 @@ En Vercel, `Root Directory` debe quedar vacío o configurado como `./` para que 
 
 ## Cambios incluidos
 
+- Checklist secuencial de Fábrica: Cortado → Armado → Embalado.
+- Al completar Embalado, el pedido pasa automáticamente a `Espejo listo`.
+- El estado `Pasado a fábrica` fue retirado de formularios y filtros; los datos antiguos se interpretan como `Verificado`.
+- Fichas de Fábrica reorganizadas para que textos y botones no se corten en celular.
+- Lista de pedidos compactada para mostrar al menos tres pedidos por pantalla móvil.
 - Flujo visual compacto: una sola tarjeta dinámica por pedido, con avance automático, indicadores y flechas de navegación.
 - Cuatro pasos para pedidos con retiro y cinco para pedidos con envío.
 - Verificación obligatoria antes de habilitar el pedido en fábrica.
