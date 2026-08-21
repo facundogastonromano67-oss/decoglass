@@ -3048,17 +3048,49 @@ function FacturasManualesPanel({ facturas, onChange, isAdmin }) {
   );
 }
 
+function reclamoFinalizado(r) {
+  return r.finalizado === true || (typeof r.estado === "string" && r.estado.toLowerCase().includes("final"));
+}
+
+function mensajeSolucionReclamo(r) {
+  const saludo = r.cliente ? `Hola ${r.cliente}! 👋` : "Hola! 👋";
+  const contexto = r.notas ? ` (${r.notas})` : "";
+  return `${saludo} Con respecto a tu reclamo por "${r.tipo}"${contexto}, te contamos cómo lo solucionamos:\n\n${r.solucion || "(completá la solución antes de enviar)"}\n\nCualquier consulta quedamos a disposición.`;
+}
+
 function ReclamosPanel({ reclamos, onChange }) {
   const [tipo, setTipo] = useState(null);
   const [cliente, setCliente] = useState("");
+  const [celular, setCelular] = useState("");
   const [notas, setNotas] = useState("");
+  const [vista, setVista] = useState("activos");
+  const [copiadoId, setCopiadoId] = useState(null);
 
   function addReclamo() {
     if (!tipo) return;
-    onChange([{ id: uid(), tipo, cliente: cliente.trim(), notas: notas.trim(), fecha: new Date().toISOString().slice(0, 10) }, ...reclamos]);
-    setTipo(null); setCliente(""); setNotas("");
+    onChange([{
+      id: uid(), tipo, cliente: cliente.trim(), celular: celular.trim(), notas: notas.trim(),
+      solucion: "", finalizado: false, fecha: new Date().toISOString().slice(0, 10),
+    }, ...reclamos]);
+    setTipo(null); setCliente(""); setCelular(""); setNotas("");
   }
   function removeReclamo(id) { onChange(reclamos.filter((r) => r.id !== id)); }
+  function setSolucion(id, solucion) { onChange(reclamos.map((r) => (r.id === id ? { ...r, solucion } : r))); }
+  function finalizar(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: true, estado: "Finalizado", finalizadoFecha: new Date().toISOString().slice(0, 10) } : r))); }
+  function reabrir(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: false, estado: "Pendiente" } : r))); }
+
+  function enviarWhatsapp(r) {
+    const link = waLink(r.celular);
+    if (!link) return;
+    const url = `${link}?text=${encodeURIComponent(mensajeSolucionReclamo(r))}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    setCopiadoId(r.id);
+    setTimeout(() => setCopiadoId(null), 2000);
+  }
+
+  const activos = reclamos.filter((r) => !reclamoFinalizado(r));
+  const finalizados = reclamos.filter((r) => reclamoFinalizado(r));
+  const visibles = vista === "activos" ? activos : finalizados;
 
   const chartData = RECLAMO_TIPOS.map((t, i) => ({ tipo: t, cantidad: reclamos.filter((r) => r.tipo === t).length, fill: RECLAMO_COLORS[i] }));
 
@@ -3089,29 +3121,67 @@ function ReclamosPanel({ reclamos, onChange }) {
           ))}
         </div>
         {tipo && (
-          <div className="dg-quick-inline" style={{ marginTop: 12 }}>
-            <input placeholder="Cliente (opcional)" value={cliente} onChange={(e) => setCliente(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addReclamo()} />
-            <input placeholder="Notas (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addReclamo()} />
-            <button className="dg-btn-ghost" onClick={() => setTipo(null)}>Cancelar</button>
-            <button className="dg-btn-primary" onClick={addReclamo}><Check size={14} /> Guardar reclamo: {tipo}</button>
-          </div>
+          <EnterFlow onSubmit={addReclamo} autoFocus={false}>
+            <div className="dg-field-grid" style={{ marginTop: 12 }}>
+              <Field label="Cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre (opcional)" /></Field>
+              <Field label="Celular (para la solución por WhatsApp)"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 1122334455" /></Field>
+              <Field label="Notas"><input value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
+            </div>
+            <div className="dg-form-actions" style={{ marginTop: 10 }}>
+              <button className="dg-btn-ghost" onClick={() => setTipo(null)}>Cancelar</button>
+              <button className="dg-btn-primary" onClick={addReclamo}><Check size={14} /> Guardar reclamo: {tipo}</button>
+            </div>
+          </EnterFlow>
         )}
       </div>
 
-      <div className="dg-task-list" style={{ marginTop: 14 }}>
-        {reclamos.length === 0 && <div className="dg-empty">No hay reclamos cargados todavía.</div>}
-        {reclamos.slice(0, 100).map((r) => (
-          <div className="dg-task dg-reclamo-row" key={r.id}>
-            <span className="dg-badge" style={{ "--bc": RECLAMO_COLORS[RECLAMO_TIPOS.indexOf(r.tipo)] || "var(--dg-text-dim)" }}>{r.tipo}</span>
-            <div className="dg-pago-info">
-              <span>{r.cliente || "Sin cliente"}{r.notas ? ` — ${r.notas}` : ""}</span>
-              {r.solucion && <span className="dg-pago-meta">Solución: {r.solucion}</span>}
+      <div className="dg-quickviews" style={{ margin: "16px 0" }}>
+        <button className={`dg-quickview-btn ${vista === "activos" ? "dg-quickview-on" : ""}`} onClick={() => setVista("activos")}>Activos ({activos.length})</button>
+        <button className={`dg-quickview-btn ${vista === "finalizados" ? "dg-quickview-on" : ""}`} onClick={() => setVista("finalizados")}>Finalizados ({finalizados.length})</button>
+      </div>
+
+      {visibles.length === 0 && <div className="dg-empty">{vista === "activos" ? "No hay reclamos activos. ¡Buenas noticias!" : "Todavía no finalizaste ningún reclamo."}</div>}
+
+      <div className="dg-reclamo-lista">
+        {visibles.map((r) => {
+          const tieneCelular = !!waLink(r.celular);
+          return (
+            <div className="dg-section-card dg-reclamo-card" key={r.id}>
+              <div className="dg-reclamo-head">
+                <span className="dg-badge" style={{ "--bc": RECLAMO_COLORS[RECLAMO_TIPOS.indexOf(r.tipo)] || "var(--dg-text-dim)" }}>{r.tipo}</span>
+                <span className="dg-reclamo-cliente">{r.cliente || "Sin cliente"}</span>
+                <span className="dg-pago-meta">{r.fecha}</span>
+                {!reclamoFinalizado(r) && <button className="dg-icon-btn dg-task-del" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>}
+              </div>
+              {r.notas && <div className="dg-pago-meta" style={{ marginBottom: 8 }}>{r.notas}</div>}
+
+              {reclamoFinalizado(r) ? (
+                <>
+                  {r.solucion && <div className="dg-fab-obs"><span>Solución aplicada</span> {r.solucion}</div>}
+                  <div className="dg-form-actions" style={{ marginTop: 8 }}>
+                    <button className="dg-btn-ghost" onClick={() => reabrir(r.id)}><RotateCcw size={13} /> Reabrir reclamo</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Field label="Solución que le ofrecemos al cliente">
+                    <input value={r.solucion || ""} onChange={(e) => setSolucion(r.id, e.target.value)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
+                  </Field>
+                  <div className="dg-form-actions" style={{ marginTop: 10 }}>
+                    {tieneCelular ? (
+                      <button className="dg-btn-ghost" onClick={() => enviarWhatsapp(r)}>
+                        <MessageCircle size={14} /> {copiadoId === r.id ? "Abriendo WhatsApp…" : "Ofrecer solución por WhatsApp"}
+                      </button>
+                    ) : (
+                      <span className="dg-pago-meta">Cargá el celular del cliente para poder escribirle.</span>
+                    )}
+                    <button className="dg-btn-primary" onClick={() => finalizar(r.id)}><CheckCircle2 size={14} /> Marcar como finalizado</button>
+                  </div>
+                </>
+              )}
             </div>
-            {r.estado && <span className="dg-badge" style={{ "--bc": r.estado.toLowerCase().includes("final") ? "var(--dg-success)" : "var(--dg-warning)" }}>{r.estado}</span>}
-            <span className="dg-pago-meta">{r.fecha}</span>
-            <button className="dg-icon-btn dg-task-del" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -4307,24 +4377,24 @@ function Style() {
       .dg-app ::-webkit-scrollbar-thumb { background: rgba(var(--dg-line-rgb),0.13); border-radius:100px; }
       .dg-app ::-webkit-scrollbar-thumb:hover { background: rgba(var(--dg-line-rgb),0.22); }
       .dg-app {
-        --dg-bg:#171411; --dg-surface:#211D19; --dg-surface-2:#28231E; --dg-surface-3:#302A24;
+        --dg-bg:#100D0B; --dg-surface:#1C1917; --dg-surface-2:#241F19; --dg-surface-3:#2C261F;
         --dg-line-rgb:238,226,210;
-        --dg-text:#F3EDE4; --dg-text-dim:#B8AB9A; --dg-text-faint:#817669;
-        --dg-accent:#D19A55; --dg-accent-rgb:209,154,85; --dg-accent-2:#E3B775; --dg-on-accent:#21170C;
-        --dg-success:#8BA36E; --dg-success-rgb:139,163,110;
+        --dg-text:#F5F0EA; --dg-text-dim:#A89E92; --dg-text-faint:#756B60;
+        --dg-accent:#F2622F; --dg-accent-rgb:242,98,47; --dg-accent-2:#FF8352; --dg-on-accent:#FFFFFF;
+        --dg-success:#7FA35C; --dg-success-rgb:127,163,92;
         --dg-warning:#D9A441; --dg-warning-rgb:217,164,65;
-        --dg-danger:#C87362; --dg-danger-rgb:200,115,98;
-        --dg-shadow:rgba(0,0,0,.55);
+        --dg-danger:#C2574A; --dg-danger-rgb:194,87,74;
+        --dg-shadow:rgba(0,0,0,.6);
         --bg:var(--dg-bg); --panel:rgba(var(--dg-line-rgb),.035); --panel-border:rgba(var(--dg-line-rgb),.1); --text:var(--dg-text); --text-dim:var(--dg-text-dim);
         font-family:'Inter', sans-serif; color: var(--text);
         color-scheme:dark;
-        background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(var(--dg-accent-rgb),.07),transparent),var(--bg);
+        background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(var(--dg-accent-rgb),.08),transparent),var(--bg);
         min-height:100vh; padding:28px 16px 60px; box-sizing:border-box; transition: background .2s ease, color .2s ease; }
       .dg-app[data-theme="light"] {
-        --dg-bg:#F4EFE6; --dg-surface:#FFFCF7; --dg-surface-2:#EDE5D9; --dg-surface-3:#E7DED0;
+        --dg-bg:#F7F2E9; --dg-surface:#FFFDF9; --dg-surface-2:#EFE6D8; --dg-surface-3:#E8DECD;
         --dg-line-rgb:53,47,40;
-        --dg-text:#2B2722; --dg-text-dim:#6F665C; --dg-text-faint:#7F7468;
-        --dg-accent:#885324; --dg-accent-rgb:136,83,36; --dg-accent-2:#6A3D1B; --dg-on-accent:#FFF9F0;
+        --dg-text:#2B2722; --dg-text-dim:#6F665C; --dg-text-faint:#89806F;
+        --dg-accent:#C1501F; --dg-accent-rgb:193,80,31; --dg-accent-2:#A6431A; --dg-on-accent:#FFFFFF;
         --dg-success:#4E673D; --dg-success-rgb:78,103,61;
         --dg-warning:#805515; --dg-warning-rgb:128,85,21;
         --dg-danger:#A44F43; --dg-danger-rgb:164,79,67;
@@ -4344,7 +4414,7 @@ function Style() {
 
       .dg-header { display:flex; align-items:center; justify-content:space-between; max-width:960px; margin:0 auto 18px; gap:12px; flex-wrap:wrap; }
       .dg-brand { display:flex; align-items:center; gap:12px; }
-      .dg-brand-mark { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:15px; width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: linear-gradient(145deg, rgba(var(--dg-accent-rgb),0.18), rgba(var(--dg-accent-rgb),0.04)); border:1px solid rgba(var(--dg-accent-rgb),0.35); color:var(--dg-accent); box-shadow: 0 0 18px rgba(var(--dg-accent-rgb),0.25); }
+      .dg-brand-mark { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:15px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background: linear-gradient(145deg, rgba(var(--dg-accent-rgb),0.18), rgba(var(--dg-accent-rgb),0.04)); border:1px solid rgba(var(--dg-accent-rgb),0.35); color:var(--dg-accent); box-shadow: 0 0 18px rgba(var(--dg-accent-rgb),0.25); }
       .dg-brand-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:18px; letter-spacing:0.5px; }
       .dg-brand-sub { font-size:12px; color: var(--text-dim); }
       .dg-session { display:flex; align-items:center; gap:8px; }
@@ -4445,7 +4515,7 @@ function Style() {
       .dg-modal-lg { max-width:540px; }
       .dg-modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
       .dg-modal-title { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:17px; }
-      .dg-modal-icon { --glow:var(--dg-accent); width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 15%, transparent); color: var(--glow); border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); }
+      .dg-modal-icon { --glow:var(--dg-accent); width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 15%, transparent); color: var(--glow); border:1.5px solid color-mix(in srgb, var(--glow) 45%, transparent); }
       .dg-modal-sub { font-size:12px; color:var(--dg-text-dim); margin-top:2px; }
       .dg-encargado-box { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dg-text-dim); background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:10px; padding:9px 12px; margin-bottom:14px; }
       .dg-sector-meta-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
@@ -4592,6 +4662,10 @@ function Style() {
       .dg-fab-func { font-size:11px; font-weight:600; padding:4px 9px; border-radius:6px; background: rgba(var(--dg-success-rgb),0.13); color:var(--dg-success); }
 
       .dg-fab-obs { font-size:12px; color:var(--dg-text-dim); margin-bottom:10px; line-height:1.4; }
+      .dg-reclamo-lista { display:flex; flex-direction:column; gap:10px; }
+      .dg-reclamo-card { margin-bottom:0; }
+      .dg-reclamo-head { display:flex; align-items:center; gap:9px; margin-bottom:8px; flex-wrap:wrap; }
+      .dg-reclamo-cliente { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; flex:1; min-width:0; }
       .dg-fab-obs span { color:var(--dg-accent); font-weight:600; margin-right:5px; }
 
       .dg-fab-audit { margin-bottom:10px; font-size:11.5px; }
@@ -4823,7 +4897,7 @@ function Style() {
 
       .dg-room-plate { position:absolute; left:12px; right:12px; bottom:12px; display:flex; align-items:center; gap:8px; background:rgba(12,9,7,.8); border:1px solid color-mix(in srgb, var(--glow) 54%, rgba(var(--dg-line-rgb),0.1)); border-radius:12px; padding:10px 11px; box-shadow:0 12px 30px -18px rgba(0,0,0,0.95); backdrop-filter:blur(14px); }
       .dg-room-plate-num { font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--dg-text-dim); }
-      .dg-room-plate-icon { --glow:var(--dg-accent); width:26px; height:26px; min-width:26px; border-radius:7px; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 18%, transparent); color: var(--glow); }
+      .dg-room-plate-icon { --glow:var(--dg-accent); width:26px; height:26px; min-width:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 18%, transparent); color: var(--glow); }
       .dg-room-plate-text { display:flex; flex-direction:column; min-width:0; flex:1; }
       .dg-room-plate-name { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:12.5px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .dg-room-plate-sub { font-size:10.5px; color:var(--dg-text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -4913,7 +4987,7 @@ function Style() {
         background:color-mix(in srgb,var(--dg-bg) 88%,transparent); backdrop-filter:blur(18px);
       }
       .dg-brand { min-width:230px; }
-      .dg-brand-mark { width:42px; height:42px; border-radius:12px; box-shadow:none; background:rgba(var(--dg-accent-rgb),.1); border-color:rgba(var(--dg-accent-rgb),.34); }
+      .dg-brand-mark { width:42px; height:42px; border-radius:50%; box-shadow:none; background:rgba(var(--dg-accent-rgb),.1); border-color:rgba(var(--dg-accent-rgb),.34); }
       .dg-brand-title { color:var(--dg-text); font-size:17px; letter-spacing:.9px; }
       .dg-brand-sub { margin-top:1px; font-size:11px; color:var(--dg-text-faint); }
       .dg-header-context { display:flex; flex-direction:column; align-items:center; gap:2px; color:var(--text-dim); }
@@ -4961,7 +5035,7 @@ function Style() {
       .dg-scene-shade { background:linear-gradient(180deg,rgba(8,6,4,.03),rgba(8,6,4,.18) 40%,rgba(8,6,4,.94) 100%),linear-gradient(125deg,color-mix(in srgb,var(--accent) 9%,transparent),transparent 48%); }
       .dg-room-plate { left:10px; right:10px; bottom:9px; gap:8px; padding:9px 10px; border:0; border-top:1px solid color-mix(in srgb,var(--glow) 45%,rgba(var(--dg-line-rgb),.08)); border-radius:10px; background:rgba(12,9,7,.76); box-shadow:none; }
       .dg-room-plate-num { color:#AFA394; font-size:9px; }
-      .dg-room-plate-icon { width:25px; height:25px; min-width:25px; border-radius:7px; }
+      .dg-room-plate-icon { width:25px; height:25px; min-width:25px; border-radius:50%; }
       .dg-room-plate-name { color:#F3EDE4; font-size:12px; }
       .dg-room-plate-sub { color:#B8AB9A; font-size:9.5px; }
       .dg-room-plate-pct { font-size:11.5px; }
