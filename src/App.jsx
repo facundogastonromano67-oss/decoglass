@@ -6,13 +6,13 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell
 } from "recharts";
-import sectorScenes from "./assets/sector-scenes.png";
+import sectorScenes from "./assets/sector-scenes.webp";
 
 const ICONS = { Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones };
 const METODO_ICONS = { "Retira": Building2, "Envío": Truck, "Envío flex": Truck, "Interior": Truck, "Colocación": Wrench, "Otro": Package };
@@ -2528,13 +2528,20 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
 
   const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
   const grupoCounts = pedidos.reduce((acc, p) => { const g = p.grupoId || p.id; acc[g] = (acc[g] || 0) + 1; return acc; }, {});
+  const VISTAS_PRINCIPALES = ["todos", "historial", "envios"];
+  const vistasSecundarias = QUICK_VIEWS.filter((v) => !VISTAS_PRINCIPALES.includes(v.id));
+  const enSecundaria = vistasSecundarias.some((v) => v.id === quickView);
 
   return (
     <div className="dg-page">
       <div className="dg-quickviews">
-        {QUICK_VIEWS.map((v) => (
+        {QUICK_VIEWS.filter((v) => VISTAS_PRINCIPALES.includes(v.id)).map((v) => (
           <button key={v.id} className={`dg-quickview-btn ${quickView === v.id ? "dg-quickview-on" : ""}`} onClick={() => setQuickView(v.id)}>{v.label}</button>
         ))}
+        <select className={`dg-quickview-mas ${enSecundaria ? "dg-quickview-mas-on" : ""}`} value={enSecundaria ? quickView : ""} onChange={(e) => e.target.value && setQuickView(e.target.value)}>
+          <option value="">Más filtros…</option>
+          {vistasSecundarias.map((v) => (<option key={v.id} value={v.id}>{v.label}</option>))}
+        </select>
       </div>
 
 
@@ -3279,8 +3286,8 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
 function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar }) {
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
-  const [agrupado, setAgrupado] = useState("mes");
   const [proceso, setProceso] = useState("simples");
+  const [menuAbierto, setMenuAbierto] = useState(null);
 
   // Fábrica solo ve pedidos ya verificados por PostVenta. Los "Sin pasar a fábrica" no aparecen.
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
@@ -3300,9 +3307,15 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     acc[item.id] = baseVisibles.filter((p) => pedidoProcesoTaller(p) === item.id).length;
     return acc;
   }, {});
-  let visibles = baseVisibles
-    .filter((p) => pedidoProcesoTaller(p) === proceso)
-    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+  let visibles = baseVisibles.filter((p) => pedidoProcesoTaller(p) === proceso);
+  visibles = filtroEstado === "historial"
+    ? visibles.sort((a, b) => (b.produccionListaFecha || b.fecha || "").localeCompare(a.produccionListaFecha || a.fecha || ""))
+    : visibles.sort((a, b) => {
+        if (!a.listo && !b.listo) return (b.orden || 0) - (a.orden || 0);
+        if (!a.listo) return 1;
+        if (!b.listo) return -1;
+        return a.listo < b.listo ? -1 : a.listo > b.listo ? 1 : 0;
+      });
 
   function setEstado(id, estado) {
     onChange(pedidos.map((p) => {
@@ -3315,6 +3328,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       }
       return { ...p, estado };
     }));
+    setMenuAbierto(null);
   }
   function avanzarProduccion(id) {
     const ahora = new Date().toISOString();
@@ -3363,12 +3377,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       entregadoFecha: "",
     } : p)));
     if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — vuelve a embalado`);
+    setMenuAbierto(null);
   }
-  function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); }
+  function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); setMenuAbierto(null); }
   function cancelar(id) { if (window.confirm("¿Cancelar este pedido?")) setEstado(id, "Cancelado"); }
-  function borrar(id) { if (window.confirm("¿Borrar este pedido definitivamente? No se puede deshacer.")) onChange(pedidos.filter((p) => p.id !== id)); }
+  function borrar(id) { if (window.confirm("¿Borrar este pedido definitivamente? No se puede deshacer.")) { onChange(pedidos.filter((p) => p.id !== id)); setMenuAbierto(null); } }
 
-  const grupos = agrupado === "semana" ? groupByWeek(visibles, "fecha") : groupByMonth(visibles, "fecha");
   const fechaHoraProduccion = (value) => {
     if (!value) return "Sin registro";
     const fecha = new Date(value);
@@ -3384,41 +3398,46 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const observaciones = detalleFabrica(p);
     const produccionCompletada = pasosProduccionCompletados(p);
     const proximoPaso = PRODUCCION_PASOS[produccionCompletada];
+    const terminado = produccionCompletada >= PRODUCCION_PASOS.length;
+    const menuOpen = menuAbierto === p.id;
     return (
-      <div className={`dg-pedido-card dg-fabrica-card dg-fab-${entrega.clase}`} key={p.id}>
+      <div className={`dg-fab-card dg-fab-${entrega.clase}`} key={p.id}>
         <div className="dg-fab-head">
-          <span className="dg-fab-orden">#{p.orden}</span>
+          <span className="dg-fab-orden">{p.orden}</span>
           <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}</span>
-          <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{entrega.icono} {p.metodo}</span>
+          <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span>
         </div>
 
         <div className="dg-fab-medida">
           <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
-          {Number(p.cant) > 1 && <span className="dg-fab-cant">× {p.cant} unidades</span>}
+          {Number(p.cant) > 1 && <span className="dg-fab-cant">× {p.cant}</span>}
         </div>
 
-        <div className="dg-fab-specs">
-          <div><span>Forma</span><strong>{p.forma}</strong></div>
-          <div><span>Tipo</span><strong>{p.tipo}</strong></div>
-          <div><span>Tono de luz</span><strong className="dg-fab-tono">{p.tono || "—"}</strong></div>
-        </div>
+        <div className="dg-fab-linea">{p.forma} · {p.tipo} · <span className="dg-fab-tono">{p.tono || "—"}</span> · <span className="dg-fab-proceso" style={{ color: procesoInfo?.color }}>{procesoInfo?.label || "Simple"}</span></div>
 
-        <div className="dg-production-checklist" aria-label="Avance de producción">
+        <div className="dg-fab-steps" aria-label="Avance de producción">
           {PRODUCCION_PASOS.map((paso, index) => {
             const completado = index < produccionCompletada;
             const actual = index === produccionCompletada;
             return (
-              <span key={paso.id} className={`${completado ? "dg-production-done" : ""}${actual ? " dg-production-current" : ""}`}>
-                <i>{completado ? <Check size={11} /> : index + 1}</i>
-                <strong>{paso.label}</strong>
+              <span key={paso.id} className={`dg-fab-step ${completado ? "dg-fab-step-done" : ""}${actual ? " dg-fab-step-current" : ""}`}>
+                {completado ? <Check size={11} /> : <em>{index + 1}</em>}{paso.label}
               </span>
             );
           })}
         </div>
 
-        {pedidoEstaListo(p) && (
-          <div className="dg-production-audit">
-            <span className="dg-production-audit-title"><ClipboardList size={12} /> Registro de fabricación</span>
+        {funciones.length > 0 && (
+          <div className="dg-fab-funciones">
+            {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
+          </div>
+        )}
+
+        {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+
+        {terminado && (
+          <details className="dg-fab-audit">
+            <summary><ClipboardList size={12} /> Registro de fabricación</summary>
             <div>
               {PRODUCCION_PASOS.map((paso) => {
                 const fecha = p[paso.fechaCampo] || (paso.id === "embalado" ? p.produccionListaFecha : "");
@@ -3431,37 +3450,35 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 );
               })}
             </div>
-          </div>
+          </details>
         )}
 
-        <div className="dg-fab-funciones">
-          {funciones.length === 0
-            ? <span className="dg-fab-nofunc">Sin funciones extra</span>
-            : funciones.map((f, i) => (<span className="dg-fab-func" key={i} style={{ background: "rgba(91,201,139,0.14)", border: "1px solid rgba(91,201,139,0.45)", color: "#5BC98B" }}>{f.label}</span>))}
+        <div className="dg-fab-foot">
+          <span className="dg-fab-foot-txt">
+            {stage.stage}{p.listo ? ` · entrega ${p.listo}` : ""}
+            {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
+            {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
+          </span>
+          {canEdit && (
+            <div className="dg-fab-acciones">
+              {!terminado && <button className="dg-fab-btn-listo" onClick={() => avanzarProduccion(p.id)}><Check size={14} /> {proximoPaso?.accion}</button>}
+              <div className="dg-fab-menu-wrap">
+                <button className="dg-icon-btn" aria-label="Más acciones" onClick={() => setMenuAbierto(menuOpen ? null : p.id)}><MoreVertical size={16} /></button>
+                {menuOpen && (
+                  <>
+                    <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
+                    <div className="dg-fab-menu">
+                      {terminado && <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>}
+                      <button onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
+                      <button onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
+                      {puedeBorrar && <button className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-
-        {observaciones && (
-          <div className="dg-fab-grabado"><strong>Observaciones:</strong> {observaciones}</div>
-        )}
-
-        <div className="dg-pedido-badges">
-          <span className="dg-badge" style={{ "--bc": procesoInfo?.color || "#8B96A8" }}>{procesoInfo?.label || "Simple"}</span>
-          <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
-          {p.demorado && <span className="dg-badge" style={{ "--bc": "#E06A6A" }}><AlertTriangle size={12} /> Demorado</span>}
-          {p.listo && <span className="dg-badge dg-badge-entrega"><Truck size={12} /> Entrega: {p.listo}</span>}
-          {p.clienteAvisado && <span className="dg-badge" style={{ "--bc": "#5BC98B" }}><MessageCircle size={12} /> Cliente avisado</span>}
-        </div>
-        {canEdit && (
-          <div className="dg-fabrica-actions">
-            {produccionCompletada >= PRODUCCION_PASOS.length
-              ? <button className="dg-fabrica-btn dg-fabrica-btn-listo dg-fabrica-btn-next" disabled><CheckCircle2 size={15} /> Producción terminada</button>
-              : <button className="dg-fabrica-btn dg-fabrica-btn-listo dg-fabrica-btn-next" onClick={() => avanzarProduccion(p.id)}><Check size={15} /> {proximoPaso?.accion}</button>}
-            {produccionCompletada >= PRODUCCION_PASOS.length && <button className="dg-fabrica-btn dg-fabrica-btn-undo" onClick={() => reabrirProduccion(p.id)}><RotateCcw size={15} /> Reabrir producción</button>}
-            <button className={`dg-fabrica-btn dg-fabrica-btn-demora ${p.demorado ? "dg-fabrica-btn-demora-on" : ""}`} onClick={() => toggleDemorado(p.id)}><AlertTriangle size={15} /> {p.demorado ? "Sin demora" : "Demorado"}</button>
-            <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => cancelar(p.id)}><XCircle size={15} /> Cancelar</button>
-            {puedeBorrar && <button className="dg-fabrica-btn dg-fabrica-btn-cancel" onClick={() => borrar(p.id)}><Trash2 size={15} /> Borrar</button>}
-          </div>
-        )}
       </div>
     );
   };
@@ -3472,7 +3489,6 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         {TALLER_PROCESOS.map((item) => (
           <button key={item.id} role="tab" aria-selected={proceso === item.id} className={proceso === item.id ? "dg-process-tab-on" : ""} style={{ "--pc": item.color }} onClick={() => setProceso(item.id)}>
             <span>{item.label}<small>{procesoCounts[item.id] || 0}</small></span>
-            <em>{item.description}</em>
           </button>
         ))}
       </div>
@@ -3485,10 +3501,6 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <option value="todos">Todos ({enFabrica.length})</option>
         </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
-        <div className="dg-periodo-toggle">
-          <button className={agrupado === "mes" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("mes")}>Mes</button>
-          <button className={agrupado === "semana" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("semana")}>Semana</button>
-        </div>
       </div>
 
       <div className="dg-fab-leyenda">
@@ -3500,7 +3512,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       </div>
 
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay pedidos terminados en este proceso." : "No hay pedidos pendientes en esta vista."}</div>}
-      {visibles.length > 0 && <MonthAccordion groups={grupos} renderItem={renderCard} />}
+      <div className="dg-fab-lista">{visibles.map(renderCard)}</div>
     </div>
   );
 }
@@ -4416,10 +4428,14 @@ function Style() {
       .dg-status-track { height:6px; border-radius:100px; background:rgba(255,255,255,0.08); overflow:hidden; }
       .dg-status-fill { height:100%; border-radius:100px; transition: width 0.3s ease; }
       .dg-status-bar span { font-size:12px; font-family:'JetBrains Mono', monospace; }
-      .dg-task-list { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; max-height:280px; overflow-y:auto; }
+      .dg-task-list { display:flex; flex-direction:column; margin-bottom:14px; max-height:280px; overflow-y:auto;
+        border:1px solid rgba(255,255,255,0.07); border-radius:12px; background: rgba(255,255,255,0.015); }
+      .dg-task-list:empty { display:none; }
       .dg-empty { font-size:13px; color:#8B96A8; padding:14px; text-align:center; border:1px dashed rgba(255,255,255,0.1); border-radius:10px; }
-      .dg-task { display:flex; align-items:center; gap:10px; background:#1A1F2B; border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:11px 13px; font-size:13px; transition: border-color .15s ease; }
-      .dg-task:hover { border-color: rgba(255,255,255,0.13); }
+      .dg-task { display:flex; align-items:center; gap:10px; background:transparent; border:none; border-bottom:1px solid rgba(255,255,255,0.055);
+        border-radius:0; padding:11px 13px; font-size:13px; transition: background .12s ease; }
+      .dg-task:last-child { border-bottom:none; }
+      .dg-task:hover { background: rgba(255,255,255,0.025); }
       .dg-task-done { text-decoration: line-through; color:#8B96A8; }
       .dg-task-del { margin-left:auto; }
       .dg-checkbox { width:18px; height:18px; min-width:18px; border-radius:6px; border:1.5px solid rgba(255,255,255,0.25); background:transparent; cursor:pointer; }
@@ -4440,7 +4456,7 @@ function Style() {
       .dg-pago-monto { font-family:'JetBrains Mono', monospace; font-size:13px; margin-right:6px; }
       .dg-pago-list { max-height:320px; }
 
-      .dg-section-card { background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:15px 16px 17px; margin-bottom:14px; transition: border-color .15s ease; }
+      .dg-section-card { background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.055); border-radius:14px; padding:16px 17px 18px; margin-bottom:14px; transition: border-color .15s ease; }
       .dg-section-card:hover { border-color: rgba(255,255,255,0.12); }
       .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:#4FC3C0; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:12.5px; text-transform:uppercase; letter-spacing:0.4px; }
       .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; }
@@ -4483,82 +4499,80 @@ function Style() {
       .dg-fab-leyenda span { --ec:#8B96A8; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px;
         padding:4px 10px; border-radius:100px; border-left:3px solid var(--ec); background: rgba(255,255,255,0.03); color:#8B96A8; }
 
-      /* ---- FICHA TECNICA DE FABRICA ---- */
-      .dg-fabrica-card { border-left-width:4px !important; }
-      .dg-fab-interior { border-left-color:#B583DE !important; background: linear-gradient(90deg, rgba(181,131,222,0.09), rgba(255,255,255,0.025) 40%) !important; }
-      .dg-fab-flex { border-left-color:#E5B54F !important; background: linear-gradient(90deg, rgba(229,181,79,0.1), rgba(255,255,255,0.025) 40%) !important; }
-      .dg-fab-envio { border-left-color:#4FC3C0 !important; }
-      .dg-fab-coloca { border-left-color:#7C8FE8 !important; }
-      .dg-fab-retira { border-left-color: rgba(255,255,255,0.12) !important; }
+      /* ---- FICHA DE FABRICA v3: un solo borde, checklist minimalista, menu de acciones ---- */
+      .dg-fab-lista { display:flex; flex-direction:column; gap:10px; }
+      .dg-fab-card { position:relative; background: rgba(255,255,255,0.02); border:0.5px solid rgba(255,255,255,0.08);
+        border-left:3px solid rgba(255,255,255,0.15); border-radius:10px; padding:14px 16px; }
+      .dg-fab-interior { border-left-color:#B583DE; }
+      .dg-fab-flex { border-left-color:#E5B54F; }
+      .dg-fab-envio { border-left-color:#4FC3C0; }
+      .dg-fab-coloca { border-left-color:#7C8FE8; }
+      .dg-fab-retira { border-left-color: rgba(255,255,255,0.15); }
 
-      .dg-fab-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-      .dg-fab-orden { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#4FC3C0; }
-      .dg-fab-cliente { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:15px; flex:1; min-width:0; }
-      .dg-fab-entrega { --ec:#8B96A8; display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:700;
-        text-transform:uppercase; letter-spacing:0.3px; padding:5px 11px; border-radius:100px;
-        background: color-mix(in srgb, var(--ec) 18%, transparent); color: var(--ec);
-        border:1px solid color-mix(in srgb, var(--ec) 50%, transparent); white-space:nowrap; }
+      .dg-fab-head { display:flex; align-items:baseline; gap:9px; margin-bottom:6px; }
+      .dg-fab-orden { font-family:'JetBrains Mono', monospace; font-size:11px; color:#5B6576; }
+      .dg-fab-cliente { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14.5px; flex:1; min-width:0;
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .dg-fab-entrega { --ec:#8B96A8; font-size:11px; font-weight:600; color: var(--ec); white-space:nowrap; }
 
-      .dg-fab-medida { display:flex; align-items:baseline; gap:8px; margin:4px 0 2px; }
-      .dg-fab-medida strong { font-family:'JetBrains Mono', monospace; font-size:27px; font-weight:700; color:#E7ECF2; letter-spacing:-0.5px; }
-      .dg-fab-medida small { font-size:12px; color:#8B96A8; }
-      .dg-fab-cant { margin-left:6px; font-size:12px; font-weight:700; color:#E5B54F; background: rgba(229,181,79,0.14);
-        border:1px solid rgba(229,181,79,0.4); border-radius:6px; padding:3px 8px; }
+      .dg-fab-medida { display:flex; align-items:baseline; gap:7px; margin-bottom:3px; }
+      .dg-fab-medida strong { font-family:'JetBrains Mono', monospace; font-size:24px; font-weight:700; color:#E7ECF2; letter-spacing:-0.4px; }
+      .dg-fab-medida small { font-size:11px; color:#7A8699; }
+      .dg-fab-cant { font-size:11px; font-weight:700; color:#E5B54F; }
+      .dg-fab-linea { font-size:12.5px; color:#8B96A8; margin-bottom:10px; }
+      .dg-fab-tono { color:#E5B54F; font-weight:600; }
+      .dg-fab-proceso { font-weight:600; }
 
-      .dg-fab-specs { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-      .dg-fab-specs > div { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:9px; padding:8px 10px; }
-      .dg-fab-specs span { display:block; font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:#7A8699; margin-bottom:3px; }
-      .dg-fab-specs strong { font-size:13px; font-weight:600; color:#E7ECF2; }
-      .dg-fab-tono { color:#E5B54F !important; }
+      .dg-fab-steps { display:flex; gap:14px; margin-bottom:10px; flex-wrap:wrap; }
+      .dg-fab-step { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:#5B6576; }
+      .dg-fab-step em { display:flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%;
+        border:1px solid rgba(255,255,255,0.15); font-style:normal; font-size:8.5px; color:#7A8699; }
+      .dg-fab-step-done { color:#5BC98B; }
+      .dg-fab-step-done svg { color:#5BC98B; }
+      .dg-fab-step-current { color:#4FC3C0; }
+      .dg-fab-step-current em { border-color:#4FC3C0; color:#4FC3C0; }
 
-      .dg-fab-grabado { font-size:12.5px; color:#E7ECF2; background: rgba(79,195,192,0.08);
-        border:1px solid rgba(79,195,192,0.28); border-radius:9px; padding:9px 11px; }
-      .dg-fab-grabado strong { color:#4FC3C0; font-size:11px; text-transform:uppercase; letter-spacing:0.3px; }
+      .dg-fab-funciones { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+      .dg-fab-func { font-size:11px; font-weight:600; padding:4px 9px; border-radius:6px; background: rgba(91,201,139,0.13); color:#5BC98B; }
 
-      .dg-fab-funciones { display:flex; gap:6px; flex-wrap:wrap; }
-      .dg-fab-func { font-size:10.5px; font-weight:700; letter-spacing:0.4px; padding:5px 10px; border-radius:7px;
-        background: rgba(91,201,139,0.14); border:1px solid rgba(91,201,139,0.45); color:#5BC98B; }
-      .dg-fab-nofunc { font-size:11.5px; color:#5B6576; font-style:italic; }
+      .dg-fab-obs { font-size:12px; color:#B8C0CC; margin-bottom:10px; line-height:1.4; }
+      .dg-fab-obs span { color:#4FC3C0; font-weight:600; margin-right:5px; }
 
-      .dg-production-checklist { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; padding:6px; border:1px solid rgba(226,232,240,.08); border-radius:10px; background:rgba(7,11,17,.34); }
-      .dg-production-checklist > span { min-width:0; display:flex; align-items:center; gap:5px; padding:5px 6px; border-radius:7px; color:#6E7B8E; }
-      .dg-production-checklist i { width:19px; height:19px; min-width:19px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(148,163,184,.2); border-radius:6px; color:#77869A; font-family:'JetBrains Mono',monospace; font-size:8px; font-style:normal; }
-      .dg-production-checklist strong { min-width:0; overflow:hidden; color:inherit; font-size:9.5px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
-      .dg-production-checklist .dg-production-done { background:rgba(91,201,139,.07); color:#72D9A0; }
-      .dg-production-checklist .dg-production-done i { border-color:rgba(91,201,139,.35); background:rgba(91,201,139,.1); }
-      .dg-production-checklist .dg-production-current { background:rgba(79,195,192,.08); color:#64D7D2; }
-      .dg-production-checklist .dg-production-current i { border-color:rgba(79,195,192,.42); }
-      .dg-production-audit { padding:8px; border:1px solid rgba(91,201,139,.16); border-radius:10px; background:rgba(91,201,139,.035); }
-      .dg-production-audit-title { display:flex; align-items:center; gap:5px; margin-bottom:6px; color:#72D9A0; font-size:9px; font-weight:700; letter-spacing:.35px; text-transform:uppercase; }
-      .dg-production-audit > div { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
-      .dg-production-audit > div > span { min-width:0; display:flex; flex-direction:column; gap:1px; padding:5px 6px; border-radius:7px; background:rgba(7,11,17,.35); }
-      .dg-production-audit strong { color:#B9C6D4; font-size:8.5px; }
-      .dg-production-audit time { color:#8C9AAD; font-family:'JetBrains Mono',monospace; font-size:8px; white-space:nowrap; }
-      .dg-production-audit small { overflow:hidden; color:#667589; font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
-      .dg-fabrica-actions { grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; margin-top:5px; }
-      .dg-fabrica-btn { min-width:0; min-height:35px; padding:7px 6px; font-size:10.5px; line-height:1.15; white-space:normal; overflow-wrap:anywhere; }
-      .dg-fabrica-btn-next { grid-column:1 / -1; border-color:rgba(91,201,139,.38); background:rgba(91,201,139,.1); color:#72D9A0; font-size:11.5px; }
-      .dg-fabrica-btn-next:disabled { opacity:1; cursor:default; }
+      .dg-fab-audit { margin-bottom:10px; font-size:11.5px; }
+      .dg-fab-audit summary { cursor:pointer; color:#7A8699; font-weight:600; list-style:none; display:flex; align-items:center; gap:5px; }
+      .dg-fab-audit summary::-webkit-details-marker { display:none; }
+      .dg-fab-audit summary:hover { color:#4FC3C0; }
+      .dg-fab-audit > div { margin-top:7px; display:flex; flex-direction:column; gap:5px; padding-left:2px; }
+      .dg-fab-audit > div > span { display:flex; align-items:baseline; gap:8px; }
+      .dg-fab-audit strong { min-width:66px; color:#B8C0CC; font-weight:600; }
+      .dg-fab-audit time { font-family:'JetBrains Mono', monospace; color:#8C9AAD; font-size:10.5px; }
+      .dg-fab-audit small { color:#5B6576; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+      .dg-fab-foot { display:flex; align-items:center; gap:10px; padding-top:10px; border-top:0.5px solid rgba(255,255,255,0.07); flex-wrap:wrap; }
+      .dg-fab-foot-txt { font-size:11.5px; color:#7A8699; flex:1; min-width:0; }
+      .dg-fab-flag-demora { color:#E06A6A; font-weight:600; }
+      .dg-fab-flag-ok { color:#5BC98B; font-weight:600; }
+      .dg-fab-acciones { display:flex; align-items:center; gap:4px; }
+      .dg-fab-btn-listo { display:flex; align-items:center; gap:6px; background: rgba(91,201,139,0.12); border:1px solid rgba(91,201,139,0.4);
+        color:#5BC98B; border-radius:8px; padding:7px 13px; font-size:12px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif; white-space:nowrap; }
+      .dg-fab-btn-listo:hover { background: rgba(91,201,139,0.2); }
+      .dg-fab-menu-wrap { position:relative; }
+      .dg-fab-menu-backdrop { position:fixed; inset:0; z-index:29; }
+      .dg-fab-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:30; background:#1A1F2B; border:1px solid rgba(255,255,255,0.12);
+        border-radius:10px; padding:5px; min-width:180px; box-shadow: 0 14px 34px -10px rgba(0,0,0,0.7); }
+      .dg-fab-menu button { display:flex; align-items:center; gap:8px; width:100%; background:transparent; border:none; color:#C3CBD8;
+        font-size:12.5px; padding:9px 10px; border-radius:7px; cursor:pointer; text-align:left; font-family:'Inter',sans-serif; white-space:nowrap; }
+      .dg-fab-menu button:hover { background: rgba(255,255,255,0.06); }
+      .dg-fab-menu-danger { color:#E06A6A !important; }
+      .dg-fab-menu-danger:hover { background: rgba(224,106,106,0.12) !important; }
 
       @media (max-width:680px) {
-        .dg-fab-medida strong { font-size:24px; }
-        .dg-fabrica-card { gap:6px; padding:10px !important; }
-        .dg-fab-head { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:7px; }
-        .dg-fab-cliente { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .dg-fab-entrega { padding:4px 8px; font-size:10px; }
-        .dg-fab-specs { grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
-        .dg-fab-specs > div { min-width:0; padding:7px; }
-        .dg-fab-specs span { margin-bottom:2px; font-size:8px; }
-        .dg-fab-specs strong { display:block; overflow-wrap:anywhere; font-size:10.5px; line-height:1.2; }
-        .dg-production-audit { padding:6px; }
-        .dg-production-audit > div { grid-template-columns:1fr; gap:3px; }
-        .dg-production-audit > div > span { display:grid; grid-template-columns:52px max-content minmax(0,1fr); align-items:center; gap:6px; padding:4px 6px; }
-        .dg-production-audit time, .dg-production-audit small { font-size:7.5px; }
-        .dg-production-audit small { text-align:right; }
-        .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; }
+        .dg-fab-medida strong { font-size:21px; }
+        .dg-fab-card { padding:12px 13px; }
+        .dg-fab-steps { gap:10px; }
       }
       @media (max-width:420px) {
-        .dg-fab-medida strong { font-size:22px; }
+        .dg-fab-medida strong { font-size:20px; }
         .dg-production-checklist strong { font-size:8.5px; }
       }
 
@@ -4690,7 +4704,7 @@ function Style() {
       .dg-pedido-card-top { display:flex; align-items:center; gap:10px; min-width:0; }
       .dg-pedido-card-top .dg-lead-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .dg-pedido-badges { display:flex; gap:6px; flex-wrap:wrap; min-width:0; }
-      .dg-badge { --bc:#8B96A8; display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:600; padding:4px 9px; border-radius:100px; background: color-mix(in srgb, var(--bc) 14%, transparent); color: var(--bc); border:1px solid color-mix(in srgb, var(--bc) 35%, transparent); white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+      .dg-badge { --bc:#8B96A8; display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:600; padding:4px 9px; border-radius:100px; background: color-mix(in srgb, var(--bc) 15%, transparent); color: var(--bc); border:none; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
       .dg-pago-meta { overflow-wrap:break-word; word-break:break-word; }
       .dg-lead-list { max-height:none; }
       .dg-lead-row { display:flex; align-items:center; justify-content:space-between; gap:10px; background:#1A1F2B; border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 12px; flex-wrap:wrap; }
@@ -4708,6 +4722,8 @@ function Style() {
       .dg-quickview-btn { background:#1A1F2B; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 13px; font-size:12px; cursor:pointer; white-space:nowrap; transition: all .15s ease; }
       .dg-quickview-btn:hover { color:#E7ECF2; }
       .dg-quickview-on { background: rgba(79,195,192,0.15); border-color:#4FC3C0; color:#4FC3C0; font-weight:600; }
+      .dg-quickview-mas { background:#1A1F2B; border:1px solid rgba(255,255,255,0.1); color:#8B96A8; border-radius:100px; padding:7px 13px; font-size:12px; cursor:pointer; }
+      .dg-quickview-mas-on { border-color:#4FC3C0; color:#4FC3C0; }
       .dg-comision-banner { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background: rgba(229,181,79,0.08); border:1px solid rgba(229,181,79,0.3); border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#E5B54F; }
       .dg-pedido-flag { font-size:11px; }
       .dg-checkbox-field { width:100%; display:flex; align-items:center; justify-content:center; gap:6px; background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:9px; padding:9px 10px; color:#8B96A8; font-size:12.5px; cursor:pointer; font-family:'Inter',sans-serif; }
