@@ -6,7 +6,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -2167,6 +2167,19 @@ const QUICK_VIEWS = [
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
 
+function resumenPasoPedido(pedido) {
+  const conEnvio = esPedidoConEnvio(pedido);
+  const total = conEnvio ? 5 : 4;
+  if (pedido?.estado === "Cancelado") return { numero: 0, total, label: "Cancelado" };
+  if (pedido?.estado === "Entregado") return { numero: total, total, label: "Entregado" };
+  if (!pedidoFueVerificado(pedido)) return { numero: 1, total, label: "Verificar pedido" };
+  if (!pedidoEstaListo(pedido)) return { numero: 2, total, label: "Esperando producción" };
+  if (!pedido?.clienteAvisado || (conEnvio && !pedido?.envioConfirmado)) {
+    return { numero: 3, total, label: conEnvio ? "Confirmar cliente y envío" : "Coordinar retiro" };
+  }
+  return { numero: total, total, label: "Confirmar entrega" };
+}
+
 function PasoPedido({ numero, titulo, detalle, estado = "pending", children }) {
   const estadoLabel = estado === "done" ? "Completado" : estado === "active" ? "En curso" : "Pendiente";
   return (
@@ -2628,46 +2641,78 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           const saldo = pedidoSaldo(p);
           const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "var(--dg-text-dim)" };
           const MetodoIcon = METODO_ICONS[p.metodo] || Package;
+          const paso = resumenPasoPedido(p);
           return (
-            <div className="dg-pedido-card dg-order-card" key={p.id} onClick={() => setOpenPedido(p)}>
-              <div className="dg-order-summary">
-                <div className="dg-order-summary-label">Datos del espejo</div>
-                <div className="dg-pedido-card-top">
-                  <span className="dg-pedido-orden">#{p.orden}</span>
-                  <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
-                  <span className="dg-pago-monto">{p.monto ? money(p.monto) : "—"}</span>
+            <details className="dg-pedido-card dg-order-card dg-order-disclosure" key={p.id}>
+              <summary className="dg-order-compact" aria-label={`Abrir pedido de ${p.cliente || "cliente sin nombre"}`}>
+                <span className="dg-order-compact-item dg-order-compact-client">
+                  <small>Nombre</small>
+                  <strong><i>#{p.orden}</i> {p.cliente || "Sin nombre"}</strong>
+                </span>
+                <span className="dg-order-compact-item dg-order-compact-measure">
+                  <small>Medida</small>
+                  <strong>{p.ancho}×{p.alto} cm</strong>
+                </span>
+                <span className="dg-order-compact-item dg-order-compact-method">
+                  <small>Método</small>
+                  <strong><MetodoIcon size={12} /> {p.metodo || "A confirmar"}</strong>
+                </span>
+                <span className="dg-order-compact-item dg-order-compact-step">
+                  <small>Paso</small>
+                  <strong>{paso.numero}/{paso.total} · {paso.label}</strong>
+                </span>
+                <span className={`dg-order-compact-item dg-order-compact-balance ${saldo > 0 ? "dg-order-balance-pending" : "dg-order-balance-paid"}`}>
+                  <small>Saldo restante</small>
+                  <strong>{saldo > 0 ? money(saldo) : "Saldado"}</strong>
+                </span>
+                <ChevronRight size={17} className="dg-order-disclosure-chevron" />
+              </summary>
+
+              <div className="dg-order-expanded">
+                <div className="dg-order-summary">
+                  <div className="dg-order-summary-label">Datos completos del espejo</div>
+                  <div className="dg-pedido-card-top">
+                    <span className="dg-pedido-orden">#{p.orden}</span>
+                    <span className="dg-lead-name">{p.cliente || "Sin nombre"}</span>
+                    <span className="dg-pago-monto">{p.monto ? money(p.monto) : "—"}</span>
+                  </div>
+                  <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.vendedor || "—"} · {p.fecha}</div>
+                  <div className="dg-pedido-badges">
+                    <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
+                    <span className="dg-badge" style={{ "--bc": p.facturado ? "var(--dg-success)" : "var(--dg-danger)" }}>
+                      {p.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {p.facturado ? "Facturado" : "Sin facturar"}
+                    </span>
+                    <span className="dg-badge" style={{ "--bc": saldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
+                      <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
+                    </span>
+                    <span className="dg-badge" style={{ "--bc": "var(--dg-text-dim)" }}><MetodoIcon size={12} /> {p.metodo}</span>
+                    {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "var(--dg-warning)" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
+                    {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
+                  </div>
                 </div>
-                <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · {p.vendedor || "—"} · {p.fecha}</div>
-                <div className="dg-pedido-badges">
-                  <span className="dg-badge" style={{ "--bc": stage.color }}>{stage.stage}</span>
-                  <span className="dg-badge" style={{ "--bc": p.facturado ? "var(--dg-success)" : "var(--dg-danger)" }}>
-                    {p.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {p.facturado ? "Facturado" : "Sin facturar"}
-                  </span>
-                  <span className="dg-badge" style={{ "--bc": saldo > 0 ? "var(--dg-danger)" : "var(--dg-success)" }}>
-                    <CircleDollarSign size={12} /> {saldo > 0 ? `${money(saldo)} pendiente` : "Saldado"}
-                  </span>
-                  <span className="dg-badge" style={{ "--bc": "var(--dg-text-dim)" }}><MetodoIcon size={12} /> {p.metodo}</span>
-                  {comisionElegible(p) && !p.comisionPagada && <span className="dg-badge" style={{ "--bc": "var(--dg-warning)" }}><CircleDollarSign size={12} /> Comisión a liquidar</span>}
-                  {grupoCounts[p.grupoId || p.id] > 1 && <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}><PackagePlus size={12} /> {grupoCounts[p.grupoId || p.id]} espejos del cliente</span>}
+                <FlujoPedido
+                  pedido={p}
+                  canEdit={canEditFull}
+                  onVerificar={marcarVerificado}
+                  onClienteConfirmado={marcarClienteAvisado}
+                  onEnvioConfirmado={marcarEnvioConfirmado}
+                  onEntregar={marcarEntregado}
+                />
+                <div className="dg-order-detail-actions">
+                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => setOpenPedido(p)}>
+                    <Pencil size={13} /> {canEditFull ? "Ver o editar ficha completa" : "Ver ficha completa"}
+                  </button>
+                  {p.estado === "Entregado" && canEditFull && (
+                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => reabrir(p)}>
+                      <RotateCcw size={13} /> Reabrir pedido
+                    </button>
+                  )}
                 </div>
+                {pedidoEstaListo(p) && !p.celular && !p.clienteAvisado && (
+                  <p className="dg-hint dg-order-expanded-hint">Sin celular cargado: avisale por otro medio y después confirmá el aviso.</p>
+                )}
               </div>
-              <FlujoPedido
-                pedido={p}
-                canEdit={canEditFull}
-                onVerificar={marcarVerificado}
-                onClienteConfirmado={marcarClienteAvisado}
-                onEnvioConfirmado={marcarEnvioConfirmado}
-                onEntregar={marcarEntregado}
-              />
-              {p.estado === "Entregado" && canEditFull && (
-                <button className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); reabrir(p); }}>
-                  <RotateCcw size={13} /> Reabrir pedido
-                </button>
-              )}
-              {pedidoEstaListo(p) && !p.celular && !p.clienteAvisado && (
-                <p className="dg-hint" style={{ marginTop: 8 }}>Sin celular cargado: avisale por otro medio y después confirmá el aviso.</p>
-              )}
-            </div>
+            </details>
           );
         };
         const grupos = agrupado === "semana" ? groupByWeek(visibles, "fecha") : groupByMonth(visibles, "fecha");
@@ -2951,6 +2996,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
 
   function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
+  function updateShipping(pedido, patch) {
+    const grupo = pedido.grupoId || pedido.id;
+    onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patch } : p)));
+  }
 
   function mensaje(p) {
     const saldo = pedidoSaldo(p);
@@ -2981,21 +3030,26 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
       <div className="dg-task-list dg-pedido-list">
         {envios.length === 0 && <div className="dg-empty">No hay pedidos con envío o interior pendientes.</div>}
         {envios.map((p) => (
-          <div className="dg-section-card" key={p.id}>
+          <div className="dg-section-card dg-shipping-confirm-card" key={p.id}>
             <div className="dg-section-header"><Truck size={14} /> #{p.orden} · {p.cliente} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
             <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma} · Método: {p.metodo}</div>
-            <EnterFlow autoFocus={false}>
-            <div className="dg-field-grid">
-              <Field label="Teléfono de contacto"><input disabled={!canEdit} value={p.celular} onChange={(e) => update(p.id, { celular: e.target.value })} /></Field>
-              <Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega} onChange={(e) => update(p.id, { detalleEntrega: e.target.value })} /></Field>
-              <Field label="Piso / Depto"><input disabled={!canEdit} value={p.piso} onChange={(e) => update(p.id, { piso: e.target.value })} /></Field>
-            </div>
-            <div className="dg-field-grid" style={{ marginTop: 12 }}>
-              <Field label="Horario de entrega"><input disabled={!canEdit} value={p.horarioEntrega} onChange={(e) => update(p.id, { horarioEntrega: e.target.value })} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
-              <Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo} onChange={(e) => update(p.id, { listo: e.target.value })} /></Field>
-            </div>
-            </EnterFlow>
-            <div className="dg-quote-actions" style={{ marginTop: 10 }}>
+            <details className="dg-shipping-editor">
+              <summary>
+                <span className="dg-shipping-editor-icon"><Pencil size={14} /></span>
+                <span><strong>Cargar o corregir datos de entrega</strong><small>{p.detalleEntrega || "Sin dirección"} · {p.listo || "sin fecha"}</small></span>
+                <ChevronRight size={16} />
+              </summary>
+              <EnterFlow autoFocus={false} className="dg-shipping-editor-body">
+                <div className="dg-shipping-fields">
+                  <div className="dg-shipping-field"><Field label="Teléfono"><input disabled={!canEdit} value={p.celular || ""} onChange={(e) => updateShipping(p, { celular: e.target.value })} /></Field></div>
+                  <div className="dg-shipping-field"><Field label="Piso / Timbre"><input disabled={!canEdit} value={p.piso || ""} onChange={(e) => updateShipping(p, { piso: e.target.value })} /></Field></div>
+                  <div className="dg-shipping-field dg-shipping-address"><Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega || ""} onChange={(e) => updateShipping(p, { detalleEntrega: e.target.value })} /></Field></div>
+                  <div className="dg-shipping-field"><Field label="Horario"><input disabled={!canEdit} value={p.horarioEntrega || ""} onChange={(e) => updateShipping(p, { horarioEntrega: e.target.value })} placeholder="Ej: 13 a 17 hs" /></Field></div>
+                  <div className="dg-shipping-field"><Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo || ""} onChange={(e) => updateShipping(p, { listo: e.target.value })} /></Field></div>
+                </div>
+              </EnterFlow>
+            </details>
+            <div className="dg-quote-actions dg-shipping-copy">
               <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
             </div>
             <FlujoPedido
@@ -3204,6 +3258,24 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
     .filter((p) => esPedidoConEnvio(p) && p.clienteAvisado && p.envioConfirmado && p.estado === "Espejo listo")
     .sort((a, b) => (a.listo || "9999").localeCompare(b.listo || "9999"));
 
+  const grupoIdCounts = confirmados.reduce((acc, p) => {
+    if (p.grupoId) acc[p.grupoId] = (acc[p.grupoId] || 0) + 1;
+    return acc;
+  }, {});
+  const gruposMap = confirmados.reduce((acc, p) => {
+    const normal = (valor) => String(valor || "").trim().toLowerCase();
+    const comparteGrupo = p.grupoId && grupoIdCounts[p.grupoId] > 1;
+    const key = comparteGrupo
+      ? `grupo:${p.grupoId}`
+      : `entrega:${normal(p.cliente)}|${normal(p.celular)}|${normal(p.detalleEntrega)}|${p.listo || ""}`;
+    if (!acc[key]) acc[key] = { key, pedidos: [] };
+    acc[key].pedidos.push(p);
+    return acc;
+  }, {});
+  const entregas = Object.values(gruposMap)
+    .map((grupo) => ({ ...grupo, pedidos: grupo.pedidos.sort((a, b) => (a.orden || 0) - (b.orden || 0)) }))
+    .sort((a, b) => (a.pedidos[0]?.listo || "9999").localeCompare(b.pedidos[0]?.listo || "9999"));
+
   function toggle(id, field) { onChange(pedidos.map((p) => (p.id === id ? { ...p, [field]: !p[field] } : p))); }
   function marcarEntregado(pedido) {
     if (!pedido.clienteAvisado || !pedido.envioConfirmado || pedido.estado !== "Espejo listo") {
@@ -3212,30 +3284,100 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
     }
     onChange(pedidos.map((p) => (p.id === pedido.id ? { ...p, estado: "Entregado", entregadoFecha: new Date().toISOString() } : p)));
   }
+  function datoEntrega(items, field, fallback) {
+    const pedido = items.find((p) => String(p[field] || "").trim());
+    return pedido ? pedido[field] : fallback;
+  }
+  function controlesEspejo(p) {
+    return (
+      <>
+        {canEdit && (
+          <div className="dg-fabrica-actions dg-logistics-payment">
+            <button className={`dg-fabrica-btn ${p.envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => toggle(p.id, "envioPagado")}>
+              <CircleDollarSign size={16} /> {p.envioPagado ? "Envío pagado ✓" : "Marcar envío pagado"}
+            </button>
+          </div>
+        )}
+        <FlujoPedido pedido={p} canEdit={canEdit} onEntregar={marcarEntregado} />
+      </>
+    );
+  }
 
   return (
     <div className="dg-page">
       <p className="dg-hint" style={{ marginBottom: 14 }}>Estos son los envíos que PostVenta ya confirmó con el cliente, ordenados por fecha estimada.</p>
-      <div className="dg-task-list dg-pedido-list">
-        {confirmados.length === 0 && <div className="dg-empty">No hay envíos confirmados pendientes de entregar.</div>}
-        {confirmados.map((p) => (
-          <div className="dg-pedido-card" key={p.id}>
-            <div className="dg-pedido-card-top">
-              <span className="dg-pedido-orden">#{p.orden}</span>
-              <span className="dg-lead-name">{p.cliente}</span>
-              <span className="dg-pago-meta">{p.listo || "sin fecha"}</span>
-            </div>
-            <div className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.metodo} · {p.detalleEntrega || "sin dirección"}</div>
-            {canEdit && (
-              <div className="dg-fabrica-actions">
-                <button className={`dg-fabrica-btn ${p.envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => toggle(p.id, "envioPagado")}>
-                  <CircleDollarSign size={16} /> {p.envioPagado ? "Envío pagado ✓" : "Marcar envío pagado"}
-                </button>
+      <div className="dg-task-list dg-logistics-list">
+        {entregas.length === 0 && <div className="dg-empty">No hay envíos confirmados pendientes de entregar.</div>}
+        {entregas.map((grupo) => {
+          const items = grupo.pedidos;
+          const principal = items[0];
+          const nombre = datoEntrega(items, "cliente", "Sin nombre");
+          const telefono = datoEntrega(items, "celular", "Sin teléfono");
+          const direccion = datoEntrega(items, "detalleEntrega", "Sin dirección");
+          const piso = datoEntrega(items, "piso", "Sin piso / timbre");
+          const fecha = datoEntrega(items, "listo", "Sin fecha");
+          const saldo = items.reduce((total, p) => total + Math.max(0, pedidoSaldo(p)), 0);
+          const medidas = items.map((p) => `${p.ancho}×${p.alto} cm`).join(" · ");
+          const ordenes = items.map((p) => `#${p.orden}`).join(" · ");
+          return (
+            <article className="dg-section-card dg-logistics-card" key={grupo.key}>
+              <div className="dg-logistics-head">
+                <span><Truck size={15} /> Entrega confirmada</span>
+                <strong>{ordenes}</strong>
+                <time>{fecha}</time>
               </div>
-            )}
-            <FlujoPedido pedido={p} canEdit={canEdit} onEntregar={marcarEntregado} />
-          </div>
-        ))}
+
+              <div className="dg-logistics-data">
+                <div className="dg-logistics-datum dg-logistics-name">
+                  <span><User size={13} /> Nombre</span>
+                  <strong>{nombre}</strong>
+                </div>
+                <div className="dg-logistics-datum">
+                  <span><Phone size={13} /> Teléfono</span>
+                  <strong>{telefono}</strong>
+                </div>
+                <div className="dg-logistics-datum dg-logistics-address">
+                  <span><MapPin size={13} /> Dirección</span>
+                  <strong>{direccion}</strong>
+                </div>
+                <div className="dg-logistics-datum">
+                  <span><Building2 size={13} /> Piso / Timbre</span>
+                  <strong>{piso}</strong>
+                </div>
+                <div className="dg-logistics-datum dg-logistics-mirror-total">
+                  <span><Package size={13} /> Espejos</span>
+                  <strong>{items.length} {items.length === 1 ? "espejo" : "espejos"}</strong>
+                  <small>{medidas}</small>
+                </div>
+                <div className={`dg-logistics-datum dg-logistics-balance ${saldo > 0 ? "dg-logistics-balance-pending" : "dg-logistics-balance-paid"}`}>
+                  <span><CircleDollarSign size={13} /> Saldo restante</span>
+                  <strong>{saldo > 0 ? money(saldo) : "Saldado"}</strong>
+                </div>
+              </div>
+
+              {items.length > 1 ? (
+                <div className="dg-logistics-mirrors">
+                  {items.map((p, index) => (
+                    <details className="dg-logistics-mirror" key={p.id}>
+                      <summary>
+                        <span>Espejo {index + 1}</span>
+                        <strong>{p.ancho}×{p.alto} cm · {p.forma}</strong>
+                        <small>#{p.orden}</small>
+                        <ChevronRight size={16} />
+                      </summary>
+                      <div className="dg-logistics-mirror-body">{controlesEspejo(p)}</div>
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <div className="dg-logistics-single">
+                  <div className="dg-logistics-single-head"><span>Espejo</span><strong>{principal.ancho}×{principal.alto} cm · {principal.forma}</strong></div>
+                  {controlesEspejo(principal)}
+                </div>
+              )}
+            </article>
+          );
+        })}
       </div>
     </div>
   );
@@ -5191,6 +5333,92 @@ function Style() {
       .dg-order-flow-cancelled { display:flex; align-items:center; gap:6px; margin-top:7px; padding:9px 10px; border:1px solid rgba(var(--dg-danger-rgb),.24); border-radius:9px; background:rgba(var(--dg-danger-rgb),.07); color:var(--dg-danger); font-size:10px; }
       @keyframes dg-order-step-in { from { opacity:.35; transform:translateX(5px); } to { opacity:1; transform:translateX(0); } }
 
+      /* Pedidos: una fila operativa corta y el detalle completo solo al desplegar. */
+      .dg-order-disclosure { display:block; cursor:default; }
+      .dg-order-disclosure > summary::-webkit-details-marker,
+      .dg-shipping-editor > summary::-webkit-details-marker,
+      .dg-logistics-mirror > summary::-webkit-details-marker { display:none; }
+      .dg-order-compact { display:grid; grid-template-columns:minmax(180px,1.4fr) minmax(92px,.7fr) minmax(112px,.8fr) minmax(175px,1.2fr) minmax(125px,.8fr) 18px; align-items:center; gap:10px; min-height:61px; padding:9px 12px; list-style:none; background:var(--dg-order-info); cursor:pointer; }
+      .dg-order-compact:hover { background:color-mix(in srgb,var(--dg-order-info) 92%,var(--dg-accent) 8%); }
+      .dg-order-compact-item { min-width:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-order-compact-item small { color:var(--dg-text-faint); font-size:7.5px; font-weight:750; letter-spacing:.65px; line-height:1; text-transform:uppercase; }
+      .dg-order-compact-item strong { min-width:0; overflow:hidden; color:var(--dg-text); font-size:10.5px; font-weight:650; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-order-compact-client strong { font-family:'Space Grotesk',sans-serif; font-size:13.5px; }
+      .dg-order-compact-client i { margin-right:3px; color:var(--dg-accent); font-family:'JetBrains Mono',monospace; font-size:9px; font-style:normal; }
+      .dg-order-compact-method strong { display:flex; align-items:center; gap:4px; }
+      .dg-order-compact-step strong { color:var(--dg-accent-2); }
+      .dg-order-compact-balance { align-items:flex-end; text-align:right; }
+      .dg-order-compact-balance strong { font-family:'JetBrains Mono',monospace; font-size:11px; }
+      .dg-order-balance-pending strong { color:var(--dg-danger); }
+      .dg-order-balance-paid strong { color:var(--dg-success); }
+      .dg-order-disclosure-chevron { color:var(--dg-text-faint); transition:transform .18s ease,color .18s ease; }
+      .dg-order-disclosure[open] .dg-order-disclosure-chevron { transform:rotate(90deg); color:var(--dg-accent); }
+      .dg-order-expanded { overflow:hidden; border-top:1px solid rgba(var(--dg-line-rgb),.13); }
+      .dg-order-detail-actions { display:flex; justify-content:flex-end; gap:6px; padding:8px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-order-flow); }
+      .dg-order-detail-actions .dg-btn-ghost { min-height:31px; padding:6px 9px; font-size:9px; }
+      .dg-order-expanded-hint { margin:0; padding:0 10px 9px; background:var(--dg-order-flow); }
+
+      /* PostVenta: los cinco campos de coordinación permanecen disponibles sin ocupar toda la tarjeta. */
+      .dg-pedido-list { max-height:none; overflow:visible; }
+      .dg-shipping-confirm-card { flex-shrink:0; overflow:hidden; }
+      .dg-shipping-editor { margin:8px 0 0; overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.13); border-radius:10px; background:var(--dg-surface-2); }
+      .dg-shipping-editor > summary { min-height:48px; display:grid; grid-template-columns:29px minmax(0,1fr) 18px; align-items:center; gap:8px; padding:7px 10px; list-style:none; cursor:pointer; }
+      .dg-shipping-editor > summary > span:nth-child(2) { min-width:0; display:flex; flex-direction:column; gap:1px; }
+      .dg-shipping-editor > summary strong { color:var(--dg-text); font-size:10.5px; }
+      .dg-shipping-editor > summary small { overflow:hidden; color:var(--dg-text-faint); font-size:8.5px; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-shipping-editor > summary > svg { color:var(--dg-text-faint); transition:transform .18s ease; }
+      .dg-shipping-editor[open] > summary > svg { transform:rotate(90deg); color:var(--dg-accent); }
+      .dg-shipping-editor-icon { width:27px; height:27px; display:flex !important; align-items:center; justify-content:center; border-radius:7px; background:rgba(var(--dg-accent-rgb),.1); color:var(--dg-accent); }
+      .dg-shipping-editor-body { padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-bg); }
+      .dg-shipping-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+      .dg-shipping-field { min-width:0; }
+      .dg-shipping-address { grid-column:1 / -1; }
+      .dg-shipping-field .dg-field { gap:3px; }
+      .dg-shipping-field .dg-field label { font-size:8.5px; }
+      .dg-shipping-field .dg-field input { min-width:0; min-height:39px; padding:7px 9px; font-size:12px; }
+      .dg-shipping-copy { margin-top:7px; }
+      .dg-shipping-copy .dg-btn-ghost { min-height:34px; padding:7px 10px; font-size:10px; }
+
+      /* Logística: una entrega por cliente, con la información de calle a primera vista. */
+      .dg-logistics-list { display:flex; flex-direction:column; gap:12px; max-height:none; overflow:visible; }
+      .dg-logistics-card { flex-shrink:0; overflow:hidden; padding:0; border-color:rgba(var(--dg-accent-rgb),.28); }
+      .dg-logistics-head { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid rgba(var(--dg-line-rgb),.11); background:var(--dg-order-flow); }
+      .dg-logistics-head > span { display:flex; align-items:center; gap:6px; color:var(--dg-accent); font-size:8.5px; font-weight:750; letter-spacing:.65px; text-transform:uppercase; }
+      .dg-logistics-head > strong { color:var(--dg-text-dim); font-family:'JetBrains Mono',monospace; font-size:9px; }
+      .dg-logistics-head > time { color:var(--dg-text); font-family:'JetBrains Mono',monospace; font-size:10px; }
+      .dg-logistics-data { display:grid; grid-template-columns:1fr 1.35fr .8fr; gap:7px; padding:10px; background:var(--dg-order-info); }
+      .dg-logistics-datum { min-width:0; min-height:66px; display:flex; flex-direction:column; justify-content:center; gap:3px; padding:9px 10px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:9px; background:var(--dg-surface-2); }
+      .dg-logistics-datum > span { display:flex; align-items:center; gap:5px; color:var(--dg-text-faint); font-size:8px; font-weight:750; letter-spacing:.55px; text-transform:uppercase; }
+      .dg-logistics-datum > strong { overflow-wrap:anywhere; color:var(--dg-text); font-family:'Space Grotesk',sans-serif; font-size:15px; line-height:1.15; }
+      .dg-logistics-datum > small { overflow:hidden; color:var(--dg-text-dim); font-size:9px; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-logistics-name { grid-column:1; grid-row:1; }
+      .dg-logistics-name > strong { font-size:20px; }
+      .dg-logistics-data > .dg-logistics-datum:nth-child(2) { grid-column:2; grid-row:1; }
+      .dg-logistics-address { grid-column:1 / 3; grid-row:2; }
+      .dg-logistics-address > strong { font-size:17px; }
+      .dg-logistics-data > .dg-logistics-datum:nth-child(4) { grid-column:3; grid-row:1; }
+      .dg-logistics-mirror-total { grid-column:1 / 3; grid-row:3; }
+      .dg-logistics-mirror-total > strong { font-size:18px; }
+      .dg-logistics-balance { grid-column:3; grid-row:2 / 4; }
+      .dg-logistics-balance > strong { font-family:'JetBrains Mono',monospace; font-size:19px; }
+      .dg-logistics-balance-pending > strong { color:var(--dg-danger); }
+      .dg-logistics-balance-paid > strong { color:var(--dg-success); }
+      .dg-logistics-mirrors, .dg-logistics-single { padding:9px 10px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.11); background:var(--dg-order-flow); }
+      .dg-logistics-mirrors { display:flex; flex-direction:column; gap:6px; }
+      .dg-logistics-mirror { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:9px; background:var(--dg-surface); }
+      .dg-logistics-mirror > summary { min-height:45px; display:grid; grid-template-columns:auto minmax(0,1fr) auto 17px; align-items:center; gap:8px; padding:7px 9px; list-style:none; cursor:pointer; }
+      .dg-logistics-mirror > summary > span, .dg-logistics-single-head > span { color:var(--dg-accent); font-size:8px; font-weight:750; letter-spacing:.55px; text-transform:uppercase; }
+      .dg-logistics-mirror > summary > strong { overflow:hidden; color:var(--dg-text); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-logistics-mirror > summary > small { color:var(--dg-text-dim); font-family:'JetBrains Mono',monospace; font-size:9px; }
+      .dg-logistics-mirror > summary > svg { color:var(--dg-text-faint); transition:transform .18s ease; }
+      .dg-logistics-mirror[open] > summary > svg { transform:rotate(90deg); color:var(--dg-accent); }
+      .dg-logistics-mirror-body { padding:0 8px 8px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-logistics-single-head { display:flex; align-items:center; gap:8px; margin-bottom:7px; padding:0 2px; }
+      .dg-logistics-single-head > strong { color:var(--dg-text); font-size:11px; }
+      .dg-logistics-payment { margin:7px 0; }
+      .dg-logistics-payment .dg-fabrica-btn { min-height:34px; padding:7px 9px; font-size:10px; }
+      .dg-logistics-card .dg-order-flow { border:1px solid rgba(var(--dg-line-rgb),.12); border-top:2px solid rgba(var(--dg-accent-rgb),.42); border-radius:9px; }
+
       .dg-process-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
       .dg-process-tabs button { --pc:var(--dg-accent); min-height:70px; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; padding:11px 13px; border:1px solid rgba(var(--dg-line-rgb),.09); border-radius:12px; background:var(--dg-surface-2); color:var(--dg-text-dim); text-align:left; cursor:pointer; transition:border-color .15s ease,background .15s ease; }
       .dg-process-tabs button:hover { border-color:color-mix(in srgb,var(--pc) 38%,rgba(var(--dg-line-rgb),.1)); }
@@ -5279,6 +5507,10 @@ function Style() {
         .dg-crm-filters > .dg-pedido-search { flex:1 1 calc(60% - 3px); width:auto; min-width:0; }
         .dg-crm-filters > .dg-periodo-toggle { flex:1 1 calc(40% - 3px); justify-content:center; }
         .dg-crm-filters > .dg-btn-ghost, .dg-crm-filters > .dg-btn-primary { flex:1 1 calc(50% - 3px); justify-content:center; margin-left:0 !important; }
+        .dg-crm-filters > select, .dg-crm-filters > .dg-pedido-search { min-height:38px; padding:7px 9px; font-size:13px; }
+        .dg-crm-filters > .dg-periodo-toggle { min-height:38px; padding:2px; }
+        .dg-crm-filters > .dg-periodo-toggle button { padding:5px 8px; font-size:10.5px; }
+        .dg-crm-filters > .dg-btn-ghost, .dg-crm-filters > .dg-btn-primary { min-height:40px; padding:7px 10px; font-size:11.5px; }
         .dg-order-tools-details { margin-bottom:8px; }
         .dg-order-tools-details > summary { min-height:38px; padding:7px 10px; }
         .dg-order-tools-details > summary > small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -5299,6 +5531,17 @@ function Style() {
         .dg-month-header { padding:9px 11px; }
         .dg-pedido-card:not(.dg-fabrica-card) { gap:5px; padding:9px 10px; }
         .dg-order-card { gap:0 !important; padding:0 !important; }
+        .dg-order-compact { grid-template-columns:minmax(0,1.25fr) minmax(82px,.8fr) minmax(100px,1fr) 16px; grid-template-rows:auto auto; gap:4px 8px; min-height:72px; padding:6px 9px; }
+        .dg-order-compact-client { grid-column:1 / 3; grid-row:1; }
+        .dg-order-compact-balance { grid-column:3; grid-row:1; }
+        .dg-order-compact-measure { grid-column:1; grid-row:2; }
+        .dg-order-compact-method { grid-column:2; grid-row:2; }
+        .dg-order-compact-step { grid-column:3; grid-row:2; }
+        .dg-order-disclosure-chevron { grid-column:4; grid-row:1 / 3; align-self:center; }
+        .dg-order-compact-item strong { font-size:9.5px; }
+        .dg-order-compact-client strong { font-size:13px; }
+        .dg-order-compact-step strong { white-space:normal; line-height:1.15; }
+        .dg-order-compact-balance strong { font-size:10px; }
         .dg-order-summary { padding:9px 10px 8px; }
         .dg-order-flow { padding:7px 9px 8px; }
         .dg-order-summary > .dg-pedido-badges { flex-wrap:nowrap; overflow-x:auto; padding-bottom:1px; scrollbar-width:none; }
@@ -5307,6 +5550,28 @@ function Style() {
         .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:10px; line-height:1.15; }
         .dg-fabrica-btn-next { grid-column:1 / -1; font-size:11px; }
         .dg-order-step { min-height:0; }
+        .dg-shipping-confirm-card { padding:11px; }
+        .dg-shipping-editor > summary { min-height:46px; padding:6px 8px; }
+        .dg-shipping-editor-body { padding:7px; }
+        .dg-shipping-fields { gap:6px; }
+        .dg-shipping-field .dg-field input { min-height:40px; padding:7px 8px; font-size:16px; }
+        .dg-logistics-head { grid-template-columns:minmax(0,1fr) auto; gap:5px; padding:9px 10px; }
+        .dg-logistics-head > strong { grid-column:1; grid-row:2; }
+        .dg-logistics-head > time { grid-column:2; grid-row:1 / 3; }
+        .dg-logistics-data { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; padding:8px; }
+        .dg-logistics-name { grid-column:1 / -1; grid-row:1; }
+        .dg-logistics-data > .dg-logistics-datum:nth-child(2) { grid-column:1; grid-row:2; }
+        .dg-logistics-data > .dg-logistics-datum:nth-child(4) { grid-column:2; grid-row:2; }
+        .dg-logistics-address { grid-column:1 / -1; grid-row:3; }
+        .dg-logistics-mirror-total { grid-column:1 / -1; grid-row:4; }
+        .dg-logistics-balance { grid-column:1 / -1; grid-row:5; min-height:61px; }
+        .dg-logistics-datum { min-height:61px; padding:8px 9px; }
+        .dg-logistics-datum > strong { font-size:15px; }
+        .dg-logistics-name > strong { font-size:21px; }
+        .dg-logistics-address > strong { font-size:18px; }
+        .dg-logistics-mirror-total > strong { font-size:18px; }
+        .dg-logistics-balance > strong { font-size:22px; }
+        .dg-logistics-mirror > summary { grid-template-columns:auto minmax(0,1fr) auto 16px; gap:6px; padding:7px 8px; }
       }
       @media (max-width:520px) {
         .dg-order-flow-nav { grid-template-columns:minmax(68px,1fr) auto auto; gap:5px; padding:4px 5px 4px 7px; }
@@ -5323,6 +5588,8 @@ function Style() {
       @media (max-width:340px) {
         .dg-building-floor .dg-plant-grid { grid-template-columns:1fr; }
         .dg-room-tile { aspect-ratio:16/10; }
+        .dg-shipping-fields { grid-template-columns:1fr; }
+        .dg-shipping-address { grid-column:auto; }
       }
       @media (prefers-reduced-motion: reduce) {
         .dg-spin { animation:none; }
