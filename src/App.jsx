@@ -5058,20 +5058,47 @@ function Style() {
         .dg-mobile-back-fab:active { transform:scale(0.94); }
       }
 
-      /* Refuerzo de contraste dentro de modales: usa mayor especificidad para
-         ganarle a cualquier otra regla, así login/ajustes nunca quedan "planos". */
+      /* Contraste alto y explícito dentro de modales (login, ajustes): colores
+         fijos, no dependen de variables de tema que otra regla pueda pisar. */
+      .dg-modal {
+        background: #26262B !important;
+        border: 1.5px solid rgba(255,255,255,0.18) !important;
+      }
+      .dg-modal .dg-modal-title { color: #FFFFFF !important; font-weight: 700; }
+      .dg-modal .dg-modal-sub { color: #B8B8C0 !important; }
+      .dg-modal .dg-hint { color: #C7C7CE !important; }
+      .dg-modal .dg-form label {
+        color: #FFFFFF !important; font-weight: 700; font-size: 13px !important;
+      }
       .dg-modal .dg-form input,
       .dg-modal .dg-form select {
-        background: var(--dg-surface); border: 1.5px solid rgba(var(--dg-line-rgb), 0.28); color: var(--dg-text);
+        background: #FFFFFF !important;
+        border: 1.5px solid #8A8A94 !important;
+        color: #16161A !important;
+        font-weight: 500;
       }
+      .dg-modal .dg-form input::placeholder { color: #6B6B74 !important; }
       .dg-modal .dg-form input:focus,
       .dg-modal .dg-form select:focus {
-        border-color: var(--dg-accent); box-shadow: 0 0 0 3px rgba(var(--dg-accent-rgb), 0.18);
+        border-color: var(--dg-accent) !important;
+        box-shadow: 0 0 0 3px rgba(var(--dg-accent-rgb), 0.35) !important;
       }
-      .dg-modal .dg-form label { color: var(--dg-text-dim); font-weight: 600; }
-      .dg-modal .dg-btn-primary { background: var(--dg-accent); color: var(--dg-on-accent); box-shadow: 0 4px 16px -6px rgba(var(--dg-accent-rgb), 0.5); }
-      .dg-modal .dg-btn-ghost { border: 1.5px solid rgba(var(--dg-line-rgb), 0.28); background: rgba(var(--dg-line-rgb), 0.05); color: var(--dg-text-dim); }
-      .dg-modal .dg-btn-ghost:hover { background: rgba(var(--dg-line-rgb), 0.09); color: var(--dg-text); }
+      .dg-modal .dg-btn-primary {
+        background: var(--dg-accent) !important;
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        border: none !important;
+        box-shadow: 0 4px 16px -4px rgba(var(--dg-accent-rgb), 0.6) !important;
+      }
+      .dg-modal .dg-btn-ghost {
+        background: rgba(255,255,255,0.09) !important;
+        border: 1.5px solid rgba(255,255,255,0.3) !important;
+        color: #FFFFFF !important;
+        font-weight: 600 !important;
+      }
+      .dg-modal .dg-btn-ghost:hover { background: rgba(255,255,255,0.16) !important; }
+      .dg-modal .dg-icon-btn { color: #FFFFFF !important; }
+      .dg-modal .dg-error { color: #FF8A80 !important; font-weight: 600; }
       .dg-modal-ajustes { max-width:820px; }
       .dg-modal-ajustes .dg-page { max-width:none; }
       .dg-vendedores-chips { display:flex; gap:6px; flex-wrap:wrap; }
