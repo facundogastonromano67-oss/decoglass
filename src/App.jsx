@@ -6218,6 +6218,7 @@ function Style() {
       .dg-seg-actual { color:var(--dg-text); font-weight:700; }
       .dg-seg-actual .dg-seguimiento-punto { border-color:var(--dg-accent); color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),0.12); }
       .dg-seguimiento-footer { text-align:center; font-size:11.5px; color:var(--dg-text-faint); margin-top:16px; }
+      .dg-seguimiento-whatsapp { justify-content:center; text-decoration:none; width:100%; margin-top:18px; background:linear-gradient(145deg, #25D366, #1DA851); }
       @media (max-width:480px) { .dg-seguimiento { padding-left:16px; padding-right:16px; } }
     `}</style>
   );
@@ -6226,8 +6227,8 @@ function Style() {
 // ---- Portal público de seguimiento (sin login) ----
 const SEGUIMIENTO_PASOS_PUBLICOS = [
   { id: "confirmado", label: "Pedido confirmado" },
-  { id: "fabricacion", label: "En fabricación" },
-  { id: "listo", label: "Listo" },
+  { id: "fabricacion", label: "En producción" },
+  { id: "listo", label: "Espejo listo" },
   { id: "entregado", label: "Entregado" },
 ];
 
@@ -6235,9 +6236,11 @@ function pasoPublicoDe(pedido) {
   if (!pedido) return 0;
   if (pedido.estado === "Entregado") return 3;
   if (pedidoEstaListo(pedido)) return 2;
-  if (pedido.estado === "Sin pasar a fábrica" || pedido.estado === "Verificado") return 0;
-  return 1;
+  if (pedido.estado === "Sin pasar a fábrica") return 0;
+  return 1; // Verificado en adelante ya se muestra como "En producción"
 }
+
+const WHATSAPP_CONSULTAS = "1173571399";
 
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
@@ -6267,6 +6270,7 @@ function SeguimientoPublico({ pedidoId }) {
     );
   }
   if (pedido === null || pedido.estado === "Cancelado") {
+    const linkGenerico = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent("Hola! Tengo una consulta sobre mi pedido")}`;
     return (
       <div className="dg-app dg-seguimiento" data-theme={tema}>
         <Style />
@@ -6275,6 +6279,9 @@ function SeguimientoPublico({ pedidoId }) {
           <div className="dg-empty" style={{ marginTop: 24 }}>
             {pedido === null ? "No encontramos ningún pedido con este link. Consultanos si creés que es un error." : "Este pedido fue cancelado. Consultanos si tenés dudas."}
           </div>
+          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkGenerico} target="_blank" rel="noopener noreferrer">
+            <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
+          </a>
         </div>
       </div>
     );
@@ -6283,6 +6290,8 @@ function SeguimientoPublico({ pedidoId }) {
   const pasoActual = pasoPublicoDe(pedido);
   const produccionCompletada = pasosProduccionCompletados(pedido);
   const entrega = ENTREGA_ESTILO[pedido.metodo] || ENTREGA_ESTILO.default;
+  const funciones = funcionesPedido(pedido, true);
+  const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi pedido #${pedido.orden}`)}`;
 
   return (
     <div className="dg-app dg-seguimiento" data-theme={tema}>
@@ -6294,8 +6303,6 @@ function SeguimientoPublico({ pedidoId }) {
             <span>Pedido #{pedido.orden}</span>
             <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{pedido.metodo}</span>
           </div>
-          <div className="dg-fab-medida"><strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small></div>
-          <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo}</div>
 
           <div className="dg-seguimiento-pasos">
             {SEGUIMIENTO_PASOS_PUBLICOS.map((paso, i) => (
@@ -6312,13 +6319,31 @@ function SeguimientoPublico({ pedidoId }) {
             </p>
           )}
           {pedido.listo && pasoActual < 3 && (
-            <p className="dg-hint" style={{ marginTop: 6 }}>Fecha estimada: <strong>{pedido.listo}</strong></p>
+            <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{pedido.listo}</strong></p>
           )}
           {pasoActual === 2 && (
             <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
-              {pedido.metodo === "Retira" ? "¡Ya podés coordinar el retiro!" : "¡Ya está listo para coordinar la entrega!"}
+              <strong>Espejo listo para coordinar entrega.</strong>
             </p>
           )}
+
+          <div className="dg-verif-specs" style={{ marginTop: 16 }}>
+            <div className="dg-fab-medida">
+              <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+              {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
+            </div>
+            <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
+            {funciones.length > 0 && (
+              <div className="dg-fab-funciones">
+                {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
+              </div>
+            )}
+            {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+          </div>
+
+          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
+            <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
+          </a>
         </div>
         <p className="dg-seguimiento-footer">Esta página se actualiza sola. Ante cualquier duda, escribinos.</p>
       </div>
