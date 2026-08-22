@@ -6,6 +6,26 @@ create table if not exists kv_store (
   updated_at timestamptz not null default now()
 );
 
+-- Cada fila es UN pedido. Antes todos los pedidos vivían juntos en un solo
+-- valor de kv_store (clave "pedidos"), así que guardar cualquier cambio
+-- reescribía la lista entera. Si dos personas guardaban casi al mismo tiempo,
+-- una podía pisarle el cambio a la otra sin que nadie se diera cuenta.
+-- Con una fila por pedido, guardar el pedido #366 solo toca esa fila —
+-- nunca choca con quien esté guardando el #201 al mismo tiempo.
+create table if not exists pedidos_rows (
+  id text primary key,
+  data jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table pedidos_rows enable row level security;
+
+create policy "Permitir todo con la clave anon en pedidos_rows"
+  on pedidos_rows
+  for all
+  using (true)
+  with check (true);
+
 -- Habilitamos Row Level Security (obligatorio en Supabase) y agregamos
 -- una política abierta: cualquiera que tenga la URL y la clave "anon" de
 -- tu proyecto puede leer y escribir esta tabla. Es lo más simple para que

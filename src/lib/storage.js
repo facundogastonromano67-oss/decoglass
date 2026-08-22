@@ -56,6 +56,38 @@ async function broadcastChange(row) {
   }
 }
 
+export const pedidosStore = {
+  async getAll() {
+    const { data, error } = await supabase.from("pedidos_rows").select("id, data, updated_at");
+    if (error) throw error;
+    return (data || []).map((r) => r.data);
+  },
+
+  async upsertMany(lista) {
+    if (!lista.length) return;
+    const rows = lista.map((p) => ({ id: p.id, data: p, updated_at: new Date().toISOString() }));
+    const { error } = await supabase.from("pedidos_rows").upsert(rows);
+    if (error) throw error;
+    rows.forEach((r) => broadcastChange({ key: `pedido:${r.id}`, value: JSON.stringify(r.data), updated_at: r.updated_at }));
+  },
+
+  async removeMany(ids) {
+    if (!ids.length) return;
+    const { error } = await supabase.from("pedidos_rows").delete().in("id", ids);
+    if (error) throw error;
+    ids.forEach((id) => broadcastChange({ key: `pedido-borrado:${id}`, value: id, updated_at: new Date().toISOString() }));
+  },
+
+  // Avisa (mejor esfuerzo) que hay cambios en pedidos; el otro cliente hace un refetch completo.
+  subscribeRealtime(onChange) {
+    const channel = supabase
+      .channel("pedidos-rows-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "pedidos_rows" }, onChange)
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch (e) {} };
+  },
+};
+
 export const storage = {
   async get(key) {
     const { data, error } = await supabase

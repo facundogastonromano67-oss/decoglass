@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { storage } from "./lib/storage";
+import { storage, pedidosStore } from "./lib/storage";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
   Lock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
@@ -725,7 +725,7 @@ function breakdownBy(entries, field, labels) {
 
 const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
-  "vendedores", "pedidos", "recursos-venta", "facturas-manuales", "reclamos",
+  "vendedores", "recursos-venta", "facturas-manuales", "reclamos",
   "stock-espejos", "stock-materiales", "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins",
 ];
@@ -775,6 +775,7 @@ export default function App() {
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
   const syncRefreshingRef = useRef(false);
+  const pedidosRefreshingRef = useRef(false);
   const localWritesRef = useRef({});
 
   function startSession(s) {
@@ -812,7 +813,6 @@ export default function App() {
 
     let parsed;
     try { parsed = JSON.parse(row.value); } catch (error) { return; }
-    if (row.key === "pedidos" && Array.isArray(parsed)) parsed = normalizarOrdenesPorGrupo(parsed);
 
     const setters = {
       sectors: setSectors,
@@ -822,7 +822,6 @@ export default function App() {
       quotes: setQuotes,
       leads: setLeads,
       vendedores: setVendedores,
-      pedidos: setPedidos,
       "recursos-venta": setRecursos,
       "facturas-manuales": setFacturas,
       reclamos: setReclamos,
@@ -895,6 +894,41 @@ export default function App() {
     };
   }, [loading]);
 
+  // Sincronización de pedidos: como cada uno vive en su propia fila, refrescar
+  // siempre trae la versión real de todos — nunca puede "perder" el cambio de
+  // otra persona, porque nadie reescribe el conjunto entero al guardar.
+  async function refreshPedidos() {
+    if (pedidosRefreshingRef.current) return;
+    pedidosRefreshingRef.current = true;
+    try {
+      const frescos = normalizarOrdenesPorGrupo(await pedidosStore.getAll());
+      setPedidos(frescos);
+    } catch (e) {
+      // sin conexión: se mantiene lo que ya está visible
+    } finally {
+      pedidosRefreshingRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    if (loading) return undefined;
+    let active = true;
+    const unsubscribe = pedidosStore.subscribeRealtime(() => { if (active) refreshPedidos(); });
+    const interval = window.setInterval(() => { if (active) refreshPedidos(); }, 4000);
+    const refreshWhenVisible = () => { if (active && document.visibilityState === "visible") refreshPedidos(); };
+    window.addEventListener("focus", refreshWhenVisible);
+    window.addEventListener("online", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      active = false;
+      unsubscribe();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      window.removeEventListener("online", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loading]);
+
   async function load() {
     let loadedSectors = DEFAULT_SECTORS;
     try {
@@ -942,12 +976,24 @@ export default function App() {
       setVendedores(v ? JSON.parse(v.value) : DEFAULT_VENDEDORES);
     } catch (e) { setVendedores(DEFAULT_VENDEDORES); }
     try {
-      const p = await storage.get("pedidos", true);
-      const pedidosGuardados = p ? JSON.parse(p.value) : [];
+      let pedidosGuardados = await pedidosStore.getAll();
+      if (pedidosGuardados.length === 0) {
+        // Migración de una sola vez: si la tabla nueva está vacía pero el
+        // bloque viejo (kv_store, clave "pedidos") tiene datos, los pasamos
+        // a filas individuales. No se borra el bloque viejo, por las dudas.
+        try {
+          const viejo = await storage.get("pedidos", true);
+          const viejosArray = viejo ? JSON.parse(viejo.value) : [];
+          if (Array.isArray(viejosArray) && viejosArray.length > 0) {
+            await pedidosStore.upsertMany(viejosArray);
+            pedidosGuardados = viejosArray;
+          }
+        } catch (e) { /* sin datos viejos para migrar, sigue con lista vacía */ }
+      }
       const pedidosNormalizados = normalizarOrdenesPorGrupo(pedidosGuardados);
       setPedidos(pedidosNormalizados);
       if (JSON.stringify(pedidosNormalizados) !== JSON.stringify(pedidosGuardados)) {
-        try { await storage.set("pedidos", JSON.stringify(pedidosNormalizados), true); } catch (error) {}
+        try { await pedidosStore.upsertMany(pedidosNormalizados); } catch (error) {}
       }
     } catch (e) { setPedidos([]); }
     try {
@@ -984,15 +1030,24 @@ export default function App() {
     } catch (e) { setAuditoria([]); }
     try {
       const ad = await storage.get("admins", true);
-      if (ad) { setAdmins(JSON.parse(ad.value)); setAdminKeyExists(true); }
-      else {
+      let lista = ad ? JSON.parse(ad.value) : [];
+      if (lista.length === 0) {
         const viejo = await storage.get("admin-key", true);
-        if (viejo) {
-          const migrado = [{ id: uid(), nombre: "Facundo", clave: viejo.value }];
-          setAdmins(migrado); setAdminKeyExists(true);
-          try { await storage.set("admins", JSON.stringify(migrado), true); } catch (e) {}
-        } else { setAdmins([]); setAdminKeyExists(false); }
+        if (viejo) lista = [{ id: uid(), nombre: "Facundo", clave: viejo.value }];
       }
+      // Migración al modelo unificado: si hay entradas sin "rol" (formato viejo,
+      // donde solo existían administradores), les asigna rol admin y además
+      // incorpora el encargado/operarios que tuviera cada sector como usuarios propios.
+      const necesitaMigrar = lista.some((u) => !u.rol);
+      if (necesitaMigrar) {
+        lista = lista.map((u) => (u.rol ? u : { ...u, rol: "admin", sectorId: null }));
+        for (const sec of loadedSectors) {
+          if (sec.clave && sec.encargado) lista.push({ id: uid(), nombre: sec.encargado, clave: sec.clave, rol: "encargado", sectorId: sec.id });
+          for (const op of sec.operarios || []) lista.push({ id: uid(), nombre: op.nombre, clave: op.clave, rol: "operario", sectorId: sec.id });
+        }
+        try { await storage.set("admins", JSON.stringify(lista), true); } catch (e) {}
+      }
+      setAdmins(lista); setAdminKeyExists(lista.length > 0);
     } catch (e) { setAdminKeyExists(false); }
     setLoading(false);
   }
@@ -1021,7 +1076,30 @@ export default function App() {
   async function persistQuotes(next) { guardar("quotes", next, () => setQuotes(next)); }
   async function persistLeads(next) { guardar("leads", next, () => setLeads(next)); }
   async function persistVendedores(next) { guardar("vendedores", next, () => setVendedores(next)); }
-  async function persistPedidos(next) { guardar("pedidos", next, () => setPedidos(next)); }
+  // Guarda pedidos por fila individual: solo toca en la base los pedidos que
+  // realmente cambiaron (se agregaron, se editaron o se borraron). Así, si
+  // dos personas guardan pedidos distintos casi al mismo tiempo, nunca se
+  // pisan entre sí — cada una solo escribe su propia fila.
+  const pedidosRef = useRef(pedidos);
+  pedidosRef.current = pedidos;
+  async function persistPedidos(next) {
+    const anterior = pedidosRef.current || [];
+    const prevById = new Map(anterior.map((p) => [p.id, p]));
+    const nextIds = new Set(next.map((p) => p.id));
+    const aGuardar = next.filter((p) => JSON.stringify(prevById.get(p.id)) !== JSON.stringify(p));
+    const aBorrar = anterior.filter((p) => !nextIds.has(p.id)).map((p) => p.id);
+
+    setPedidos(next);
+    if (aGuardar.length === 0 && aBorrar.length === 0) return;
+    setSaveState({ estado: "guardando" });
+    try {
+      if (aGuardar.length) await pedidosStore.upsertMany(aGuardar);
+      if (aBorrar.length) await pedidosStore.removeMany(aBorrar);
+      setSaveState({ estado: "ok", ts: Date.now() });
+    } catch (e) {
+      setSaveState({ estado: "error", clave: "pedidos", mensaje: "No se pudo guardar. Revisá la conexión.", reintentar: () => persistPedidos(next) });
+    }
+  }
   async function persistRecursos(next) { guardar("recursos-venta", next, () => setRecursos(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistReclamos(next) { guardar("reclamos", next, () => setReclamos(next)); }
@@ -1205,7 +1283,7 @@ export default function App() {
         <AjustesModal
           onClose={() => setAjustesOpen(false)}
           admins={admins} onChangeAdmins={persistAdmins} session={session}
-          sectors={sectors} onSectorUpdate={updateSector}
+          sectors={sectors}
           vendedores={vendedores} onChangeVendedores={persistVendedores}
           auditoria={auditoria}
           datos={{ pedidos, incomes, purchases, leads, reclamos, facturas, stockEspejos, stockMateriales, liquidaciones, empleados: empleadosSueldo, sectors, recursos, quotes, admins, auditoria }}
@@ -1216,10 +1294,9 @@ export default function App() {
 
       {loginOpen && (
         <LoginModal
-          sectors={sectors} adminKeyExists={adminKeyExists}
+          usuarios={admins}
           onClose={() => setLoginOpen(false)}
-          onAdminKeyCreated={() => setAdminKeyExists(true)}
-          onSectorUpdate={updateSector}
+          onCreateFirstAdmin={(u) => persistAdmins([u])}
           onSuccess={startSession}
         />
       )}
@@ -1260,58 +1337,11 @@ function LockedPage({ label, onLogin }) {
   );
 }
 
-function OperariosSector({ sector, onSectorUpdate, verClaves }) {
-  const [nombre, setNombre] = useState("");
-  const [clave, setClave] = useState("");
-  const [error, setError] = useState("");
-  const operarios = sector.operarios || [];
-
-  function agregar() {
-    setError("");
-    if (!nombre.trim()) return setError("Poné el nombre del operario.");
-    if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
-    if (clave === sector.clave) return setError("Esa clave ya la usa el encargado.");
-    if (operarios.some((o) => o.clave === clave)) return setError("Esa clave ya la usa otro operario.");
-    onSectorUpdate(sector.id, { operarios: [...operarios, { id: uid(), nombre: nombre.trim(), clave }] });
-    setNombre(""); setClave("");
-  }
-  function quitar(id) { onSectorUpdate(sector.id, { operarios: operarios.filter((o) => o.id !== id) }); }
-
-  return (
-    <div className="dg-operarios-box">
-      {operarios.length > 0 && (
-        <div className="dg-task-list" style={{ marginBottom: 8 }}>
-          {operarios.map((o) => (
-            <div className="dg-task" key={o.id}>
-              <User size={13} style={{ color: "var(--dg-text-dim)" }} />
-              <div className="dg-pago-info">
-                <span>{o.nombre}</span>
-                <span className="dg-pago-meta">Operario · {verClaves ? `Clave: ${o.clave}` : "Clave: ••••••••"}</span>
-              </div>
-              <button className="dg-icon-btn dg-task-del" onClick={() => quitar(o.id)}><Trash2 size={13} /></button>
-            </div>
-          ))}
-        </div>
-      )}
-      <EnterFlow onSubmit={agregar} autoFocus={false}>
-        <div className="dg-operario-form">
-          <input placeholder="Nombre del operario" value={nombre} onChange={(e) => setNombre(e.target.value)} />
-          <input type="password" placeholder="Su clave" value={clave} onChange={(e) => setClave(e.target.value)} />
-          <button className="dg-btn-ghost dg-mini-btn" onClick={agregar}><UserPlus size={13} /> Agregar</button>
-        </div>
-      </EnterFlow>
-      {error && <div className="dg-error" style={{ marginTop: 6 }}>{error}</div>}
-    </div>
-  );
-}
-
-function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, onSectorUpdate, vendedores, onChangeVendedores, datos, auditoria }) {
-  const [tab, setTab] = useState("accesos");
-  const [verClaves, setVerClaves] = useState(false);
+function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vendedores, onChangeVendedores, datos, auditoria }) {
+  const [tab, setTab] = useState("usuarios");
 
   const tabs = [
-    { id: "accesos", label: "Administradores", icon: ShieldCheck },
-    { id: "usuarios", label: "Usuarios y claves", icon: Users },
+    { id: "usuarios", label: "Usuarios y accesos", icon: ShieldCheck },
     { id: "respaldo", label: "Respaldo y datos", icon: Save },
     { id: "actividad", label: "Actividad", icon: ClipboardList },
   ];
@@ -1341,56 +1371,9 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, onSec
           })}
         </div>
 
-        {tab === "accesos" && <AdminsPanel admins={admins} onChange={onChangeAdmins} session={session} />}
-
         {tab === "usuarios" && (
-          <div className="dg-page">
-            <p className="dg-hint" style={{ marginBottom: 14 }}>
-              Cada sector tiene un <strong>encargado</strong> y puede tener varios <strong>operarios</strong>. Los operarios hacen el trabajo del día (marcar tareas, pedidos, stock) pero no pueden borrar registros ni cambiar la configuración del sector.
-            </p>
-            <button className="dg-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setVerClaves((v) => !v)}>
-              {verClaves ? <XCircle size={14} /> : <ShieldCheck size={14} />} {verClaves ? "Ocultar" : "Mostrar"} las claves
-            </button>
-
-            <div className="dg-section-card">
-              <div className="dg-section-header"><ShieldCheck size={14} /> Administradores</div>
-              <div className="dg-task-list" style={{ marginBottom: 0 }}>
-                {admins.map((a) => (
-                  <div className="dg-task" key={a.id}>
-                    <div className="dg-pago-info">
-                      <span>{a.nombre}{a.nombre === session?.nombre ? " (vos)" : ""}</span>
-                      <span className="dg-pago-meta">{verClaves ? `Clave: ${a.clave}` : "Clave: ••••••••"}</span>
-                    </div>
-                    <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}>Acceso total</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="dg-section-card">
-              <div className="dg-section-header"><Building2 size={14} /> Encargados de sector</div>
-              <div className="dg-task-list" style={{ marginBottom: 0 }}>
-                {sectors.map((sec) => (
-                  <div className="dg-sector-usuarios" key={sec.id}>
-                    <div className="dg-task">
-                      <div className="dg-pago-info">
-                        <span>{sec.name} <span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}>Encargado</span></span>
-                        <span className="dg-pago-meta">
-                          {sec.encargado || "Sin encargado"} · {sec.clave ? (verClaves ? `Clave: ${sec.clave}` : "Clave: ••••••••") : "Sin clave configurada"}
-                        </span>
-                      </div>
-                      {sec.clave && (
-                        <button className="dg-btn-ghost dg-mini-btn" onClick={() => onSectorUpdate(sec.id, { clave: null })}>
-                          <RotateCcw size={13} /> Restablecer
-                        </button>
-                      )}
-                    </div>
-                    <OperariosSector sector={sec} onSectorUpdate={onSectorUpdate} verClaves={verClaves} />
-                  </div>
-                ))}
-              </div>
-            </div>
-
+          <>
+            <UsuariosPanel usuarios={admins} onChange={onChangeAdmins} session={session} sectors={sectors} />
             <div className="dg-section-card">
               <div className="dg-section-header"><Users size={14} /> Vendedores del CRM</div>
               <div className="dg-vendedores-chips">
@@ -1399,7 +1382,7 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, onSec
                 ))}
               </div>
             </div>
-          </div>
+          </>
         )}
 
         {tab === "respaldo" && <RespaldoPanel datos={datos} auditoria={[]} />}
@@ -1523,60 +1506,94 @@ function RespaldoPanel({ datos, auditoria }) {
   );
 }
 
-function AdminsPanel({ admins, onChange, session }) {
+const ROLES_USUARIO = [
+  { id: "admin", label: "Administrador" },
+  { id: "encargado", label: "Encargado" },
+  { id: "operario", label: "Operario" },
+];
+
+function UsuariosPanel({ usuarios, onChange, session, sectors }) {
   const [nombre, setNombre] = useState("");
   const [clave, setClave] = useState("");
   const [clave2, setClave2] = useState("");
+  const [rol, setRol] = useState("encargado");
+  const [sectorId, setSectorId] = useState(sectors[0]?.id || "");
   const [error, setError] = useState("");
   const [aviso, setAviso] = useState("");
+  const [verClaves, setVerClaves] = useState(false);
 
   function agregar() {
     setError("");
-    if (!nombre.trim()) return setError("Poné el nombre.");
-    if (admins.some((a) => a.nombre.toLowerCase() === nombre.trim().toLowerCase())) return setError("Ya existe un admin con ese nombre.");
+    if (!nombre.trim()) return setError("Poné el nombre de usuario.");
+    if (usuarios.some((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase())) return setError("Ya existe un usuario con ese nombre.");
     if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
     if (clave !== clave2) return setError("Las claves no coinciden.");
-    if (admins.some((a) => a.clave === clave)) return setError("Esa clave ya la usa otro admin, elegí otra.");
-    onChange([...admins, { id: uid(), nombre: nombre.trim(), clave }]);
+    const nuevo = { id: uid(), nombre: nombre.trim(), clave, rol, sectorId: rol === "admin" ? null : sectorId };
+    onChange([...usuarios, nuevo]);
     setNombre(""); setClave(""); setClave2("");
-    setAviso("Administrador agregado."); setTimeout(() => setAviso(""), 4000);
+    setAviso("Usuario agregado."); setTimeout(() => setAviso(""), 4000);
   }
   function quitar(id) {
-    if (admins.length <= 1) { setError("Tiene que quedar al menos un administrador."); return; }
-    const a = admins.find((x) => x.id === id);
-    if (a && a.nombre === session?.nombre) { setError("No podés eliminar tu propio usuario."); return; }
-    onChange(admins.filter((x) => x.id !== id));
+    setError("");
+    const u = usuarios.find((x) => x.id === id);
+    if (!u) return;
+    if (u.rol === "admin" && usuarios.filter((x) => x.rol === "admin").length <= 1) { setError("Tiene que quedar al menos un administrador."); return; }
+    if (u.nombre === session?.nombre) { setError("No podés eliminar tu propio usuario."); return; }
+    onChange(usuarios.filter((x) => x.id !== id));
   }
+
+  const sectorNombre = (id) => sectors.find((s) => s.id === id)?.name || "—";
+  const rolLabel = (r) => ROLES_USUARIO.find((x) => x.id === r)?.label || r;
+  const rolColor = (r) => (r === "admin" ? "var(--dg-accent)" : r === "encargado" ? "var(--dg-warning)" : "var(--dg-text-dim)");
 
   return (
     <div className="dg-page">
       <p className="dg-hint" style={{ marginBottom: 14 }}>
-        Los administradores son los únicos que ven <strong>Finanzas, Comisiones y Sueldos</strong>. Los encargados de sector solo ven lo operativo de su área.
+        Un solo formulario de acceso para todos: usuario y clave. El sistema reconoce solo si es <strong>administrador</strong> (ve finanzas, comisiones, sueldos y ajustes) o <strong>encargado/operario</strong> de un sector.
       </p>
 
+      <button className="dg-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setVerClaves((v) => !v)}>
+        {verClaves ? <XCircle size={14} /> : <ShieldCheck size={14} />} {verClaves ? "Ocultar" : "Mostrar"} las claves
+      </button>
+
       <div className="dg-section-card">
-        <div className="dg-section-header"><ShieldCheck size={14} /> Administradores</div>
+        <div className="dg-section-header"><Users size={14} /> Usuarios ({usuarios.length})</div>
         <div className="dg-task-list" style={{ marginBottom: 0 }}>
-          {admins.map((a) => (
-            <div className="dg-task" key={a.id}>
-              <ShieldCheck size={14} style={{ color: "var(--dg-accent)" }} />
+          {usuarios.map((u) => (
+            <div className="dg-task" key={u.id}>
+              <ShieldCheck size={14} style={{ color: rolColor(u.rol) }} />
               <div className="dg-pago-info">
-                <span>{a.nombre}{a.nombre === session?.nombre ? " (vos)" : ""}</span>
-                <span className="dg-pago-meta">Acceso total al sistema</span>
+                <span>{u.nombre}{u.nombre === session?.nombre ? " (vos)" : ""}</span>
+                <span className="dg-pago-meta">
+                  {rolLabel(u.rol)}{u.sectorId ? ` · ${sectorNombre(u.sectorId)}` : ""} · {verClaves ? `Clave: ${u.clave}` : "Clave: ••••••••"}
+                </span>
               </div>
-              <button className="dg-icon-btn dg-task-del" onClick={() => quitar(a.id)}><Trash2 size={14} /></button>
+              <button className="dg-icon-btn dg-task-del" onClick={() => quitar(u.id)}><Trash2 size={14} /></button>
             </div>
           ))}
+          {usuarios.length === 0 && <div className="dg-empty">Todavía no hay usuarios cargados.</div>}
         </div>
       </div>
 
       <div className="dg-section-card">
-        <div className="dg-section-header"><UserPlus size={14} /> Agregar administrador</div>
+        <div className="dg-section-header"><UserPlus size={14} /> Agregar usuario</div>
         <EnterFlow onSubmit={agregar} autoFocus={false}>
           <div className="dg-field-grid">
-            <Field label="Nombre"><input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Sergio" /></Field>
+            <Field label="Nombre de usuario"><input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Sergio" /></Field>
             <Field label="Clave"><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} /></Field>
             <Field label="Repetir clave"><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></Field>
+            <Field label="Rol">
+              <select value={rol} onChange={(e) => setRol(e.target.value)}>
+                {ROLES_USUARIO.map((r) => (<option key={r.id} value={r.id}>{r.label}</option>))}
+              </select>
+            </Field>
+            {rol !== "admin" && (
+              <Field label="Sector">
+                <select value={sectorId} onChange={(e) => setSectorId(e.target.value)}>
+                  {sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+                </select>
+              </Field>
+            )}
           </div>
         </EnterFlow>
         {error && <div className="dg-error" style={{ marginTop: 8 }}>{error}</div>}
@@ -4502,107 +4519,46 @@ function ConfigEditor({ config, onChange }) {
   );
 }
 
-function LoginModal({ sectors, adminKeyExists, onClose, onAdminKeyCreated, onSectorUpdate, onSuccess }) {
-  const [mode, setMode] = useState("choose");
-  const [sectorId, setSectorId] = useState(sectors[0]?.id || "");
+function LoginModal({ usuarios, onClose, onCreateFirstAdmin, onSuccess }) {
+  const [nombre, setNombre] = useState("");
   const [clave, setClave] = useState("");
   const [clave2, setClave2] = useState("");
-  const [nombre, setNombre] = useState("");
   const [error, setError] = useState("");
-  const sector = sectors.find((s) => s.id === sectorId);
-  const sectorNeedsSetup = sector && !sector.clave;
+  const bootstrap = usuarios.length === 0;
 
-  async function handleAdmin() {
+  function handleSubmit() {
     setError("");
-    if (!adminKeyExists) {
-      if (!nombre.trim()) return setError("Ingresá tu nombre.");
+    if (bootstrap) {
+      if (!nombre.trim()) return setError("Ingresá tu nombre de usuario.");
       if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
       if (clave !== clave2) return setError("Las claves no coinciden.");
-      try {
-        const lista = [{ id: uid(), nombre: nombre.trim(), clave }];
-        await storage.set("admins", JSON.stringify(lista), true);
-        onAdminKeyCreated();
-        onSuccess({ role: "admin", nombre: nombre.trim() });
-      } catch (e) { setError("No se pudo guardar la clave. Probá de nuevo."); }
+      const primero = { id: uid(), nombre: nombre.trim(), clave, rol: "admin", sectorId: null };
+      onCreateFirstAdmin(primero);
+      onSuccess({ role: "admin", nombre: primero.nombre });
       return;
     }
-    try {
-      let lista = [];
-      const res = await storage.get("admins", true);
-      if (res) lista = JSON.parse(res.value);
-      else {
-        // compatibilidad con la clave única anterior
-        const viejo = await storage.get("admin-key", true);
-        if (viejo) lista = [{ id: uid(), nombre: "Facundo", clave: viejo.value }];
-      }
-      const match = lista.find((a) => a.clave === clave);
-      if (match) onSuccess({ role: "admin", nombre: match.nombre });
-      else setError("Clave incorrecta.");
-    } catch (e) { setError("No se pudo verificar la clave."); }
-  }
-  function handleSector() {
-    setError("");
-    if (!sector) return;
-    if (sectorNeedsSetup) {
-      if (!nombre.trim()) return setError("Ingresá el nombre del encargado.");
-      if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
-      if (clave !== clave2) return setError("Las claves no coinciden.");
-      onSectorUpdate(sector.id, { encargado: nombre.trim(), clave });
-      onSuccess({ role: "sector", sectorId: sector.id, tipo: "encargado", nombre: nombre.trim() });
-      return;
-    }
-    if (sector.clave === clave) {
-      onSuccess({ role: "sector", sectorId: sector.id, tipo: "encargado", nombre: sector.encargado || "Encargado" });
-      return;
-    }
-    const op = (sector.operarios || []).find((o) => o.clave === clave);
-    if (op) {
-      onSuccess({ role: "sector", sectorId: sector.id, tipo: "operario", nombre: op.nombre });
-      return;
-    }
-    setError("Clave incorrecta.");
+    const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase() && u.clave === clave);
+    if (!match) return setError("Usuario o clave incorrectos.");
+    if (match.rol === "admin") onSuccess({ role: "admin", nombre: match.nombre });
+    else onSuccess({ role: "sector", sectorId: match.sectorId, tipo: match.rol, nombre: match.nombre });
   }
 
   return (
     <div className="dg-overlay" onClick={onClose}>
       <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
         <div className="dg-modal-head"><div className="dg-modal-title">Iniciar sesión</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
-        {mode === "choose" && (
-          <div className="dg-choice-grid">
-            <button className="dg-choice-btn" onClick={() => setMode("admin")}><ShieldCheck size={20} /><div>Soy administrador</div><span>Acceso total: finanzas, sueldos y ajustes</span></button>
-            <button className="dg-choice-btn" onClick={() => setMode("sector")}><User size={20} /><div>Trabajo en un sector</div><span>Encargados y operarios</span></button>
+        <EnterFlow className="dg-form" onSubmit={handleSubmit}>
+          {bootstrap && <p className="dg-hint">Primera vez: creá el usuario administrador principal del sistema.</p>}
+          <label>Usuario</label>
+          <input value={nombre} onChange={(e) => setNombre(e.target.value)} autoCapitalize="off" autoCorrect="off" />
+          <label>Clave{bootstrap ? " nueva" : ""}</label>
+          <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
+          {bootstrap && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
+          {error && <div className="dg-error">{error}</div>}
+          <div className="dg-form-actions" style={{ justifyContent: "flex-end" }}>
+            <button className="dg-btn-primary" onClick={handleSubmit}>{bootstrap ? "Crear usuario y entrar" : "Entrar"}</button>
           </div>
-        )}
-        {mode === "admin" && (
-          <EnterFlow className="dg-form" onSubmit={handleAdmin}>
-            {!adminKeyExists && <p className="dg-hint">Primera vez: creá tu usuario de administrador.</p>}
-            {!adminKeyExists && (<><label>Tu nombre</label><input value={nombre} onChange={(e) => setNombre(e.target.value)} /></>)}
-            <label>Clave{!adminKeyExists ? " nueva" : ""}</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
-            {!adminKeyExists && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
-            {error && <div className="dg-error">{error}</div>}
-            <div className="dg-form-actions"><button className="dg-btn-ghost" onClick={() => setMode("choose")}>Volver</button><button className="dg-btn-primary" onClick={handleAdmin}>{adminKeyExists ? "Entrar" : "Crear clave y entrar"}</button></div>
-          </EnterFlow>
-        )}
-        {mode === "sector" && (
-          <EnterFlow className="dg-form" onSubmit={handleSector}>
-            <label>Sector</label>
-            <select value={sectorId} onChange={(e) => { setSectorId(e.target.value); setError(""); }}>{sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}</select>
-            {sectorNeedsSetup ? (
-              <>
-                <p className="dg-hint">Este sector no tiene encargado configurado. Poné tu nombre y clave.</p>
-                <label>Tu nombre</label><input value={nombre} onChange={(e) => setNombre(e.target.value)} />
-                <label>Clave nueva</label><input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
-                <label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} />
-              </>
-            ) : (<>
-              <label>Tu clave</label>
-              <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
-              <p className="dg-hint">Encargado: {sector?.encargado || "—"}{(sector?.operarios || []).length > 0 ? ` · Operarios: ${sector.operarios.map((o) => o.nombre).join(", ")}` : ""}</p>
-            </>)}
-            {error && <div className="dg-error">{error}</div>}
-            <div className="dg-form-actions"><button className="dg-btn-ghost" onClick={() => setMode("choose")}>Volver</button><button className="dg-btn-primary" onClick={handleSector}>{sectorNeedsSetup ? "Guardar y entrar" : "Entrar"}</button></div>
-          </EnterFlow>
-        )}
+        </EnterFlow>
       </div>
     </div>
   );
@@ -4620,7 +4576,6 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
   function toggleTask(id) { onUpdate({ tasks: sector.tasks.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)) }); }
   function loadSuggested() { onUpdate({ tasks: [...sector.tasks, ...suggested.map((text) => ({ id: uid(), text, completed: false }))] }); }
   function saveName() { onUpdate({ encargado: nameDraft.trim() }); setEditingName(false); }
-  function resetClave() { onUpdate({ clave: null }); }
 
   return (
     <div className="dg-page">
@@ -4630,7 +4585,6 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
           {!editingName ? (<span>{sector.encargado || "Sin encargado asignado"}</span>) : (<input className="dg-inline-input" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} autoFocus />)}
           {isAdmin && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={() => setEditingName(true)} title="Editar encargado"><Pencil size={12} /></button>)}
           {isAdmin && editingName && (<button className="dg-btn-primary dg-mini-btn" onClick={saveName}>Guardar</button>)}
-          {isAdmin && sector.clave && !editingName && (<button className="dg-icon-btn dg-encargado-edit" onClick={resetClave} title="Restablecer clave"><RotateCcw size={12} /></button>)}
         </div>
       </div>
 
