@@ -63,6 +63,15 @@ export const pedidosStore = {
     return (data || []).map((r) => r.data);
   },
 
+  // Lectura pública de un solo pedido por id, sin sesión — la usa el portal
+  // de seguimiento del cliente (no requiere login, la base ya es de lectura abierta).
+  async getOne(id) {
+    if (!id) return null;
+    const { data, error } = await supabase.from("pedidos_rows").select("data").eq("id", id).maybeSingle();
+    if (error) throw error;
+    return data ? data.data : null;
+  },
+
   async upsertMany(lista) {
     if (!lista.length) return;
     const rows = lista.map((p) => ({ id: p.id, data: p, updated_at: new Date().toISOString() }));

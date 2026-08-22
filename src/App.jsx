@@ -731,7 +731,7 @@ const SHARED_SYNC_KEYS = [
   "auditoria", "admins", "integraciones",
 ];
 
-export default function App() {
+function App() {
   const [sectors, setSectors] = useState(null);
   const [purchases, setPurchases] = useState(null);
   const [incomes, setIncomes] = useState(null);
@@ -1765,18 +1765,7 @@ function ComisionesPanel({ pedidos, onChangePedidos, empleados, onCreatePurchase
 const SUELDOS_SECTORES = ["Oficina/Ventas", "Taller"];
 
 function emptyEmpleadoSueldo() {
-  return { id: uid(), nombre: "", sector: "Oficina/Ventas", valorHora: 0, comisionPct: 0, sueldoBase: 0, complementoFijo: 0, valorHoraExtra: 0, plusSemanal: 0 };
-}
-
-function liquidacionTotal(emp, liq) {
-  if (!emp) return 0;
-  if (emp.sector === "Oficina/Ventas") {
-    return (Number(liq.horas) || 0) * (Number(emp.valorHora) || 0) + (Number(liq.ventasCobradas) || 0) * ((Number(emp.comisionPct) || 0) / 100);
-  }
-  return (Number(emp.sueldoBase) || 0) + (Number(emp.complementoFijo) || 0)
-    + (Number(liq.horasExtra) || 0) * (Number(emp.valorHoraExtra) || 0)
-    + (Number(liq.plusesAplicados) || 0) * (Number(emp.plusSemanal) || 0)
-    - (Number(liq.adelanto) || 0);
+  return { id: uid(), nombre: "", sector: "Oficina/Ventas", valorHora: 0, comisionPct: 0, sueldoBase: 0, complementoFijo: 0, valorHoraExtra: 0 };
 }
 
 const SEMANAS = [1, 2, 3, 4, 5];
@@ -1799,7 +1788,7 @@ function periodosCercanos() {
   }
   return out.reverse();
 }
-function celdaVacia() { return { horas: "", ventas: "", he: "", adelanto: "", plus: false }; }
+function celdaVacia() { return { horas: "", ventas: "", he: "", adelanto: "" }; }
 function filaVacia(empleadoId, periodo) {
   const semanas = {};
   SEMANAS.forEach((n) => { semanas[n] = celdaVacia(); });
@@ -1813,7 +1802,6 @@ function totalesFila(emp, fila, comisionAutomatica = 0) {
   const ventas = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.ventas), 0);
   const he = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.he), 0);
   const adelantos = SEMANAS.reduce((a, n) => a + nnum(sem[n]?.adelanto), 0);
-  const pluses = SEMANAS.filter((n) => sem[n]?.plus).length;
   const pagoHoras = horas * nnum(emp?.valorHora);
   const comisionManualAnterior = ventas * (nnum(emp?.comisionPct) / 100);
   const tieneAjusteExplicito = fila && Object.prototype.hasOwnProperty.call(fila, "ajusteComision");
@@ -1822,17 +1810,93 @@ function totalesFila(emp, fila, comisionAutomatica = 0) {
     : (nnum(comisionAutomatica) > 0 ? 0 : comisionManualAnterior);
   const pagoComision = nnum(comisionAutomatica);
   const pagoHE = he * nnum(emp?.valorHoraExtra);
-  const pagoPlus = pluses * nnum(emp?.plusSemanal);
   const total = emp?.sector === "Taller"
-    ? nnum(emp?.sueldoBase) + nnum(emp?.complementoFijo) + pagoHE + pagoPlus - adelantos
+    ? nnum(emp?.sueldoBase) + nnum(emp?.complementoFijo) + pagoHE - adelantos
     : pagoHoras + pagoComision + ajusteComision;
-  return { horas, ventas, he, adelantos, pluses, pagoHoras, pagoComision, ajusteComision, pagoHE, pagoPlus, total };
+  return { horas, ventas, he, adelantos, pagoHoras, pagoComision, ajusteComision, pagoHE, total };
+}
+
+function CargarSemanasModal({ empleado, periodo, fila, onGuardar, onClose }) {
+  const esOficina = empleado.sector === "Oficina/Ventas";
+  const [semanas, setSemanas] = useState(() => {
+    const base = {};
+    SEMANAS.forEach((n) => { base[n] = { ...celdaVacia(), ...(fila?.semanas?.[n] || {}) }; });
+    return base;
+  });
+  const [ajusteComision, setAjusteComision] = useState(fila?.ajusteComision ?? "");
+  const [nota, setNota] = useState(fila?.nota ?? "");
+
+  function setCampo(n, campo, valor) {
+    setSemanas((prev) => ({ ...prev, [n]: { ...prev[n], [campo]: valor } }));
+  }
+  function guardar() {
+    onGuardar({ semanas, ajusteComision, nota });
+    onClose();
+  }
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-semanas" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div>
+            <div className="dg-modal-title">Cargar horas — {empleado.nombre}</div>
+            <div className="dg-modal-sub">{periodoLabel(periodo)}</div>
+          </div>
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <EnterFlow onSubmit={guardar} autoFocus={false}>
+          <div className="dg-sueldo-semanas-form">
+            {SEMANAS.map((n) => (
+              <div className="dg-sueldo-semana-bloque" key={n}>
+                <div className="dg-sueldo-semana-num">Semana {n}</div>
+                {esOficina ? (
+                  <Field label="Horas trabajadas">
+                    <input type="number" inputMode="decimal" value={semanas[n].horas} onChange={(e) => setCampo(n, "horas", e.target.value)} placeholder="0" />
+                  </Field>
+                ) : (
+                  <div className="dg-field-grid">
+                    <Field label="Horas extra">
+                      <input type="number" inputMode="decimal" value={semanas[n].he} onChange={(e) => setCampo(n, "he", e.target.value)} placeholder="0" />
+                    </Field>
+                    <Field label="Adelanto ($)">
+                      <input type="number" inputMode="decimal" value={semanas[n].adelanto} onChange={(e) => setCampo(n, "adelanto", e.target.value)} placeholder="0" />
+                    </Field>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {esOficina && (
+              <div className="dg-sueldo-semana-bloque">
+                <Field label="Ajuste manual de comisión (opcional)">
+                  <input type="number" inputMode="decimal" value={ajusteComision} onChange={(e) => setAjusteComision(e.target.value)} placeholder="Dejar vacío si no corresponde" />
+                </Field>
+              </div>
+            )}
+
+            <div className="dg-sueldo-semana-bloque">
+              <Field label="Anotador (opcional)">
+                <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Ej: le debo 2,5 hs de la semana 3..." />
+              </Field>
+            </div>
+          </div>
+        </EnterFlow>
+
+        <div className="dg-form-actions" style={{ marginTop: 14 }}>
+          <button className="dg-btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="dg-btn-primary" onClick={guardar}><Save size={14} /> Guardar mes</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiquidaciones, pedidos }) {
   const [periodo, setPeriodo] = useState(periodoActual());
   const [verEmpleados, setVerEmpleados] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
+  const [cargandoSemanas, setCargandoSemanas] = useState(null);
 
   const oficina = empleados.filter((e) => e.sector === "Oficina/Ventas");
   const taller = empleados.filter((e) => e.sector === "Taller");
@@ -1840,27 +1904,15 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
   function filaDe(empId) {
     return liquidaciones.find((l) => l.empleadoId === empId && l.periodo === periodo && l.semanas) || null;
   }
-  function setCelda(empId, semana, campo, valor) {
-    const existe = filaDe(empId);
-    if (existe) {
-      onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id
-        ? { ...l, semanas: { ...l.semanas, [semana]: { ...celdaVacia(), ...l.semanas[semana], [campo]: valor } } }
-        : l)));
-    } else {
-      const nueva = filaVacia(empId, periodo);
-      nueva.semanas[semana] = { ...celdaVacia(), [campo]: valor };
-      onChangeLiquidaciones([nueva, ...liquidaciones]);
-    }
-  }
-  function setNota(empId, nota) {
-    const existe = filaDe(empId);
-    if (existe) onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id ? { ...l, nota } : l)));
-    else onChangeLiquidaciones([{ ...filaVacia(empId, periodo), nota }, ...liquidaciones]);
-  }
   function setCampoFila(empId, campo, valor) {
     const existe = filaDe(empId);
     if (existe) onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id ? { ...l, [campo]: valor } : l)));
     else onChangeLiquidaciones([{ ...filaVacia(empId, periodo), [campo]: valor }, ...liquidaciones]);
+  }
+  function guardarSemanasDe(empId, datos) {
+    const existe = filaDe(empId);
+    if (existe) onChangeLiquidaciones(liquidaciones.map((l) => (l.id === existe.id ? { ...l, ...datos } : l)));
+    else onChangeLiquidaciones([{ ...filaVacia(empId, periodo), ...datos }, ...liquidaciones]);
   }
   function saveEmpleado(emp) {
     const exists = empleados.some((e) => e.id === emp.id);
@@ -1907,7 +1959,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
       {verEmpleados && (
         <div className="dg-section-card dg-sueldo-editor">
           <div className="dg-section-header"><UserPlus size={14} /> {editingEmp ? `Editar valores de ${editingEmp.nombre}` : "Nuevo empleado y valores salariales"}</div>
-          <p className="dg-hint dg-sueldo-editor-hint">Podés actualizar valor hora, porcentaje de comisión, sueldo, complemento, horas extra y plus. Los nuevos importes se guardan en la ficha del empleado.</p>
+          <p className="dg-hint dg-sueldo-editor-hint">Acá cargás los valores fijos de cada uno (valor hora, comisión, sueldo, complemento, hora extra). Para cargar las horas del mes, usá el ícono de calendario en cada fila de la tabla.</p>
           <EmpleadoForm key={editingEmp?.id || "nuevo"} empleado={editingEmp || emptyEmpleadoSueldo()} onSave={saveEmpleado} onCancel={editingEmp ? () => setEditingEmp(null) : null} />
           <div className="dg-task-list" style={{ marginTop: 14, marginBottom: 0 }}>
             {empleados.map((e) => (
@@ -1917,7 +1969,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   <span className="dg-pago-meta">
                     {e.sector === "Oficina/Ventas"
                       ? `${money(e.valorHora)}/hora · ${e.comisionPct}% comisión`
-                      : `${money(e.sueldoBase)} + ${money(e.complementoFijo)} · HE ${money(e.valorHoraExtra)} · plus ${money(e.plusSemanal)}`}
+                      : `${money(e.sueldoBase)} + ${money(e.complementoFijo)} · HE ${money(e.valorHoraExtra)}`}
                   </span>
                 </div>
                 <button className="dg-icon-btn" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={14} /></button>
@@ -1950,18 +2002,20 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   const t = totalEmpleado(e);
                   return (
                     <tr key={e.id}>
-                      <td className="dg-sticky-col dg-td-nombre"><span>{e.nombre}</span><button className="dg-sueldo-row-edit" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={12} /></button></td>
+                      <td className="dg-sticky-col dg-td-nombre">
+                        <span>{e.nombre}</span>
+                        <button className="dg-sueldo-row-edit" aria-label={`Cargar horas de ${e.nombre}`} title="Cargar horas del mes" onClick={() => setCargandoSemanas(e)}><CalendarDays size={12} /></button>
+                        <button className="dg-sueldo-row-edit" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={12} /></button>
+                      </td>
                       <td className="dg-td-ref">{money(e.valorHora)}</td>
                       <td className="dg-td-ref">{e.comisionPct}%</td>
                       {SEMANAS.map((n) => (
-                        <td key={n} className="dg-td-semana">
-                          <input type="number" className="dg-celda" placeholder="hs" value={fila?.semanas?.[n]?.horas ?? ""} onChange={(ev) => setCelda(e.id, n, "horas", ev.target.value)} />
-                        </td>
+                        <td key={n} className="dg-td-semana dg-td-semana-lectura">{fila?.semanas?.[n]?.horas || "—"}</td>
                       ))}
                       <td className="dg-td-calc">{t.horas}</td>
                       <td className="dg-td-calc">{money(t.pagoHoras)}</td>
                       <td className="dg-td-calc dg-td-comision-auto"><strong>{money(t.pagoComision)}</strong><small>{resumenComision.cantidad > 0 ? `${resumenComision.cantidad} pedido(s)` : "Sin liquidar"}</small></td>
-                      <td className="dg-td-ajuste"><input type="number" className="dg-celda dg-celda-ajuste" placeholder="$ 0" value={fila?.ajusteComision ?? (t.ajusteComision || "")} onChange={(ev) => setCampoFila(e.id, "ajusteComision", ev.target.value)} /></td>
+                      <td className="dg-td-calc">{t.ajusteComision ? money(t.ajusteComision) : "—"}</td>
                       <td className="dg-td-total">{money(t.total)}</td>
                     </tr>
                   );
@@ -1981,17 +2035,14 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
             </table>
           </div>
         )}
-        {oficina.map((e) => (
-          <div className="dg-anotador" key={e.id}>
-            <label>Anotador {e.nombre}</label>
-            <input value={filaDe(e.id)?.nota ?? ""} onChange={(ev) => setNota(e.id, ev.target.value)} placeholder="Ej: le debo 2,5 hs de la semana 3..." />
-          </div>
+        {oficina.filter((e) => filaDe(e.id)?.nota).map((e) => (
+          <p className="dg-sueldo-nota-fija" key={e.id}><strong>{e.nombre}:</strong> {filaDe(e.id).nota}</p>
         ))}
       </div>
 
       {/* ---- TALLER ---- */}
       <div className="dg-sueldo-block">
-        <div className="dg-sueldo-title">Taller — sueldo mensual + horas extra y plus semanal</div>
+        <div className="dg-sueldo-title">Taller — sueldo mensual + horas extra</div>
         {taller.length === 0 ? <div className="dg-empty">No hay empleados de Taller cargados.</div> : (
           <div className="dg-tabla-scroll">
             <table className="dg-tabla">
@@ -1999,8 +2050,8 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                 <tr>
                   <th className="dg-sticky-col">Empleado</th>
                   <th>Sueldo</th><th>Complem.</th>
-                  {SEMANAS.map((n) => (<th key={n} className="dg-th-semana">S{n}<small>HE / adel. / plus</small></th>))}
-                  <th>Tot HE</th><th>$ HE</th><th>$ Plus</th><th>Adelantos</th><th className="dg-th-total">TOTAL</th>
+                  {SEMANAS.map((n) => (<th key={n} className="dg-th-semana">S{n}<small>HE / adelanto</small></th>))}
+                  <th>Tot HE</th><th>$ HE</th><th>Adelantos</th><th className="dg-th-total">TOTAL</th>
                 </tr>
               </thead>
               <tbody>
@@ -2008,20 +2059,22 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   const fila = filaDe(e.id); const t = totalesFila(e, fila);
                   return (
                     <tr key={e.id}>
-                      <td className="dg-sticky-col dg-td-nombre"><span>{e.nombre}</span><button className="dg-sueldo-row-edit" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={12} /></button></td>
+                      <td className="dg-sticky-col dg-td-nombre">
+                        <span>{e.nombre}</span>
+                        <button className="dg-sueldo-row-edit" aria-label={`Cargar horas de ${e.nombre}`} title="Cargar horas del mes" onClick={() => setCargandoSemanas(e)}><CalendarDays size={12} /></button>
+                        <button className="dg-sueldo-row-edit" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={12} /></button>
+                      </td>
                       <td className="dg-td-ref">{money(e.sueldoBase)}</td>
                       <td className="dg-td-ref">{money(e.complementoFijo)}</td>
                       {SEMANAS.map((n) => (
-                        <td key={n} className="dg-td-semana">
-                          <input type="number" className="dg-celda" placeholder="HE" value={fila?.semanas?.[n]?.he ?? ""} onChange={(ev) => setCelda(e.id, n, "he", ev.target.value)} />
-                          <input type="number" className="dg-celda dg-celda-sec" placeholder="adel." value={fila?.semanas?.[n]?.adelanto ?? ""} onChange={(ev) => setCelda(e.id, n, "adelanto", ev.target.value)} />
-                          <button className={`dg-celda-plus ${fila?.semanas?.[n]?.plus ? "dg-celda-plus-on" : ""}`}
-                            title="Plus semanal" onClick={() => setCelda(e.id, n, "plus", !fila?.semanas?.[n]?.plus)}>plus</button>
+                        <td key={n} className="dg-td-semana dg-td-semana-lectura">
+                          {fila?.semanas?.[n]?.he || fila?.semanas?.[n]?.adelanto
+                            ? `${fila?.semanas?.[n]?.he || 0}h / ${money(fila?.semanas?.[n]?.adelanto || 0)}`
+                            : "—"}
                         </td>
                       ))}
                       <td className="dg-td-calc">{t.he}</td>
                       <td className="dg-td-calc">{money(t.pagoHE)}</td>
-                      <td className="dg-td-calc">{money(t.pagoPlus)}</td>
                       <td className="dg-td-calc dg-td-neg">−{money(t.adelantos)}</td>
                       <td className="dg-td-total">{money(t.total)}</td>
                     </tr>
@@ -2034,7 +2087,6 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   ))}
                   <td className="dg-td-calc">{taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).he, 0)}</td>
                   <td className="dg-td-calc">{money(taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoHE, 0))}</td>
-                  <td className="dg-td-calc">{money(taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).pagoPlus, 0))}</td>
                   <td className="dg-td-calc dg-td-neg">−{money(taller.reduce((a, e) => a + totalesFila(e, filaDe(e.id)).adelantos, 0))}</td>
                   <td className="dg-td-total">{money(totTaller)}</td>
                 </tr>
@@ -2042,13 +2094,20 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
             </table>
           </div>
         )}
-        {taller.map((e) => (
-          <div className="dg-anotador" key={e.id}>
-            <label>Anotador {e.nombre}</label>
-            <input value={filaDe(e.id)?.nota ?? ""} onChange={(ev) => setNota(e.id, ev.target.value)} placeholder="Ej: el plus de la semana 4 ya lo cobró..." />
-          </div>
+        {taller.filter((e) => filaDe(e.id)?.nota).map((e) => (
+          <p className="dg-sueldo-nota-fija" key={e.id}><strong>{e.nombre}:</strong> {filaDe(e.id).nota}</p>
         ))}
       </div>
+
+      {cargandoSemanas && (
+        <CargarSemanasModal
+          empleado={cargandoSemanas}
+          periodo={periodo}
+          fila={filaDe(cargandoSemanas.id)}
+          onGuardar={(datos) => guardarSemanasDe(cargandoSemanas.id, datos)}
+          onClose={() => setCargandoSemanas(null)}
+        />
+      )}
     </div>
   );
 }
@@ -2072,7 +2131,6 @@ function EmpleadoForm({ empleado, onSave, onCancel }) {
           <Field label="Sueldo de recibo"><input type="number" min="0" step="0.01" value={draft.sueldoBase} onChange={(e) => set("sueldoBase", e.target.value)} /></Field>
           <Field label="Complemento fijo"><input type="number" min="0" step="0.01" value={draft.complementoFijo} onChange={(e) => set("complementoFijo", e.target.value)} /></Field>
           <Field label="Valor hora extra"><input type="number" min="0" step="0.01" value={draft.valorHoraExtra} onChange={(e) => set("valorHoraExtra", e.target.value)} /></Field>
-          <Field label="Plus semanal"><input type="number" min="0" step="0.01" value={draft.plusSemanal} onChange={(e) => set("plusSemanal", e.target.value)} /></Field>
         </div>
       )}
       <div className="dg-form-actions">
@@ -2513,6 +2571,27 @@ function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio }) {
   );
 }
 
+function BotonCompartirSeguimiento({ pedido }) {
+  const [copiado, setCopiado] = useState(false);
+  const link = linkSeguimiento(pedido);
+
+  async function compartir() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    } catch (e) {
+      window.prompt("Copiá el link de seguimiento:", link);
+    }
+  }
+
+  return (
+    <button className="dg-btn-ghost dg-mini-btn" onClick={compartir} title="Copiar link para que el cliente vea el estado de su pedido">
+      {copiado ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link de seguimiento</>}
+    </button>
+  );
+}
+
 function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar }) {
   const conEnvio = esPedidoConEnvio(pedido);
   const entregado = pedido.estado === "Entregado";
@@ -2627,7 +2706,10 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
 
   return (
     <div className={`dg-order-flow ${conEnvio ? "dg-order-flow-five" : "dg-order-flow-four"}`} onClick={(e) => e.stopPropagation()}>
-      <div className="dg-order-flow-title">Proceso del pedido</div>
+      <div className="dg-order-flow-title-row">
+        <div className="dg-order-flow-title">Proceso del pedido</div>
+        <BotonCompartirSeguimiento pedido={pedido} />
+      </div>
       <div className="dg-order-flow-nav">
         <div className="dg-order-flow-label">
           <span>{conEnvio ? "Envío" : "Retiro"}</span>
@@ -5352,21 +5434,18 @@ function Style() {
       .dg-td-neg { color:var(--dg-danger); }
       .dg-td-total { font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:var(--dg-success); background: rgba(var(--dg-success-rgb),0.06); white-space:nowrap; }
       .dg-td-semana { padding:5px 6px !important; }
-      .dg-celda { width:58px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:6px; padding:5px 4px;
-        color:var(--dg-text); font-family:'JetBrains Mono', monospace; font-size:11.5px; text-align:center; outline:none; display:block; margin:0 auto 3px; }
-      .dg-celda:focus { border-color:var(--dg-accent); box-shadow: 0 0 0 2px rgba(var(--dg-accent-rgb),0.15); }
-      .dg-celda-sec { color:var(--dg-text-dim); font-size:10.5px; }
-      .dg-celda-ajuste { width:68px; margin:0 auto; color:var(--dg-warning); }
-      .dg-celda-plus { width:58px; display:block; margin:0 auto; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:6px;
-        padding:3px; font-size:9px; font-weight:700; text-transform:uppercase; color:var(--dg-text-faint); cursor:pointer; }
-      .dg-celda-plus-on { background: rgba(var(--dg-success-rgb),0.18); border-color:var(--dg-success); color:var(--dg-success); }
+      .dg-td-semana-lectura { font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--dg-text); text-align:center; white-space:nowrap; }
+      .dg-sueldo-row-edit { background:transparent; border:none; color:var(--dg-text-faint); cursor:pointer; padding:3px; border-radius:5px; display:inline-flex; vertical-align:middle; margin-left:4px; }
+      .dg-sueldo-row-edit:hover { color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),0.1); }
       .dg-tr-total td { background:var(--dg-surface-2) !important; font-weight:700; border-top:2px solid rgba(var(--dg-accent-rgb),0.3); border-bottom:none; }
       .dg-tr-total .dg-sticky-col { background:var(--dg-surface-2) !important; color:var(--dg-accent); font-size:11px; letter-spacing:0.5px; }
-      .dg-anotador { display:flex; align-items:center; gap:10px; margin-top:8px; }
-      .dg-anotador label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; color:var(--dg-text-faint); min-width:130px; }
-      .dg-anotador input { flex:1; background: rgba(var(--dg-warning-rgb),0.05); border:1px solid rgba(var(--dg-warning-rgb),0.2); border-radius:8px;
-        padding:7px 10px; color:var(--dg-text); font-size:12px; outline:none; }
-      .dg-anotador input:focus { border-color:var(--dg-warning); }
+      .dg-sueldo-nota-fija { margin:8px 0 0; padding:9px 12px; background:rgba(var(--dg-warning-rgb),0.06); border:1px solid rgba(var(--dg-warning-rgb),0.2); border-radius:8px; font-size:12.5px; color:var(--dg-text-dim); }
+      .dg-sueldo-nota-fija strong { color:var(--dg-warning); font-weight:700; }
+
+      .dg-modal-semanas { max-width:420px; }
+      .dg-sueldo-semanas-form { display:flex; flex-direction:column; gap:12px; max-height:60vh; overflow-y:auto; padding-right:2px; }
+      .dg-sueldo-semana-bloque { padding:10px 12px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:10px; }
+      .dg-sueldo-semana-num { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:12.5px; color:var(--dg-accent); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.4px; }
 
       .dg-comision-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
       .dg-comision-toggle { display:flex; align-items:center; gap:8px; background:transparent; border:none; color:var(--dg-text); cursor:pointer; padding:0; flex:1; min-width:0; text-align:left; font-family:'Inter',sans-serif; flex-wrap:wrap; }
@@ -5570,8 +5649,7 @@ function Style() {
         .dg-total-card { min-width:calc(50% - 4px); }
         .dg-room-strip { height:56px; }
         .dg-task-table-row { padding:14px 12px; font-size:14px; }
-        .dg-celda, .dg-celda-plus { width:52px; }
-        .dg-anotador { flex-direction:column; align-items:stretch; gap:4px; }
+        .dg-sueldo-semanas-form { max-height:50vh; }
         .dg-anotador label { min-width:0; }
         .dg-sueldo-topbar > * { flex:1 1 auto; }
         .dg-room-tile:nth-child(1), .dg-room-tile:nth-child(2), .dg-room-tile:nth-child(3), .dg-room-tile:nth-child(4), .dg-room-tile:nth-child(5), .dg-room-tile:nth-child(6) { border-radius:14px; }
@@ -5765,6 +5843,8 @@ function Style() {
       .dg-order-card .dg-badge { padding:3px 7px; font-size:9px; }
       .dg-order-flow { width:100%; margin:0; overflow:hidden; padding:7px 10px 8px; border:0; border-top:2px solid rgba(var(--dg-accent-rgb),.42); border-radius:0; background:var(--dg-order-flow); }
       .dg-order-flow-title { margin:0 0 3px; color:var(--dg-text-dim); }
+      .dg-order-flow-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:3px; }
+      .dg-order-flow-title-row .dg-order-flow-title { margin:0; }
       .dg-order-flow-nav { min-height:30px; display:grid; grid-template-columns:minmax(100px,1fr) auto minmax(100px,1fr); gap:8px; align-items:center; padding:2px 0 3px; border:0; background:transparent; }
       .dg-order-flow-label { min-width:0; display:flex; align-items:baseline; gap:6px; }
       .dg-order-flow-label span { color:var(--dg-text-faint); font-size:8px; font-weight:750; letter-spacing:.6px; text-transform:uppercase; }
@@ -6119,6 +6199,140 @@ function Style() {
         .dg-room-tile, .dg-scene-image, .dg-flow-dot { transition:none; }
         .dg-order-flow-slide { animation:none; }
       }
+
+      /* ---- Portal público de seguimiento ---- */
+      .dg-seguimiento { display:flex; align-items:flex-start; justify-content:center; padding-top:calc(48px + env(safe-area-inset-top, 0px)); }
+      .dg-seguimiento-wrap { width:100%; max-width:420px; }
+      .dg-seguimiento-brand { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:15px; letter-spacing:1px; color:var(--dg-accent); text-align:center; margin-bottom:20px; }
+      .dg-seguimiento-card { background:var(--dg-surface-2); border:1.5px solid rgba(var(--dg-line-rgb),0.14); border-radius:18px; padding:22px; box-shadow:0 24px 60px -20px rgba(0,0,0,0.6); }
+      .dg-seguimiento-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; }
+      .dg-seguimiento-pasos { display:flex; flex-direction:column; gap:0; margin-top:20px; }
+      .dg-seguimiento-paso { display:flex; align-items:center; gap:12px; padding:9px 0; color:var(--dg-text-faint); font-size:13.5px; position:relative; }
+      .dg-seguimiento-paso::before { content:''; position:absolute; left:12px; top:-2px; bottom:-2px; width:2px; background:rgba(var(--dg-line-rgb),0.12); z-index:0; }
+      .dg-seguimiento-paso:first-child::before { top:50%; }
+      .dg-seguimiento-paso:last-child::before { bottom:50%; }
+      .dg-seguimiento-punto { position:relative; z-index:1; display:flex; align-items:center; justify-content:center; width:25px; height:25px; min-width:25px;
+        border-radius:50%; background:var(--dg-surface); border:2px solid rgba(var(--dg-line-rgb),0.18); font-size:11px; font-weight:700; color:var(--dg-text-faint); }
+      .dg-seg-hecho { color:var(--dg-text); }
+      .dg-seg-hecho .dg-seguimiento-punto { background:var(--dg-success); border-color:var(--dg-success); color:#FFFFFF; }
+      .dg-seg-actual { color:var(--dg-text); font-weight:700; }
+      .dg-seg-actual .dg-seguimiento-punto { border-color:var(--dg-accent); color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),0.12); }
+      .dg-seguimiento-footer { text-align:center; font-size:11.5px; color:var(--dg-text-faint); margin-top:16px; }
+      @media (max-width:480px) { .dg-seguimiento { padding-left:16px; padding-right:16px; } }
     `}</style>
   );
+}
+
+// ---- Portal público de seguimiento (sin login) ----
+const SEGUIMIENTO_PASOS_PUBLICOS = [
+  { id: "confirmado", label: "Pedido confirmado" },
+  { id: "fabricacion", label: "En fabricación" },
+  { id: "listo", label: "Listo" },
+  { id: "entregado", label: "Entregado" },
+];
+
+function pasoPublicoDe(pedido) {
+  if (!pedido) return 0;
+  if (pedido.estado === "Entregado") return 3;
+  if (pedidoEstaListo(pedido)) return 2;
+  if (pedido.estado === "Sin pasar a fábrica" || pedido.estado === "Verificado") return 0;
+  return 1;
+}
+
+function SeguimientoPublico({ pedidoId }) {
+  const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
+  const [tema] = useState(() => {
+    try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
+  });
+
+  useEffect(() => {
+    let activo = true;
+    async function cargar() {
+      try {
+        const p = await pedidosStore.getOne(pedidoId);
+        if (activo) setPedido(p || null);
+      } catch (e) { if (activo) setPedido(null); }
+    }
+    cargar();
+    const interval = window.setInterval(cargar, 20000);
+    return () => { activo = false; window.clearInterval(interval); };
+  }, [pedidoId]);
+
+  if (pedido === undefined) {
+    return (
+      <div className="dg-app dg-seguimiento" data-theme={tema}>
+        <Style />
+        <div className="dg-loading"><Loader2 className="dg-spin" size={26} /><span>Buscando tu pedido...</span></div>
+      </div>
+    );
+  }
+  if (pedido === null || pedido.estado === "Cancelado") {
+    return (
+      <div className="dg-app dg-seguimiento" data-theme={tema}>
+        <Style />
+        <div className="dg-seguimiento-wrap">
+          <div className="dg-seguimiento-brand">DECOGLASS</div>
+          <div className="dg-empty" style={{ marginTop: 24 }}>
+            {pedido === null ? "No encontramos ningún pedido con este link. Consultanos si creés que es un error." : "Este pedido fue cancelado. Consultanos si tenés dudas."}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const pasoActual = pasoPublicoDe(pedido);
+  const produccionCompletada = pasosProduccionCompletados(pedido);
+  const entrega = ENTREGA_ESTILO[pedido.metodo] || ENTREGA_ESTILO.default;
+
+  return (
+    <div className="dg-app dg-seguimiento" data-theme={tema}>
+      <Style />
+      <div className="dg-seguimiento-wrap">
+        <div className="dg-seguimiento-brand">DECOGLASS</div>
+        <div className="dg-seguimiento-card">
+          <div className="dg-seguimiento-head">
+            <span>Pedido #{pedido.orden}</span>
+            <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{pedido.metodo}</span>
+          </div>
+          <div className="dg-fab-medida"><strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small></div>
+          <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo}</div>
+
+          <div className="dg-seguimiento-pasos">
+            {SEGUIMIENTO_PASOS_PUBLICOS.map((paso, i) => (
+              <div key={paso.id} className={`dg-seguimiento-paso ${i < pasoActual ? "dg-seg-hecho" : i === pasoActual ? "dg-seg-actual" : ""}`}>
+                <span className="dg-seguimiento-punto">{i < pasoActual ? <Check size={13} /> : i + 1}</span>
+                <span>{paso.label}</span>
+              </div>
+            ))}
+          </div>
+
+          {pasoActual === 1 && produccionCompletada < PRODUCCION_PASOS.length && (
+            <p className="dg-hint" style={{ marginTop: 10 }}>
+              Etapa actual en fábrica: <strong>{PRODUCCION_PASOS[produccionCompletada]?.label}</strong>
+            </p>
+          )}
+          {pedido.listo && pasoActual < 3 && (
+            <p className="dg-hint" style={{ marginTop: 6 }}>Fecha estimada: <strong>{pedido.listo}</strong></p>
+          )}
+          {pasoActual === 2 && (
+            <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
+              {pedido.metodo === "Retira" ? "¡Ya podés coordinar el retiro!" : "¡Ya está listo para coordinar la entrega!"}
+            </p>
+          )}
+        </div>
+        <p className="dg-seguimiento-footer">Esta página se actualiza sola. Ante cualquier duda, escribinos.</p>
+      </div>
+    </div>
+  );
+}
+
+function linkSeguimiento(pedido) {
+  return `${window.location.origin}/seguimiento/${pedido.id}`;
+}
+
+export default function Root() {
+  const path = window.location.pathname;
+  const match = path.match(/^\/seguimiento\/([^/]+)\/?$/);
+  if (match) return <SeguimientoPublico pedidoId={match[1]} />;
+  return <App />;
 }
