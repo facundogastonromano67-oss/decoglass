@@ -728,7 +728,7 @@ const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
   "vendedores", "recursos-venta", "facturas-manuales", "reclamos",
   "stock-espejos", "stock-materiales", "empleados-sueldo", "liquidaciones-sueldo",
-  "auditoria", "admins",
+  "auditoria", "admins", "integraciones",
 ];
 
 export default function App() {
@@ -749,6 +749,7 @@ export default function App() {
   const [liquidaciones, setLiquidaciones] = useState(null);
   const [adminKeyExists, setAdminKeyExists] = useState(false);
   const [admins, setAdmins] = useState([]);
+  const [integraciones, setIntegraciones] = useState({ kommoSubdominio: "" });
   const [auditoria, setAuditoria] = useState([]);
   const [saveState, setSaveState] = useState({ estado: "idle" });
   const [syncState, setSyncState] = useState("connecting");
@@ -832,6 +833,7 @@ export default function App() {
       "liquidaciones-sueldo": setLiquidaciones,
       auditoria: setAuditoria,
       admins: setAdmins,
+      integraciones: setIntegraciones,
     };
 
     setters[row.key]?.(parsed);
@@ -1050,6 +1052,10 @@ export default function App() {
       }
       setAdmins(lista); setAdminKeyExists(lista.length > 0);
     } catch (e) { setAdminKeyExists(false); }
+    try {
+      const ig = await storage.get("integraciones", true);
+      setIntegraciones(ig ? JSON.parse(ig.value) : { kommoSubdominio: "" });
+    } catch (e) { setIntegraciones({ kommoSubdominio: "" }); }
     setLoading(false);
   }
 
@@ -1107,6 +1113,7 @@ export default function App() {
   async function persistStockEspejos(next) { guardar("stock-espejos", next, () => setStockEspejos(next)); }
   async function persistStockMateriales(next) { guardar("stock-materiales", next, () => setStockMateriales(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
+  async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
   async function persistEmpleadosSueldo(next) { guardar("empleados-sueldo", next, () => setEmpleadosSueldo(next)); }
   async function persistLiquidaciones(next) { guardar("liquidaciones-sueldo", next, () => setLiquidaciones(next)); }
 
@@ -1274,6 +1281,7 @@ export default function App() {
             onCreatePurchase={createPurchaseEntry}
             admins={admins} onChangeAdmins={persistAdmins}
             auditoria={auditoria}
+            kommoSubdominio={integraciones?.kommoSubdominio}
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
             facturas={facturas} onChangeFacturas={persistFacturas}
@@ -1293,6 +1301,7 @@ export default function App() {
           sectors={sectors}
           vendedores={vendedores} onChangeVendedores={persistVendedores}
           auditoria={auditoria}
+          integraciones={integraciones} onChangeIntegraciones={persistIntegraciones}
           datos={{ pedidos, incomes, purchases, leads, reclamos, facturas, stockEspejos, stockMateriales, liquidaciones, empleados: empleadosSueldo, sectors, recursos, quotes, admins, auditoria }}
         />
       )}
@@ -1345,7 +1354,7 @@ function LockedPage({ label, onLogin }) {
   );
 }
 
-function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vendedores, onChangeVendedores, datos, auditoria }) {
+function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vendedores, onChangeVendedores, datos, auditoria, integraciones, onChangeIntegraciones }) {
   const [tab, setTab] = useState("usuarios");
 
   const tabs = [
@@ -1389,6 +1398,15 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vende
                   <span key={v} className="dg-vendedor-chip">{v}<button onClick={() => onChangeVendedores(vendedores.filter((x) => x !== v))}><X size={11} /></button></span>
                 ))}
               </div>
+            </div>
+            <div className="dg-section-card">
+              <div className="dg-section-header"><ExternalLink size={14} /> Integraciones</div>
+              <p className="dg-pago-meta" style={{ marginBottom: 10 }}>
+                Se usa en la tarjeta de "Verificar pedido" para abrir el contacto directo en Kommo. Es el nombre que aparece antes de ".kommo.com" en tu cuenta.
+              </p>
+              <Field label="Subdominio de Kommo">
+                <input value={integraciones?.kommoSubdominio || ""} onChange={(e) => onChangeIntegraciones({ ...integraciones, kommoSubdominio: e.target.value })} placeholder="Ej: midecoglass" />
+              </Field>
             </div>
           </>
         )}
@@ -2440,6 +2458,61 @@ function PasoPedido({ numero, titulo, detalle, estado = "pending", children }) {
   );
 }
 
+function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio }) {
+  const funciones = funcionesPedido(pedido, true);
+  const linkWhatsapp = waLink(pedido.celular);
+  const linkKommo = kommoSubdominio?.trim()
+    ? `https://${kommoSubdominio.trim()}.kommo.com/contacts/list/?query=${encodeURIComponent(pedido.celular || pedido.cliente || "")}`
+    : null;
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-verificacion" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title">Verificar pedido #{pedido.orden}</div>
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <p className="dg-hint" style={{ marginBottom: 14 }}>
+          Antes de habilitarlo para fábrica, confirmá que estos datos coincidan con lo que pidió {pedido.cliente || "el cliente"}.
+        </p>
+
+        <div className="dg-verif-specs">
+          <div className="dg-fab-medida">
+            <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+            {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
+          </div>
+          <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
+          {funciones.length > 0 && (
+            <div className="dg-fab-funciones">
+              {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
+            </div>
+          )}
+          {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+        </div>
+
+        <div className="dg-verif-contacto">
+          <span className="dg-verif-cliente">{pedido.cliente || "Sin nombre"}</span>
+          <span className="dg-pago-meta">{pedido.celular || "Sin celular cargado"}</span>
+        </div>
+
+        <div className="dg-verif-links">
+          {linkWhatsapp
+            ? <a className="dg-btn-ghost" href={linkWhatsapp} target="_blank" rel="noopener noreferrer"><MessageCircle size={14} /> Abrir chat de WhatsApp</a>
+            : <span className="dg-pago-meta">Sin celular: no se puede abrir WhatsApp</span>}
+          {linkKommo
+            ? <a className="dg-btn-ghost" href={linkKommo} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /> Buscar en Kommo</a>
+            : <span className="dg-pago-meta">Configurá el subdominio de Kommo en Ajustes para habilitar este botón</span>}
+        </div>
+
+        <div className="dg-form-actions" style={{ marginTop: 16 }}>
+          <button className="dg-btn-ghost" onClick={onClose}>Todavía no</button>
+          <button className="dg-btn-primary" onClick={onConfirmar}><CheckCircle2 size={14} /> Coincide, marcar Verificado</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar }) {
   const conEnvio = esPedidoConEnvio(pedido);
   const entregado = pedido.estado === "Entregado";
@@ -2653,13 +2726,14 @@ function validarPedido(p) {
   return errores;
 }
 
-function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar }) {
+function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio }) {
   const [quickView, setQuickView] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [filtroVendedor, setFiltroVendedor] = useState("todos");
   const [busqueda, setBusqueda] = useState("");
   const [openPedido, setOpenPedido] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [verificando, setVerificando] = useState(null);
   const [nextDraft, setNextDraft] = useState(null);
   const [agrupado, setAgrupado] = useState("mes");
   const [fechaDesde, setFechaDesde] = useState("");
@@ -2986,7 +3060,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                           <FlujoPedido
                             pedido={espejo}
                             canEdit={canEditFull}
-                            onVerificar={marcarVerificado}
+                            onVerificar={(p) => setVerificando(p)}
                             onClienteConfirmado={marcarClienteAvisado}
                             onEnvioConfirmado={marcarEnvioConfirmado}
                             onEntregar={marcarEntregado}
@@ -3057,6 +3131,15 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         </table>
         <div className="dg-print-total">Total: {money(totalVisible)}</div>
       </div>
+
+      {verificando && (
+        <VerificacionModal
+          pedido={verificando}
+          kommoSubdominio={kommoSubdominio}
+          onClose={() => setVerificando(null)}
+          onConfirmar={() => { marcarVerificado(verificando); setVerificando(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -4074,6 +4157,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <option value="todos">Todos ({enFabrica.length})</option>
         </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
       </div>
 
       <div className="dg-fab-leyenda">
@@ -4086,6 +4170,30 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay pedidos terminados en este proceso." : "No hay pedidos pendientes en esta vista."}</div>}
       <div className="dg-fab-lista">{visibles.map(renderCard)}</div>
+
+      <div className="dg-print-area dg-print-fabrica">
+        <div className="dg-print-head">
+          <div className="dg-print-brand">DECOGLASS — Fábrica</div>
+          <div className="dg-print-sub">
+            {TALLER_PROCESOS.find((t) => t.id === proceso)?.label || proceso} — {new Date().toLocaleDateString("es-AR")} · {visibles.length} pedido(s)
+          </div>
+        </div>
+        <table className="dg-print-table">
+          <thead>
+            <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Funciones</th><th>Entrega</th><th>Estado</th><th>Entrega estimada</th></tr>
+          </thead>
+          <tbody>
+            {visibles.map((p) => (
+              <tr key={p.id}>
+                <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
+                <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
+                <td>{funcionesPedido(p, true).map((f) => f.label).join(", ") || "—"}</td>
+                <td>{p.metodo}</td><td>{p.estado}{p.demorado ? " (demorado)" : ""}</td><td>{p.listo || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -4677,7 +4785,7 @@ function SectorPage({
   facturas, onChangeFacturas, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
-  admins, onChangeAdmins, auditoria, onRegistrar,
+  admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio,
 }) {
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
   const [subpage, setSubpage] = useState(tabs[0].id);
@@ -4743,7 +4851,7 @@ function SectorPage({
 
       {subpage === "pedidos" && sector.id !== "fabrica" && (
         canSeePedidos ? (
-          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
+          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} kommoSubdominio={kommoSubdominio} />
         ) : <LockedPage label="Pedidos" onLogin={onRequestLogin} />
       )}
 
@@ -5100,6 +5208,12 @@ function Style() {
       .dg-modal .dg-icon-btn { color: #FFFFFF !important; }
       .dg-modal .dg-error { color: #FF8A80 !important; font-weight: 600; }
       .dg-modal-ajustes { max-width:820px; }
+      .dg-modal-verificacion { max-width:460px; }
+      .dg-verif-specs { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+      .dg-verif-contacto { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 2px; border-top:1px solid rgba(var(--dg-line-rgb),0.08); border-bottom:1px solid rgba(var(--dg-line-rgb),0.08); margin-bottom:14px; }
+      .dg-verif-cliente { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; }
+      .dg-verif-links { display:flex; flex-direction:column; gap:8px; }
+      .dg-verif-links a.dg-btn-ghost { text-decoration:none; justify-content:center; }
       .dg-modal-ajustes .dg-page { max-width:none; }
       .dg-vendedores-chips { display:flex; gap:6px; flex-wrap:wrap; }
       .dg-export-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:8px; }
