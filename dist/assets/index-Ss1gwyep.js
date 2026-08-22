@@ -474,7 +474,7 @@ Cualquier consulta quedamos a disposición.`}function cie({reclamos:e,onChange:t
         font-family:'Inter', sans-serif; color: var(--text);
         color-scheme:dark;
         background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(var(--dg-accent-rgb),.06),transparent),var(--bg);
-        min-height:100vh; padding:28px 16px 60px; box-sizing:border-box; transition: background .2s ease, color .2s ease; }
+        min-height:100vh; min-height:100dvh; padding:calc(28px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(60px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); box-sizing:border-box; transition: background .2s ease, color .2s ease; }
       .dg-app[data-theme="light"] {
         --dg-bg:#E6E3DE; --dg-surface:#FAF9F6; --dg-surface-2:#FFFFFF; --dg-surface-3:#DCD8D1;
         --dg-order-info:#FFFFFF; --dg-order-flow:#DDD8D0;
@@ -595,7 +595,7 @@ Cualquier consulta quedamos a disposición.`}function cie({reclamos:e,onChange:t
       .dg-chart-card { flex:1; min-width:220px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:12px; }
       .dg-chart-title { font-size:12px; color:var(--dg-text-dim); margin-bottom:6px; font-family:'JetBrains Mono', monospace; }
 
-      .dg-overlay { position:fixed; inset:0; background:rgba(8,6,4,.72); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50; }
+      .dg-overlay { position:fixed; inset:0; background:rgba(8,6,4,.72); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; padding:calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); z-index:50; }
       .dg-modal { font-family:'Inter', sans-serif; color:var(--dg-text); width:100%; max-width:400px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
       @keyframes dg-modal-in { from { opacity:0; transform: translateY(8px) scale(0.99); } to { opacity:1; transform:none; } }
       .dg-modal-lg { max-width:540px; }
@@ -1074,7 +1074,7 @@ Cualquier consulta quedamos a disposición.`}function cie({reclamos:e,onChange:t
       /* Sistema visual profesional · V2 */
       .dg-app {
         --panel-2:var(--dg-surface-2); --panel-3:var(--dg-surface-3);
-        min-height:100vh; padding:0 24px 80px; line-height:1.45; color:var(--text);
+        min-height:100vh; min-height:100dvh; padding:env(safe-area-inset-top, 0px) calc(24px + env(safe-area-inset-right, 0px)) calc(80px + env(safe-area-inset-bottom, 0px)) calc(24px + env(safe-area-inset-left, 0px)); line-height:1.45; color:var(--text);
         background:
           radial-gradient(circle at 50% -12%, rgba(var(--dg-accent-rgb),.09), transparent 34%),
           var(--dg-bg);
@@ -1082,7 +1082,7 @@ Cualquier consulta quedamos a disposición.`}function cie({reclamos:e,onChange:t
       }
       .dg-app button, .dg-app input, .dg-app select, .dg-app textarea { font-family:'Inter',sans-serif; }
       .dg-header {
-        position:sticky; top:0; z-index:40; max-width:1180px; min-height:76px; margin:0 auto;
+        position:sticky; top:env(safe-area-inset-top, 0px); z-index:40; max-width:1180px; min-height:76px; margin:0 auto;
         flex-wrap:nowrap; padding:12px 0; border-bottom:1px solid rgba(var(--dg-line-rgb),.08);
         background:color-mix(in srgb,var(--dg-bg) 88%,transparent); backdrop-filter:blur(18px);
       }
@@ -1450,7 +1450,7 @@ Cualquier consulta quedamos a disposición.`}function cie({reclamos:e,onChange:t
         .dg-sector-workbar .dg-sector-tabs { width:100%; justify-content:flex-start; }
       }
       @media (max-width:680px) {
-        .dg-app { padding:0 12px 48px; }
+        .dg-app { padding:env(safe-area-inset-top, 0px) calc(12px + env(safe-area-inset-right, 0px)) calc(48px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px)); }
         .dg-header { min-height:66px; padding:9px 0; }
         .dg-brand { min-width:0; }
         .dg-brand-mark { width:37px; height:37px; }
