@@ -1295,8 +1295,9 @@ export default function App() {
       {loginOpen && (
         <LoginModal
           usuarios={admins}
+          sectors={sectors}
           onClose={() => setLoginOpen(false)}
-          onCreateFirstAdmin={(u) => persistAdmins([u])}
+          onCreateUsuario={(u) => persistAdmins([...(admins || []), u])}
           onSuccess={startSession}
         />
       )}
@@ -1841,7 +1842,11 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
     onChangeEmpleados(exists ? empleados.map((e) => (e.id === emp.id ? emp : e)) : [...empleados, emp]);
     setEditingEmp(null);
   }
-  function removeEmpleado(id) { onChangeEmpleados(empleados.filter((e) => e.id !== id)); }
+  function removeEmpleado(id, nombre) {
+    if (!window.confirm(`¿Borrar a ${nombre} de la planilla de sueldos?\n\nSus liquidaciones ya guardadas no se borran, pero dejará de aparecer en la grilla.`)) return;
+    onChangeEmpleados(empleados.filter((e) => e.id !== id));
+    if (editingEmp?.id === id) setEditingEmp(null);
+  }
   function editarEmpleado(emp) {
     setEditingEmp(emp);
     setVerEmpleados(true);
@@ -1891,7 +1896,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                   </span>
                 </div>
                 <button className="dg-icon-btn" aria-label={`Editar valores de ${e.nombre}`} title="Editar sueldo y valores" onClick={() => editarEmpleado(e)}><Pencil size={14} /></button>
-                <button className="dg-icon-btn dg-task-del" onClick={() => removeEmpleado(e.id)}><Trash2 size={14} /></button>
+                <button className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={() => removeEmpleado(e.id, e.nombre)}><Trash2 size={13} /> Borrar</button>
               </div>
             ))}
           </div>
@@ -4519,44 +4524,71 @@ function ConfigEditor({ config, onChange }) {
   );
 }
 
-function LoginModal({ usuarios, onClose, onCreateFirstAdmin, onSuccess }) {
+function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) {
+  const [modo, setModo] = useState("entrar"); // "entrar" | "crear"
   const [nombre, setNombre] = useState("");
   const [clave, setClave] = useState("");
   const [clave2, setClave2] = useState("");
+  const [rol, setRol] = useState("encargado");
+  const [sectorId, setSectorId] = useState(sectors[0]?.id || "");
   const [error, setError] = useState("");
-  const bootstrap = usuarios.length === 0;
+  const bootstrap = usuarios.length === 0; // nadie usó la app todavía: el primero en crear cuenta es admin
 
-  function handleSubmit() {
+  function handleEntrar() {
     setError("");
-    if (bootstrap) {
-      if (!nombre.trim()) return setError("Ingresá tu nombre de usuario.");
-      if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
-      if (clave !== clave2) return setError("Las claves no coinciden.");
-      const primero = { id: uid(), nombre: nombre.trim(), clave, rol: "admin", sectorId: null };
-      onCreateFirstAdmin(primero);
-      onSuccess({ role: "admin", nombre: primero.nombre });
-      return;
-    }
     const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase() && u.clave === clave);
     if (!match) return setError("Usuario o clave incorrectos.");
     if (match.rol === "admin") onSuccess({ role: "admin", nombre: match.nombre });
     else onSuccess({ role: "sector", sectorId: match.sectorId, tipo: match.rol, nombre: match.nombre });
   }
 
+  function handleCrear() {
+    setError("");
+    if (!nombre.trim()) return setError("Elegí un nombre de usuario.");
+    if (usuarios.some((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase())) return setError("Ya existe un usuario con ese nombre.");
+    if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
+    if (clave !== clave2) return setError("Las claves no coinciden.");
+    const nuevo = bootstrap
+      ? { id: uid(), nombre: nombre.trim(), clave, rol: "admin", sectorId: null }
+      : { id: uid(), nombre: nombre.trim(), clave, rol, sectorId: rol === "admin" ? null : sectorId };
+    onCreateUsuario(nuevo);
+    onSuccess(nuevo.rol === "admin" ? { role: "admin", nombre: nuevo.nombre } : { role: "sector", sectorId: nuevo.sectorId, tipo: nuevo.rol, nombre: nuevo.nombre });
+  }
+
+  const submit = modo === "crear" || bootstrap ? handleCrear : handleEntrar;
+
   return (
     <div className="dg-overlay" onClick={onClose}>
       <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="dg-modal-head"><div className="dg-modal-title">Iniciar sesión</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
-        <EnterFlow className="dg-form" onSubmit={handleSubmit}>
-          {bootstrap && <p className="dg-hint">Primera vez: creá el usuario administrador principal del sistema.</p>}
+        <div className="dg-modal-head"><div className="dg-modal-title">{modo === "crear" || bootstrap ? "Crear cuenta" : "Iniciar sesión"}</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
+        <EnterFlow className="dg-form" onSubmit={submit}>
+          {bootstrap && <p className="dg-hint">Primera vez que se usa el sistema: esta cuenta va a ser la de administrador principal.</p>}
           <label>Usuario</label>
           <input value={nombre} onChange={(e) => setNombre(e.target.value)} autoCapitalize="off" autoCorrect="off" />
-          <label>Clave{bootstrap ? " nueva" : ""}</label>
+          <label>Clave{modo === "crear" || bootstrap ? " nueva" : ""}</label>
           <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
-          {bootstrap && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
+          {(modo === "crear" || bootstrap) && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
+          {modo === "crear" && !bootstrap && (
+            <>
+              <label>Sos</label>
+              <select value={rol} onChange={(e) => setRol(e.target.value)}>
+                <option value="encargado">Encargado de sector</option>
+                <option value="operario">Operario de sector</option>
+              </select>
+              <label>Sector</label>
+              <select value={sectorId} onChange={(e) => setSectorId(e.target.value)}>
+                {sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+              </select>
+            </>
+          )}
           {error && <div className="dg-error">{error}</div>}
-          <div className="dg-form-actions" style={{ justifyContent: "flex-end" }}>
-            <button className="dg-btn-primary" onClick={handleSubmit}>{bootstrap ? "Crear usuario y entrar" : "Entrar"}</button>
+          <div className="dg-form-actions" style={{ justifyContent: "space-between" }}>
+            {!bootstrap && (
+              <button className="dg-btn-ghost" onClick={() => { setError(""); setModo(modo === "crear" ? "entrar" : "crear"); }}>
+                {modo === "crear" ? "Ya tengo cuenta" : "No tengo cuenta"}
+              </button>
+            )}
+            <button className="dg-btn-primary" onClick={submit}>{modo === "crear" || bootstrap ? "Crear cuenta y entrar" : "Entrar"}</button>
           </div>
         </EnterFlow>
       </div>
@@ -4568,7 +4600,9 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
   const [newTask, setNewTask] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(sector.encargado || "");
-  const isThisSector = session?.role === "sector" && session.sectorId === sector.id;
+  const puedeMarcarTareas = isAdmin
+    || (session?.role === "sector" && session.tipo === "encargado")
+    || (session?.role === "sector" && session.tipo === "operario" && session.sectorId === sector.id);
   const suggested = SUGGESTED_TASKS[sector.id] || [];
 
   function addTask() { if (!newTask.trim()) return; onUpdate({ tasks: [...sector.tasks, { id: uid(), text: newTask.trim(), completed: false }] }); setNewTask(""); }
@@ -4597,7 +4631,7 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
           {sector.tasks.length === 0 && <div className="dg-empty">Todavía no hay tareas asignadas a este sector.</div>}
           {sector.tasks.map((t) => (
             <div className={`dg-task-table-row ${t.completed ? "dg-task-table-row-done" : ""}`} key={t.id}>
-              <button className={`dg-checkbox ${t.completed ? "dg-checkbox-on" : ""}`} disabled={!isThisSector && !isAdmin} onClick={() => toggleTask(t.id)} />
+              <button className={`dg-checkbox ${t.completed ? "dg-checkbox-on" : ""}`} disabled={!puedeMarcarTareas} onClick={() => toggleTask(t.id)} />
               <span className={t.completed ? "dg-task-done" : ""}>{t.text}</span>
               {isAdmin && <button className="dg-icon-btn dg-task-del" onClick={() => removeTask(t.id)}><Trash2 size={14} /></button>}
             </div>
@@ -4615,7 +4649,7 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
         </>
       )}
 
-      {!isAdmin && !isThisSector && (
+      {!puedeMarcarTareas && (
         <div className="dg-locked-note"><Lock size={14} /> Iniciá sesión como admin o como encargado de este sector para modificar tareas.
           <button className="dg-btn-ghost dg-inline-btn" onClick={onRequestLogin}>Iniciar sesión</button>
         </div>
@@ -4639,16 +4673,19 @@ function SectorPage({
   const Icon = ICONS[sector.icon];
   const { key } = getStatus(sector.tasks);
   const glow = STATUS[key].glow;
-  const isVentasSession = session?.role === "sector" && session.sectorId === "ventas";
   const esEncargado = session?.role === "sector" && session.tipo !== "operario";
   const puedeBorrar = isAdmin || esEncargado; // los operarios no borran registros
-  const canQuote = isAdmin || isVentasSession;
+  // Cualquier encargado (de cualquier sector) tiene acceso operativo completo a
+  // Ventas, PostVenta, Fábrica y Logística. Lo único reservado para admin son
+  // Finanzas, Comisiones y Sueldos (eso ya se controla aparte, con isAdmin).
+  // Los operarios siguen limitados solo al sector donde tienen su usuario.
+  const canQuote = isAdmin || esEncargado;
   const canSeePedidos = !!session;
   const sessionSectorId = session?.role === "sector" ? session.sectorId : null;
-  const canEditPedidoFull = isAdmin || isVentasSession;
-  const canEditFabrica = isAdmin || sessionSectorId === "fabrica";
-  const canEditPostventa = isAdmin || sessionSectorId === "postventa";
-  const canEditLogistica = isAdmin || sessionSectorId === "logistica";
+  const canEditPedidoFull = isAdmin || esEncargado;
+  const canEditFabrica = isAdmin || esEncargado;
+  const canEditPostventa = isAdmin || esEncargado;
+  const canEditLogistica = isAdmin || esEncargado;
 
   return (
     <div className="dg-sector-page">
@@ -4695,7 +4732,7 @@ function SectorPage({
 
       {subpage === "pedidos" && sector.id !== "fabrica" && (
         canSeePedidos ? (
-          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={sector.id === "administracion" ? isAdmin : canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
+          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
         ) : <LockedPage label="Pedidos" onLogin={onRequestLogin} />
       )}
 
@@ -4823,9 +4860,11 @@ function Style() {
       .dg-btn-ghost:hover { color:var(--text); border-color: rgba(var(--dg-line-rgb),0.2); }
       .dg-inline-btn { padding:4px 10px; font-size:12px; margin-left:8px; }
       .dg-mini-btn { padding:5px 10px; font-size:12px; }
+      .dg-btn-danger-ghost { color:var(--dg-danger); border-color:rgba(var(--dg-danger-rgb),0.35); }
+      .dg-btn-danger-ghost:hover { background:rgba(var(--dg-danger-rgb),0.1); border-color:rgba(var(--dg-danger-rgb),0.55); }
 
       .dg-nav { display:flex; gap:6px; max-width:960px; margin:0 auto 26px; background: var(--panel); border:1px solid var(--panel-border); border-radius:12px; padding:4px; }
-      .dg-nav-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:transparent; border:none; color:var(--text-dim); font-family:'Inter',sans-serif; font-size:13px; font-weight:600; padding:9px; border-radius:9px; cursor:pointer; }
+      .dg-nav-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:transparent; border:none; color:var(--text-dim); font-family:'Inter',sans-serif; font-size:13px; font-weight:600; padding:9px; border-radius:9px; cursor:pointer; position:relative; z-index:1; pointer-events:auto; touch-action:manipulation; }
       .dg-nav-on { background: rgba(var(--dg-accent-rgb),0.14); color:var(--dg-accent); }
       .dg-nav-breadcrumb { justify-content:flex-start; }
       .dg-nav-breadcrumb .dg-nav-btn { flex:none; }
@@ -4839,7 +4878,7 @@ function Style() {
       .dg-sector-page-head-v2 { display:flex; align-items:center; gap:14px; margin-bottom:18px; }
       .dg-back-circle { display:flex; align-items:center; justify-content:center; width:38px; height:38px; min-width:38px;
         border-radius:50%; background: rgba(var(--dg-line-rgb),0.05); border:1px solid rgba(var(--dg-line-rgb),0.12); color:var(--dg-text-dim); cursor:pointer;
-        transition: all .15s ease; }
+        transition: all .15s ease; position:relative; z-index:41; pointer-events:auto; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
       .dg-back-circle:hover { background: rgba(var(--dg-accent-rgb),0.15); border-color: rgba(var(--dg-accent-rgb),0.4); color:var(--dg-accent); transform: translateX(-2px); }
       .dg-sector-page-title-v2 { display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
       .dg-sector-page-name { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:17px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -5393,6 +5432,7 @@ function Style() {
         position:sticky; top:env(safe-area-inset-top, 0px); z-index:40; max-width:1180px; min-height:76px; margin:0 auto;
         flex-wrap:nowrap; padding:12px 0; border-bottom:1px solid rgba(var(--dg-line-rgb),.08);
         background:color-mix(in srgb,var(--dg-bg) 88%,transparent); backdrop-filter:blur(18px);
+        transform:translateZ(0); -webkit-transform:translateZ(0); will-change:transform;
       }
       .dg-brand { min-width:230px; }
       .dg-brand-mark { width:42px; height:42px; border-radius:50%; box-shadow:none; background:rgba(var(--dg-accent-rgb),.1); border-color:rgba(var(--dg-accent-rgb),.34); }
