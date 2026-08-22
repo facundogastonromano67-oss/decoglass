@@ -671,8 +671,8 @@ function saveSession(s) {
 const MATERIAL_CATEGORIAS = ["Vidrio", "Perfilería", "Iluminación", "Electrónica", "Químicos", "Embalaje", "Ferretería", "Otro"];
 
 const DEFAULT_MATERIALES = [
-  { categoria: "Vidrio", nombre: "Plancha de espejo", unidad: "m²", minimo: 12 },
-  { categoria: "Perfilería", nombre: "Aluminio (perfil)", unidad: "m", minimo: 40 },
+  { categoria: "Vidrio", nombre: "Plancha de espejo", unidad: "Plancha 240x180", minimo: 3 },
+  { categoria: "Perfilería", nombre: "Aluminio (perfil)", unidad: "Tira 6m", minimo: 7 },
   { categoria: "Iluminación", nombre: "Tira LED 3 tonos", unidad: "u", minimo: 20 },
   { categoria: "Electrónica", nombre: "Transformador", unidad: "u", minimo: 20 },
   { categoria: "Electrónica", nombre: "Sensor touch", unidad: "u", minimo: 15 },
@@ -682,14 +682,14 @@ const DEFAULT_MATERIALES = [
   { categoria: "Electrónica", nombre: "Módulo hora y temperatura", unidad: "u", minimo: 10 },
   { categoria: "Electrónica", nombre: "Módulo Bluetooth", unidad: "u", minimo: 10 },
   { categoria: "Electrónica", nombre: "Parlante", unidad: "u", minimo: 10 },
-  { categoria: "Químicos", nombre: "Sellador / silicona", unidad: "ml", minimo: 500 },
-  { categoria: "Químicos", nombre: "Alcohol isopropílico", unidad: "l", minimo: 3 },
-  { categoria: "Embalaje", nombre: "Film burbuja", unidad: "m²", minimo: 50 },
-  { categoria: "Embalaje", nombre: "Film stretch", unidad: "m", minimo: 200 },
+  { categoria: "Químicos", nombre: "Sellador / silicona", unidad: "Pomo", minimo: 6 },
+  { categoria: "Químicos", nombre: "Alcohol isopropílico", unidad: "Botella 500ml", minimo: 6 },
+  { categoria: "Embalaje", nombre: "Film burbuja", unidad: "Rollo", minimo: 2 },
+  { categoria: "Embalaje", nombre: "Film stretch", unidad: "Rollo", minimo: 2 },
   { categoria: "Embalaje", nombre: "Cinta de embalar", unidad: "u", minimo: 10 },
   { categoria: "Embalaje", nombre: "Cartón para puntas", unidad: "u", minimo: 40 },
-  { categoria: "Embalaje", nombre: "Madera para cajón (interior)", unidad: "m²", minimo: 10 },
-  { categoria: "Embalaje", nombre: "Telgopor (interior)", unidad: "m²", minimo: 10 },
+  { categoria: "Embalaje", nombre: "Madera para cajón (interior)", unidad: "Plancha 240x180", minimo: 3 },
+  { categoria: "Embalaje", nombre: "Telgopor (interior)", unidad: "Recorte 100x100", minimo: 10 },
   { categoria: "Ferretería", nombre: "Pitones", unidad: "u", minimo: 50 },
   { categoria: "Ferretería", nombre: "Tarugos", unidad: "u", minimo: 50 },
 ];
@@ -3736,7 +3736,7 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
           <div className="dg-field-grid">
             <Field label="Material"><input value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
             <Field label="Categoría"><select value={categoria} onChange={(e) => setCategoria(e.target.value)}>{MATERIAL_CATEGORIAS.map((c) => (<option key={c}>{c}</option>))}</select></Field>
-            <Field label="Unidad"><input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="u / m / m² / l" /></Field>
+            <Field label="Unidad"><input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="Ej: Plancha 240x180, Tira 6m, Pomo, Rollo" /></Field>
             <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
             <Field label="Mínimo de alerta"><input type="number" value={minimo} onChange={(e) => setMinimo(e.target.value)} /></Field>
           </div>
@@ -4901,7 +4901,7 @@ function Style() {
       .dg-chart-card { flex:1; min-width:220px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:12px; }
       .dg-chart-title { font-size:12px; color:var(--dg-text-dim); margin-bottom:6px; font-family:'JetBrains Mono', monospace; }
 
-      .dg-overlay { position:fixed; inset:0; background:var(--dg-bg); display:flex; align-items:center; justify-content:center; padding:calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); z-index:50; }
+      .dg-overlay { position:fixed; inset:0; background:#0A0A0B; display:flex; align-items:center; justify-content:center; padding:calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); z-index:50; }
       .dg-modal { font-family:'Inter', sans-serif; color:var(--dg-text); width:100%; max-width:400px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
       @keyframes dg-modal-in { from { opacity:0; transform: translateY(8px) scale(0.99); } to { opacity:1; transform:none; } }
       .dg-modal-lg { max-width:540px; }
@@ -5485,7 +5485,7 @@ function Style() {
       .dg-task-table-wrap { padding:5px; }
       .dg-total-card { padding:14px 15px; }
       .dg-modal-overlay { background:rgba(7,5,4,.76); backdrop-filter:blur(8px); }
-      .dg-modal { max-width:440px; border-color:rgba(var(--dg-line-rgb),.13); border-radius:18px; background:var(--dg-bg); box-shadow:0 30px 80px -20px rgba(0,0,0,.9); }
+      .dg-modal { max-width:440px; border-color:rgba(var(--dg-line-rgb),.13); border-radius:18px; background:var(--dg-surface-2); box-shadow:0 30px 80px -20px rgba(0,0,0,.9); }
       .dg-modal-lg { max-width:920px; }
       .dg-field input, .dg-field select, .dg-form input, .dg-form select, .dg-inline-input, .dg-pedido-search, textarea {
         border-color:rgba(var(--dg-line-rgb),.12); border-radius:9px; background:var(--dg-bg); color:var(--dg-text);
