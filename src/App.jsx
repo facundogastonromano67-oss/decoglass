@@ -205,6 +205,7 @@ const ENTREGA_ESTILO = {
 };
 
 const ENVIO_METODOS = ["Envío", "Envío flex", "Interior", "Colocación"];
+const METODOS_ENVIO_GENERAL = ["Envío", "Envío flex", "Colocación"];
 
 function esPedidoConEnvio(pedido) {
   return ENVIO_METODOS.includes(pedido?.metodo);
@@ -1245,6 +1246,12 @@ export default function App() {
               </div>
             </div>
           </>
+        )}
+
+        {activeSector && (
+          <button className="dg-mobile-back-fab" onClick={() => setActiveSectorId(null)} aria-label="Volver al edificio" title="Volver al edificio">
+            <ArrowLeft size={19} />
+          </button>
         )}
 
         {activeSector && (
@@ -2396,9 +2403,11 @@ function detalleFabrica(pedido) {
 const QUICK_VIEWS = [
   { id: "todos", label: "Activos" },
   { id: "historial", label: "Historial (entregados)" },
+  { id: "retiros", label: "Retiros de la semana" },
+  { id: "envios", label: "Envíos de la semana" },
+  { id: "interior", label: "Envíos al interior" },
   { id: "verificados", label: "Verificados → listos para fábrica" },
   { id: "facturar", label: "Pendiente de facturar" },
-  { id: "envios", label: "Envíos de la semana" },
 ];
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
@@ -2662,7 +2671,9 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   if (quickView === "historial") visibles = visibles.filter((p) => p.estado === "Entregado" || p.estado === "Cancelado");
   else if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado" || p.estado === "Pasado a fábrica");
   else if (quickView === "facturar") visibles = visibles.filter((p) => !p.facturado);
-  else if (quickView === "envios") visibles = visibles.filter((p) => ENVIO_METODOS.includes(p.metodo) && p.estado !== "Entregado");
+  else if (quickView === "envios") visibles = visibles.filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.estado !== "Entregado");
+  else if (quickView === "retiros") visibles = visibles.filter((p) => p.metodo === "Retira" && p.estado !== "Entregado");
+  else if (quickView === "interior") visibles = visibles.filter((p) => p.metodo === "Interior" && p.estado !== "Entregado");
   else visibles = visibles
     .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
     .filter((p) => filtroEstado === "todos" || p.estado === filtroEstado || (filtroEstado === "Verificado" && p.estado === "Pasado a fábrica"));
@@ -2835,7 +2846,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   }
 
   const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
-  const VISTAS_PRINCIPALES = ["todos", "historial", "envios"];
+  const VISTAS_PRINCIPALES = ["todos", "historial", "retiros", "envios", "interior"];
   const vistasSecundarias = QUICK_VIEWS.filter((v) => !VISTAS_PRINCIPALES.includes(v.id));
   const enSecundaria = vistasSecundarias.some((v) => v.id === quickView);
 
@@ -4811,7 +4822,7 @@ function Style() {
         --dg-warning:#D9A441; --dg-warning-rgb:217,164,65;
         --dg-danger:#C2574A; --dg-danger-rgb:194,87,74;
         --dg-shadow:rgba(0,0,0,.6);
-        --bg:var(--dg-bg); --panel:rgba(var(--dg-line-rgb),.035); --panel-border:rgba(var(--dg-line-rgb),.1); --text:var(--dg-text); --text-dim:var(--dg-text-dim);
+        --bg:var(--dg-bg); --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22); --text:var(--dg-text); --text-dim:var(--dg-text-dim);
         font-family:'Inter', sans-serif; color: var(--text);
         color-scheme:dark;
         background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(var(--dg-accent-rgb),.06),transparent),var(--bg);
@@ -4828,7 +4839,7 @@ function Style() {
         --dg-warning:#805515; --dg-warning-rgb:128,85,21;
         --dg-danger:#A44F43; --dg-danger-rgb:164,79,67;
         --dg-shadow:rgba(65,52,39,.16);
-        --panel:rgba(var(--dg-line-rgb),.035); --panel-border:rgba(var(--dg-line-rgb),.11);
+        --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22);
         color-scheme:light;
         background:radial-gradient(ellipse 75% 42% at 50% -10%,rgba(var(--dg-accent-rgb),.07),transparent),var(--dg-bg);
       }
@@ -5034,6 +5045,33 @@ function Style() {
       .dg-operario-form { display:flex; gap:6px; flex-wrap:wrap; }
       .dg-operario-form input { flex:1 1 130px; min-width:0; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:8px 10px; color:var(--dg-text); font-size:12px; outline:none; }
       .dg-operario-form input:focus { border-color:var(--dg-accent); }
+      .dg-mobile-back-fab { display:none; }
+      @media (max-width:680px) {
+        .dg-mobile-back-fab {
+          display:flex; align-items:center; justify-content:center;
+          position:fixed; top:calc(10px + env(safe-area-inset-top, 0px)); left:calc(10px + env(safe-area-inset-left, 0px));
+          width:42px; height:42px; border-radius:50%; z-index:200;
+          background:var(--dg-surface-2); border:1.5px solid rgba(var(--dg-line-rgb),0.28); color:var(--dg-text);
+          box-shadow:0 8px 22px -8px rgba(0,0,0,0.7);
+          -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+        }
+        .dg-mobile-back-fab:active { transform:scale(0.94); }
+      }
+
+      /* Refuerzo de contraste dentro de modales: usa mayor especificidad para
+         ganarle a cualquier otra regla, así login/ajustes nunca quedan "planos". */
+      .dg-modal .dg-form input,
+      .dg-modal .dg-form select {
+        background: var(--dg-surface); border: 1.5px solid rgba(var(--dg-line-rgb), 0.28); color: var(--dg-text);
+      }
+      .dg-modal .dg-form input:focus,
+      .dg-modal .dg-form select:focus {
+        border-color: var(--dg-accent); box-shadow: 0 0 0 3px rgba(var(--dg-accent-rgb), 0.18);
+      }
+      .dg-modal .dg-form label { color: var(--dg-text-dim); font-weight: 600; }
+      .dg-modal .dg-btn-primary { background: var(--dg-accent); color: var(--dg-on-accent); box-shadow: 0 4px 16px -6px rgba(var(--dg-accent-rgb), 0.5); }
+      .dg-modal .dg-btn-ghost { border: 1.5px solid rgba(var(--dg-line-rgb), 0.28); background: rgba(var(--dg-line-rgb), 0.05); color: var(--dg-text-dim); }
+      .dg-modal .dg-btn-ghost:hover { background: rgba(var(--dg-line-rgb), 0.09); color: var(--dg-text); }
       .dg-modal-ajustes { max-width:820px; }
       .dg-modal-ajustes .dg-page { max-width:none; }
       .dg-vendedores-chips { display:flex; gap:6px; flex-wrap:wrap; }
@@ -5525,7 +5563,7 @@ function Style() {
       .dg-task-table-wrap { padding:5px; }
       .dg-total-card { padding:14px 15px; }
       .dg-modal-overlay { background:rgba(7,5,4,.76); backdrop-filter:blur(8px); }
-      .dg-modal { max-width:440px; border-color:rgba(var(--dg-line-rgb),.13); border-radius:18px; background:var(--dg-surface-2); box-shadow:0 30px 80px -20px rgba(0,0,0,.9); }
+      .dg-modal { max-width:440px; border-color:rgba(var(--dg-line-rgb),.25); border-width:1.5px; border-radius:18px; background:var(--dg-surface-2); box-shadow:0 30px 80px -20px rgba(0,0,0,.9); }
       .dg-modal-lg { max-width:920px; }
       .dg-field input, .dg-field select, .dg-form input, .dg-form select, .dg-inline-input, .dg-pedido-search, textarea {
         border-color:rgba(var(--dg-line-rgb),.12); border-radius:9px; background:var(--dg-bg); color:var(--dg-text);
