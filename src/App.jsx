@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { storage, pedidosStore } from "./lib/storage";
+import { storage, pedidosStore, pushStore } from "./lib/storage";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
   Lock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -791,6 +791,11 @@ function App() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -1197,6 +1202,7 @@ function App() {
             {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             <span>{theme === "dark" ? "Claro" : "Oscuro"}</span>
           </button>
+          {session && <BotonNotificaciones session={session} />}
           {session ? (
             <div className="dg-session">
               <span className="dg-session-badge">
@@ -2568,6 +2574,65 @@ function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const salida = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) salida[i] = rawData.charCodeAt(i);
+  return salida;
+}
+
+function BotonNotificaciones({ session }) {
+  const [estado, setEstado] = useState("cargando"); // cargando | inactivo | activo | no-soportado | denegado
+
+  useEffect(() => {
+    async function chequear() {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || typeof Notification === "undefined") { setEstado("no-soportado"); return; }
+      if (Notification.permission === "denied") { setEstado("denegado"); return; }
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        setEstado(sub ? "activo" : "inactivo");
+      } catch (e) { setEstado("inactivo"); }
+    }
+    chequear();
+  }, []);
+
+  async function activar() {
+    try {
+      const permiso = await Notification.requestPermission();
+      if (permiso !== "granted") { setEstado("denegado"); return; }
+      const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      if (!vapidKey) { window.alert("Falta configurar la clave pública de notificaciones (VITE_VAPID_PUBLIC_KEY)."); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidKey) });
+      await pushStore.guardarSuscripcion(sub.toJSON(), session);
+      setEstado("activo");
+    } catch (e) { window.alert("No se pudo activar. En iPhone, primero agregá la app a la pantalla de inicio y abrila desde ahí."); }
+  }
+
+  async function desactivar() {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) { await pushStore.borrarSuscripcion(sub.endpoint); await sub.unsubscribe(); }
+    } catch (e) {}
+    setEstado("inactivo");
+  }
+
+  if (estado === "no-soportado" || estado === "cargando") return null;
+  if (estado === "denegado") {
+    return <button className="dg-icon-btn" title="Las notificaciones están bloqueadas en este navegador. Activalas desde la configuración del sitio para habilitarlas de nuevo." disabled><BellOff size={17} /></button>;
+  }
+  return (
+    <button className="dg-icon-btn" onClick={estado === "activo" ? desactivar : activar}
+      title={estado === "activo" ? "Notificaciones activadas en este teléfono (tocá para desactivar)" : "Activar notificaciones en este teléfono"}>
+      {estado === "activo" ? <Bell size={17} style={{ color: "var(--dg-accent)" }} /> : <BellOff size={17} />}
+    </button>
   );
 }
 

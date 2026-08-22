@@ -97,6 +97,26 @@ export const pedidosStore = {
   },
 };
 
+export const pushStore = {
+  async guardarSuscripcion({ endpoint, keys }, usuario) {
+    const row = {
+      id: endpoint, // el endpoint ya es único por dispositivo/navegador
+      usuario_nombre: usuario?.nombre || "Desconocido",
+      rol: usuario?.role === "admin" ? "admin" : (usuario?.tipo || "encargado"),
+      sector_id: usuario?.sectorId || null,
+      endpoint,
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+    };
+    const { error } = await supabase.from("push_subscriptions").upsert(row);
+    if (error) throw error;
+  },
+  async borrarSuscripcion(endpoint) {
+    if (!endpoint) return;
+    await supabase.from("push_subscriptions").delete().eq("endpoint", endpoint);
+  },
+};
+
 export const storage = {
   async get(key) {
     const { data, error } = await supabase

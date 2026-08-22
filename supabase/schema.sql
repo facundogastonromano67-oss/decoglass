@@ -44,3 +44,25 @@ create policy "Permitir todo con la clave anon"
   for all
   using (true)
   with check (true);
+
+-- Notificaciones push: cada fila es un teléfono/navegador suscripto.
+-- Guardamos también rol/sector para poder avisar solo a quien corresponde
+-- (ej: stock bajo -> gente de Fábrica, comisiones -> administradores).
+create table if not exists push_subscriptions (
+  id text primary key,
+  usuario_nombre text not null,
+  rol text not null,
+  sector_id text,
+  endpoint text not null,
+  p256dh text not null,
+  auth text not null,
+  creado timestamptz not null default now()
+);
+
+alter table push_subscriptions enable row level security;
+
+create policy "Permitir todo con la clave anon en push_subscriptions"
+  on push_subscriptions
+  for all
+  using (true)
+  with check (true);
