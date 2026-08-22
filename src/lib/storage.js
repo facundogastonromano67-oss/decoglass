@@ -14,87 +14,29 @@
 import { supabase } from "./supabaseClient";
 
 const TABLE = "kv_store";
-const SYNC_TOPIC = "decoglass-shared-data-v1";
-const SYNC_EVENT = "kv-change";
-
-const syncListeners = new Set();
-const statusListeners = new Set();
-let syncChannel = null;
-let syncConnected = false;
-
-function notifyStatus(status) {
-  statusListeners.forEach((listener) => listener(status));
-}
-
-function ensureSyncChannel() {
-  if (syncChannel) return syncChannel;
-
-  syncChannel = supabase
-    .channel(SYNC_TOPIC, { config: { broadcast: { self: false } } })
-    .on("broadcast", { event: SYNC_EVENT }, ({ payload }) => {
-      syncListeners.forEach((listener) => listener(payload));
-    })
-    .subscribe((status) => {
-      syncConnected = status === "SUBSCRIBED";
-      notifyStatus(status);
-    });
-
-  return syncChannel;
-}
-
-async function broadcastChange(row) {
-  if (!syncConnected || !syncChannel || !row) return;
-  try {
-    await syncChannel.send({
-      type: "broadcast",
-      event: SYNC_EVENT,
-      payload: row,
-    });
-  } catch (error) {
-    // El dato ya quedó guardado. El sondeo automático recuperará el cambio
-    // aunque el aviso en vivo falle momentáneamente.
-  }
-}
 
 export const storage = {
   async get(key) {
     const { data, error } = await supabase
       .from(TABLE)
-      .select("key, value, updated_at")
+      .select("key, value")
       .eq("key", key)
       .maybeSingle();
 
     if (error) throw error;
     if (!data) return null;
-    return { key: data.key, value: data.value, updated_at: data.updated_at };
-  },
-
-  async getMany(keys = []) {
-    let query = supabase.from(TABLE).select("key, value, updated_at");
-    if (keys.length) query = query.in("key", keys);
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
-  },
-
-  async getVersions(keys = []) {
-    let query = supabase.from(TABLE).select("key, updated_at");
-    if (keys.length) query = query.in("key", keys);
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
+    return { key: data.key, value: data.value };
   },
 
   async set(key, value) {
     const { data, error } = await supabase
       .from(TABLE)
       .upsert({ key, value, updated_at: new Date().toISOString() })
-      .select("key, value, updated_at")
+      .select("key, value")
       .maybeSingle();
 
     if (error) throw error;
-    if (data) broadcastChange(data);
-    return data ? { key: data.key, value: data.value, updated_at: data.updated_at } : null;
+    return data ? { key: data.key, value: data.value } : null;
   },
 
   async delete(key) {
@@ -108,17 +50,5 @@ export const storage = {
     const { data, error } = prefix ? await query.like("key", `${prefix}%`) : await query;
     if (error) throw error;
     return { keys: (data || []).map((r) => r.key) };
-  },
-
-  subscribe(onChange, onStatus = () => {}) {
-    syncListeners.add(onChange);
-    statusListeners.add(onStatus);
-    ensureSyncChannel();
-    if (syncConnected) onStatus("SUBSCRIBED");
-
-    return () => {
-      syncListeners.delete(onChange);
-      statusListeners.delete(onStatus);
-    };
   },
 };
