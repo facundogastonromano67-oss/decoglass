@@ -5427,7 +5427,7 @@ function Style() {
       .dg-app {
         --panel-2:var(--dg-surface-2); --panel-3:var(--dg-surface-3);
         min-height:100vh; min-height:100dvh;
-        padding:env(safe-area-inset-top, 0px) calc(24px + env(safe-area-inset-right, 0px)) calc(80px + env(safe-area-inset-bottom, 0px)) calc(24px + env(safe-area-inset-left, 0px));
+        padding:calc(20px + env(safe-area-inset-top, 0px)) calc(24px + env(safe-area-inset-right, 0px)) calc(80px + env(safe-area-inset-bottom, 0px)) calc(24px + env(safe-area-inset-left, 0px));
         line-height:1.45; color:var(--text);
         background:
           radial-gradient(circle at 50% -12%, rgba(var(--dg-accent-rgb),.09), transparent 34%),
@@ -5805,7 +5805,7 @@ function Style() {
       }
       @media (max-width:680px) {
         .dg-app {
-          padding:env(safe-area-inset-top, 0px) calc(12px + env(safe-area-inset-right, 0px)) calc(48px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
+          padding:calc(14px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(48px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
         }
         .dg-header { min-height:66px; padding:9px 0; }
         .dg-brand { min-width:0; }
