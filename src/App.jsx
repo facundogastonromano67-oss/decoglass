@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { storage, pedidosStore, pushStore } from "./lib/storage";
+import { storage, pedidosStore, pushStore, notificacionesStore } from "./lib/storage";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
   Lock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
@@ -774,6 +774,7 @@ function App() {
   }, [theme]);
   const [loginOpen, setLoginOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
+  const [panelNotifOpen, setPanelNotifOpen] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
   const syncRefreshingRef = useRef(false);
@@ -791,6 +792,13 @@ function App() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("notificaciones") === "1") {
+      setPanelNotifOpen(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -1203,6 +1211,12 @@ function App() {
             <span>{theme === "dark" ? "Claro" : "Oscuro"}</span>
           </button>
           {session && <BotonNotificaciones session={session} />}
+          {session && (
+            <button className="dg-icon-btn" onClick={() => setPanelNotifOpen(true)} title="Ver resumen del día">
+              <ClipboardList size={17} />
+            </button>
+          )}
+          {panelNotifOpen && session && <PanelNotificaciones session={session} onClose={() => setPanelNotifOpen(false)} />}
           {session ? (
             <div className="dg-session">
               <span className="dg-session-badge">
@@ -1360,11 +1374,141 @@ function LockedPage({ label, onLogin }) {
   );
 }
 
+function audienciaDeSession(session) {
+  if (!session) return null;
+  if (session.role === "admin") return "admin";
+  const mapa = { fabrica: "fabrica", ventas: "ventas", administracion: "administracion" };
+  return mapa[session.sectorId] || "otros";
+}
+
+const NOTIF_SECCIONES = [
+  { key: "demorados", label: "Pedidos demorados", icon: AlertTriangle, color: "var(--dg-danger)" },
+  { key: "sinConfirmar", label: "Pedidos sin confirmar", icon: ClipboardList, color: "var(--dg-warning)" },
+  { key: "pasadosDeFecha", label: "Pasados de fecha de entrega", icon: CalendarDays, color: "var(--dg-danger)" },
+  { key: "reclamosSinResolver", label: "Reclamos sin resolver (+48hs)", icon: MessageCircle, color: "var(--dg-danger)" },
+  { key: "comisionesPendientes", label: "Comisiones pendientes (+7 días)", icon: CircleDollarSign, color: "var(--dg-warning)" },
+  { key: "stockBajo", label: "Materiales bajo el mínimo", icon: Package, color: "var(--dg-warning)" },
+];
+
+function detalleItemTexto(item) {
+  if (item.tipo) return item.tipo;
+  if (item.vendedor) return `Vendedor: ${item.vendedor}`;
+  if (item.listo) return `Entrega: ${item.listo}`;
+  if (item.cantidad !== undefined) return `${item.cantidad} / mínimo ${item.minimo} ${item.unidad || ""}`;
+  return item.metodo || "";
+}
+
+function PanelNotificaciones({ session, onClose }) {
+  const [resumen, setResumen] = useState(undefined);
+  const audiencia = audienciaDeSession(session);
+
+  useEffect(() => {
+    let activo = true;
+    if (!audiencia) { setResumen(null); return; }
+    notificacionesStore.getUltimoDe(audiencia)
+      .then((r) => { if (activo) setResumen(r); })
+      .catch(() => { if (activo) setResumen(null); });
+    return () => { activo = false; };
+  }, [audiencia]);
+
+  const detalle = resumen?.detalle || {};
+  const seccionesConDatos = NOTIF_SECCIONES.filter((s) => detalle[s.key]?.length > 0);
+  const totalGeneral = seccionesConDatos.reduce((a, s) => a + detalle[s.key].length, 0);
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-notificaciones" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div>
+            <div className="dg-modal-title">Resumen del día</div>
+            {resumen && <div className="dg-modal-sub">{resumen.fecha}</div>}
+          </div>
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        {resumen === undefined && <div className="dg-loading" style={{ minHeight: 120 }}><Loader2 className="dg-spin" size={22} /></div>}
+        {resumen === null && <div className="dg-empty">Todavía no hay ningún resumen generado para tu sector.</div>}
+        {resumen && totalGeneral === 0 && <div className="dg-empty">Sin novedades hoy. 🎉</div>}
+        {resumen && totalGeneral > 0 && (
+          <div className="dg-notificaciones-secciones">
+            {seccionesConDatos.map((s) => {
+              const Ic = s.icon;
+              return (
+                <div className="dg-section-card" key={s.key}>
+                  <div className="dg-section-header" style={{ color: s.color }}><Ic size={14} /> {s.label} ({detalle[s.key].length})</div>
+                  <div className="dg-task-list" style={{ marginBottom: 0 }}>
+                    {detalle[s.key].map((item) => (
+                      <div className="dg-task" key={item.id}>
+                        <div className="dg-pago-info">
+                          <span>{item.orden ? `#${item.orden} — ` : ""}{item.cliente || item.nombre}</span>
+                          <span className="dg-pago-meta">{detalleItemTexto(item)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const AUDIENCIA_LABEL = { admin: "Administradores", fabrica: "Fábrica", ventas: "Ventas", administracion: "Administración", otros: "Otros sectores" };
+
+function HistorialNotificacionesPanel() {
+  const [historial, setHistorial] = useState(undefined);
+  const [expandido, setExpandido] = useState(null);
+
+  useEffect(() => {
+    notificacionesStore.getHistorial(90).then(setHistorial).catch(() => setHistorial([]));
+  }, []);
+
+  if (historial === undefined) return <div className="dg-loading" style={{ minHeight: 120 }}><Loader2 className="dg-spin" size={22} /></div>;
+  if (historial.length === 0) return <div className="dg-empty">Todavía no se generó ningún resumen. Se arma solo, una vez por día.</div>;
+
+  return (
+    <div className="dg-task-list" style={{ maxHeight: "none" }}>
+      {historial.map((r) => {
+        const detalle = r.detalle || {};
+        const total = Object.values(detalle).reduce((a, l) => a + (l?.length || 0), 0);
+        const abierto = expandido === r.id;
+        return (
+          <div key={r.id} className="dg-notif-historial-fila">
+            <button className="dg-notif-historial-head" onClick={() => setExpandido(abierto ? null : r.id)}>
+              <ChevronRight size={14} className={abierto ? "dg-chev-open" : ""} />
+              <div className="dg-pago-info">
+                <span>{r.fecha} — {AUDIENCIA_LABEL[r.audiencia] || r.audiencia}</span>
+                <span className="dg-pago-meta">{total === 0 ? "Sin novedades" : `${total} aviso(s)`}</span>
+              </div>
+            </button>
+            {abierto && total > 0 && (
+              <div className="dg-notif-historial-detalle">
+                {NOTIF_SECCIONES.filter((s) => detalle[s.key]?.length > 0).map((s) => (
+                  <div key={s.key} style={{ marginBottom: 8 }}>
+                    <strong style={{ fontSize: 11.5, color: s.color }}>{s.label} ({detalle[s.key].length})</strong>
+                    {detalle[s.key].map((item, i) => (
+                      <div key={i} className="dg-pago-meta">{item.orden ? `#${item.orden} — ` : ""}{item.cliente || item.nombre} {detalleItemTexto(item) ? `· ${detalleItemTexto(item)}` : ""}</div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vendedores, onChangeVendedores, datos, auditoria, integraciones, onChangeIntegraciones }) {
   const [tab, setTab] = useState("usuarios");
 
   const tabs = [
     { id: "usuarios", label: "Usuarios y accesos", icon: ShieldCheck },
+    { id: "notificaciones", label: "Notificaciones", icon: Bell },
     { id: "respaldo", label: "Respaldo y datos", icon: Save },
     { id: "actividad", label: "Actividad", icon: ClipboardList },
   ];
@@ -1415,6 +1559,17 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vende
               </Field>
             </div>
           </>
+        )}
+
+        {tab === "notificaciones" && (
+          <div className="dg-page">
+            <p className="dg-hint" style={{ marginBottom: 14 }}>
+              Un resumen se arma solo una vez por día. A cada persona le llega solo lo de su sector: Fábrica ve demorados,
+              Ventas ve sin confirmar y vencidos, Administración ve ambas cosas, y los administradores ven todo, incluidos
+              reclamos y comisiones.
+            </p>
+            <HistorialNotificacionesPanel />
+          </div>
         )}
 
         {tab === "respaldo" && <RespaldoPanel datos={datos} auditoria={[]} />}
@@ -5355,6 +5510,13 @@ function Style() {
       .dg-modal .dg-icon-btn { color: #FFFFFF !important; }
       .dg-modal .dg-error { color: #FF8A80 !important; font-weight: 600; }
       .dg-modal-ajustes { max-width:820px; }
+      .dg-modal-notificaciones { max-width:480px; max-height:82vh; }
+      .dg-notificaciones-secciones { display:flex; flex-direction:column; gap:12px; }
+      .dg-notif-historial-fila { border-bottom:1px solid rgba(var(--dg-line-rgb),0.06); }
+      .dg-notif-historial-fila:last-child { border-bottom:none; }
+      .dg-notif-historial-head { display:flex; align-items:center; gap:10px; width:100%; background:transparent; border:none; padding:11px 13px; cursor:pointer; text-align:left; color:var(--dg-text); font-family:'Inter',sans-serif; }
+      .dg-notif-historial-head:hover { background:rgba(var(--dg-line-rgb),0.025); }
+      .dg-notif-historial-detalle { padding:4px 13px 14px 37px; }
       .dg-modal-verificacion { max-width:460px; }
       .dg-verif-specs { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
       .dg-verif-contacto { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 2px; border-top:1px solid rgba(var(--dg-line-rgb),0.08); border-bottom:1px solid rgba(var(--dg-line-rgb),0.08); margin-bottom:14px; }

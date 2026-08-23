@@ -66,3 +66,23 @@ create policy "Permitir todo con la clave anon en push_subscriptions"
   for all
   using (true)
   with check (true);
+
+-- Un resumen guardado por día y por "audiencia" (a quién le corresponde verlo).
+-- Sirve para dos cosas: (1) cuando alguien toca la notificación en el celular,
+-- la app busca acá el detalle completo para mostrarlo en una tarjeta; (2) el
+-- panel de Ajustes usa esta misma tabla para el historial de notificaciones.
+create table if not exists notificaciones_resumen (
+  id text primary key, -- "{fecha}-{audiencia}", ej "2026-08-23-fabrica"
+  fecha date not null,
+  audiencia text not null, -- admin | fabrica | ventas | administracion | otros
+  detalle jsonb not null,
+  creado timestamptz not null default now()
+);
+
+alter table notificaciones_resumen enable row level security;
+
+create policy "Permitir todo con la clave anon en notificaciones_resumen"
+  on notificaciones_resumen
+  for all
+  using (true)
+  with check (true);

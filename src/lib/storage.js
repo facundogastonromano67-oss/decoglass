@@ -97,6 +97,29 @@ export const pedidosStore = {
   },
 };
 
+export const notificacionesStore = {
+  async getUltimoDe(audiencia) {
+    const { data, error } = await supabase
+      .from("notificaciones_resumen")
+      .select("*")
+      .eq("audiencia", audiencia)
+      .order("fecha", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  },
+  async getHistorial(limite = 60) {
+    const { data, error } = await supabase
+      .from("notificaciones_resumen")
+      .select("*")
+      .order("fecha", { ascending: false })
+      .limit(limite);
+    if (error) throw error;
+    return data || [];
+  },
+};
+
 export const pushStore = {
   async guardarSuscripcion({ endpoint, keys }, usuario) {
     const row = {
