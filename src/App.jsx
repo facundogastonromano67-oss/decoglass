@@ -6629,8 +6629,8 @@ const SEGUIMIENTO_PASOS_PUBLICOS = [
 
 function pasoPublicoDe(pedido) {
   if (!pedido) return 0;
-  if (pedido.estado === "Entregado") return 3;
-  if (pedidoEstaListo(pedido)) return 2;
+  if (pedido.estado === "Entregado") return 4; // los 4 pasos con tilde
+  if (pedidoEstaListo(pedido)) return 3; // confirmado + producción + listo, los 3 con tilde; "Entregado" queda pendiente
   if (pedido.estado === "Sin pasar a fábrica") return 0;
   return 1; // Verificado en adelante ya se muestra como "En producción"
 }
@@ -6771,10 +6771,10 @@ function SeguimientoPublico({ pedidoId }) {
               Etapa actual en fábrica: <strong>{PRODUCCION_PASOS[produccionCompletada]?.label}</strong>
             </p>
           )}
-          {pedido.listo && pasoActual < 3 && (
+          {pedido.listo && pasoActual < 4 && (
             <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{pedido.listo}</strong></p>
           )}
-          {pasoActual === 2 && (
+          {pasoActual === 3 && (
             <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
               <strong>Espejo listo para coordinar entrega.</strong>
             </p>
