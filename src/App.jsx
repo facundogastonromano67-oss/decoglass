@@ -2855,11 +2855,11 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
         : !confirmacionCompleta
           ? 2
           : totalPasos - 1;
-  const [pasoVisible, setPasoVisible] = useState(1);
+  const [pasoVisible, setPasoVisible] = useState(pasoActual);
 
   useEffect(() => {
-    setPasoVisible(1);
-  }, [pedido.id]);
+    setPasoVisible(pasoActual);
+  }, [pedido.id, pasoActual]);
 
   if (pedido.estado === "Cancelado") {
     return <div className="dg-order-flow-cancelled"><XCircle size={14} /> Pedido cancelado · el flujo quedó detenido</div>;
@@ -2883,9 +2883,7 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
       titulo={listo ? "Producción terminada" : produccionCompletada > 0 ? `Producción · ${produccionCompletada} de 3` : "Esperando producción"}
       detalle={listo ? "Fábrica completó corte, armado y embalado." : verificado ? `Próximo control del taller: ${proximoPasoProduccion?.label || "producción"}.` : "Se habilita después de verificar el pedido."}
       estado={listo ? "done" : verificado ? "active" : "pending"}
-    >
-      <FichaEspejoPaso pedido={pedido} />
-    </PasoPedido>,
+    />,
     <PasoPedido
       key="confirmacion"
       numero={3}
@@ -3383,6 +3381,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                             </div>
                             {comisionElegible(espejo) && !espejo.comisionPagada && <span className="dg-order-mirror-commission"><CircleDollarSign size={12} /> Comisión a liquidar</span>}
                           </div>
+                          <FichaEspejoPaso pedido={espejo} />
                           <FlujoPedido
                             pedido={espejo}
                             canEdit={canEditFull}
