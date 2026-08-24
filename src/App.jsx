@@ -5123,6 +5123,25 @@ function SectorPage({
   // Ventas, PostVenta, Fábrica y Logística. Lo único reservado para admin son
   // Finanzas, Comisiones y Sueldos (eso ya se controla aparte, con isAdmin).
   // Los operarios siguen limitados solo al sector donde tienen su usuario.
+  //
+  // EXCEPCIÓN: a pedido explícito, quien se registra como encargado u operario
+  // de Fábrica queda encerrado en Fábrica — no puede ver ni abrir ningún otro
+  // sector, ni siquiera de solo lectura. El resto de los sectores conserva el
+  // acceso ampliado de arriba.
+  const restringidoAFabrica = session?.role === "sector" && session.sectorId === "fabrica";
+  if (restringidoAFabrica && sector.id !== "fabrica") {
+    return (
+      <div className="dg-sector-page">
+        <div className="dg-sector-page-head-v2">
+          <button className="dg-back-circle" onClick={onBack} title="Volver al edificio"><ArrowLeft size={19} /></button>
+        </div>
+        <div className="dg-page dg-locked-page">
+          <div className="dg-locked-icon"><Lock size={22} /></div>
+          <div><strong>No tenés acceso a {sector.name}</strong><p>Tu usuario de Fábrica solo puede ver y trabajar dentro de Fábrica.</p></div>
+        </div>
+      </div>
+    );
+  }
   const canQuote = isAdmin || esEncargado;
   const canSeePedidos = !!session;
   const sessionSectorId = session?.role === "sector" ? session.sectorId : null;
