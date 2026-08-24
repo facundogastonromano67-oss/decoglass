@@ -16,7 +16,7 @@ const UMBRAL_RECLAMO_HORAS = 48;
 const UMBRAL_COMISION_DIAS = 7;
 
 function supabaseAdmin() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  return createClient((process.env.SUPABASE_URL || "").trim(), (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim());
 }
 
 async function leerKv(supabase, key) {
@@ -66,9 +66,9 @@ async function ejecutar(req, res) {
   }
 
   webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || "mailto:contacto@decoglass.com",
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
+    (process.env.VAPID_SUBJECT || "mailto:contacto@decoglass.com").trim(),
+    process.env.VAPID_PUBLIC_KEY.trim(),
+    process.env.VAPID_PRIVATE_KEY.trim()
   );
 
   const supabase = supabaseAdmin();
