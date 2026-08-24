@@ -37,9 +37,21 @@ function hoyISO() {
 }
 
 export default async function handler(req, res) {
+  try {
+    return await ejecutar(req, res);
+  } catch (e) {
+    console.error("check-alerts crasheó:", e);
+    return res.status(500).json({ error: e?.message || String(e), stack: e?.stack });
+  }
+}
+
+async function ejecutar(req, res) {
   if (process.env.CRON_SECRET) {
     const auth = req.headers["authorization"];
     if (auth !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ error: "No autorizado" });
+  }
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return res.status(500).json({ error: "Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY en las variables de entorno de Vercel." });
   }
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
     return res.status(500).json({ error: "Faltan las claves VAPID en las variables de entorno de Vercel." });
