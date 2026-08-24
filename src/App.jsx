@@ -672,8 +672,8 @@ function saveSession(s) {
 const MATERIAL_CATEGORIAS = ["Vidrio", "Perfilería", "Iluminación", "Electrónica", "Químicos", "Embalaje", "Ferretería", "Otro"];
 
 const DEFAULT_MATERIALES = [
-  { categoria: "Vidrio", nombre: "Plancha de espejo", unidad: "Plancha 240x180", minimo: 3 },
-  { categoria: "Perfilería", nombre: "Aluminio (perfil)", unidad: "Tira 6m", minimo: 7 },
+  { categoria: "Vidrio", nombre: "Plancha de espejo", unidad: "u", minimo: 3 },
+  { categoria: "Perfilería", nombre: "Aluminio (perfil)", unidad: "u", minimo: 7 },
   { categoria: "Iluminación", nombre: "Tira LED 3 tonos", unidad: "u", minimo: 20 },
   { categoria: "Electrónica", nombre: "Transformador", unidad: "u", minimo: 20 },
   { categoria: "Electrónica", nombre: "Sensor touch", unidad: "u", minimo: 15 },
@@ -683,14 +683,14 @@ const DEFAULT_MATERIALES = [
   { categoria: "Electrónica", nombre: "Módulo hora y temperatura", unidad: "u", minimo: 10 },
   { categoria: "Electrónica", nombre: "Módulo Bluetooth", unidad: "u", minimo: 10 },
   { categoria: "Electrónica", nombre: "Parlante", unidad: "u", minimo: 10 },
-  { categoria: "Químicos", nombre: "Sellador / silicona", unidad: "Pomo", minimo: 6 },
-  { categoria: "Químicos", nombre: "Alcohol isopropílico", unidad: "Botella 500ml", minimo: 6 },
-  { categoria: "Embalaje", nombre: "Film burbuja", unidad: "Rollo", minimo: 2 },
-  { categoria: "Embalaje", nombre: "Film stretch", unidad: "Rollo", minimo: 2 },
+  { categoria: "Químicos", nombre: "Sellador / silicona", unidad: "u", minimo: 6 },
+  { categoria: "Químicos", nombre: "Alcohol isopropílico", unidad: "u", minimo: 6 },
+  { categoria: "Embalaje", nombre: "Film burbuja", unidad: "u", minimo: 2 },
+  { categoria: "Embalaje", nombre: "Film stretch", unidad: "u", minimo: 2 },
   { categoria: "Embalaje", nombre: "Cinta de embalar", unidad: "u", minimo: 10 },
   { categoria: "Embalaje", nombre: "Cartón para puntas", unidad: "u", minimo: 40 },
-  { categoria: "Embalaje", nombre: "Madera para cajón (interior)", unidad: "Plancha 240x180", minimo: 3 },
-  { categoria: "Embalaje", nombre: "Telgopor (interior)", unidad: "Recorte 100x100", minimo: 10 },
+  { categoria: "Embalaje", nombre: "Madera para cajón (interior)", unidad: "u", minimo: 3 },
+  { categoria: "Embalaje", nombre: "Telgopor (interior)", unidad: "u", minimo: 10 },
   { categoria: "Ferretería", nombre: "Pitones", unidad: "u", minimo: 50 },
   { categoria: "Ferretería", nombre: "Tarugos", unidad: "u", minimo: 50 },
 ];
@@ -4450,7 +4450,7 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
           <div className="dg-field-grid">
             <Field label="Material"><input value={nombre} onChange={(e) => setNombre(e.target.value)} /></Field>
             <Field label="Categoría"><select value={categoria} onChange={(e) => setCategoria(e.target.value)}>{MATERIAL_CATEGORIAS.map((c) => (<option key={c}>{c}</option>))}</select></Field>
-            <Field label="Unidad"><input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="Ej: Plancha 240x180, Tira 6m, Pomo, Rollo" /></Field>
+            <Field label="Unidad"><input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="u" /></Field>
             <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
             <Field label="Mínimo de alerta"><input type="number" value={minimo} onChange={(e) => setMinimo(e.target.value)} /></Field>
           </div>
@@ -5452,6 +5452,10 @@ function SectorPage({
   const sessionSectorId = session?.role === "sector" ? session.sectorId : null;
   const canEditPedidoFull = isAdmin || esEncargado;
   const canEditFabrica = isAdmin || esEncargado;
+  // El stock lo pueden cargar también los operarios de Fábrica (no solo el
+  // encargado): es trabajo del día a día del taller, a pedido explícito.
+  const esOperarioFabrica = session?.role === "sector" && session.tipo === "operario" && session.sectorId === "fabrica";
+  const canEditStock = canEditFabrica || esOperarioFabrica;
   const canEditPostventa = isAdmin || esEncargado;
   const canEditLogistica = isAdmin || esEncargado;
 
@@ -5510,12 +5514,12 @@ function SectorPage({
       )}
 
       {subpage === "materiales" && sector.id === "fabrica" && (
-        canSeePedidos ? <StockMaterialesPanel stock={stockMateriales} onChange={onChangeStockMateriales} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} />
+        canSeePedidos ? <StockMaterialesPanel stock={stockMateriales} onChange={onChangeStockMateriales} canEdit={canEditStock} puedeBorrar={puedeBorrar} />
           : <LockedPage label="Stock de materiales" onLogin={onRequestLogin} />
       )}
 
       {subpage === "stock" && sector.id === "fabrica" && (
-        canSeePedidos ? <StockEspejosPanel stock={stockEspejos} onChange={onChangeStockEspejos} canEdit={canEditFabrica} />
+        canSeePedidos ? <StockEspejosPanel stock={stockEspejos} onChange={onChangeStockEspejos} canEdit={canEditStock} />
           : <LockedPage label="Stock de espejos" onLogin={onRequestLogin} />
       )}
 
