@@ -6,7 +6,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -5051,6 +5051,69 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
 
 const TIPOS_PRODUCTO_LIST = Object.keys(TIPO_PRODUCTO_TABLE);
 
+function formaAEstilo(forma, ancho, alto) {
+  const ratio = ancho > 0 && alto > 0 ? ancho / alto : 1;
+  switch (forma) {
+    case "Redondo": return { borderRadius: "50%" };
+    case "Ovalado": return { borderRadius: "50%" };
+    case "Pastilla":
+    case "Pastilla/Oval": return { borderRadius: "999px" };
+    case "Puntas Curvas": return { borderRadius: "26%" };
+    case "Orgánico": return { borderRadius: "42% 58% 53% 47% / 55% 45% 55% 45%" };
+    case "Soft": return { borderRadius: "34px 60px 34px 60px" };
+    default: return { borderRadius: "10px" }; // Rectangular
+  }
+}
+
+const TONO_LUZ_COLOR = {
+  "Cálida": { glow: "rgba(255,178,102,0.85)", rim: "#FFD9A6" },
+  "Fría": { glow: "rgba(160,215,255,0.85)", rim: "#CFEBFF" },
+  "Neutra": { glow: "rgba(255,250,235,0.85)", rim: "#FFF9EC" },
+  "3 tonos": { glow: "rgba(255,225,190,0.85)", rim: "#FFE7C2" },
+  "Sin led": { glow: "transparent", rim: "transparent" },
+};
+
+function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, horaTemp, bluetooth }) {
+  const [tilt, setTilt] = useState({ x: 0, y: 0 });
+  const estiloForma = formaAEstilo(forma, ancho, alto);
+  const luz = TONO_LUZ_COLOR[tono] || TONO_LUZ_COLOR["3 tonos"];
+  const sinLed = tono === "Sin led";
+
+  const ratio = ancho > 0 && alto > 0 ? ancho / alto : 1;
+  const anchoCaja = ratio >= 1 ? 220 : Math.max(140, 220 * ratio);
+  const altoCaja = ratio >= 1 ? Math.max(140, 220 / ratio) : 220;
+
+  function handleMove(e) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width - 0.5;
+    const py = (e.clientY - rect.top) / rect.height - 0.5;
+    setTilt({ x: py * -14, y: px * 16 });
+  }
+  function handleLeave() { setTilt({ x: 0, y: 0 }); }
+
+  return (
+    <div className="dg-preview3d-wrap" onMouseMove={handleMove} onMouseLeave={handleLeave}>
+      <div className="dg-preview3d-stage" style={{ transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)` }}>
+        <div
+          className={`dg-preview3d-mirror ${esmerilado !== "Ninguno" ? "dg-preview3d-esmerilado" : ""}`}
+          style={{
+            width: anchoCaja, height: altoCaja, ...estiloForma,
+            boxShadow: sinLed ? "0 20px 40px -18px rgba(0,0,0,0.6)" : `0 0 26px 6px ${luz.glow}, 0 0 60px 18px ${luz.glow}, 0 20px 40px -18px rgba(0,0,0,0.6)`,
+            border: sinLed ? "1px solid rgba(255,255,255,0.15)" : `2px solid ${luz.rim}`,
+          }}
+        >
+          <div className="dg-preview3d-reflejo" />
+          {touch && <span className="dg-preview3d-touch" title="Touch" />}
+          {horaTemp && <span className="dg-preview3d-horatemp" title="Hora y temperatura">12:34 · 23°</span>}
+          {bluetooth && <span className="dg-preview3d-bt" title="Bluetooth"><Bluetooth size={11} /></span>}
+          {desemp && <span className="dg-preview3d-desemp" title="Desempañante" />}
+        </div>
+      </div>
+      <p className="dg-preview3d-caption">Vista previa — moví el mouse para inclinarlo · {ancho || "—"}×{alto || "—"} cm</p>
+    </div>
+  );
+}
+
 function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) {
   const [tipoProducto, setTipoProducto] = useState(TIPOS_PRODUCTO_LIST[0]);
   const [ancho, setAncho] = useState(60);
@@ -5059,6 +5122,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const [desemp, setDesemp] = useState("No");
   const [horaTemp, setHoraTemp] = useState("No");
   const [bluetoothSel, setBluetoothSel] = useState("Sin Bluetooth");
+  const [tono, setTono] = useState("3 tonos");
   const [panelesAdicionales, setPanelesAdicionales] = useState(0);
   const [envioInterior, setEnvioInterior] = useState("No");
   const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
@@ -5110,6 +5174,11 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
                   {Object.keys(config.opcionales.bluetooth).map((k) => (<option key={k} value={k}>{k}</option>))}
                 </select>
               </Field>
+              <Field label="Tono de luz">
+                <select value={tono} onChange={(e) => setTono(e.target.value)}>
+                  {TONO_OPTIONS.map((t) => (<option key={t} value={t}>{t}</option>))}
+                </select>
+              </Field>
               {desemp === "Sí" && (
                 <Field label="Paneles adicionales"><input type="number" min="0" value={panelesAdicionales} onChange={(e) => setPanelesAdicionales(e.target.value)} /></Field>
               )}
@@ -5139,6 +5208,13 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
         </div>
 
         <div className="dg-quote-result">
+          <EspejoPreview3D
+            forma={TIPO_PRODUCTO_TABLE[tipoProducto]?.display || "Rectangular"}
+            esmerilado={TIPO_PRODUCTO_TABLE[tipoProducto]?.esmerilado || "Ninguno"}
+            ancho={inputs.ancho} alto={inputs.alto} tono={tono}
+            touch={touch === "Sí"} desemp={desemp === "Sí"} horaTemp={horaTemp === "Sí"} bluetooth={bluetoothSel !== "Sin Bluetooth"}
+          />
+
           {result.alertaMedidaMaxima !== "OK" && (
             <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaMedidaMaxima}</div>
           )}
@@ -6067,6 +6143,17 @@ function Style() {
 
       .dg-quote-grid { display:flex; gap:16px; align-items:flex-start; }
       .dg-quote-form, .dg-quote-result { flex:1; min-width:280px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:14px; padding:16px; }
+
+      .dg-preview3d-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; padding:18px 10px 6px; margin-bottom:16px; border-bottom:1px solid rgba(var(--dg-line-rgb),0.08); }
+      .dg-preview3d-stage { perspective:900px; transition:transform .08s ease-out; }
+      .dg-preview3d-mirror { position:relative; background:linear-gradient(155deg, rgba(255,255,255,0.16), rgba(120,130,140,0.28) 45%, rgba(40,44,50,0.55)); backdrop-filter:blur(2px); transition:box-shadow .25s ease, border-color .25s ease; overflow:hidden; }
+      .dg-preview3d-reflejo { position:absolute; top:-30%; left:-40%; width:75%; height:160%; background:linear-gradient(120deg, rgba(255,255,255,0.35), transparent 60%); transform:rotate(18deg); pointer-events:none; }
+      .dg-preview3d-esmerilado::after { content:''; position:absolute; inset:0; background:repeating-linear-gradient(115deg, rgba(255,255,255,0.05) 0 2px, transparent 2px 5px); mix-blend-mode:overlay; }
+      .dg-preview3d-touch { position:absolute; bottom:8%; left:50%; transform:translateX(-50%); width:11px; height:11px; border-radius:50%; background:rgba(255,255,255,0.85); box-shadow:0 0 8px 2px rgba(255,255,255,0.7); }
+      .dg-preview3d-horatemp { position:absolute; top:10%; left:50%; transform:translateX(-50%); font-family:'JetBrains Mono', monospace; font-size:10px; color:rgba(255,255,255,0.9); background:rgba(0,0,0,0.35); padding:2px 7px; border-radius:5px; letter-spacing:0.4px; }
+      .dg-preview3d-bt { position:absolute; top:9%; right:9%; width:18px; height:18px; border-radius:50%; background:rgba(0,0,0,0.35); color:#fff; display:flex; align-items:center; justify-content:center; }
+      .dg-preview3d-desemp { position:absolute; inset:14% 14% 30% 14%; border:1px dashed rgba(255,255,255,0.25); border-radius:inherit; pointer-events:none; }
+      .dg-preview3d-caption { font-size:11px; color:var(--dg-text-faint); text-align:center; margin:2px 0 0; }
       .dg-quote-section-title { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:var(--dg-accent); margin:14px 0 6px; }
       .dg-quote-section-title:first-child { margin-top:0; }
       .dg-alert { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),0.1); border:1px solid rgba(var(--dg-warning-rgb),0.3); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
