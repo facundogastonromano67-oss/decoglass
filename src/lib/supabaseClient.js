@@ -1,7 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// .trim() por las dudas: si alguna de estas dos variables se cargó con un
+// espacio de más al final (algo muy fácil que pase al copiar y pegar en
+// Vercel), rompe la conexión en tiempo real de forma silenciosa y rara.
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "").trim();
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 
 if (!supabaseUrl || !supabaseAnonKey) {
   // eslint-disable-next-line no-console

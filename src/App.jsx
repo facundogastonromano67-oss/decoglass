@@ -2761,13 +2761,16 @@ function BotonNotificaciones({ session }) {
     try {
       const permiso = await Notification.requestPermission();
       if (permiso !== "granted") { setEstado("denegado"); return; }
-      const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      const vapidKey = (import.meta.env.VITE_VAPID_PUBLIC_KEY || "").trim();
       if (!vapidKey) { window.alert("Falta configurar la clave pública de notificaciones (VITE_VAPID_PUBLIC_KEY)."); return; }
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidKey) });
       await pushStore.guardarSuscripcion(sub.toJSON(), session);
       setEstado("activo");
-    } catch (e) { window.alert("No se pudo activar. En iPhone, primero agregá la app a la pantalla de inicio y abrila desde ahí."); }
+    } catch (e) {
+      console.error("Error al activar notificaciones:", e);
+      window.alert(`No se pudo activar.\n\nDetalle: ${e?.name || ""} ${e?.message || e}\n\n(En iPhone además hace falta agregar la app a la pantalla de inicio antes de activarlas.)`);
+    }
   }
 
   async function desactivar() {
