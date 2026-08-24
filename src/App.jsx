@@ -785,12 +785,10 @@ function App() {
     setSession(s);
     saveSession(s);
     setLoginOpen(false);
-    setActiveSectorId(null);
   }
   function endSession() {
     setSession(null);
     saveSession(null);
-    setActiveSectorId(null);
   }
 
   useEffect(() => { load(); }, []);
