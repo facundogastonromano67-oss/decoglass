@@ -2662,6 +2662,25 @@ function resumenPasoPedido(pedido) {
   return { numero: total, total, label: "Confirmar entrega" };
 }
 
+function FichaEspejoPaso({ pedido }) {
+  const funciones = funcionesPedido(pedido, true);
+  return (
+    <div className="dg-ficha-espejo-paso">
+      <div className="dg-fab-medida">
+        <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+        {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
+      </div>
+      <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
+      {funciones.length > 0 && (
+        <div className="dg-fab-funciones">
+          {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
+        </div>
+      )}
+      {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+    </div>
+  );
+}
+
 function PasoPedido({ numero, titulo, detalle, estado = "pending", children }) {
   const estadoLabel = estado === "done" ? "Completado" : estado === "active" ? "En curso" : "Pendiente";
   return (
@@ -2836,11 +2855,11 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
         : !confirmacionCompleta
           ? 2
           : totalPasos - 1;
-  const [pasoVisible, setPasoVisible] = useState(pasoActual);
+  const [pasoVisible, setPasoVisible] = useState(1);
 
   useEffect(() => {
-    setPasoVisible(pasoActual);
-  }, [pedido.id, pasoActual]);
+    setPasoVisible(1);
+  }, [pedido.id]);
 
   if (pedido.estado === "Cancelado") {
     return <div className="dg-order-flow-cancelled"><XCircle size={14} /> Pedido cancelado · el flujo quedó detenido</div>;
@@ -2864,7 +2883,9 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
       titulo={listo ? "Producción terminada" : produccionCompletada > 0 ? `Producción · ${produccionCompletada} de 3` : "Esperando producción"}
       detalle={listo ? "Fábrica completó corte, armado y embalado." : verificado ? `Próximo control del taller: ${proximoPasoProduccion?.label || "producción"}.` : "Se habilita después de verificar el pedido."}
       estado={listo ? "done" : verificado ? "active" : "pending"}
-    />,
+    >
+      <FichaEspejoPaso pedido={pedido} />
+    </PasoPedido>,
     <PasoPedido
       key="confirmacion"
       numero={3}
@@ -6106,6 +6127,7 @@ function Style() {
       .dg-order-step-active .dg-order-step-state { background:rgba(var(--dg-accent-rgb),.1); color:var(--dg-accent-2); }
       .dg-order-step > p { display:-webkit-box; margin:4px 0 0; overflow:hidden; color:var(--dg-text-dim); font-size:8.5px; line-height:1.35; -webkit-box-orient:vertical; -webkit-line-clamp:1; }
       .dg-order-step-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:stretch; gap:5px; margin-top:0; padding-top:6px; }
+      .dg-ficha-espejo-paso { grid-column:1 / -1; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:10px; padding:10px 12px; margin-top:2px; }
       .dg-step-action, .dg-step-whatsapp { min-width:0; min-height:29px; display:flex; align-items:center; justify-content:center; gap:5px; padding:5px 8px; border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:7px; background:rgba(var(--dg-line-rgb),.045); color:var(--dg-text-dim); font-family:'Inter',sans-serif; font-size:8.5px; font-weight:650; line-height:1.15; text-align:center; text-decoration:none; cursor:pointer; }
       .dg-step-action:hover, .dg-step-whatsapp:hover { border-color:rgba(var(--dg-accent-rgb),.45); color:var(--dg-accent-2); }
       .dg-step-action:disabled { opacity:.36; cursor:not-allowed; }
@@ -6293,7 +6315,7 @@ function Style() {
         .dg-header { min-height:66px; padding:9px 0; }
         .dg-brand { min-width:0; }
         .dg-brand-mark { width:37px; height:37px; }
-        .dg-brand-title { font-size:15px; }
+        .dg-brand-title { display:none; }
         .dg-brand-sub, .dg-header-context { display:none; }
         .dg-login-btn { min-height:36px; padding:8px 10px; font-size:11.5px; }
         .dg-nav { position:relative; top:auto; z-index:auto; margin:12px auto 19px; backdrop-filter:none; }
