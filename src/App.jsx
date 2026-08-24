@@ -5213,7 +5213,7 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
 }
 
 function SectorPage({
-  sector, session, isAdmin, onUpdate, onRequestLogin,
+  sector, session, isAdmin, onUpdate, onRequestLogin, onBack,
   pedidos, onChangePedidos, vendedores, onChangeVendedores, incomes, onChangeIncomes,
   purchases, onChangePurchases, quoteConfig, onChangeQuoteConfig, quotes, onChangeQuotes,
   leads, onChangeLeads, onCreateIncome, sectors, recursos, onChangeRecursos,
