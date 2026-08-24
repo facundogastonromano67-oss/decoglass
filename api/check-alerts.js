@@ -37,6 +37,7 @@ function hoyISO() {
 }
 
 export default async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   try {
     return await ejecutar(req, res);
   } catch (e) {
@@ -46,12 +47,19 @@ export default async function handler(req, res) {
 }
 
 async function ejecutar(req, res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   if (process.env.CRON_SECRET) {
     const auth = req.headers["authorization"];
     if (auth !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ error: "No autorizado" });
   }
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return res.status(500).json({ error: "Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY en las variables de entorno de Vercel." });
+    return res.status(500).json({
+      error: "Faltan variables de entorno.",
+      SUPABASE_URL_presente: !!process.env.SUPABASE_URL,
+      SUPABASE_URL_largo: (process.env.SUPABASE_URL || "").length,
+      SUPABASE_SERVICE_ROLE_KEY_presente: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      SUPABASE_SERVICE_ROLE_KEY_largo: (process.env.SUPABASE_SERVICE_ROLE_KEY || "").length,
+    });
   }
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
     return res.status(500).json({ error: "Faltan las claves VAPID en las variables de entorno de Vercel." });
