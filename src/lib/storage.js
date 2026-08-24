@@ -72,6 +72,16 @@ export const pedidosStore = {
     return data ? data.data : null;
   },
 
+  // Lectura pública de todos los espejos de un mismo pedido agrupado (varios
+  // espejos, un solo link de seguimiento). Filtra por el campo grupoId
+  // guardado adentro del jsonb de cada fila.
+  async getByGrupoId(grupoId) {
+    if (!grupoId) return [];
+    const { data, error } = await supabase.from("pedidos_rows").select("data").eq("data->>grupoId", grupoId);
+    if (error) throw error;
+    return (data || []).map((r) => r.data);
+  },
+
   async upsertMany(lista) {
     if (!lista.length) return;
     const rows = lista.map((p) => ({ id: p.id, data: p, updated_at: new Date().toISOString() }));

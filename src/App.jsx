@@ -2649,6 +2649,10 @@ const QUICK_VIEWS = [
 ];
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
+// Un pedido puede tener varias unidades iguales (cant > 1) en un solo registro.
+// Para contar "espejos" hay que sumar cant, no contar registros — si no, un
+// grupo de 3 registros donde uno tiene cant=2 muestra "3 espejos" en vez de 4.
+function totalUnidades(lista) { return (lista || []).reduce((total, p) => total + (Number(p?.cant) || 1), 0); }
 
 function resumenPasoPedido(pedido) {
   const conEnvio = esPedidoConEnvio(pedido);
@@ -3227,21 +3231,21 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   }
   function restaurarVisibles() {
     if (restaurablesVisibles.length === 0) return;
-    if (!window.confirm(`Se van a restaurar ${cantidadPedidosRestaurables} pedido(s), con ${restaurablesVisibles.length} espejo(s).\n\nLos entregados volverán a “Espejo listo” y los cancelados a “Sin pasar a fábrica”. ¿Continuar?`)) return;
+    if (!window.confirm(`Se van a restaurar ${cantidadPedidosRestaurables} pedido(s), con ${totalUnidades(restaurablesVisibles)} espejo(s).\n\nLos entregados volverán a “Espejo listo” y los cancelados a “Sin pasar a fábrica”. ¿Continuar?`)) return;
     const ids = new Set(restaurablesVisibles.map((p) => p.id));
     onChange(pedidos.map((p) => {
       if (!ids.has(p.id)) return p;
       if (p.estado === "Entregado") return { ...p, estado: "Espejo listo", entregadoFecha: "" };
       return { ...p, estado: "Sin pasar a fábrica", clienteAvisado: false, clienteAvisadoFecha: "" };
     }));
-    if (onRegistrar) onRegistrar("Restauró pedidos en masa", `${cantidadPedidosRestaurables} pedido(s) · ${restaurablesVisibles.length} espejo(s)`);
+    if (onRegistrar) onRegistrar("Restauró pedidos en masa", `${cantidadPedidosRestaurables} pedido(s) · ${totalUnidades(restaurablesVisibles)} espejo(s)`);
   }
   function borrarVisibles() {
     if (visibles.length === 0) return;
-    if (!window.confirm(`Vas a borrar definitivamente ${cantidadPedidosVisibles} pedido(s), que contienen ${visibles.length} espejo(s).\n\nEsta acción no se puede deshacer. ¿Confirmás?`)) return;
+    if (!window.confirm(`Vas a borrar definitivamente ${cantidadPedidosVisibles} pedido(s), que contienen ${totalUnidades(visibles)} espejo(s).\n\nEsta acción no se puede deshacer. ¿Confirmás?`)) return;
     const ids = new Set(visibles.map((p) => p.id));
     onChange(pedidos.filter((p) => !ids.has(p.id)));
-    if (onRegistrar) onRegistrar("Borró pedidos en masa", `${cantidadPedidosVisibles} pedido(s) · ${visibles.length} espejo(s)`);
+    if (onRegistrar) onRegistrar("Borró pedidos en masa", `${cantidadPedidosVisibles} pedido(s) · ${totalUnidades(visibles)} espejo(s)`);
   }
 
   const activeViewLabel = QUICK_VIEWS.find((v) => v.id === quickView)?.label || "Todos";
@@ -3288,7 +3292,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       <details className="dg-order-tools-details">
         <summary>
           <span><CalendarDays size={14} /> Fechas y acciones masivas</span>
-          <small>{fechaDesde || fechaHasta ? "Filtro de fecha activo" : `${cantidadPedidosVisibles} pedidos · ${visibles.length} espejos`}</small>
+          <small>{fechaDesde || fechaHasta ? "Filtro de fecha activo" : `${cantidadPedidosVisibles} pedidos · ${totalUnidades(visibles)} espejos`}</small>
         </summary>
         <div className="dg-order-tools-content">
           <div className="dg-date-filter-bar">
@@ -3302,7 +3306,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
             <div className="dg-bulk-bar">
               <div>
                 <strong>Acciones masivas</strong>
-                <span>Se aplican a {cantidadPedidosVisibles} pedidos completos ({visibles.length} espejos).</span>
+                <span>Se aplican a {cantidadPedidosVisibles} pedidos completos ({totalUnidades(visibles)} espejos).</span>
               </div>
               <div className="dg-bulk-actions">
                 <button className="dg-btn-ghost" disabled={restaurablesVisibles.length === 0} onClick={restaurarVisibles}><RotateCcw size={14} /> Restaurar pedidos ({cantidadPedidosRestaurables})</button>
@@ -3316,7 +3320,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       {(() => {
         const renderCard = (grupo) => {
           const { principal: p, espejos } = grupo;
-          const cantidadEspejos = espejos.length;
+          const cantidadEspejos = totalUnidades(espejos);
           const saldo = espejos.reduce((total, espejo) => total + Math.max(0, pedidoSaldo(espejo)), 0);
           const metodos = [...new Set(espejos.map((espejo) => espejo.metodo || "A confirmar"))];
           const metodoLabel = metodos.length === 1 ? metodos[0] : "Entrega mixta";
@@ -3438,7 +3442,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         <div className="dg-print-head">
           <div className="dg-print-brand">DECOGLASS</div>
           <div className="dg-print-sub">
-            {activeViewLabel}{filtroVendedor !== "todos" ? ` · Vendedor: ${filtroVendedor}` : ""} — {new Date().toLocaleDateString("es-AR")} · {cantidadPedidosVisibles} pedido(s) · {visibles.length} espejo(s)
+            {activeViewLabel}{filtroVendedor !== "todos" ? ` · Vendedor: ${filtroVendedor}` : ""} — {new Date().toLocaleDateString("es-AR")} · {cantidadPedidosVisibles} pedido(s) · {totalUnidades(visibles)} espejo(s)
           </div>
         </div>
         <table className="dg-print-table">
@@ -4164,7 +4168,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                 </div>
                 <div className="dg-logistics-datum dg-logistics-mirror-total">
                   <span><Package size={13} /> Espejos</span>
-                  <strong>{items.length} {items.length === 1 ? "espejo" : "espejos"}</strong>
+                  <strong>{totalUnidades(items)} {totalUnidades(items) === 1 ? "espejo" : "espejos"}</strong>
                   <small>{medidas}</small>
                 </div>
                 <div className={`dg-logistics-datum dg-logistics-balance ${saldo > 0 ? "dg-logistics-balance-pending" : "dg-logistics-balance-paid"}`}>
@@ -4477,7 +4481,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     return fecha.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
   };
 
-  const renderCard = (p) => {
+  const renderCard = (p, unidad, totalUnidadesPedido) => {
     const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "var(--dg-text-dim)" };
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
     const procesoInfo = TALLER_PROCESOS.find((item) => item.id === pedidoProcesoTaller(p));
@@ -4488,8 +4492,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const terminado = produccionCompletada >= PRODUCCION_PASOS.length;
     const menuOpen = menuAbierto === p.id;
     return (
-      <div className={`dg-fab-card dg-fab-${entrega.clase}`} key={p.id}>
+      <div className={`dg-fab-card dg-fab-${entrega.clase}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
         <div className="dg-fab-zona-datos">
+          {totalUnidadesPedido > 1 && (
+            <div className="dg-fab-unidad-badge">Unidad {unidad} de {totalUnidadesPedido} — mismo pedido, misma medida</div>
+          )}
           <div className="dg-fab-head">
             <span className="dg-fab-orden">{p.orden}</span>
             <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}</span>
@@ -4498,7 +4505,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
           <div className="dg-fab-medida">
             <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
-            {Number(p.cant) > 1 && <span className="dg-fab-cant">× {p.cant}</span>}
+            {Number(p.cant) > 1 && totalUnidadesPedido <= 1 && <span className="dg-fab-cant">× {p.cant}</span>}
           </div>
 
           <div className="dg-fab-linea">{p.forma} · {p.tipo} · <span className="dg-fab-tono">{p.tono || "—"}</span> · <span className="dg-fab-proceso" style={{ color: procesoInfo?.color }}>{procesoInfo?.label || "Simple"}</span></div>
@@ -4604,7 +4611,13 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       </div>
 
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay pedidos terminados en este proceso." : "No hay pedidos pendientes en esta vista."}</div>}
-      <div className="dg-fab-lista">{visibles.map(renderCard)}</div>
+      <div className="dg-fab-lista">
+        {visibles.flatMap((p) => {
+          const cant = Math.max(1, Number(p.cant) || 1);
+          if (cant <= 1) return [renderCard(p, 1, 1)];
+          return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
+        })}
+      </div>
 
       <div className="dg-print-area dg-print-fabrica">
         <div className="dg-print-head">
@@ -5725,6 +5738,8 @@ function Style() {
       .dg-fab-medida strong { font-family:'JetBrains Mono', monospace; font-size:24px; font-weight:700; color:var(--dg-text); letter-spacing:-0.4px; }
       .dg-fab-medida small { font-size:11px; color:var(--dg-text-faint); }
       .dg-fab-cant { font-size:11px; font-weight:700; color:var(--dg-warning); }
+      .dg-fab-unidad-badge { display:inline-block; background:rgba(var(--dg-warning-rgb),0.15); border:1px solid rgba(var(--dg-warning-rgb),0.35); color:var(--dg-warning);
+        font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; padding:4px 9px; border-radius:7px; margin-bottom:8px; }
       .dg-fab-linea { font-size:12.5px; color:var(--dg-text-dim); margin-bottom:10px; }
       .dg-fab-tono { color:var(--dg-warning); font-weight:600; }
       .dg-fab-proceso { font-weight:600; }
@@ -6606,6 +6621,9 @@ function Style() {
       .dg-seguimiento-footer { text-align:center; font-size:11.5px; color:var(--dg-text-faint); margin-top:16px; }
       .dg-seguimiento-whatsapp { justify-content:center; text-decoration:none; width:100%; margin-top:18px; background:linear-gradient(145deg, #25D366, #1DA851); }
       .dg-seguimiento-docs { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+      .dg-seguimiento-espejo { padding:14px 0; border-top:1px solid rgba(var(--dg-line-rgb),0.1); }
+      .dg-seguimiento-espejo:first-of-type { border-top:none; padding-top:4px; }
+      .dg-seguimiento-espejo-titulo { display:flex; align-items:center; justify-content:space-between; gap:8px; font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:13px; color:var(--dg-text-dim); text-transform:uppercase; letter-spacing:0.3px; }
       .dg-seguimiento-docs a.dg-btn-ghost, .dg-seguimiento-docs button.dg-btn-ghost { text-decoration:none; justify-content:center; }
       .dg-seguimiento-doc-pendiente { text-align:center; padding:9px; }
       .dg-link-ecomapp { display:inline-flex; align-items:center; gap:5px; margin-top:6px; font-size:11.5px; color:var(--dg-accent); text-decoration:none; }
@@ -6637,17 +6655,32 @@ function pasoPublicoDe(pedido) {
 
 const WHATSAPP_CONSULTAS = "1173571399";
 
-function abrirGarantia(pedido) {
-  const fechaCompra = pedido.fecha ? new Date(pedido.fecha + "T00:00:00").toLocaleDateString("es-AR") : "—";
-  const medida = `${pedido.ancho} × ${pedido.alto} cm${Number(pedido.cant) > 1 ? ` (×${pedido.cant})` : ""}`;
-  const funciones = funcionesPedido(pedido, true).map((f) => f.label).join(", ") || "—";
+function abrirGarantia(pedidosOEspejo) {
+  const espejos = Array.isArray(pedidosOEspejo) ? pedidosOEspejo : [pedidosOEspejo];
+  const primero = espejos[0];
+  const fechaCompra = primero.fecha ? new Date(primero.fecha + "T00:00:00").toLocaleDateString("es-AR") : "—";
+  const ordenes = [...new Set(espejos.map((e) => e.orden))].join(", ");
+  const bloquesDatos = espejos.map((pedido, i) => {
+    const medida = `${pedido.ancho} × ${pedido.alto} cm${Number(pedido.cant) > 1 ? ` (×${pedido.cant})` : ""}`;
+    const funciones = funcionesPedido(pedido, true).map((f) => f.label).join(", ") || "—";
+    return `
+  <div class="datos">
+    ${espejos.length > 1 ? `<div class="datos-titulo">Espejo ${i + 1} de ${espejos.length}</div>` : ""}
+    <div><strong>Medida:</strong> ${medida}</div>
+    <div><strong>Forma:</strong> ${pedido.forma || "—"}</div>
+    <div><strong>Tipo:</strong> ${pedido.tipo || "—"}</div>
+    <div><strong>Tono de luz:</strong> ${pedido.tono || "—"}</div>
+    <div><strong>Funciones:</strong> ${funciones}</div>
+  </div>`;
+  }).join("");
   const html = `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Garantía — Pedido #${pedido.orden}</title>
+<html lang="es"><head><meta charset="utf-8"><title>Garantía — Pedido #${ordenes}</title>
 <style>
   body { font-family: Georgia, 'Times New Roman', serif; color:#1a1a1a; max-width:720px; margin:40px auto; padding:0 24px; line-height:1.6; }
   h1 { font-size:22px; margin-bottom:4px; }
   .sub { color:#555; font-size:13px; margin-bottom:28px; }
-  .datos { background:#f5f3ef; border:1px solid #ddd; border-radius:10px; padding:16px 20px; margin:20px 0 28px; font-size:14px; }
+  .datos { background:#f5f3ef; border:1px solid #ddd; border-radius:10px; padding:16px 20px; margin:16px 0; font-size:14px; }
+  .datos-titulo { font-weight:700; margin-bottom:8px; color:#333; }
   .datos div { margin-bottom:4px; }
   .datos strong { display:inline-block; min-width:150px; }
   p { font-size:14px; text-align:justify; }
@@ -6663,15 +6696,11 @@ function abrirGarantia(pedido) {
   <p>Nos comprometemos a proporcionar una garantía para el espejo que ha adquirido, sujeto a los términos y condiciones establecidos a continuación.</p>
 
   <div class="datos">
-    <div><strong>Pedido:</strong> #${pedido.orden}</div>
-    <div><strong>Cliente:</strong> ${pedido.cliente || "—"}</div>
+    <div><strong>Pedido:</strong> #${ordenes}</div>
+    <div><strong>Cliente:</strong> ${primero.cliente || "—"}</div>
     <div><strong>Fecha de compra:</strong> ${fechaCompra}</div>
-    <div><strong>Medida:</strong> ${medida}</div>
-    <div><strong>Forma:</strong> ${pedido.forma || "—"}</div>
-    <div><strong>Tipo:</strong> ${pedido.tipo || "—"}</div>
-    <div><strong>Tono de luz:</strong> ${pedido.tono || "—"}</div>
-    <div><strong>Funciones:</strong> ${funciones}</div>
   </div>
+  ${bloquesDatos}
 
   <ol>
     <li><strong>Duración:</strong> Esta garantía es válida por un período de seis meses a partir de la fecha de compra.</li>
@@ -6816,7 +6845,140 @@ function SeguimientoPublico({ pedidoId }) {
   );
 }
 
+function SeguimientoGrupoPublico({ grupoId }) {
+  const [espejos, setEspejos] = useState(undefined); // undefined = cargando, null/[] = no encontrado
+  const [tema] = useState(() => {
+    try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
+  });
+
+  useEffect(() => {
+    let activo = true;
+    async function cargar() {
+      try {
+        const lista = await pedidosStore.getByGrupoId(grupoId);
+        if (activo) setEspejos(lista);
+      } catch (e) { if (activo) setEspejos([]); }
+    }
+    cargar();
+    const interval = window.setInterval(cargar, 20000);
+    return () => { activo = false; window.clearInterval(interval); };
+  }, [grupoId]);
+
+  if (espejos === undefined) {
+    return (
+      <div className="dg-app dg-seguimiento" data-theme={tema}>
+        <Style />
+        <div className="dg-loading"><Loader2 className="dg-spin" size={26} /><span>Buscando tu pedido...</span></div>
+      </div>
+    );
+  }
+
+  const primero = espejos[0];
+  if (!primero) {
+    return (
+      <div className="dg-app dg-seguimiento" data-theme={tema}>
+        <Style />
+        <div className="dg-seguimiento-wrap">
+          <div className="dg-seguimiento-brand">DECOGLASS</div>
+          <div className="dg-empty" style={{ marginTop: 24 }}>No encontramos ningún pedido con este link. Consultanos si creés que es un error.</div>
+          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={`${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent("Hola! Tengo una consulta sobre mi pedido")}`} target="_blank" rel="noopener noreferrer">
+            <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const todosCancelados = espejos.every((e) => e.estado === "Cancelado");
+  const activos = espejos.filter((e) => e.estado !== "Cancelado");
+  const conFacturaUrl = espejos.find((e) => e.facturaUrl);
+  const conRemito = espejos.find((e) => e.remitoNumeroGuia?.trim());
+  const puedeDescargarFactura = primero.tipoFactura === "Cons. Final / B" || primero.tipoFactura === "Factura A";
+  const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi pedido #${primero.orden}`)}`;
+
+  return (
+    <div className="dg-app dg-seguimiento" data-theme={tema}>
+      <Style />
+      <div className="dg-seguimiento-wrap">
+        <div className="dg-seguimiento-brand">DECOGLASS</div>
+
+        {todosCancelados ? (
+          <div className="dg-empty" style={{ marginTop: 12 }}>Este pedido fue cancelado. Consultanos si tenés dudas.</div>
+        ) : (
+          <div className="dg-seguimiento-card">
+            <div className="dg-seguimiento-head">
+              <span>Pedido #{primero.orden}</span>
+              <span className="dg-pago-meta">{totalUnidades(activos)} espejo(s)</span>
+            </div>
+
+            {activos.map((pedido, i) => {
+              const pasoActual = pasoPublicoDe(pedido);
+              const produccionCompletada = pasosProduccionCompletados(pedido);
+              const funciones = funcionesPedido(pedido, true);
+              const entrega = ENTREGA_ESTILO[pedido.metodo] || ENTREGA_ESTILO.default;
+              return (
+                <div className="dg-seguimiento-espejo" key={pedido.id}>
+                  <div className="dg-seguimiento-espejo-titulo">
+                    Espejo {i + 1} de {activos.length}
+                    <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{pedido.metodo}</span>
+                  </div>
+                  <div className="dg-verif-specs" style={{ marginTop: 8 }}>
+                    <div className="dg-fab-medida">
+                      <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+                      {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
+                    </div>
+                    <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
+                    {funciones.length > 0 && (
+                      <div className="dg-fab-funciones">
+                        {funciones.map((f, j) => (<span className="dg-fab-func" key={j}>{f.label}</span>))}
+                      </div>
+                    )}
+                    {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+                  </div>
+
+                  <div className="dg-seguimiento-pasos" style={{ marginTop: 10 }}>
+                    {SEGUIMIENTO_PASOS_PUBLICOS.map((paso, j) => (
+                      <div key={paso.id} className={`dg-seguimiento-paso ${j < pasoActual ? "dg-seg-hecho" : j === pasoActual ? "dg-seg-actual" : ""}`}>
+                        <span className="dg-seguimiento-punto">{j < pasoActual ? <Check size={13} /> : j + 1}</span>
+                        <span>{paso.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {pasoActual === 1 && produccionCompletada < PRODUCCION_PASOS.length && (
+                    <p className="dg-hint" style={{ marginTop: 8 }}>Etapa actual en fábrica: <strong>{PRODUCCION_PASOS[produccionCompletada]?.label}</strong></p>
+                  )}
+                  {pasoActual === 3 && (
+                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="dg-seguimiento-docs">
+              {puedeDescargarFactura && (
+                conFacturaUrl
+                  ? <a className="dg-btn-ghost" href={conFacturaUrl.facturaUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                  : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
+              )}
+              {conRemito && (
+                <a className="dg-btn-ghost" href={linkViaCargo(conRemito.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><Truck size={14} /> Seguir envío en Vía Cargo</a>
+              )}
+              <button className="dg-btn-ghost" onClick={() => abrirGarantia(activos)}><ShieldCheck size={14} /> Descargar garantía</button>
+            </div>
+          </div>
+        )}
+
+        <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
+          <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
+        </a>
+        <p className="dg-seguimiento-footer">Esta página se actualiza sola. Ante cualquier duda, escribinos.</p>
+      </div>
+    </div>
+  );
+}
+
 function linkSeguimiento(pedido) {
+  if (pedido.grupoId) return `${window.location.origin}/seguimiento/grupo/${pedido.grupoId}`;
   return `${window.location.origin}/seguimiento/${pedido.id}`;
 }
 
@@ -6826,6 +6988,8 @@ function linkViaCargo(numeroGuia) {
 
 export default function Root() {
   const path = window.location.pathname;
+  const matchGrupo = path.match(/^\/seguimiento\/grupo\/([^/]+)\/?$/);
+  if (matchGrupo) return <SeguimientoGrupoPublico grupoId={matchGrupo[1]} />;
   const match = path.match(/^\/seguimiento\/([^/]+)\/?$/);
   if (match) return <SeguimientoPublico pedidoId={match[1]} />;
   return <App />;
