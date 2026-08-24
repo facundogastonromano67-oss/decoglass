@@ -97,6 +97,23 @@ export const pedidosStore = {
   },
 };
 
+export const documentosStore = {
+  // Sube el PDF de la factura (emitida en otra app, como EcomApp) y devuelve
+  // la URL pública para guardarla en el pedido. Requiere el bucket "facturas"
+  // creado en Supabase Storage (público, para que el link funcione en el
+  // portal de seguimiento sin pedir login).
+  async subirFactura(pedidoId, archivo) {
+    const ruta = `${pedidoId}/factura-${Date.now()}.pdf`;
+    const { error } = await supabase.storage.from("facturas").upload(ruta, archivo, {
+      contentType: archivo.type || "application/pdf",
+      upsert: true,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from("facturas").getPublicUrl(ruta);
+    return data.publicUrl;
+  },
+};
+
 export const notificacionesStore = {
   async getUltimoDe(audiencia) {
     const { data, error } = await supabase

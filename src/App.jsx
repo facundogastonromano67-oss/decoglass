@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { storage, pedidosStore, pushStore, notificacionesStore } from "./lib/storage";
+import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore } from "./lib/storage";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
   Lock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
@@ -3538,6 +3538,44 @@ function Field({ label, computed, error, children }) {
   );
 }
 
+function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleFile(e) {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    setError(""); setSubiendo(true);
+    try {
+      const url = await documentosStore.subirFactura(pedido.id, archivo);
+      onSubido(url);
+    } catch (err) {
+      setError("No se pudo subir. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      setSubiendo(false);
+      e.target.value = "";
+    }
+  }
+
+  return (
+    <div className="dg-factura-campo">
+      {pedido.facturaUrl && (
+        <a href={pedido.facturaUrl} target="_blank" rel="noopener noreferrer" className="dg-factura-actual">
+          <FileText size={13} /> Ver factura cargada
+        </a>
+      )}
+      {canEdit && (
+        <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
+          {subiendo ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />}
+          {subiendo ? "Subiendo..." : pedido.facturaUrl ? "Reemplazar" : "Subir factura"}
+          <input type="file" accept="application/pdf" onChange={handleFile} disabled={subiendo} style={{ display: "none" }} />
+        </label>
+      )}
+      {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
+    </div>
+  );
+}
+
 function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete }) {
   const [draft, setDraft] = useState(() => normalizarPedidoFunciones(pedido));
   const [intentoGuardar, setIntentoGuardar] = useState(false);
@@ -3619,6 +3657,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <div className="dg-section-header"><User size={14} /> Cliente y pago</div>
           <div className="dg-field-grid">
             <Field label="Cliente" error={err("cliente")}><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+            <Field label="Fecha de compra"><input type="date" disabled={!canEditFull} value={draft.fecha || ""} onChange={(e) => set("fecha", e.target.value)} /></Field>
             <Field label="Vendedor" error={err("vendedor")}><select disabled={!canEditFull} value={draft.vendedor} onChange={(e) => set("vendedor", e.target.value)}><option value="">—</option>{vendedores.map((v) => (<option key={v}>{v}</option>))}</select></Field>
             <Field label="Celular" error={err("celular")}><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
             <Field label="DNI/CUIT"><input disabled={!canEditFull} value={draft.dniCuit} onChange={(e) => set("dniCuit", e.target.value)} /></Field>
@@ -3627,6 +3666,14 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
               <button type="button" disabled={!canEditFull} className={`dg-checkbox-field ${draft.facturado ? "dg-checkbox-field-on" : ""}`} onClick={() => set("facturado", !draft.facturado)}>
                 {draft.facturado ? <Check size={14} /> : null} {draft.facturado ? "Facturado" : "Sin facturar"}
               </button>
+              {!draft.facturado && (
+                <a href="https://admin.ecomm-app.com/facturacion/factura/editar" target="_blank" rel="noopener noreferrer" className="dg-link-ecomapp">
+                  <ExternalLink size={12} /> Facturar en EcomApp
+                </a>
+              )}
+            </Field>
+            <Field label="Comprobante de factura (PDF)">
+              <SubirFacturaCampo pedido={draft} canEdit={canEditFull} onSubido={(url) => set("facturaUrl", url)} />
             </Field>
             <Field label="Comisión">
               <div className="dg-comision-info">
@@ -5131,14 +5178,20 @@ function SectorPage({
   const restringidoAFabrica = session?.role === "sector" && session.sectorId === "fabrica";
   if (restringidoAFabrica && sector.id !== "fabrica") {
     return (
-      <div className="dg-sector-page">
-        <div className="dg-sector-page-head-v2">
-          <button className="dg-back-circle" onClick={onBack} title="Volver al edificio"><ArrowLeft size={19} /></button>
+      <div style={{ minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, textAlign: "center", padding: "40px 20px", background: "#0C0C0D", color: "#F1F1EF" }}>
+        <div style={{ width: 56, height: 56, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(242,98,47,0.12)", border: "1px solid rgba(242,98,47,0.3)", color: "#F2622F" }}>
+          <Lock size={26} />
         </div>
-        <div className="dg-page dg-locked-page">
-          <div className="dg-locked-icon"><Lock size={22} /></div>
-          <div><strong>No tenés acceso a {sector.name}</strong><p>Tu usuario de Fábrica solo puede ver y trabajar dentro de Fábrica.</p></div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 6 }}>No tenés acceso a {sector.name}</div>
+          <p style={{ color: "#9C9C99", fontSize: 13.5, margin: 0, maxWidth: 320 }}>Tu usuario de Fábrica solo puede ver y trabajar dentro de Fábrica.</p>
         </div>
+        <button
+          onClick={onBack}
+          style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "12px 22px", borderRadius: 12, background: "#F2622F", color: "#FFFFFF", border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+        >
+          <ArrowLeft size={17} /> Volver al edificio
+        </button>
       </div>
     );
   }
@@ -6489,6 +6542,15 @@ function Style() {
       .dg-seg-actual .dg-seguimiento-punto { border-color:var(--dg-accent); color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),0.12); }
       .dg-seguimiento-footer { text-align:center; font-size:11.5px; color:var(--dg-text-faint); margin-top:16px; }
       .dg-seguimiento-whatsapp { justify-content:center; text-decoration:none; width:100%; margin-top:18px; background:linear-gradient(145deg, #25D366, #1DA851); }
+      .dg-seguimiento-docs { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+      .dg-seguimiento-docs a.dg-btn-ghost, .dg-seguimiento-docs button.dg-btn-ghost { text-decoration:none; justify-content:center; }
+      .dg-seguimiento-doc-pendiente { text-align:center; padding:9px; }
+      .dg-link-ecomapp { display:inline-flex; align-items:center; gap:5px; margin-top:6px; font-size:11.5px; color:var(--dg-accent); text-decoration:none; }
+      .dg-link-ecomapp:hover { text-decoration:underline; }
+      .dg-factura-campo { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .dg-factura-actual { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--dg-success); text-decoration:none; }
+      .dg-factura-actual:hover { text-decoration:underline; }
+      .dg-factura-upload-btn { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
       @media (max-width:480px) { .dg-seguimiento { padding-left:16px; padding-right:16px; } }
     `}</style>
   );
@@ -6511,6 +6573,63 @@ function pasoPublicoDe(pedido) {
 }
 
 const WHATSAPP_CONSULTAS = "1173571399";
+
+function abrirGarantia(pedido) {
+  const fechaCompra = pedido.fecha ? new Date(pedido.fecha + "T00:00:00").toLocaleDateString("es-AR") : "—";
+  const medida = `${pedido.ancho} × ${pedido.alto} cm${Number(pedido.cant) > 1 ? ` (×${pedido.cant})` : ""}`;
+  const funciones = funcionesPedido(pedido, true).map((f) => f.label).join(", ") || "—";
+  const html = `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Garantía — Pedido #${pedido.orden}</title>
+<style>
+  body { font-family: Georgia, 'Times New Roman', serif; color:#1a1a1a; max-width:720px; margin:40px auto; padding:0 24px; line-height:1.6; }
+  h1 { font-size:22px; margin-bottom:4px; }
+  .sub { color:#555; font-size:13px; margin-bottom:28px; }
+  .datos { background:#f5f3ef; border:1px solid #ddd; border-radius:10px; padding:16px 20px; margin:20px 0 28px; font-size:14px; }
+  .datos div { margin-bottom:4px; }
+  .datos strong { display:inline-block; min-width:150px; }
+  p { font-size:14px; text-align:justify; }
+  ol { font-size:14px; padding-left:20px; }
+  ol li { margin-bottom:10px; text-align:justify; }
+  .firma { margin-top:50px; font-size:14px; }
+  @media print { body { margin:20px auto; } }
+</style></head>
+<body>
+  <h1>Garantía del Espejo por 6 (Seis) Meses</h1>
+  <div class="sub">DECOGLASS ESPEJOS ILUMINADOS</div>
+
+  <p>Nos comprometemos a proporcionar una garantía para el espejo que ha adquirido, sujeto a los términos y condiciones establecidos a continuación.</p>
+
+  <div class="datos">
+    <div><strong>Pedido:</strong> #${pedido.orden}</div>
+    <div><strong>Cliente:</strong> ${pedido.cliente || "—"}</div>
+    <div><strong>Fecha de compra:</strong> ${fechaCompra}</div>
+    <div><strong>Medida:</strong> ${medida}</div>
+    <div><strong>Forma:</strong> ${pedido.forma || "—"}</div>
+    <div><strong>Tipo:</strong> ${pedido.tipo || "—"}</div>
+    <div><strong>Tono de luz:</strong> ${pedido.tono || "—"}</div>
+    <div><strong>Funciones:</strong> ${funciones}</div>
+  </div>
+
+  <ol>
+    <li><strong>Duración:</strong> Esta garantía es válida por un período de seis meses a partir de la fecha de compra.</li>
+    <li><strong>Cobertura:</strong> Garantizamos que el espejo estará libre de defectos de fabricación y mano de obra durante el período de garantía. Si se descubre cualquier defecto debido a un error de fabricación o defecto de material dentro de los seis meses, repararemos o reemplazaremos el espejo, a nuestra discreción, sin costo adicional para usted.</li>
+    <li><strong>Exclusiones:</strong> Esta garantía no cubre los daños causados por un uso indebido, abuso, negligencia, accidentes, instalación inadecuada o cualquier modificación no autorizada realizada en el espejo. Además, no nos responsabilizamos por daños incidentales o consecuentes que puedan surgir como resultado del mal uso del espejo.</li>
+    <li>Si desea presentar un reclamo bajo esta garantía, deberá ponerse en contacto con nuestro servicio de atención al cliente dentro del período de garantía. Le proporcionaremos instrucciones sobre cómo proceder.</li>
+  </ol>
+
+  <p>Si tiene alguna pregunta o inquietud relacionada con esta garantía, no dude en ponerse en contacto con nosotros.</p>
+
+  <div class="firma">
+    Atentamente,<br/>
+    <strong>DECOGLASS</strong><br/>
+    1159513250 — Sergio Romano
+  </div>
+
+  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+  const ventana = window.open("", "_blank");
+  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+}
 
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
@@ -6562,6 +6681,7 @@ function SeguimientoPublico({ pedidoId }) {
   const entrega = ENTREGA_ESTILO[pedido.metodo] || ENTREGA_ESTILO.default;
   const funciones = funcionesPedido(pedido, true);
   const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi pedido #${pedido.orden}`)}`;
+  const puedeDescargarFactura = pedido.tipoFactura === "Cons. Final / B" || pedido.tipoFactura === "Factura A";
 
   return (
     <div className="dg-app dg-seguimiento" data-theme={tema}>
@@ -6609,6 +6729,15 @@ function SeguimientoPublico({ pedidoId }) {
               </div>
             )}
             {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+          </div>
+
+          <div className="dg-seguimiento-docs">
+            {puedeDescargarFactura && (
+              pedido.facturaUrl
+                ? <a className="dg-btn-ghost" href={pedido.facturaUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
+            )}
+            <button className="dg-btn-ghost" onClick={() => abrirGarantia(pedido)}><ShieldCheck size={14} /> Descargar garantía</button>
           </div>
 
           <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
