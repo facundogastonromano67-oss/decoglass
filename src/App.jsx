@@ -4482,12 +4482,20 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
                 <div className="dg-task" key={s.id}>
                   <div className="dg-pago-info">
                     <span>{s.nombre}</span>
-                    <span className="dg-pago-meta">mínimo: {s.minimo} {s.unidad}</span>
+                    {canEdit ? (
+                      <span className="dg-pago-meta dg-stock-minimo-editable">
+                        Mínimo:
+                        <input type="number" className="dg-stock-minimo-input" value={s.minimo} onChange={(e) => update(s.id, { minimo: Number(e.target.value) || 0 })} />
+                        <input className="dg-stock-unidad-input" value={s.unidad} onChange={(e) => update(s.id, { unidad: e.target.value })} placeholder="u" />
+                      </span>
+                    ) : (
+                      <span className="dg-pago-meta">mínimo: {s.minimo} {s.unidad}</span>
+                    )}
                   </div>
                   {bajo && <span className="dg-badge" style={{ "--bc": "var(--dg-danger)" }}>Reponer</span>}
                   <input type="number" className="dg-stock-cantidad" style={bajo ? { color: "var(--dg-danger)", borderColor: "rgba(var(--dg-danger-rgb),0.4)" } : undefined}
                     disabled={!canEdit} value={s.cantidad} onChange={(e) => update(s.id, { cantidad: Number(e.target.value) || 0 })} />
-                  <span className="dg-stock-unidad">{s.unidad}</span>
+                  {!canEdit && <span className="dg-stock-unidad">{s.unidad}</span>}
                   {canEdit && puedeBorrar && <button className="dg-icon-btn dg-task-del" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
                 </div>
               );
@@ -6144,6 +6152,9 @@ function Style() {
       .dg-lead-estado-select { background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:5px 8px; font-size:11px; }
       .dg-stock-unidad { font-size:11px; color:var(--dg-text-dim); min-width:26px; }
       .dg-stock-cantidad { width:64px; text-align:center; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:6px 4px; color:var(--dg-accent); font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; }
+      .dg-stock-minimo-editable { display:flex; align-items:center; gap:5px; }
+      .dg-stock-minimo-input { width:44px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:6px; padding:3px 4px; color:var(--dg-text); font-size:11.5px; text-align:center; }
+      .dg-stock-unidad-input { width:44px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:6px; padding:3px 4px; color:var(--dg-text); font-size:11.5px; }
 
       .dg-quickviews { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
       .dg-quickview-btn { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); color:var(--dg-text-dim); border-radius:100px; padding:7px 13px; font-size:12px; cursor:pointer; white-space:nowrap; transition: all .15s ease; }
