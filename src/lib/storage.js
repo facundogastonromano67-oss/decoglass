@@ -112,6 +112,20 @@ export const documentosStore = {
     const { data } = supabase.storage.from("facturas").getPublicUrl(ruta);
     return data.publicUrl;
   },
+
+  // Sube el remito de envío de Vía Cargo (foto o PDF). Requiere el bucket
+  // "remitos" en Supabase Storage (público, mismo motivo que arriba).
+  async subirRemito(pedidoId, archivo) {
+    const ext = (archivo.type || "").includes("pdf") ? "pdf" : "jpg";
+    const ruta = `${pedidoId}/remito-${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("remitos").upload(ruta, archivo, {
+      contentType: archivo.type || "application/octet-stream",
+      upsert: true,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from("remitos").getPublicUrl(ruta);
+    return data.publicUrl;
+  },
 };
 
 export const notificacionesStore = {

@@ -175,7 +175,7 @@ const QUICK_BUTTONS = [
 
 const FORMA_OPTIONS = ["Rectangular", "Pastilla", "Circular", "P. Curvas", "Ovalado", "Orgánico", "Capilla Arriba", "Capilla Abajo", "Capilla Izquierda", "Soft Orgánico", "Otro"];
 const TIPO_PEDIDO_OPTIONS = ["Simple", "Importado", "Esm.", "Sin led", "Biselado"];
-const TOUCH_OPTIONS = ["Touch", "No"];
+const TOUCH_OPTIONS = ["Touch", "Doble touch (frontal + perimetral)", "No"];
 const DESEMP_OPTIONS = ["Desempañante", "No"];
 const DESEMP_TIPO_OPTIONS = ["220", "Touch"];
 const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
@@ -2538,6 +2538,7 @@ function emptyPedido(prefill) {
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
+    facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
   };
 }
 
@@ -2624,7 +2625,7 @@ function normalizarPedidoFunciones(pedido) {
 
 function funcionesPedido(pedido, incluirPulido = false) {
   const funciones = [
-    { on: pedido?.touch === "Touch", label: "TOUCH" },
+    { on: pedido?.touch === "Touch" || pedido?.touch === "Doble touch (frontal + perimetral)", label: pedido?.touch === "Doble touch (frontal + perimetral)" ? "DOBLE TOUCH" : "TOUCH" },
     { on: pedidoTieneDesempanante(pedido), label: pedidoTipoDesempanante(pedido) === "Touch" ? "DESEMPAÑANTE T" : "DESEMPAÑANTE 220" },
     { on: pedido?.horaTemp === "Hora y Temperatura", label: "HORA Y TEMP" },
     { on: pedido?.bluetooth && pedido.bluetooth !== "No", label: String(pedido.bluetooth).toUpperCase() },
@@ -3538,6 +3539,64 @@ function Field({ label, computed, error, children }) {
   );
 }
 
+function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleFile(e) {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    setError(""); setSubiendo(true);
+    try {
+      const url = await documentosStore.subirRemito(pedido.id, archivo);
+      onCambiar({ remitoUrl: url });
+    } catch (err) {
+      setError("No se pudo subir. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      setSubiendo(false);
+      e.target.value = "";
+    }
+  }
+
+  return (
+    <div className="dg-section-card">
+      <div className="dg-section-header"><Package size={14} /> Remito de Vía Cargo</div>
+      <div className="dg-field-grid">
+        <Field label="Número de guía">
+          <input
+            disabled={!canEdit}
+            value={pedido.remitoNumeroGuia || ""}
+            onChange={(e) => onCambiar({ remitoNumeroGuia: e.target.value })}
+            placeholder="Ej: 999036524031"
+          />
+        </Field>
+        <Field label="Comprobante (foto o PDF)">
+          <div className="dg-factura-campo">
+            {pedido.remitoUrl && (
+              <a href={pedido.remitoUrl} target="_blank" rel="noopener noreferrer" className="dg-factura-actual">
+                <FileText size={13} /> Ver remito
+              </a>
+            )}
+            {canEdit && (
+              <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
+                {subiendo ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />}
+                {subiendo ? "Subiendo..." : pedido.remitoUrl ? "Reemplazar" : "Subir remito"}
+                <input type="file" accept="application/pdf,image/*" onChange={handleFile} disabled={subiendo} style={{ display: "none" }} />
+              </label>
+            )}
+          </div>
+          {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
+        </Field>
+      </div>
+      {pedido.remitoNumeroGuia?.trim() && (
+        <a href={linkViaCargo(pedido.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer" className="dg-link-ecomapp" style={{ marginTop: 10 }}>
+          <ExternalLink size={12} /> Ver seguimiento en Vía Cargo
+        </a>
+      )}
+    </div>
+  );
+}
+
 function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState("");
@@ -3717,6 +3776,10 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
           </div>
         </div>
+
+        {draft.metodo === "Interior" && (
+          <RemitoViaCargoCampo pedido={draft} canEdit={canEditFull} onCambiar={(cambios) => setDraft((d) => ({ ...d, ...cambios }))} />
+        )}
 
         </EnterFlow>
 
@@ -6737,6 +6800,9 @@ function SeguimientoPublico({ pedidoId }) {
                 ? <a className="dg-btn-ghost" href={pedido.facturaUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
                 : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
             )}
+            {pedido.metodo === "Interior" && pedido.remitoNumeroGuia?.trim() && (
+              <a className="dg-btn-ghost" href={linkViaCargo(pedido.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><Truck size={14} /> Seguir envío en Vía Cargo</a>
+            )}
             <button className="dg-btn-ghost" onClick={() => abrirGarantia(pedido)}><ShieldCheck size={14} /> Descargar garantía</button>
           </div>
 
@@ -6752,6 +6818,10 @@ function SeguimientoPublico({ pedidoId }) {
 
 function linkSeguimiento(pedido) {
   return `${window.location.origin}/seguimiento/${pedido.id}`;
+}
+
+function linkViaCargo(numeroGuia) {
+  return `https://viacargo.com.ar/seguimiento-de-envio/${(numeroGuia || "").trim()}/`;
 }
 
 export default function Root() {
