@@ -123,6 +123,16 @@ export const documentosStore = {
     return data.publicUrl;
   },
 
+  // Borra el archivo de factura ya subido, por si se cargó por error.
+  async borrarFactura(url) {
+    if (!url) return;
+    const marcador = "/storage/v1/object/public/facturas/";
+    const idx = url.indexOf(marcador);
+    if (idx === -1) return;
+    const ruta = decodeURIComponent(url.slice(idx + marcador.length));
+    await supabase.storage.from("facturas").remove([ruta]);
+  },
+
   // Sube el remito de envío de Vía Cargo (foto o PDF). Requiere el bucket
   // "remitos" en Supabase Storage (público, mismo motivo que arriba).
   async subirRemito(pedidoId, archivo) {
@@ -135,6 +145,16 @@ export const documentosStore = {
     if (error) throw error;
     const { data } = supabase.storage.from("remitos").getPublicUrl(ruta);
     return data.publicUrl;
+  },
+
+  // Borra el remito ya subido, por si se cargó por error.
+  async borrarRemito(url) {
+    if (!url) return;
+    const marcador = "/storage/v1/object/public/remitos/";
+    const idx = url.indexOf(marcador);
+    if (idx === -1) return;
+    const ruta = decodeURIComponent(url.slice(idx + marcador.length));
+    await supabase.storage.from("remitos").remove([ruta]);
   },
 };
 

@@ -775,6 +775,7 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [panelNotifOpen, setPanelNotifOpen] = useState(false);
+  const [vistaPanel, setVistaPanel] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
   const syncRefreshingRef = useRef(false);
@@ -1170,7 +1171,7 @@ function App() {
         key={sector.id}
         className={`dg-room-tile dg-room-tile-${sector.tipo}`}
         style={{ "--glow": glow }}
-        onClick={() => setActiveSectorId(sector.id)}
+        onClick={() => { setActiveSectorId(sector.id); setVistaPanel(false); }}
         aria-label={`Abrir sector ${sector.name}`}
       >
         <RoomScene sector={sector} />
@@ -1232,13 +1233,20 @@ function App() {
         </header>
 
         <nav className="dg-nav dg-nav-breadcrumb">
-          <button className={`dg-nav-btn ${!activeSectorId ? "dg-nav-on" : ""}`} onClick={() => setActiveSectorId(null)} aria-current={!activeSectorId ? "page" : undefined}><Building2 size={14} /> Edificio</button>
-          {activeSector && (
+          <button className={`dg-nav-btn ${!activeSectorId && !vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setActiveSectorId(null); setVistaPanel(false); }} aria-current={!activeSectorId && !vistaPanel ? "page" : undefined}><Building2 size={14} /> Edificio</button>
+          {isAdmin && (
+            <button className={`dg-nav-btn ${vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setVistaPanel(true); setActiveSectorId(null); }} aria-current={vistaPanel ? "page" : undefined}><BarChart3 size={14} /> Panel de control</button>
+          )}
+          {activeSector && !vistaPanel && (
             <span className="dg-nav-btn dg-nav-on dg-nav-crumb"><ChevronRight size={13} /> {activeSector.name}</span>
           )}
         </nav>
 
-        {!activeSector && (
+        {vistaPanel && isAdmin && (
+          <PanelControlAdmin pedidos={pedidos} incomes={incomes} reclamos={reclamos} stockMateriales={stockMateriales} sectors={sectors} />
+        )}
+
+        {!activeSector && !vistaPanel && (
           <>
             <section className="dg-overview-head">
               <div className="dg-overview-copy">
@@ -1275,13 +1283,13 @@ function App() {
           </>
         )}
 
-        {activeSector && (
+        {activeSector && !vistaPanel && (
           <button className="dg-mobile-back-fab" onClick={() => setActiveSectorId(null)} aria-label="Volver al edificio" title="Volver al edificio">
             <ArrowLeft size={19} />
           </button>
         )}
 
-        {activeSector && (
+        {activeSector && !vistaPanel && (
           <SectorPage
             sector={activeSector}
             index={sectors.findIndex((s) => s.id === activeSector.id)}
@@ -1499,6 +1507,136 @@ function HistorialNotificacionesPanel() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function mesesAtras(n) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - n);
+  return d.toISOString().slice(0, 7); // "YYYY-MM"
+}
+function labelMes(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  const nombre = new Date(y, m - 1, 1).toLocaleDateString("es-AR", { month: "short" });
+  return nombre.charAt(0).toUpperCase() + nombre.slice(1).replace(".", "");
+}
+
+function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sectors }) {
+  const [resumenAlertas, setResumenAlertas] = useState(undefined);
+
+  useEffect(() => {
+    let activo = true;
+    notificacionesStore.getUltimoDe("admin").then((r) => { if (activo) setResumenAlertas(r); }).catch(() => { if (activo) setResumenAlertas(null); });
+    return () => { activo = false; };
+  }, []);
+
+  const mesActual = mesesAtras(0);
+  const mesAnterior = mesesAtras(1);
+  const facturacionMes = incomes.filter((i) => (i.fecha || "").slice(0, 7) === mesActual).reduce((a, i) => a + (Number(i.monto) || 0), 0);
+  const facturacionMesAnterior = incomes.filter((i) => (i.fecha || "").slice(0, 7) === mesAnterior).reduce((a, i) => a + (Number(i.monto) || 0), 0);
+  const variacion = facturacionMesAnterior > 0 ? ((facturacionMes - facturacionMesAnterior) / facturacionMesAnterior) * 100 : null;
+
+  const activos = pedidos.filter((p) => p.estado !== "Cancelado");
+  const etapas = [
+    { id: "sinConfirmar", label: "Sin confirmar", color: "var(--dg-text-dim)", count: totalUnidades(activos.filter((p) => p.estado === "Sin pasar a fábrica")) },
+    { id: "produccion", label: "En producción", color: "var(--dg-warning)", count: totalUnidades(activos.filter((p) => p.estado === "Verificado" || p.estado === "Pasado a fábrica")) },
+    { id: "listos", label: "Listos para entregar", color: "var(--dg-accent)", count: totalUnidades(activos.filter((p) => p.estado === "Espejo listo")) },
+    { id: "entregadosMes", label: "Entregados este mes", color: "var(--dg-success)", count: totalUnidades(pedidos.filter((p) => p.estado === "Entregado" && (p.entregadoFecha || "").slice(0, 7) === mesActual)) },
+  ];
+
+  const meses6 = Array.from({ length: 6 }, (_, i) => mesesAtras(5 - i));
+  const datosGrafico = meses6.map((ym) => ({
+    mes: labelMes(ym),
+    ventas: incomes.filter((i) => (i.fecha || "").slice(0, 7) === ym).reduce((a, i) => a + (Number(i.monto) || 0), 0),
+    reclamos: reclamos.filter((r) => (r.fecha || "").slice(0, 7) === ym).length,
+  }));
+
+  const detalle = resumenAlertas?.detalle || {};
+  const alertasConDatos = NOTIF_SECCIONES.filter((s) => detalle[s.key]?.length > 0);
+  const totalAlertas = alertasConDatos.reduce((a, s) => a + detalle[s.key].length, 0);
+
+  return (
+    <div className="dg-page dg-panel-control">
+      <section className="dg-overview-head">
+        <div className="dg-overview-copy">
+          <span className="dg-eyebrow">Panel de control</span>
+          <h1>Cómo está el negocio hoy</h1>
+          <p>Un resumen para no tener que entrar sector por sector a buscar los números.</p>
+        </div>
+      </section>
+
+      <div className="dg-panel-grid">
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">Facturación de {labelMes(mesActual)}</div>
+          <div className="dg-panel-card-valor">{money(facturacionMes)}</div>
+          {variacion !== null ? (
+            <div className={`dg-panel-card-variacion ${variacion >= 0 ? "dg-panel-up" : "dg-panel-down"}`}>
+              {variacion >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />} {Math.abs(variacion).toFixed(0)}% vs {labelMes(mesAnterior)}
+            </div>
+          ) : (
+            <div className="dg-panel-card-variacion">Sin datos de {labelMes(mesAnterior)} para comparar</div>
+          )}
+        </div>
+
+        {etapas.map((e) => (
+          <div className="dg-panel-card" key={e.id}>
+            <div className="dg-panel-card-label">{e.label}</div>
+            <div className="dg-panel-card-valor" style={{ color: e.color }}>{e.count}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="dg-section-card">
+        <div className="dg-section-header"><Bell size={14} /> Alertas activas {totalAlertas > 0 && <span className="dg-badge" style={{ "--bc": "var(--dg-danger)" }}>{totalAlertas}</span>}</div>
+        {resumenAlertas === undefined && <div className="dg-loading" style={{ minHeight: 80 }}><Loader2 className="dg-spin" size={20} /></div>}
+        {resumenAlertas !== undefined && totalAlertas === 0 && <div className="dg-empty">Sin alertas activas. Todo en orden.</div>}
+        {alertasConDatos.length > 0 && (
+          <div className="dg-panel-alertas">
+            {alertasConDatos.map((s) => {
+              const Ic = s.icon;
+              return (
+                <div className="dg-panel-alerta-fila" key={s.key} style={{ "--ac": s.color }}>
+                  <Ic size={14} />
+                  <span>{s.label}</span>
+                  <strong>{detalle[s.key].length}</strong>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="dg-section-card">
+        <div className="dg-section-header"><BarChart3 size={14} /> Facturación de los últimos 6 meses</div>
+        <div style={{ width: "100%", height: 220 }}>
+          <ResponsiveContainer>
+            <BarChart data={datosGrafico}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--dg-line-rgb),0.1)" />
+              <XAxis dataKey="mes" stroke="var(--dg-text-faint)" fontSize={12} />
+              <YAxis stroke="var(--dg-text-faint)" fontSize={11} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <Tooltip formatter={(v) => money(v)} contentStyle={{ background: "var(--dg-surface-2)", border: "1px solid rgba(var(--dg-line-rgb),0.15)", borderRadius: 8, color: "var(--dg-text)" }} />
+              <Bar dataKey="ventas" name="Facturación" fill="var(--dg-accent)" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="dg-section-card">
+        <div className="dg-section-header"><AlertTriangle size={14} /> Reclamos por mes (últimos 6 meses)</div>
+        <div style={{ width: "100%", height: 180 }}>
+          <ResponsiveContainer>
+            <BarChart data={datosGrafico}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--dg-line-rgb),0.1)" />
+              <XAxis dataKey="mes" stroke="var(--dg-text-faint)" fontSize={12} />
+              <YAxis stroke="var(--dg-text-faint)" fontSize={11} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: "var(--dg-surface-2)", border: "1px solid rgba(var(--dg-line-rgb),0.15)", borderRadius: 8, color: "var(--dg-text)" }} />
+              <Bar dataKey="reclamos" name="Reclamos" fill="var(--dg-danger)" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3545,6 +3683,7 @@ function Field({ label, computed, error, children }) {
 
 function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
   const [subiendo, setSubiendo] = useState(false);
+  const [borrando, setBorrando] = useState(false);
   const [error, setError] = useState("");
 
   async function handleFile(e) {
@@ -3559,6 +3698,19 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
     } finally {
       setSubiendo(false);
       e.target.value = "";
+    }
+  }
+
+  async function handleBorrar() {
+    if (!window.confirm("¿Quitar este remito? Si lo subiste por error, se elimina del pedido.")) return;
+    setError(""); setBorrando(true);
+    try {
+      await documentosStore.borrarRemito(pedido.remitoUrl);
+      onCambiar({ remitoUrl: "" });
+    } catch (err) {
+      setError("No se pudo quitar. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      setBorrando(false);
     }
   }
 
@@ -3580,6 +3732,11 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
               <a href={pedido.remitoUrl} target="_blank" rel="noopener noreferrer" className="dg-factura-actual">
                 <FileText size={13} /> Ver remito
               </a>
+            )}
+            {canEdit && pedido.remitoUrl && (
+              <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={handleBorrar} disabled={borrando}>
+                {borrando ? <Loader2 size={13} className="dg-spin" /> : <Trash2 size={13} />} Quitar
+              </button>
             )}
             {canEdit && (
               <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
@@ -3603,6 +3760,7 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
 
 function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
   const [subiendo, setSubiendo] = useState(false);
+  const [borrando, setBorrando] = useState(false);
   const [error, setError] = useState("");
 
   async function handleFile(e) {
@@ -3620,12 +3778,30 @@ function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
     }
   }
 
+  async function handleBorrar() {
+    if (!window.confirm("¿Quitar esta factura? Si la subiste por error, se elimina del pedido.")) return;
+    setError(""); setBorrando(true);
+    try {
+      await documentosStore.borrarFactura(pedido.facturaUrl);
+      onSubido("");
+    } catch (err) {
+      setError("No se pudo quitar. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      setBorrando(false);
+    }
+  }
+
   return (
     <div className="dg-factura-campo">
       {pedido.facturaUrl && (
         <a href={pedido.facturaUrl} target="_blank" rel="noopener noreferrer" className="dg-factura-actual">
           <FileText size={13} /> Ver factura cargada
         </a>
+      )}
+      {canEdit && pedido.facturaUrl && (
+        <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={handleBorrar} disabled={borrando}>
+          {borrando ? <Loader2 size={13} className="dg-spin" /> : <Trash2 size={13} />} Quitar
+        </button>
       )}
       {canEdit && (
         <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
@@ -5503,6 +5679,20 @@ function Style() {
       .dg-month-items { display:flex; flex-direction:column; gap:8px; padding:10px; }
 
       .dg-overview-head { max-width:960px; margin:0 auto 18px; padding:22px 24px; box-sizing:border-box; display:flex; align-items:flex-end; justify-content:space-between; gap:24px; background:linear-gradient(135deg,rgba(var(--dg-accent-rgb),.09),var(--dg-surface) 48%,rgba(var(--dg-line-rgb),.02)); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:18px; box-shadow:0 18px 50px -34px rgba(0,0,0,0.85); }
+
+      .dg-panel-control { max-width:960px; }
+      .dg-panel-grid { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:12px; margin:18px 0 22px; }
+      .dg-panel-card { background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:14px; padding:16px; }
+      .dg-panel-card-label { font-size:11.5px; color:var(--dg-text-dim); font-weight:600; margin-bottom:8px; }
+      .dg-panel-card-valor { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:22px; }
+      .dg-panel-card-variacion { display:flex; align-items:center; gap:5px; font-size:11.5px; margin-top:8px; color:var(--dg-text-faint); }
+      .dg-panel-up { color:var(--dg-success); }
+      .dg-panel-down { color:var(--dg-danger); }
+      .dg-panel-alertas { display:flex; flex-direction:column; gap:6px; }
+      .dg-panel-alerta-fila { display:flex; align-items:center; gap:9px; padding:8px 10px; background:rgba(var(--dg-line-rgb),0.03); border-left:3px solid var(--ac); border-radius:8px; font-size:13px; }
+      .dg-panel-alerta-fila span { flex:1; color:var(--dg-text-dim); }
+      .dg-panel-alerta-fila strong { color:var(--ac); font-family:'JetBrains Mono', monospace; }
+      @media (max-width:900px) { .dg-panel-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } }
       .dg-overview-copy { min-width:0; }
       .dg-eyebrow { display:block; margin-bottom:6px; color:var(--dg-accent); font-size:10.5px; font-weight:700; letter-spacing:1.25px; text-transform:uppercase; }
       .dg-overview-copy h1 { margin:0; font-family:'Space Grotesk',sans-serif; font-size:24px; line-height:1.1; letter-spacing:-0.35px; }
