@@ -1853,7 +1853,7 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
     if (usuarios.some((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase())) return setError("Ya existe un usuario con ese nombre.");
     if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
     if (clave !== clave2) return setError("Las claves no coinciden.");
-    const nuevo = { id: uid(), nombre: nombre.trim(), clave, rol, sectorId: rol === "admin" ? null : sectorId };
+    const nuevo = { id: uid(), nombre: nombre.trim(), clave, rol, sectorId: rol === "admin" ? null : sectorId, aprobado: true };
     onChange([...usuarios, nuevo]);
     setNombre(""); setClave(""); setClave2("");
     setAviso("Usuario agregado."); setTimeout(() => setAviso(""), 4000);
@@ -1866,6 +1866,11 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
     if (u.nombre === session?.nombre) { setError("No podés eliminar tu propio usuario."); return; }
     onChange(usuarios.filter((x) => x.id !== id));
   }
+  function aprobar(id) { onChange(usuarios.map((x) => (x.id === id ? { ...x, aprobado: true } : x))); }
+  function rechazar(id) { onChange(usuarios.filter((x) => x.id !== id)); }
+
+  const pendientes = usuarios.filter((u) => u.aprobado === false);
+  const aprobados = usuarios.filter((u) => u.aprobado !== false);
 
   const sectorNombre = (id) => sectors.find((s) => s.id === id)?.name || "—";
   const rolLabel = (r) => ROLES_USUARIO.find((x) => x.id === r)?.label || r;
@@ -1881,10 +1886,31 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
         {verClaves ? <XCircle size={14} /> : <ShieldCheck size={14} />} {verClaves ? "Ocultar" : "Mostrar"} las claves
       </button>
 
+      {pendientes.length > 0 && (
+        <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-warning-rgb),0.35)" }}>
+          <div className="dg-section-header" style={{ color: "var(--dg-warning)" }}><AlertTriangle size={14} /> Solicitudes pendientes ({pendientes.length})</div>
+          <div className="dg-task-list" style={{ marginBottom: 0 }}>
+            {pendientes.map((u) => (
+              <div className="dg-task" key={u.id}>
+                <AlertTriangle size={14} style={{ color: "var(--dg-warning)" }} />
+                <div className="dg-pago-info">
+                  <span>{u.nombre}</span>
+                  <span className="dg-pago-meta">
+                    Pidió ser {rolLabel(u.rol)}{u.sectorId ? ` de ${sectorNombre(u.sectorId)}` : ""} · {verClaves ? `Clave: ${u.clave}` : "Clave: ••••••••"}
+                  </span>
+                </div>
+                <button className="dg-btn-ghost dg-mini-btn" onClick={() => rechazar(u.id)}><XCircle size={13} /> Rechazar</button>
+                <button className="dg-btn-primary dg-mini-btn" onClick={() => aprobar(u.id)}><Check size={13} /> Aprobar</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="dg-section-card">
-        <div className="dg-section-header"><Users size={14} /> Usuarios ({usuarios.length})</div>
+        <div className="dg-section-header"><Users size={14} /> Usuarios ({aprobados.length})</div>
         <div className="dg-task-list" style={{ marginBottom: 0 }}>
-          {usuarios.map((u) => (
+          {aprobados.map((u) => (
             <div className="dg-task" key={u.id}>
               <ShieldCheck size={14} style={{ color: rolColor(u.rol) }} />
               <div className="dg-pago-info">
@@ -1896,7 +1922,7 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
               <button className="dg-icon-btn dg-task-del" onClick={() => quitar(u.id)}><Trash2 size={14} /></button>
             </div>
           ))}
-          {usuarios.length === 0 && <div className="dg-empty">Todavía no hay usuarios cargados.</div>}
+          {aprobados.length === 0 && <div className="dg-empty">Todavía no hay usuarios cargados.</div>}
         </div>
       </div>
 
@@ -5427,7 +5453,7 @@ function ConfigEditor({ config, onChange }) {
 }
 
 function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) {
-  const [modo, setModo] = useState("entrar"); // "entrar" | "crear"
+  const [modo, setModo] = useState("entrar"); // "entrar" | "solicitar" | "solicitud-enviada"
   const [nombre, setNombre] = useState("");
   const [clave, setClave] = useState("");
   const [clave2, setClave2] = useState("");
@@ -5440,37 +5466,63 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
     setError("");
     const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase() && u.clave === clave);
     if (!match) return setError("Usuario o clave incorrectos.");
+    if (match.aprobado === false) return setError("Tu cuenta todavía está pendiente de aprobación por un administrador.");
     if (match.rol === "admin") onSuccess({ role: "admin", nombre: match.nombre });
     else onSuccess({ role: "sector", sectorId: match.sectorId, tipo: match.rol, nombre: match.nombre });
   }
 
-  function handleCrear() {
+  function handleCrearPrimerAdmin() {
+    setError("");
+    if (!nombre.trim()) return setError("Elegí un nombre de usuario.");
+    if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
+    if (clave !== clave2) return setError("Las claves no coinciden.");
+    const nuevo = { id: uid(), nombre: nombre.trim(), clave, rol: "admin", sectorId: null, aprobado: true };
+    onCreateUsuario(nuevo);
+    onSuccess({ role: "admin", nombre: nuevo.nombre });
+  }
+
+  function handleSolicitar() {
     setError("");
     if (!nombre.trim()) return setError("Elegí un nombre de usuario.");
     if (usuarios.some((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase())) return setError("Ya existe un usuario con ese nombre.");
     if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
     if (clave !== clave2) return setError("Las claves no coinciden.");
-    const nuevo = bootstrap
-      ? { id: uid(), nombre: nombre.trim(), clave, rol: "admin", sectorId: null }
-      : { id: uid(), nombre: nombre.trim(), clave, rol, sectorId: rol === "admin" ? null : sectorId };
+    const nuevo = { id: uid(), nombre: nombre.trim(), clave, rol, sectorId, aprobado: false };
     onCreateUsuario(nuevo);
-    onSuccess(nuevo.rol === "admin" ? { role: "admin", nombre: nuevo.nombre } : { role: "sector", sectorId: nuevo.sectorId, tipo: nuevo.rol, nombre: nuevo.nombre });
+    setModo("solicitud-enviada");
   }
 
-  const submit = modo === "crear" || bootstrap ? handleCrear : handleEntrar;
+  const submit = bootstrap ? handleCrearPrimerAdmin : modo === "solicitar" ? handleSolicitar : handleEntrar;
+
+  if (modo === "solicitud-enviada") {
+    return (
+      <div className="dg-overlay" onClick={onClose}>
+        <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="dg-modal-head"><div className="dg-modal-title">Solicitud enviada</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
+          <p className="dg-hint">
+            Le llegó a un administrador para que la apruebe. Una vez aprobada, ya podés entrar con el mismo usuario y clave que elegiste.
+          </p>
+          <div className="dg-form-actions" style={{ justifyContent: "flex-end" }}>
+            <button className="dg-btn-primary" onClick={onClose}>Entendido</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="dg-overlay" onClick={onClose}>
       <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="dg-modal-head"><div className="dg-modal-title">{modo === "crear" || bootstrap ? "Crear cuenta" : "Iniciar sesión"}</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
+        <div className="dg-modal-head"><div className="dg-modal-title">{bootstrap ? "Crear cuenta" : modo === "solicitar" ? "Solicitar cuenta" : "Iniciar sesión"}</div><button className="dg-icon-btn" onClick={onClose}><X size={18} /></button></div>
         <EnterFlow className="dg-form" onSubmit={submit}>
           {bootstrap && <p className="dg-hint">Primera vez que se usa el sistema: esta cuenta va a ser la de administrador principal.</p>}
+          {!bootstrap && modo === "solicitar" && <p className="dg-hint">Un administrador tiene que aprobar tu solicitud antes de que puedas entrar con esta cuenta.</p>}
           <label>Usuario</label>
           <input value={nombre} onChange={(e) => setNombre(e.target.value)} autoCapitalize="off" autoCorrect="off" />
-          <label>Clave{modo === "crear" || bootstrap ? " nueva" : ""}</label>
+          <label>Clave{bootstrap || modo === "solicitar" ? " nueva" : ""}</label>
           <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
-          {(modo === "crear" || bootstrap) && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
-          {modo === "crear" && !bootstrap && (
+          {(bootstrap || modo === "solicitar") && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
+          {!bootstrap && modo === "solicitar" && (
             <>
               <label>Sos</label>
               <select value={rol} onChange={(e) => setRol(e.target.value)}>
@@ -5486,11 +5538,11 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
           {error && <div className="dg-error">{error}</div>}
           <div className="dg-form-actions" style={{ justifyContent: "space-between" }}>
             {!bootstrap && (
-              <button className="dg-btn-ghost" onClick={() => { setError(""); setModo(modo === "crear" ? "entrar" : "crear"); }}>
-                {modo === "crear" ? "Ya tengo cuenta" : "No tengo cuenta"}
+              <button className="dg-btn-ghost" onClick={() => { setError(""); setModo(modo === "solicitar" ? "entrar" : "solicitar"); }}>
+                {modo === "solicitar" ? "Ya tengo cuenta" : "No tengo cuenta"}
               </button>
             )}
-            <button className="dg-btn-primary" onClick={submit}>{modo === "crear" || bootstrap ? "Crear cuenta y entrar" : "Entrar"}</button>
+            <button className="dg-btn-primary" onClick={submit}>{bootstrap ? "Crear cuenta y entrar" : modo === "solicitar" ? "Enviar solicitud" : "Entrar"}</button>
           </div>
         </EnterFlow>
       </div>
