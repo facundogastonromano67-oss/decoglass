@@ -4702,7 +4702,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const terminado = produccionCompletada >= PRODUCCION_PASOS.length;
     const menuOpen = menuAbierto === p.id;
     return (
-      <div className={`dg-fab-card dg-fab-${entrega.clase}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
+      <div className={`dg-fab-card dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
         <div className="dg-fab-zona-datos">
           {totalUnidadesPedido > 1 && (
             <div className="dg-fab-unidad-badge">Unidad {unidad} de {totalUnidadesPedido} — mismo pedido, misma medida</div>
@@ -5077,120 +5077,6 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
 
 const TIPOS_PRODUCTO_LIST = Object.keys(TIPO_PRODUCTO_TABLE);
 
-function formaAEstilo(forma, ancho, alto) {
-  switch (forma) {
-    case "Redondo": return { borderRadius: "50%" };
-    case "Ovalado": return { borderRadius: "50%" };
-    case "Pastilla":
-    case "Pastilla/Oval": return { borderRadius: "999px" };
-    case "Puntas Curvas": return { borderRadius: "10px" }; // el radio que antes tenía Rectangular
-    case "Orgánico": return { borderRadius: "68% 32% 41% 59% / 46% 66% 34% 54%", transform: "rotate(-3deg)" };
-    case "Soft": return { borderRadius: "34px 60px 34px 60px" };
-    default: return { borderRadius: "2px" }; // Rectangular: puntas rectas, en punta
-  }
-}
-
-// Pastilla y Ovalado son siempre alargados en el catálogo real (nunca cuadrados),
-// así que la vista previa fuerza un mínimo de proporción aunque la medida
-// cargada sea más pareja — para que la forma se lea bien de entrada.
-function cajaPreview(forma, ancho, alto) {
-  let ratio = ancho > 0 && alto > 0 ? ancho / alto : 1;
-  const necesitaAlargado = forma === "Pastilla" || forma === "Pastilla/Oval" || forma === "Ovalado";
-  if (necesitaAlargado) {
-    const minEstrechez = 1.35;
-    if (ratio > 1 / minEstrechez && ratio < minEstrechez) ratio = ratio >= 1 ? minEstrechez : 1 / minEstrechez;
-  }
-  const anchoCaja = ratio >= 1 ? 220 : Math.max(120, 220 * ratio);
-  const altoCaja = ratio >= 1 ? Math.max(120, 220 / ratio) : 220;
-  return { anchoCaja, altoCaja };
-}
-
-const TONO_LUZ_COLOR = {
-  "Cálida": { glow: "rgba(255,178,102,0.85)", rim: "#FFD9A6" },
-  "Fría": { glow: "rgba(160,215,255,0.85)", rim: "#CFEBFF" },
-  "Neutra": { glow: "rgba(255,250,235,0.85)", rim: "#FFF9EC" },
-  "3 tonos": { glow: "rgba(255,225,190,0.85)", rim: "#FFE7C2" },
-  "Sin led": { glow: "transparent", rim: "transparent" },
-};
-
-function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, horaTemp, bluetooth }) {
-  const [tilt, setTilt] = useState({ x: 0, y: 0 });
-  const estiloForma = formaAEstilo(forma, ancho, alto);
-  const luz = TONO_LUZ_COLOR[tono] || TONO_LUZ_COLOR["3 tonos"];
-  const sinLed = tono === "Sin led";
-  const esEsmerilado = esmerilado !== "Ninguno";
-  const { anchoCaja, altoCaja } = cajaPreview(forma, ancho, alto);
-
-  // Medidas reales del catálogo: el esmerilado arranca 3 a 5cm adentro del
-  // borde, y la franja encendida mide entre 2,5 y 4cm de ancho. Convertimos
-  // esos centímetros a píxeles según la escala real de la medida cargada,
-  // para que la proporción se vea correcta sin importar el tamaño del espejo.
-  const anchoRealCm = Number(ancho) || 60;
-  const altoRealCm = Number(alto) || 60;
-  const pxPorCm = Math.min(anchoCaja / anchoRealCm, altoCaja / altoRealCm);
-  const margenPx = Math.max(6, Math.round(4 * pxPorCm)); // ~4cm (rango real: 3 a 5) — distancia al borde, sin cambios
-  const bandaPx = Math.max(3, Math.round(2 * pxPorCm)); // ~2cm de ancho — más finita que antes
-  // Los íconos (touch, hora/temp, bluetooth) siempre van por encima de la banda
-  // esmerilada, nunca superpuestos: se calcula cuánto ocupa el margen + la
-  // banda, y se les deja un respiro extra antes de empezar a dibujarlos.
-  const distanciaIconosPx = (esEsmerilado ? margenPx + bandaPx : margenPx * 0.6) + 12;
-
-  function handleMove(e) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / rect.width - 0.5;
-    const py = (e.clientY - rect.top) / rect.height - 0.5;
-    setTilt({ x: py * -14, y: px * 16 });
-  }
-  function handleLeave() { setTilt({ x: 0, y: 0 }); }
-
-  return (
-    <div className="dg-preview3d-wrap" onMouseMove={handleMove} onMouseLeave={handleLeave}>
-      <div className="dg-preview3d-stage" style={{ transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)` }}>
-        <div
-          className="dg-preview3d-mirror"
-          style={{
-            width: anchoCaja, height: altoCaja, ...estiloForma,
-            boxShadow: sinLed ? "0 20px 40px -18px rgba(0,0,0,0.6)" : `0 0 30px 8px ${luz.glow}, 0 20px 40px -18px rgba(0,0,0,0.6)`,
-          }}
-        >
-          {/* el vidrio ocupa todo el espejo, de punta a punta */}
-          <div className="dg-preview3d-vidrio" style={{ position: "absolute", inset: 0, borderRadius: "inherit" }}>
-            <div className="dg-preview3d-reflejo" />
-            {(touch || horaTemp || bluetooth) && (
-              <div className="dg-preview3d-funciones" style={{ bottom: distanciaIconosPx }}>
-                {touch && <span className="dg-preview3d-touch" title="Touch (con dimmer)" />}
-                {horaTemp && (
-                  <span className="dg-preview3d-horatemp" title="Hora y temperatura">
-                    <b>16:20</b><b>24°c</b>
-                  </span>
-                )}
-                {bluetooth && <span className="dg-preview3d-bt" title="Bluetooth"><Bluetooth size={11} /></span>}
-              </div>
-            )}
-          </div>
-
-          {/* el anillo de luz va ENCIMA del vidrio, en la posición real: pegado
-              al borde y angosto si es Simple, o metido unos cm adentro y más
-              ancho si es Esmerilado */}
-          {!sinLed && (
-            <div
-              className={esEsmerilado ? "dg-preview3d-banda-esmerilada" : "dg-preview3d-banda-simple"}
-              style={{
-                position: "absolute", inset: esEsmerilado ? margenPx : 0, borderRadius: "inherit",
-                border: esEsmerilado ? `${bandaPx}px solid ${luz.rim}` : `2px solid ${luz.rim}`,
-                boxShadow: esEsmerilado ? "inset 0 0 14px 2px rgba(255,255,255,0.45)" : "none",
-                background: "transparent", pointerEvents: "none",
-              }}
-            />
-          )}
-        </div>
-      </div>
-      <p className="dg-preview3d-caption">Vista previa — moví el mouse para inclinarlo · {ancho || "—"}×{alto || "—"} cm</p>
-      {desemp && <p className="dg-preview3d-tag"><Sparkles size={11} /> Incluye desempañante (placa trasera, no se ve desde el frente)</p>}
-    </div>
-  );
-}
-
 function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) {
   const [tipoProducto, setTipoProducto] = useState(TIPOS_PRODUCTO_LIST[0]);
   const [ancho, setAncho] = useState(60);
@@ -5199,7 +5085,6 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const [desemp, setDesemp] = useState("No");
   const [horaTemp, setHoraTemp] = useState("No");
   const [bluetoothSel, setBluetoothSel] = useState("Sin Bluetooth");
-  const [tono, setTono] = useState("3 tonos");
   const [panelesAdicionales, setPanelesAdicionales] = useState(0);
   const [envioInterior, setEnvioInterior] = useState("No");
   const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
@@ -5217,30 +5102,11 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
   function saveQuote() {
-    const q = {
-      id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre",
-      tipoProducto, ancho: inputs.ancho, alto: inputs.alto, tono,
-      touch: touch === "Sí", desemp: desemp === "Sí", horaTemp: horaTemp === "Sí", bluetoothSel, panelesAdicionales: inputs.panelesAdicionales,
-      medida: `${ancho}x${alto}`, cantidad: inputs.cantidad,
-      precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas,
-    };
+    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
     onQuotesChange([q, ...quotes]);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
-    return q;
   }
   function removeQuote(id) { onQuotesChange(quotes.filter((q) => q.id !== id)); }
-  function linkCotizacion(q) { return `${window.location.origin}/cotizacion/${q.id}`; }
-  const [linkCopiadoId, setLinkCopiadoId] = useState(null);
-  async function copiarLinkCotizacion(q) {
-    const url = linkCotizacion(q);
-    try { await navigator.clipboard.writeText(url); } catch (e) { window.prompt("Copiá el link:", url); }
-    setLinkCopiadoId(q.id);
-    setTimeout(() => setLinkCopiadoId(null), 2500);
-  }
-  function guardarYCopiarLink() {
-    const q = saveQuote();
-    copiarLinkCotizacion(q);
-  }
 
   return (
     <div className="dg-page">
@@ -5268,11 +5134,6 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
               <Field label="Bluetooth">
                 <select value={bluetoothSel} onChange={(e) => setBluetoothSel(e.target.value)}>
                   {Object.keys(config.opcionales.bluetooth).map((k) => (<option key={k} value={k}>{k}</option>))}
-                </select>
-              </Field>
-              <Field label="Tono de luz">
-                <select value={tono} onChange={(e) => setTono(e.target.value)}>
-                  {TONO_OPTIONS.map((t) => (<option key={t} value={t}>{t}</option>))}
                 </select>
               </Field>
               {desemp === "Sí" && (
@@ -5304,13 +5165,6 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
         </div>
 
         <div className="dg-quote-result">
-          <EspejoPreview3D
-            forma={TIPO_PRODUCTO_TABLE[tipoProducto]?.display || "Rectangular"}
-            esmerilado={TIPO_PRODUCTO_TABLE[tipoProducto]?.esmerilado || "Ninguno"}
-            ancho={inputs.ancho} alto={inputs.alto} tono={tono}
-            touch={touch === "Sí"} desemp={desemp === "Sí"} horaTemp={horaTemp === "Sí"} bluetooth={bluetoothSel !== "Sin Bluetooth"}
-          />
-
           {result.alertaMedidaMaxima !== "OK" && (
             <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaMedidaMaxima}</div>
           )}
@@ -5343,9 +5197,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
               <button className="dg-btn-ghost" onClick={copyMessage}>{copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copiado" : "Copiar mensaje"}</button>
               <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Vista de impresión (PDF)</button>
               <button className="dg-btn-primary" onClick={saveQuote}>{saved ? <Check size={14} /> : <Save size={14} />} {saved ? "Guardado" : "Guardar cotización"}</button>
-              <button className="dg-btn-primary" onClick={guardarYCopiarLink}><ExternalLink size={14} /> Guardar y copiar link para el cliente</button>
             </div>
-            <p className="dg-hint" style={{ marginTop: 8 }}>El link abre una página con el render y el precio, para que el cliente la vea sin necesidad de entrar a la app.</p>
           </div>
         </div>
       </div>
@@ -5361,9 +5213,6 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
                   <span className="dg-pago-meta">{q.fecha}</span>
                 </div>
                 <span className="dg-pago-monto">{fmtMoney(roundTo1000(q.precioTransferencia))}</span>
-                <button className="dg-btn-ghost dg-mini-btn" onClick={() => copiarLinkCotizacion(q)}>
-                  {linkCopiadoId === q.id ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link</>}
-                </button>
                 <button className="dg-icon-btn dg-task-del" onClick={() => removeQuote(q.id)}><Trash2 size={14} /></button>
               </div>
             ))}
@@ -6129,6 +5978,8 @@ function Style() {
       .dg-fab-envio { border-left-color:var(--dg-accent); }
       .dg-fab-coloca { border-left-color:#8A9161; }
       .dg-fab-retira { border-left-color: rgba(var(--dg-line-rgb),0.15); }
+      .dg-fab-terminado { box-shadow: 0 0 0 2px var(--dg-success); }
+      .dg-fab-terminado .dg-fab-zona-datos { background: rgba(var(--dg-success-rgb),0.06); }
 
       .dg-fab-zona-datos { background: var(--dg-surface); padding:14px 16px 12px; }
       .dg-fab-zona-proceso { background: var(--dg-bg); padding:12px 16px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.09); }
@@ -6270,28 +6121,6 @@ function Style() {
 
       .dg-quote-grid { display:flex; gap:16px; align-items:flex-start; }
       .dg-quote-form, .dg-quote-result { flex:1; min-width:280px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:14px; padding:16px; }
-
-      .dg-preview3d-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; padding:28px 16px 20px; margin-bottom:16px; border-radius:16px; position:relative; overflow:hidden;
-        background:
-          linear-gradient(to bottom, transparent 76%, rgba(90,80,68,0.35) 76%, rgba(90,80,68,0.35) 100%),
-          repeating-linear-gradient(0deg, rgba(255,255,255,0.035) 0 42px, rgba(0,0,0,0.06) 42px 44px),
-          repeating-linear-gradient(90deg, rgba(255,255,255,0.035) 0 42px, rgba(0,0,0,0.06) 42px 44px),
-          radial-gradient(ellipse 120% 90% at 50% 0%, rgba(255,255,255,0.05), transparent 60%),
-          linear-gradient(165deg, #a49a8c, #857c70 55%, #6f665c);
-      }
-      .dg-preview3d-stage { perspective:900px; transition:transform .08s ease-out; }
-      .dg-preview3d-mirror { position:relative; overflow:hidden; transition:box-shadow .25s ease; }
-      .dg-preview3d-vidrio { background:linear-gradient(155deg, rgba(255,255,255,0.16), rgba(120,130,140,0.28) 45%, rgba(40,44,50,0.55)); backdrop-filter:blur(2px); overflow:hidden; }
-      .dg-preview3d-reflejo { position:absolute; top:-30%; left:-40%; width:75%; height:160%; background:linear-gradient(120deg, rgba(255,255,255,0.35), transparent 60%); transform:rotate(18deg); pointer-events:none; }
-      .dg-preview3d-banda-simple { transition:background .25s ease; }
-      .dg-preview3d-banda-esmerilada { transition:background .25s ease, box-shadow .25s ease; filter:blur(0.3px); }
-      .dg-preview3d-banda-esmerilada::after { content:''; position:absolute; inset:0; border-radius:inherit; background:repeating-linear-gradient(115deg, rgba(255,255,255,0.12) 0 2px, transparent 2px 5px); mix-blend-mode:overlay; }
-      .dg-preview3d-funciones { position:absolute; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px; }
-      .dg-preview3d-touch { width:15px; height:15px; border-radius:50%; border:2px solid #4FC3F7; background:rgba(79,195,247,0.15); box-shadow:0 0 9px 3px rgba(79,195,247,0.75); }
-      .dg-preview3d-horatemp { display:flex; align-items:center; gap:6px; font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; color:#4FC3F7; text-shadow:0 0 6px rgba(79,195,247,0.9); letter-spacing:0.4px; }
-      .dg-preview3d-bt { width:16px; height:16px; border-radius:50%; background:rgba(0,0,0,0.35); color:#fff; display:flex; align-items:center; justify-content:center; }
-      .dg-preview3d-caption { font-size:11px; color:rgba(255,255,255,0.8); text-align:center; margin:4px 0 0; text-shadow:0 1px 4px rgba(0,0,0,0.6); }
-      .dg-preview3d-tag { display:flex; align-items:center; justify-content:center; gap:5px; font-size:11px; color:rgba(255,255,255,0.9); text-align:center; margin:2px 0 0; text-shadow:0 1px 4px rgba(0,0,0,0.6); }
       .dg-quote-section-title { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:var(--dg-accent); margin:14px 0 6px; }
       .dg-quote-section-title:first-child { margin-top:0; }
       .dg-alert { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),0.1); border:1px solid rgba(var(--dg-warning-rgb),0.3); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
@@ -7068,17 +6897,24 @@ function Style() {
 }
 
 // ---- Portal público de seguimiento (sin login) ----
-const SEGUIMIENTO_PASOS_PUBLICOS = [
-  { id: "confirmado", label: "Pedido confirmado" },
-  { id: "fabricacion", label: "En producción" },
-  { id: "listo", label: "Espejo listo" },
-  { id: "entregado", label: "Entregado" },
-];
+function pasosPublicosDe(pedido) {
+  const pasos = [
+    { id: "confirmado", label: "Pedido confirmado" },
+    { id: "fabricacion", label: "En producción" },
+    { id: "listo", label: "Espejo listo" },
+  ];
+  if (pedido?.metodo === "Interior") pasos.push({ id: "despachado", label: "Despachado" });
+  pasos.push({ id: "entregado", label: "Entregado" });
+  return pasos;
+}
 
 function pasoPublicoDe(pedido) {
   if (!pedido) return 0;
-  if (pedido.estado === "Entregado") return 4; // los 4 pasos con tilde
-  if (pedidoEstaListo(pedido)) return 3; // confirmado + producción + listo, los 3 con tilde; "Entregado" queda pendiente
+  const esInterior = pedido.metodo === "Interior";
+  const despachado = !!pedido.remitoNumeroGuia?.trim();
+  if (pedido.estado === "Entregado") return esInterior ? 5 : 4; // todos los pasos con tilde
+  if (esInterior && despachado) return 4; // listo + despachado, falta entregado
+  if (pedidoEstaListo(pedido)) return 3; // confirmado + producción + listo, los 3 con tilde
   if (pedido.estado === "Sin pasar a fábrica") return 0;
   return 1; // Verificado en adelante ya se muestra como "En producción"
 }
@@ -7153,97 +6989,6 @@ function abrirGarantia(pedidosOEspejo) {
   if (ventana) { ventana.document.write(html); ventana.document.close(); }
 }
 
-function CotizacionPublica({ quoteId }) {
-  const [quote, setQuote] = useState(undefined); // undefined = cargando, null = no encontrada
-  const [tema] = useState(() => {
-    try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
-  });
-
-  useEffect(() => {
-    let activo = true;
-    async function cargar() {
-      try {
-        const row = await storage.get("quotes");
-        const lista = row ? JSON.parse(row.value) : [];
-        const encontrada = (lista || []).find((q) => q.id === quoteId) || null;
-        if (activo) setQuote(encontrada);
-      } catch (e) { if (activo) setQuote(null); }
-    }
-    cargar();
-    return () => { activo = false; };
-  }, [quoteId]);
-
-  if (quote === undefined) {
-    return (
-      <div className="dg-app dg-seguimiento" data-theme={tema}>
-        <Style />
-        <div className="dg-loading"><Loader2 className="dg-spin" size={26} /><span>Buscando tu cotización...</span></div>
-      </div>
-    );
-  }
-  if (quote === null) {
-    return (
-      <div className="dg-app dg-seguimiento" data-theme={tema}>
-        <Style />
-        <div className="dg-seguimiento-wrap">
-          <div className="dg-seguimiento-brand">DECOGLASS</div>
-          <div className="dg-empty" style={{ marginTop: 24 }}>No encontramos esta cotización. Puede que haya sido eliminada — consultanos si creés que es un error.</div>
-          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={`${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent("Hola! Tengo una consulta sobre una cotización")}`} target="_blank" rel="noopener noreferrer">
-            <MessageCircle size={15} /> Consultas por WhatsApp
-          </a>
-        </div>
-      </div>
-    );
-  }
-
-  const info = TIPO_PRODUCTO_TABLE[quote.tipoProducto] || {};
-  const funciones = [
-    { on: quote.touch, label: "Touch" },
-    { on: quote.desemp, label: "Desempañante" },
-    { on: quote.horaTemp, label: "Hora y temperatura" },
-    { on: quote.bluetoothSel && quote.bluetoothSel !== "Sin Bluetooth", label: quote.bluetoothSel },
-  ].filter((f) => f.on);
-  const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi cotización (espejo ${quote.medida} cm)`)}`;
-
-  return (
-    <div className="dg-app dg-seguimiento" data-theme={tema}>
-      <Style />
-      <div className="dg-seguimiento-wrap">
-        <div className="dg-seguimiento-brand">DECOGLASS</div>
-        <div className="dg-seguimiento-card">
-          <EspejoPreview3D
-            forma={info.display || "Rectangular"} esmerilado={info.esmerilado || "Ninguno"}
-            ancho={Number(quote.ancho) || 0} alto={Number(quote.alto) || 0} tono={quote.tono || "3 tonos"}
-            touch={!!quote.touch} desemp={!!quote.desemp} horaTemp={!!quote.horaTemp} bluetooth={!!quote.bluetoothSel && quote.bluetoothSel !== "Sin Bluetooth"}
-          />
-
-          <div className="dg-seguimiento-head" style={{ marginTop: 6 }}>
-            <span>{quote.tipoProducto}</span>
-            <span className="dg-pago-meta">{quote.medida} cm{quote.cantidad > 1 ? ` × ${quote.cantidad}` : ""}</span>
-          </div>
-
-          {funciones.length > 0 && (
-            <div className="dg-fab-funciones" style={{ marginTop: 8 }}>
-              {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
-            </div>
-          )}
-
-          <div className="dg-price-card" style={{ marginTop: 16 }}>
-            <span className="dg-price-label">Transferencia (con IVA)</span>
-            <strong className="dg-price-main">{fmtMoney(roundTo1000(quote.precioTransferencia))}</strong>
-            {quote.precio3Cuotas && <span className="dg-price-sub">{fmtMoney(roundTo1000(quote.precio3Cuotas))} en 3 cuotas</span>}
-          </div>
-
-          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
-            <MessageCircle size={15} /> Consultas por WhatsApp
-          </a>
-        </div>
-        <p className="dg-seguimiento-footer">Cotización válida por tiempo limitado. Ante cualquier duda, escribinos.</p>
-      </div>
-    </div>
-  );
-}
-
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
   const [tema] = useState(() => {
@@ -7295,6 +7040,8 @@ function SeguimientoPublico({ pedidoId }) {
   const funciones = funcionesPedido(pedido, true);
   const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi pedido #${pedido.orden}`)}`;
   const puedeDescargarFactura = pedido.tipoFactura === "Cons. Final / B" || pedido.tipoFactura === "Factura A";
+  const pasosPub = pasosPublicosDe(pedido);
+  const esInterior = pedido.metodo === "Interior";
 
   return (
     <div className="dg-app dg-seguimiento" data-theme={tema}>
@@ -7308,7 +7055,7 @@ function SeguimientoPublico({ pedidoId }) {
           </div>
 
           <div className="dg-seguimiento-pasos">
-            {SEGUIMIENTO_PASOS_PUBLICOS.map((paso, i) => (
+            {pasosPub.map((paso, i) => (
               <div key={paso.id} className={`dg-seguimiento-paso ${i < pasoActual ? "dg-seg-hecho" : i === pasoActual ? "dg-seg-actual" : ""}`}>
                 <span className="dg-seguimiento-punto">{i < pasoActual ? <Check size={13} /> : i + 1}</span>
                 <span>{paso.label}</span>
@@ -7321,12 +7068,22 @@ function SeguimientoPublico({ pedidoId }) {
               Etapa actual en fábrica: <strong>{PRODUCCION_PASOS[produccionCompletada]?.label}</strong>
             </p>
           )}
-          {pedido.listo && pasoActual < 4 && (
+          {pedido.listo && pasoActual < pasosPub.length && (
             <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{pedido.listo}</strong></p>
           )}
-          {pasoActual === 3 && (
+          {pasoActual === 3 && !esInterior && (
             <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
               <strong>Espejo listo para coordinar entrega.</strong>
+            </p>
+          )}
+          {pasoActual === 3 && esInterior && (
+            <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
+              <strong>Espejo listo. Lo estamos preparando para despachar por Vía Cargo.</strong>
+            </p>
+          )}
+          {pasoActual === 4 && esInterior && (
+            <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
+              <strong>Despachado. Ya podés seguirlo con el número de guía más abajo.</strong>
             </p>
           )}
 
@@ -7437,6 +7194,8 @@ function SeguimientoGrupoPublico({ grupoId }) {
               const produccionCompletada = pasosProduccionCompletados(pedido);
               const funciones = funcionesPedido(pedido, true);
               const entrega = ENTREGA_ESTILO[pedido.metodo] || ENTREGA_ESTILO.default;
+              const pasosPub = pasosPublicosDe(pedido);
+              const esInterior = pedido.metodo === "Interior";
               return (
                 <div className="dg-seguimiento-espejo" key={pedido.id}>
                   <div className="dg-seguimiento-espejo-titulo">
@@ -7458,7 +7217,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
                   </div>
 
                   <div className="dg-seguimiento-pasos" style={{ marginTop: 10 }}>
-                    {SEGUIMIENTO_PASOS_PUBLICOS.map((paso, j) => (
+                    {pasosPub.map((paso, j) => (
                       <div key={paso.id} className={`dg-seguimiento-paso ${j < pasoActual ? "dg-seg-hecho" : j === pasoActual ? "dg-seg-actual" : ""}`}>
                         <span className="dg-seguimiento-punto">{j < pasoActual ? <Check size={13} /> : j + 1}</span>
                         <span>{paso.label}</span>
@@ -7468,8 +7227,14 @@ function SeguimientoGrupoPublico({ grupoId }) {
                   {pasoActual === 1 && produccionCompletada < PRODUCCION_PASOS.length && (
                     <p className="dg-hint" style={{ marginTop: 8 }}>Etapa actual en fábrica: <strong>{PRODUCCION_PASOS[produccionCompletada]?.label}</strong></p>
                   )}
-                  {pasoActual === 3 && (
+                  {pasoActual === 3 && !esInterior && (
                     <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
+                  )}
+                  {pasoActual === 3 && esInterior && (
+                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo. Lo estamos preparando para despachar por Vía Cargo.</strong></p>
+                  )}
+                  {pasoActual === 4 && esInterior && (
+                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Despachado. Ya podés seguirlo con el número de guía más abajo.</strong></p>
                   )}
                 </div>
               );
@@ -7509,8 +7274,6 @@ function linkViaCargo(numeroGuia) {
 
 export default function Root() {
   const path = window.location.pathname;
-  const matchCotizacion = path.match(/^\/cotizacion\/([^/]+)\/?$/);
-  if (matchCotizacion) return <CotizacionPublica quoteId={matchCotizacion[1]} />;
   const matchGrupo = path.match(/^\/seguimiento\/grupo\/([^/]+)\/?$/);
   if (matchGrupo) return <SeguimientoGrupoPublico grupoId={matchGrupo[1]} />;
   const match = path.match(/^\/seguimiento\/([^/]+)\/?$/);
