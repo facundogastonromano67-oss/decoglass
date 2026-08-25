@@ -2889,6 +2889,32 @@ function pedidoListaFabrica(pedido) {
   return pedidoProcesoTaller(pedido) === "biselados" ? "bisel_sin_pedir" : "armar";
 }
 
+// Agrupa la lista "Espejos para armar" para que no se mezclen simples,
+// esmerilados y biselados entre sí: primero simples (por método de entrega:
+// retira, envío, interior), después esmerilados (los que ya volvieron y hay
+// que armar, y recién después los que hay que cortar para mandar a grabar),
+// y al final los biselados que ya volvieron y hay que armar.
+function grupoListaArmar(pedido) {
+  const proceso = pedidoProcesoTaller(pedido);
+  if (proceso === "simples") return "simples";
+  if (proceso === "esmerilados") return pedido?.estado === "Para armar" ? "esmerilados_armar" : "esmerilados_cortar";
+  return "biselados_armar";
+}
+const ORDEN_GRUPOS_ARMAR = ["simples", "esmerilados_armar", "esmerilados_cortar", "biselados_armar"];
+const ETIQUETAS_GRUPO_ARMAR = {
+  simples: "Simples",
+  esmerilados_armar: "Esmerilados — para armar",
+  esmerilados_cortar: "Esmerilados — para cortar y mandar a grabar",
+  biselados_armar: "Biselados — para armar",
+};
+const ORDEN_METODO_ARMAR = { "Retira": 0, "Envío": 1, "Envío flex": 1, "Colocación": 1, "Interior": 2 };
+function prioridadListaArmar(pedido) {
+  const grupo = grupoListaArmar(pedido);
+  const grupoIndex = ORDEN_GRUPOS_ARMAR.indexOf(grupo);
+  const subOrden = grupo === "simples" ? (ORDEN_METODO_ARMAR[pedido?.metodo] ?? 1.5) : 0;
+  return grupoIndex * 10 + subOrden;
+}
+
 function estadoProduccionLabel(pedido) {
   if (pedidoEstaListo(pedido)) return "Espejo listo";
   const lista = TALLER_LISTAS.find((item) => item.id === pedidoListaFabrica(pedido));
@@ -4865,6 +4891,15 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   let visibles = filtroEstado === "historial" ? [...baseVisibles] : baseVisibles.filter((p) => pedidoListaFabrica(p) === lista);
   visibles = filtroEstado === "historial"
     ? visibles.sort((a, b) => (b.produccionListaFecha || b.fecha || "").localeCompare(a.produccionListaFecha || a.fecha || ""))
+    : lista === "armar"
+    ? visibles.sort((a, b) => {
+        const pa = prioridadListaArmar(a), pb = prioridadListaArmar(b);
+        if (pa !== pb) return pa - pb;
+        if (!a.listo && !b.listo) return (b.orden || 0) - (a.orden || 0);
+        if (!a.listo) return 1;
+        if (!b.listo) return -1;
+        return a.listo < b.listo ? -1 : a.listo > b.listo ? 1 : 0;
+      })
     : visibles.sort((a, b) => {
         if (!a.listo && !b.listo) return (b.orden || 0) - (a.orden || 0);
         if (!a.listo) return 1;
@@ -5138,7 +5173,21 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
-        {visibles.flatMap((p) => {
+        {lista === "armar" ? (() => {
+          const elementos = [];
+          let grupoAnterior = null;
+          visibles.forEach((p) => {
+            const grupo = grupoListaArmar(p);
+            if (grupo !== grupoAnterior) {
+              elementos.push(<div className="dg-fab-grupo-header" key={`grupo-${grupo}`}>{ETIQUETAS_GRUPO_ARMAR[grupo]}</div>);
+              grupoAnterior = grupo;
+            }
+            const cant = Math.max(1, Number(p.cant) || 1);
+            if (cant <= 1) elementos.push(renderCard(p, 1, 1));
+            else Array.from({ length: cant }, (_, i) => elementos.push(renderCard(p, i + 1, cant)));
+          });
+          return elementos;
+        })() : visibles.flatMap((p) => {
           const cant = Math.max(1, Number(p.cant) || 1);
           if (cant <= 1) return [renderCard(p, 1, 1)];
           return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
@@ -6287,8 +6336,11 @@ function Style() {
 
       /* ---- FICHA DE FABRICA v3: un solo borde, checklist minimalista, menu de acciones ---- */
       .dg-fab-lista { display:flex; flex-direction:column; gap:10px; }
+      .dg-fab-grupo-header { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:13px; color:var(--dg-text-dim);
+        text-transform:uppercase; letter-spacing:0.4px; padding:10px 2px 2px; margin-top:4px; border-bottom:1.5px solid rgba(var(--dg-line-rgb),0.14); }
+      .dg-fab-grupo-header:first-child { margin-top:0; padding-top:0; }
       .dg-fab-card { position:relative; background: var(--dg-surface); border:0.5px solid rgba(var(--dg-line-rgb),0.08);
-        border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:10px; padding:0; overflow:hidden; }
+        border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:10px; padding:0; }
       .dg-fab-interior { border-left-color:#A66A75; }
       .dg-fab-flex { border-left-color:var(--dg-warning); }
       .dg-fab-envio { border-left-color:var(--dg-accent); }
@@ -6297,8 +6349,8 @@ function Style() {
       .dg-fab-terminado { box-shadow: 0 0 0 2px var(--dg-success); }
       .dg-fab-terminado .dg-fab-zona-datos { background: rgba(var(--dg-success-rgb),0.06); }
 
-      .dg-fab-zona-datos { background: var(--dg-surface); padding:14px 16px 12px; }
-      .dg-fab-zona-proceso { background: var(--dg-bg); padding:12px 16px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.09); }
+      .dg-fab-zona-datos { background: var(--dg-surface); padding:14px 16px 12px; border-radius:9px 9px 0 0; }
+      .dg-fab-zona-proceso { background: var(--dg-bg); padding:12px 16px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.09); border-radius:0 0 9px 9px; }
 
       .dg-fab-head { display:flex; align-items:baseline; gap:9px; margin-bottom:6px; }
       .dg-fab-orden { font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dg-text-faint); }
