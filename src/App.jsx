@@ -3707,8 +3707,22 @@ function Field({ label, computed, error, children }) {
   );
 }
 
+async function leerNumeroGuiaDeImagen(archivo) {
+  const Tesseract = (await import("tesseract.js")).default;
+  const resultado = await Tesseract.recognize(archivo, "spa");
+  const texto = resultado?.data?.text || "";
+  // Primero busca el número justo al lado de la palabra "GUIA" (más confiable).
+  const conEtiqueta = texto.match(/GU[IÍ1]A\s*N?[°oO0]?\.?\s*[:.]?\s*(\d{6,15})/i);
+  if (conEtiqueta) return conEtiqueta[1];
+  // Si no lo encuentra, usa el número más largo de toda la hoja (suele ser la guía).
+  const numeros = texto.match(/\d{8,15}/g) || [];
+  if (numeros.length) return numeros.sort((a, b) => b.length - a.length)[0];
+  return null;
+}
+
 function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
   const [subiendo, setSubiendo] = useState(false);
+  const [leyendoGuia, setLeyendoGuia] = useState(false);
   const [borrando, setBorrando] = useState(false);
   const [error, setError] = useState("");
 
@@ -3718,11 +3732,22 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
     setError(""); setSubiendo(true);
     try {
       const url = await documentosStore.subirRemito(pedido.id, archivo);
-      onCambiar({ remitoUrl: url });
+      const cambios = { remitoUrl: url };
+
+      if (archivo.type.startsWith("image/") && !pedido.remitoNumeroGuia?.trim()) {
+        setSubiendo(false); setLeyendoGuia(true);
+        try {
+          const guia = await leerNumeroGuiaDeImagen(archivo);
+          if (guia) cambios.remitoNumeroGuia = guia;
+        } catch (ocrErr) { /* si falla la lectura automática, se puede escribir a mano igual */ }
+        setLeyendoGuia(false);
+      }
+
+      onCambiar(cambios);
     } catch (err) {
       setError("No se pudo subir. Revisá la conexión e intentá de nuevo.");
     } finally {
-      setSubiendo(false);
+      setSubiendo(false); setLeyendoGuia(false);
       e.target.value = "";
     }
   }
@@ -3765,14 +3790,17 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
               </button>
             )}
             {canEdit && (
-              <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
-                {subiendo ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />}
-                {subiendo ? "Subiendo..." : pedido.remitoUrl ? "Reemplazar" : "Subir remito"}
-                <input type="file" accept="application/pdf,image/*" onChange={handleFile} disabled={subiendo} style={{ display: "none" }} />
+              <label className={`dg-btn-ghost dg-mini-btn dg-factura-upload-btn ${leyendoGuia ? "dg-btn-leyendo" : ""}`}>
+                {subiendo || leyendoGuia ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />}
+                {subiendo ? "Subiendo..." : leyendoGuia ? "Leyendo guía..." : pedido.remitoUrl ? "Reemplazar" : "Subir remito"}
+                <input type="file" accept="application/pdf,image/*" onChange={handleFile} disabled={subiendo || leyendoGuia} style={{ display: "none" }} />
               </label>
             )}
           </div>
           {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
+          {canEdit && !pedido.remitoNumeroGuia?.trim() && (
+            <p className="dg-hint" style={{ marginTop: 6, fontSize: 11 }}>Si subís una foto (no un PDF), el número de guía se completa solo — revisalo antes de guardar por si lo leyó mal.</p>
+          )}
         </Field>
       </div>
       {pedido.remitoNumeroGuia?.trim() && (
@@ -7107,6 +7135,9 @@ function SeguimientoPublico({ pedidoId }) {
                 ? <a className="dg-btn-ghost" href={pedido.facturaUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
                 : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
             )}
+            {pedido.metodo === "Interior" && pedido.remitoUrl && (
+              <a className="dg-btn-ghost" href={pedido.remitoUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar remito de Vía Cargo</a>
+            )}
             {pedido.metodo === "Interior" && pedido.remitoNumeroGuia?.trim() && (
               <a className="dg-btn-ghost" href={linkViaCargo(pedido.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><Truck size={14} /> Seguir envío en Vía Cargo</a>
             )}
@@ -7245,6 +7276,9 @@ function SeguimientoGrupoPublico({ grupoId }) {
                 conFacturaUrl
                   ? <a className="dg-btn-ghost" href={conFacturaUrl.facturaUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
                   : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
+              )}
+              {conRemito?.remitoUrl && (
+                <a className="dg-btn-ghost" href={conRemito.remitoUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar remito de Vía Cargo</a>
               )}
               {conRemito && (
                 <a className="dg-btn-ghost" href={linkViaCargo(conRemito.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><Truck size={14} /> Seguir envío en Vía Cargo</a>
