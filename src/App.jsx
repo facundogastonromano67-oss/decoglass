@@ -293,6 +293,7 @@ const SECTOR_SUBPAGES = {
   ],
   postventa: [
     { id: "envios", label: "Envíos" },
+    { id: "interior", label: "Envíos al interior" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "reclamos", label: "Reclamos" },
     { id: "tareas", label: "Tareas" },
@@ -3040,7 +3041,6 @@ const QUICK_VIEWS = [
   { id: "historial", label: "Historial (entregados)" },
   { id: "retiros", label: "Retiros de la semana" },
   { id: "envios", label: "Envíos de la semana" },
-  { id: "interior", label: "Envíos al interior" },
   { id: "verificados", label: "Verificados → listos para fábrica" },
   { id: "facturar", label: "Pendiente de facturar" },
 ];
@@ -3483,7 +3483,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   else if (quickView === "facturar") visibles = visibles.filter((p) => !p.facturado);
   else if (quickView === "envios") visibles = visibles.filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.estado !== "Entregado");
   else if (quickView === "retiros") visibles = visibles.filter((p) => p.metodo === "Retira" && p.estado !== "Entregado");
-  else if (quickView === "interior") visibles = visibles.filter((p) => p.metodo === "Interior" && p.estado !== "Entregado");
   else visibles = visibles
     .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
     .filter((p) => filtroEstado === "todos" || p.estado === filtroEstado || (filtroEstado === "Verificado" && p.estado === "Pasado a fábrica"));
@@ -3692,22 +3691,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           <button className={agrupado === "semana" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("semana")}>Semana</button>
         </div>
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
-        {quickView === "interior" && visibles.some((p) => p.ancho && p.alto) && (() => {
-          const paraDespacho = visibles.filter((p) => p.ancho && p.alto);
-          return (
-            <>
-              <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(paraDespacho)}>
-                <FileText size={14} /> 1. Datos para Vía Cargo
-              </button>
-              <button className="dg-btn-ghost" onClick={() => abrirRotulos(paraDespacho)}>
-                <Printer size={14} /> 2. Rótulos ({paraDespacho.length})
-              </button>
-              <button className="dg-btn-ghost" onClick={() => abrirTirasContieneEspejo(paraDespacho.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}>
-                <AlertTriangle size={14} /> 3. Tiras "Contiene espejo"
-              </button>
-            </>
-          );
-        })()}
         {canEditFull && (
           <button className="dg-btn-primary" style={{ marginLeft: "auto" }} onClick={() => setCreating(true)}><Plus size={14} /> Nuevo pedido</button>
         )}
@@ -3789,22 +3772,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               </summary>
 
               <div className="dg-order-expanded">
-                {espejos.filter((e) => e.metodo === "Interior" && e.ancho && e.alto).length > 1 && (() => {
-                  const espejosInterior = espejos.filter((e) => e.metodo === "Interior" && e.ancho && e.alto);
-                  return (
-                    <div className="dg-order-despacho-btns" style={{ marginBottom: 10 }}>
-                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); abrirDatosDespacho(espejosInterior); }}>
-                        <FileText size={13} /> 1. Datos para Vía Cargo
-                      </button>
-                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); abrirRotulos(espejosInterior); }}>
-                        <Printer size={13} /> 2. Rótulos ({espejosInterior.length})
-                      </button>
-                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); abrirTirasContieneEspejo(espejosInterior.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0)); }}>
-                        <AlertTriangle size={13} /> 3. Tiras "Contiene espejo"
-                      </button>
-                    </div>
-                  );
-                })()}
                 <div className="dg-order-mirror-list">
                   {espejos.map((espejo, index) => {
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
@@ -4337,12 +4304,87 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   );
 }
 
+function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
+  const [busqueda, setBusqueda] = useState("");
+
+  const interior = pedidos
+    .filter((p) => p.metodo === "Interior")
+    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
+    .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
+    .sort((a, b) => {
+      const aListo = pedidoEstaListo(a), bListo = pedidoEstaListo(b);
+      if (aListo !== bListo) return aListo ? -1 : 1; // los listos para despachar van primero
+      return (b.orden || 0) - (a.orden || 0);
+    });
+
+  // Solo se imprime lo que ya está terminado — no tiene sentido armar un
+  // rótulo o pedirle a Vía Cargo el remito de un espejo que sigue en fábrica.
+  const listosParaDespachar = interior.filter((p) => pedidoEstaListo(p) && p.ancho && p.alto);
+
+  function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
+  function updateGrupo(pedido, patch) {
+    const grupo = pedido.grupoId || pedido.id;
+    onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patch } : p)));
+  }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+      </div>
+
+      {listosParaDespachar.length > 0 && (
+        <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-success-rgb),.35)" }}>
+          <div className="dg-section-header" style={{ color: "var(--dg-success)" }}><Truck size={14} /> Listos para despachar ({listosParaDespachar.length})</div>
+          <p className="dg-hint" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen los espejos que ya están terminados, nunca los que siguen en fábrica.</p>
+          <div className="dg-order-despacho-btns">
+            <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(listosParaDespachar)}><FileText size={14} /> 1. Datos para Vía Cargo</button>
+            <button className="dg-btn-ghost" onClick={() => abrirRotulos(listosParaDespachar)}><Printer size={14} /> 2. Rótulos ({listosParaDespachar.length})</button>
+            <button className="dg-btn-ghost" onClick={() => abrirTirasContieneEspejo(listosParaDespachar.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}><AlertTriangle size={14} /> 3. Tiras "Contiene espejo"</button>
+          </div>
+        </div>
+      )}
+
+      <div className="dg-task-list dg-pedido-list">
+        {interior.length === 0 && <div className="dg-empty">No hay pedidos al interior pendientes.</div>}
+        {interior.map((p) => {
+          const listo = pedidoEstaListo(p);
+          return (
+            <div className={`dg-section-card dg-shipping-confirm-card ${listo ? "dg-fab-terminado" : ""}`} key={p.id}>
+              <div className="dg-section-header">
+                <Truck size={14} /> #{p.orden} · {p.cliente}
+                {listo && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Listo</span>}
+              </div>
+              <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma}{!listo && " · todavía en producción"}</div>
+
+              <div className="dg-field-grid">
+                <Field label="Provincia"><input disabled={!canEdit} value={p.provincia || ""} onChange={(e) => updateGrupo(p, { provincia: e.target.value })} /></Field>
+                <Field label="Localidad"><input disabled={!canEdit} value={p.localidad || ""} onChange={(e) => updateGrupo(p, { localidad: e.target.value })} /></Field>
+                <Field label="Código postal"><input disabled={!canEdit} value={p.codigoPostal || ""} onChange={(e) => updateGrupo(p, { codigoPostal: e.target.value })} /></Field>
+              </div>
+
+              <RemitoViaCargoCampo pedido={p} canEdit={canEdit} onCambiar={(cambios) => update(p.id, cambios)} />
+
+              {listo && p.ancho && p.alto && (
+                <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
+                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(p)}><Printer size={13} /> Rótulo de este pedido</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   const [busqueda, setBusqueda] = useState("");
   const [copiedId, setCopiedId] = useState(null);
 
   const envios = pedidos
-    .filter((p) => esPedidoConEnvio(p))
+    .filter((p) => esPedidoConEnvio(p) && p.metodo !== "Interior")
     .filter((p) => p.estado !== "Entregado")
     .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
@@ -6016,6 +6058,11 @@ function SectorPage({
       {subpage === "envios" && sector.id === "postventa" && (
         canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "interior" && sector.id === "postventa" && (
+        canSeePedidos ? <EnviosInteriorPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} />
+          : <LockedPage label="Envíos al interior" onLogin={onRequestLogin} />
       )}
 
       {subpage === "envios" && sector.id === "logistica" && (
