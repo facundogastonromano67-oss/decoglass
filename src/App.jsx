@@ -5057,10 +5057,10 @@ function formaAEstilo(forma, ancho, alto) {
     case "Ovalado": return { borderRadius: "50%" };
     case "Pastilla":
     case "Pastilla/Oval": return { borderRadius: "999px" };
-    case "Puntas Curvas": return { borderRadius: "26%" };
+    case "Puntas Curvas": return { borderRadius: "10px" }; // el radio que antes tenía Rectangular
     case "Orgánico": return { borderRadius: "68% 32% 41% 59% / 46% 66% 34% 54%", transform: "rotate(-3deg)" };
     case "Soft": return { borderRadius: "34px 60px 34px 60px" };
-    default: return { borderRadius: "10px" }; // Rectangular
+    default: return { borderRadius: "2px" }; // Rectangular: puntas rectas, en punta
   }
 }
 
@@ -5102,8 +5102,12 @@ function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, 
   const anchoRealCm = Number(ancho) || 60;
   const altoRealCm = Number(alto) || 60;
   const pxPorCm = Math.min(anchoCaja / anchoRealCm, altoCaja / altoRealCm);
-  const margenPx = Math.max(6, Math.round(4 * pxPorCm)); // ~4cm (rango real: 3 a 5)
-  const bandaPx = Math.max(4, Math.round(3.2 * pxPorCm)); // ~3,2cm (rango real: 2,5 a 4)
+  const margenPx = Math.max(6, Math.round(4 * pxPorCm)); // ~4cm (rango real: 3 a 5) — distancia al borde, sin cambios
+  const bandaPx = Math.max(3, Math.round(2 * pxPorCm)); // ~2cm de ancho — más finita que antes
+  // Los íconos (touch, hora/temp, bluetooth) siempre van por encima de la banda
+  // esmerilada, nunca superpuestos: se calcula cuánto ocupa el margen + la
+  // banda, y se les deja un respiro extra antes de empezar a dibujarlos.
+  const distanciaIconosPx = (esEsmerilado ? margenPx + bandaPx : margenPx * 0.6) + 12;
 
   function handleMove(e) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -5127,7 +5131,7 @@ function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, 
           <div className="dg-preview3d-vidrio" style={{ position: "absolute", inset: 0, borderRadius: "inherit" }}>
             <div className="dg-preview3d-reflejo" />
             {(touch || horaTemp || bluetooth) && (
-              <div className="dg-preview3d-funciones">
+              <div className="dg-preview3d-funciones" style={{ bottom: distanciaIconosPx }}>
                 {touch && <span className="dg-preview3d-touch" title="Touch (con dimmer)" />}
                 {horaTemp && (
                   <span className="dg-preview3d-horatemp" title="Hora y temperatura">
@@ -6215,7 +6219,14 @@ function Style() {
       .dg-quote-grid { display:flex; gap:16px; align-items:flex-start; }
       .dg-quote-form, .dg-quote-result { flex:1; min-width:280px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:14px; padding:16px; }
 
-      .dg-preview3d-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; padding:18px 10px 6px; margin-bottom:16px; border-bottom:1px solid rgba(var(--dg-line-rgb),0.08); }
+      .dg-preview3d-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; padding:28px 16px 20px; margin-bottom:16px; border-radius:16px; position:relative; overflow:hidden;
+        background:
+          linear-gradient(to bottom, transparent 76%, rgba(90,80,68,0.35) 76%, rgba(90,80,68,0.35) 100%),
+          repeating-linear-gradient(0deg, rgba(255,255,255,0.035) 0 42px, rgba(0,0,0,0.06) 42px 44px),
+          repeating-linear-gradient(90deg, rgba(255,255,255,0.035) 0 42px, rgba(0,0,0,0.06) 42px 44px),
+          radial-gradient(ellipse 120% 90% at 50% 0%, rgba(255,255,255,0.05), transparent 60%),
+          linear-gradient(165deg, #a49a8c, #857c70 55%, #6f665c);
+      }
       .dg-preview3d-stage { perspective:900px; transition:transform .08s ease-out; }
       .dg-preview3d-mirror { position:relative; overflow:hidden; transition:box-shadow .25s ease; }
       .dg-preview3d-vidrio { background:linear-gradient(155deg, rgba(255,255,255,0.16), rgba(120,130,140,0.28) 45%, rgba(40,44,50,0.55)); backdrop-filter:blur(2px); overflow:hidden; }
@@ -6223,12 +6234,12 @@ function Style() {
       .dg-preview3d-banda-simple { transition:background .25s ease; }
       .dg-preview3d-banda-esmerilada { transition:background .25s ease, box-shadow .25s ease; filter:blur(0.3px); }
       .dg-preview3d-banda-esmerilada::after { content:''; position:absolute; inset:0; border-radius:inherit; background:repeating-linear-gradient(115deg, rgba(255,255,255,0.12) 0 2px, transparent 2px 5px); mix-blend-mode:overlay; }
-      .dg-preview3d-funciones { position:absolute; bottom:9%; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px; }
-      .dg-preview3d-touch { width:11px; height:11px; border-radius:50%; background:#4FC3F7; box-shadow:0 0 9px 3px rgba(79,195,247,0.8); }
+      .dg-preview3d-funciones { position:absolute; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px; }
+      .dg-preview3d-touch { width:15px; height:15px; border-radius:50%; border:2px solid #4FC3F7; background:rgba(79,195,247,0.15); box-shadow:0 0 9px 3px rgba(79,195,247,0.75); }
       .dg-preview3d-horatemp { display:flex; align-items:center; gap:6px; font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; color:#4FC3F7; text-shadow:0 0 6px rgba(79,195,247,0.9); letter-spacing:0.4px; }
       .dg-preview3d-bt { width:16px; height:16px; border-radius:50%; background:rgba(0,0,0,0.35); color:#fff; display:flex; align-items:center; justify-content:center; }
-      .dg-preview3d-caption { font-size:11px; color:var(--dg-text-faint); text-align:center; margin:2px 0 0; }
-      .dg-preview3d-tag { display:flex; align-items:center; justify-content:center; gap:5px; font-size:11px; color:var(--dg-text-dim); text-align:center; margin:2px 0 0; }
+      .dg-preview3d-caption { font-size:11px; color:rgba(255,255,255,0.8); text-align:center; margin:4px 0 0; text-shadow:0 1px 4px rgba(0,0,0,0.6); }
+      .dg-preview3d-tag { display:flex; align-items:center; justify-content:center; gap:5px; font-size:11px; color:rgba(255,255,255,0.9); text-align:center; margin:2px 0 0; text-shadow:0 1px 4px rgba(0,0,0,0.6); }
       .dg-quote-section-title { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:var(--dg-accent); margin:14px 0 6px; }
       .dg-quote-section-title:first-child { margin-top:0; }
       .dg-alert { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),0.1); border:1px solid rgba(var(--dg-warning-rgb),0.3); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
