@@ -3526,8 +3526,9 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
                     const espejoStage = ESTADO_STAGE[espejo.estado] || { stage: espejo.estado, color: "var(--dg-text-dim)" };
                     const funciones = funcionesPedido(espejo, true);
+                    const espejoListo = pedidoEstaListo(espejo) && espejo.estado !== "Entregado";
                     return (
-                      <details className="dg-order-mirror" key={espejo.id}>
+                      <details className={`dg-order-mirror ${espejoListo ? "dg-order-mirror-listo" : ""}`} key={espejo.id}>
                         <summary>
                           <span className="dg-order-mirror-index">Espejo {index + 1}</span>
                           <span className="dg-order-mirror-main">
@@ -6601,6 +6602,7 @@ function Style() {
       .dg-order-expanded-hint { margin:0; padding:0 10px 9px; background:var(--dg-order-flow); }
       .dg-order-mirror-list { display:flex; flex-direction:column; gap:6px; padding:7px; }
       .dg-order-mirror { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:10px; background:var(--dg-order-info); }
+      .dg-order-mirror-listo { box-shadow: 0 0 0 2px var(--dg-success); border-color: transparent; }
       .dg-order-mirror > summary { min-height:50px; display:grid; grid-template-columns:72px minmax(170px,1fr) minmax(105px,auto) minmax(95px,auto) 16px; align-items:center; gap:8px; padding:6px 10px; list-style:none; cursor:pointer; }
       .dg-order-mirror > summary:hover { background:rgba(var(--dg-line-rgb),.035); }
       .dg-order-mirror-index { color:var(--dg-accent); font-size:8px; font-weight:750; letter-spacing:.65px; text-transform:uppercase; }
