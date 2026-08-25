@@ -7638,8 +7638,8 @@ function abrirDatosDespacho(lista) {
 
 // 3ra impresión del despacho: tiras "CONTIENE ESPEJO" para envolver los
 // paquetes, varias por hoja A4, listas para cortar.
-function abrirTirasContieneEspejo(cantidad) {
-  const n = Math.max(1, Number(cantidad) || 1);
+function abrirTirasContieneEspejo(cantidadEspejos) {
+  const n = Math.max(1, Number(cantidadEspejos) || 1) * 3; // 3 tiras por cada espejo
   const tiras = Array.from({ length: n }).map(() => `
       <div class="tira">⚠ CONTIENE ESPEJO — FRÁGIL — MANEJAR CON CUIDADO ⚠</div>`).join("");
 
@@ -7672,57 +7672,57 @@ function abrirRotulos(pedidosOPedido) {
     const { anchoCaja, altoCaja, espesorCaja } = medidasCajaInterior(pedido);
     const { peso, estimado } = pesoCajaInterior(pedido);
     return `
-  <div class="rotulo">
-    <div class="pedido-num">PEDIDO #${pedido.orden}</div>
+    <div class="rotulo">
+      <div class="pedido-num">PEDIDO #${pedido.orden}</div>
 
-    <div class="bloque">
-      <div class="titulo">Remitente</div>
-      <div class="nombre">DECOGLASS SRL</div>
-      <div class="dato">CUIT: 30-71826423-3</div>
-      <div class="dato">José Marmol 1660</div>
-      <div class="dato">Tel: 11 7059-4088</div>
-      <div class="dato">decoglass@hotmail.com</div>
-    </div>
+      <div class="bloque">
+        <div class="titulo">Remitente</div>
+        <div class="nombre">DECOGLASS SRL</div>
+        <div class="dato">CUIT: 30-71826423-3</div>
+        <div class="dato">José Marmol 1660</div>
+        <div class="dato">Tel: 11 7059-4088</div>
+      </div>
 
-    <div class="bloque">
-      <div class="titulo">Destinatario</div>
-      <div class="nombre">${pedido.cliente || "—"}</div>
-      ${pedido.dniCuit ? `<div class="dato">DNI/CUIT: ${pedido.dniCuit}</div>` : ""}
-      <div class="dato">Tel: ${pedido.celular || "—"}</div>
-      <div class="dato">${pedido.localidad || "—"}${pedido.provincia ? `, ${pedido.provincia}` : ""}</div>
-      ${pedido.codigoPostal ? `<div class="dato">CP: ${pedido.codigoPostal}</div>` : ""}
-    </div>
+      <div class="bloque">
+        <div class="titulo">Destinatario</div>
+        <div class="nombre">${pedido.cliente || "—"}</div>
+        ${pedido.dniCuit ? `<div class="dato">DNI/CUIT: ${pedido.dniCuit}</div>` : ""}
+        <div class="dato">Tel: ${pedido.celular || "—"}</div>
+        <div class="dato">${pedido.localidad || "—"}${pedido.provincia ? `, ${pedido.provincia}` : ""}</div>
+        ${pedido.codigoPostal ? `<div class="dato">CP: ${pedido.codigoPostal}</div>` : ""}
+      </div>
 
-    <div class="bloque">
-      <div class="titulo">Paquete</div>
-      <div class="medidas"><span>Medida de la caja</span><strong>${anchoCaja} × ${altoCaja} × ${espesorCaja} cm</strong></div>
-      <div class="medidas"><span>Peso aproximado</span><strong>${peso} kg</strong></div>
-      ${estimado ? `<div class="aviso-peso">⚠ Peso estimado (no es una medida de tabla conocida) — pesar antes de despachar si hay dudas.</div>` : ""}
-      <div class="medidas"><span>Bultos</span><strong>${Number(pedido.cant) > 1 ? pedido.cant : 1}</strong></div>
-    </div>
-  </div>`;
-  }).join("\n  <div class=\"salto-pagina\"></div>\n");
+      <div class="bloque">
+        <div class="titulo">Paquete</div>
+        <div class="medidas"><span>Caja</span><strong>${anchoCaja} × ${altoCaja} × ${espesorCaja} cm</strong></div>
+        <div class="medidas"><span>Peso aprox.</span><strong>${peso} kg</strong></div>
+        ${estimado ? `<div class="aviso-peso">⚠ Peso estimado — pesar si hay dudas.</div>` : ""}
+        <div class="medidas"><span>Bultos</span><strong>${Number(pedido.cant) > 1 ? pedido.cant : 1}</strong></div>
+      </div>
+    </div>`;
+  }).join("");
 
   const html = `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>Rótulos (${lista.length})</title>
 <style>
-  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:20px auto; padding:0 16px; }
-  .rotulo { border:3px solid #111; border-radius:10px; padding:18px; max-width:420px; margin:0 auto; }
-  .bloque { margin-bottom:16px; padding-bottom:14px; border-bottom:1px dashed #999; }
+  * { box-sizing:border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:8mm; }
+  .grilla { display:grid; grid-template-columns:1fr 1fr; gap:6mm; }
+  .rotulo { border:2.5px solid #111; border-radius:8px; padding:10px; page-break-inside:avoid; break-inside:avoid; }
+  .bloque { margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed #999; }
   .bloque:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
-  .titulo { font-size:11px; font-weight:700; letter-spacing:1px; color:#666; text-transform:uppercase; margin-bottom:6px; }
-  .nombre { font-size:18px; font-weight:700; }
-  .dato { font-size:14px; margin-top:2px; }
-  .medidas { display:flex; justify-content:space-between; font-size:14px; margin-top:8px; }
-  .medidas strong { font-size:16px; }
-  .pedido-num { text-align:center; font-size:22px; font-weight:800; letter-spacing:1px; margin-bottom:14px; }
-  .aviso-peso { font-size:11px; color:#a15c00; margin-top:4px; }
-  .salto-pagina { page-break-after:always; }
-  @media print { body { margin:10px auto; } }
+  .titulo { font-size:9px; font-weight:700; letter-spacing:0.5px; color:#666; text-transform:uppercase; margin-bottom:3px; }
+  .nombre { font-size:13px; font-weight:700; }
+  .dato { font-size:11px; margin-top:1px; }
+  .medidas { display:flex; justify-content:space-between; font-size:11px; margin-top:4px; }
+  .medidas strong { font-size:12px; }
+  .pedido-num { text-align:center; font-size:15px; font-weight:800; letter-spacing:0.5px; margin-bottom:8px; }
+  .aviso-peso { font-size:9px; color:#a15c00; margin-top:3px; }
+  @media print { body { margin:5mm; } }
 </style></head>
 <body>
-${bloques}
-
+  <div class="grilla">${bloques}
+  </div>
   <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
   const ventana = window.open("", "_blank");
