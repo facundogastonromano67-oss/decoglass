@@ -2819,6 +2819,7 @@ function emptyPedido(prefill) {
   return {
     id: uid(), orden: prefill?.orden || null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
     vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
+    provincia: prefill?.provincia || "", localidad: prefill?.localidad || "", codigoPostal: prefill?.codigoPostal || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
@@ -3691,6 +3692,22 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           <button className={agrupado === "semana" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("semana")}>Semana</button>
         </div>
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
+        {quickView === "interior" && visibles.some((p) => p.ancho && p.alto) && (() => {
+          const paraDespacho = visibles.filter((p) => p.ancho && p.alto);
+          return (
+            <>
+              <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(paraDespacho)}>
+                <FileText size={14} /> 1. Datos para Vía Cargo
+              </button>
+              <button className="dg-btn-ghost" onClick={() => abrirRotulos(paraDespacho)}>
+                <Printer size={14} /> 2. Rótulos ({paraDespacho.length})
+              </button>
+              <button className="dg-btn-ghost" onClick={() => abrirTirasContieneEspejo(paraDespacho.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}>
+                <AlertTriangle size={14} /> 3. Tiras "Contiene espejo"
+              </button>
+            </>
+          );
+        })()}
         {canEditFull && (
           <button className="dg-btn-primary" style={{ marginLeft: "auto" }} onClick={() => setCreating(true)}><Plus size={14} /> Nuevo pedido</button>
         )}
@@ -3772,6 +3789,22 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               </summary>
 
               <div className="dg-order-expanded">
+                {espejos.filter((e) => e.metodo === "Interior" && e.ancho && e.alto).length > 1 && (() => {
+                  const espejosInterior = espejos.filter((e) => e.metodo === "Interior" && e.ancho && e.alto);
+                  return (
+                    <div className="dg-order-despacho-btns" style={{ marginBottom: 10 }}>
+                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); abrirDatosDespacho(espejosInterior); }}>
+                        <FileText size={13} /> 1. Datos para Vía Cargo
+                      </button>
+                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); abrirRotulos(espejosInterior); }}>
+                        <Printer size={13} /> 2. Rótulos ({espejosInterior.length})
+                      </button>
+                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(e) => { e.stopPropagation(); abrirTirasContieneEspejo(espejosInterior.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0)); }}>
+                        <AlertTriangle size={13} /> 3. Tiras "Contiene espejo"
+                      </button>
+                    </div>
+                  );
+                })()}
                 <div className="dg-order-mirror-list">
                   {espejos.map((espejo, index) => {
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
@@ -4264,7 +4297,24 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         </div>
 
         {draft.metodo === "Interior" && (
+          <div className="dg-section-card">
+            <div className="dg-section-header"><MapPin size={14} /> Dirección para el envío al interior</div>
+            <div className="dg-field-grid">
+              <Field label="Provincia"><input disabled={!canEditFull} value={draft.provincia} onChange={(e) => set("provincia", e.target.value)} /></Field>
+              <Field label="Localidad"><input disabled={!canEditFull} value={draft.localidad} onChange={(e) => set("localidad", e.target.value)} /></Field>
+              <Field label="Código postal"><input disabled={!canEditFull} value={draft.codigoPostal} onChange={(e) => set("codigoPostal", e.target.value)} /></Field>
+            </div>
+          </div>
+        )}
+
+        {draft.metodo === "Interior" && (
           <RemitoViaCargoCampo pedido={draft} canEdit={canEditFull} onCambiar={(cambios) => setDraft((d) => ({ ...d, ...cambios }))} />
+        )}
+
+        {draft.metodo === "Interior" && draft.ancho && draft.alto && (
+          <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 4 }}>
+            <button type="button" className="dg-btn-ghost" onClick={() => abrirRotulos(draft)}><Printer size={14} /> Imprimir rótulo del paquete</button>
+          </div>
         )}
 
         </EnterFlow>
@@ -7082,6 +7132,7 @@ function Style() {
       .dg-order-disclosure-chevron { color:var(--dg-text-faint); transition:transform .18s ease,color .18s ease; }
       .dg-order-disclosure[open] .dg-order-disclosure-chevron { transform:rotate(90deg); color:var(--dg-accent); }
       .dg-order-expanded { overflow:hidden; border-top:1px solid rgba(var(--dg-line-rgb),.13); background:var(--dg-order-flow); }
+      .dg-order-despacho-btns { display:flex; flex-wrap:wrap; gap:6px; }
       .dg-order-detail-actions { display:flex; justify-content:flex-end; gap:6px; padding:8px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-order-flow); }
       .dg-order-detail-actions .dg-btn-ghost { min-height:31px; padding:6px 9px; font-size:9px; }
       .dg-order-expanded-hint { margin:0; padding:0 10px 9px; background:var(--dg-order-flow); }
@@ -7448,6 +7499,188 @@ function pasoPublicoDe(pedido) {
 }
 
 const WHATSAPP_CONSULTAS = "1173571399";
+
+// Tabla real de pesos y medidas de caja para envíos al interior (de la
+// planilla de Vía Cargo). La caja siempre es la medida del espejo + 10cm de
+// ancho y + 10cm de alto, con 10cm de espesor fijo — eso es una regla fija,
+// no depende de la tabla. El peso sí depende de la medida exacta y la forma.
+const TABLA_PESOS_INTERIOR = [
+  { ancho: 50, alto: 70, forma: "rect", peso: 7.5 },
+  { ancho: 50, alto: 80, forma: "rect", peso: 8 },
+  { ancho: 60, alto: 80, forma: "rect", peso: 9 },
+  { ancho: 60, alto: 90, forma: "rect", peso: 10 },
+  { ancho: 50, alto: 85, forma: "pastilla", peso: 8.5 },
+  { ancho: 60, alto: 85, forma: "pastilla", peso: 9.5 },
+  { ancho: 50, alto: 50, forma: "redondo", peso: 4.5 },
+  { ancho: 60, alto: 60, forma: "redondo", peso: 6.5 },
+  { ancho: 70, alto: 70, forma: "redondo", peso: 9.5 },
+];
+
+function formaBucketInterior(pedido) {
+  const f = textoComparable(pedido?.forma || "");
+  if (f.includes("redondo") || f.includes("circular")) return "redondo";
+  if (f.includes("pastilla")) return "pastilla";
+  return "rect";
+}
+
+function medidasCajaInterior(pedido) {
+  const ancho = Number(pedido?.ancho) || 0;
+  const alto = Number(pedido?.alto) || 0;
+  return { anchoCaja: ancho + 10, altoCaja: alto + 10, espesorCaja: 10 };
+}
+
+function pesoCajaInterior(pedido) {
+  const bucket = formaBucketInterior(pedido);
+  const ancho = Number(pedido?.ancho) || 0;
+  const alto = Number(pedido?.alto) || 0;
+  const exacto = TABLA_PESOS_INTERIOR.find((r) => r.forma === bucket && r.ancho === ancho && r.alto === alto);
+  if (exacto) return { peso: exacto.peso, estimado: false };
+  // No está en la tabla real: estimación aproximada según la tendencia de la
+  // planilla. Se marca como estimado — conviene pesarlo en el taller antes
+  // de despachar si no coincide con una medida conocida.
+  const estimado = Math.max(3, Math.round((0.083 * (ancho + alto) - 2.2) * 10) / 10);
+  return { peso: estimado, estimado: true };
+}
+
+// 1ra impresión del despacho: la planilla con los datos de la empresa y de
+// cada cliente, para dársela al de Vía Cargo y que arme los remitos.
+function abrirDatosDespacho(lista) {
+  if (!lista || lista.length === 0) return;
+  const filas = lista.map((p) => {
+    const { anchoCaja, altoCaja, espesorCaja } = medidasCajaInterior(p);
+    const { peso } = pesoCajaInterior(p);
+    return `
+        <tr>
+          <td>${p.cliente || "—"}</td>
+          <td>${p.celular || "—"}</td>
+          <td>${p.dniCuit || "—"}</td>
+          <td>${Number(p.cant) > 1 ? p.cant : 1}</td>
+          <td>${anchoCaja} × ${altoCaja} × ${espesorCaja} cm</td>
+          <td>${peso} kg</td>
+          <td>${p.provincia || "—"}</td>
+          <td>${p.localidad || "—"}</td>
+          <td>${p.codigoPostal || "—"}</td>
+        </tr>`;
+  }).join("");
+
+  const html = `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Datos de despacho</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:20px; }
+  h1 { font-size:16px; margin:0 0 2px; }
+  .remitente { font-size:12px; color:#555; margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { border:1px solid #999; padding:5px 7px; text-align:left; }
+  th { background:#eee; font-size:10.5px; text-transform:uppercase; }
+  @media print { body { margin:8px; } }
+</style></head>
+<body>
+  <h1>DECOGLASS SRL — Lista de envíos al interior</h1>
+  <div class="remitente">CUIT: 30-71826423-3 · José Marmol 1660 · Tel: 11 7059-4088 · decoglass@hotmail.com · ${new Date().toLocaleDateString("es-AR")}</div>
+  <table>
+    <thead>
+      <tr><th>Nombre</th><th>Tel</th><th>DNI/CUIT</th><th>Cant</th><th>Medida caja</th><th>Peso</th><th>Provincia</th><th>Localidad</th><th>CP</th></tr>
+    </thead>
+    <tbody>${filas}</tbody>
+  </table>
+  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+  const ventana = window.open("", "_blank");
+  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+}
+
+// 3ra impresión del despacho: tiras "CONTIENE ESPEJO" para envolver los
+// paquetes, varias por hoja A4, listas para cortar.
+function abrirTirasContieneEspejo(cantidad) {
+  const n = Math.max(1, Number(cantidad) || 1);
+  const tiras = Array.from({ length: n }).map(() => `
+      <div class="tira">⚠ CONTIENE ESPEJO — FRÁGIL — MANEJAR CON CUIDADO ⚠</div>`).join("");
+
+  const html = `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Tiras — Contiene espejo</title>
+<style>
+  * { box-sizing:border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; margin:10mm; }
+  .tira {
+    width:100%; height:32mm; margin-bottom:6mm; border:3px solid #111; border-radius:6px;
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    font-size:22px; font-weight:800; letter-spacing:1px; color:#111;
+    page-break-inside:avoid;
+  }
+  @media print { body { margin:6mm; } }
+</style></head>
+<body>
+  ${tiras}
+  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+  const ventana = window.open("", "_blank");
+  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+}
+
+function abrirRotulos(pedidosOPedido) {
+  const lista = Array.isArray(pedidosOPedido) ? pedidosOPedido : [pedidosOPedido];
+  if (lista.length === 0) return;
+
+  const bloques = lista.map((pedido) => {
+    const { anchoCaja, altoCaja, espesorCaja } = medidasCajaInterior(pedido);
+    const { peso, estimado } = pesoCajaInterior(pedido);
+    return `
+  <div class="rotulo">
+    <div class="pedido-num">PEDIDO #${pedido.orden}</div>
+
+    <div class="bloque">
+      <div class="titulo">Remitente</div>
+      <div class="nombre">DECOGLASS SRL</div>
+      <div class="dato">CUIT: 30-71826423-3</div>
+      <div class="dato">José Marmol 1660</div>
+      <div class="dato">Tel: 11 7059-4088</div>
+      <div class="dato">decoglass@hotmail.com</div>
+    </div>
+
+    <div class="bloque">
+      <div class="titulo">Destinatario</div>
+      <div class="nombre">${pedido.cliente || "—"}</div>
+      ${pedido.dniCuit ? `<div class="dato">DNI/CUIT: ${pedido.dniCuit}</div>` : ""}
+      <div class="dato">Tel: ${pedido.celular || "—"}</div>
+      <div class="dato">${pedido.localidad || "—"}${pedido.provincia ? `, ${pedido.provincia}` : ""}</div>
+      ${pedido.codigoPostal ? `<div class="dato">CP: ${pedido.codigoPostal}</div>` : ""}
+    </div>
+
+    <div class="bloque">
+      <div class="titulo">Paquete</div>
+      <div class="medidas"><span>Medida de la caja</span><strong>${anchoCaja} × ${altoCaja} × ${espesorCaja} cm</strong></div>
+      <div class="medidas"><span>Peso aproximado</span><strong>${peso} kg</strong></div>
+      ${estimado ? `<div class="aviso-peso">⚠ Peso estimado (no es una medida de tabla conocida) — pesar antes de despachar si hay dudas.</div>` : ""}
+      <div class="medidas"><span>Bultos</span><strong>${Number(pedido.cant) > 1 ? pedido.cant : 1}</strong></div>
+    </div>
+  </div>`;
+  }).join("\n  <div class=\"salto-pagina\"></div>\n");
+
+  const html = `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Rótulos (${lista.length})</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:20px auto; padding:0 16px; }
+  .rotulo { border:3px solid #111; border-radius:10px; padding:18px; max-width:420px; margin:0 auto; }
+  .bloque { margin-bottom:16px; padding-bottom:14px; border-bottom:1px dashed #999; }
+  .bloque:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
+  .titulo { font-size:11px; font-weight:700; letter-spacing:1px; color:#666; text-transform:uppercase; margin-bottom:6px; }
+  .nombre { font-size:18px; font-weight:700; }
+  .dato { font-size:14px; margin-top:2px; }
+  .medidas { display:flex; justify-content:space-between; font-size:14px; margin-top:8px; }
+  .medidas strong { font-size:16px; }
+  .pedido-num { text-align:center; font-size:22px; font-weight:800; letter-spacing:1px; margin-bottom:14px; }
+  .aviso-peso { font-size:11px; color:#a15c00; margin-top:4px; }
+  .salto-pagina { page-break-after:always; }
+  @media print { body { margin:10px auto; } }
+</style></head>
+<body>
+${bloques}
+
+  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+  const ventana = window.open("", "_blank");
+  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+}
 
 function abrirGarantia(pedidosOEspejo) {
   const espejos = Array.isArray(pedidosOEspejo) ? pedidosOEspejo : [pedidosOEspejo];
