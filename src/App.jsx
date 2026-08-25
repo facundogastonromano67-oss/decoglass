@@ -5094,10 +5094,16 @@ function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, 
   const sinLed = tono === "Sin led";
   const esEsmerilado = esmerilado !== "Ninguno";
   const { anchoCaja, altoCaja } = cajaPreview(forma, ancho, alto);
-  // Simple (borde pulido): un marco angosto, la luz se difunde por fuera, sobre
-  // la pared. Esmerilado: la banda de vidrio esmerilado en sí se ve encendida
-  // por dentro, como un marco ancho pegado al borde interior (foto de referencia).
-  const anchoBanda = esEsmerilado ? Math.round(Math.min(anchoCaja, altoCaja) * 0.11) : 3;
+
+  // Medidas reales del catálogo: el esmerilado arranca 3 a 5cm adentro del
+  // borde, y la franja encendida mide entre 2,5 y 4cm de ancho. Convertimos
+  // esos centímetros a píxeles según la escala real de la medida cargada,
+  // para que la proporción se vea correcta sin importar el tamaño del espejo.
+  const anchoRealCm = Number(ancho) || 60;
+  const altoRealCm = Number(alto) || 60;
+  const pxPorCm = Math.min(anchoCaja / anchoRealCm, altoCaja / altoRealCm);
+  const margenPx = Math.max(6, Math.round(4 * pxPorCm)); // ~4cm (rango real: 3 a 5)
+  const bandaPx = Math.max(4, Math.round(3.2 * pxPorCm)); // ~3,2cm (rango real: 2,5 a 4)
 
   function handleMove(e) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -5114,30 +5120,39 @@ function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, 
           className="dg-preview3d-mirror"
           style={{
             width: anchoCaja, height: altoCaja, ...estiloForma,
-            boxShadow: sinLed ? "0 20px 40px -18px rgba(0,0,0,0.6)" : `0 0 34px 10px ${luz.glow}, 0 20px 40px -18px rgba(0,0,0,0.6)`,
+            boxShadow: sinLed ? "0 20px 40px -18px rgba(0,0,0,0.6)" : `0 0 30px 8px ${luz.glow}, 0 20px 40px -18px rgba(0,0,0,0.6)`,
           }}
         >
-          {/* banda del borde: angosta y prolija (simple) o ancha y esmerilada, encendida por dentro */}
-          <div
-            className={esEsmerilado ? "dg-preview3d-banda-esmerilada" : "dg-preview3d-banda-simple"}
-            style={{
-              position: "absolute", inset: 0, borderRadius: "inherit",
-              background: sinLed ? "transparent" : luz.rim,
-              boxShadow: sinLed || !esEsmerilado ? "none" : `inset 0 0 16px 3px rgba(255,255,255,0.5)`,
-              opacity: sinLed ? 0.25 : 1,
-            }}
-          />
-          {/* vidrio reflectante, inset por el ancho de la banda */}
-          <div className="dg-preview3d-vidrio" style={{ position: "absolute", inset: anchoBanda, borderRadius: "inherit" }}>
+          {/* el vidrio ocupa todo el espejo, de punta a punta */}
+          <div className="dg-preview3d-vidrio" style={{ position: "absolute", inset: 0, borderRadius: "inherit" }}>
             <div className="dg-preview3d-reflejo" />
-            {touch && <span className="dg-preview3d-touch" title="Touch (con dimmer)" />}
-            {horaTemp && (
-              <span className="dg-preview3d-horatemp" title="Hora y temperatura">
-                <b>16:20</b><b>24°c</b>
-              </span>
+            {(touch || horaTemp || bluetooth) && (
+              <div className="dg-preview3d-funciones">
+                {touch && <span className="dg-preview3d-touch" title="Touch (con dimmer)" />}
+                {horaTemp && (
+                  <span className="dg-preview3d-horatemp" title="Hora y temperatura">
+                    <b>16:20</b><b>24°c</b>
+                  </span>
+                )}
+                {bluetooth && <span className="dg-preview3d-bt" title="Bluetooth"><Bluetooth size={11} /></span>}
+              </div>
             )}
-            {bluetooth && <span className="dg-preview3d-bt" title="Bluetooth"><Bluetooth size={11} /></span>}
           </div>
+
+          {/* el anillo de luz va ENCIMA del vidrio, en la posición real: pegado
+              al borde y angosto si es Simple, o metido unos cm adentro y más
+              ancho si es Esmerilado */}
+          {!sinLed && (
+            <div
+              className={esEsmerilado ? "dg-preview3d-banda-esmerilada" : "dg-preview3d-banda-simple"}
+              style={{
+                position: "absolute", inset: esEsmerilado ? margenPx : 0, borderRadius: "inherit",
+                border: esEsmerilado ? `${bandaPx}px solid ${luz.rim}` : `2px solid ${luz.rim}`,
+                boxShadow: esEsmerilado ? "inset 0 0 14px 2px rgba(255,255,255,0.45)" : "none",
+                background: "transparent", pointerEvents: "none",
+              }}
+            />
+          )}
         </div>
       </div>
       <p className="dg-preview3d-caption">Vista previa — moví el mouse para inclinarlo · {ancho || "—"}×{alto || "—"} cm</p>
@@ -5175,7 +5190,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
     const q = {
       id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre",
       tipoProducto, ancho: inputs.ancho, alto: inputs.alto, tono,
-      touch, desemp, horaTemp, bluetoothSel, panelesAdicionales: inputs.panelesAdicionales,
+      touch: touch === "Sí", desemp: desemp === "Sí", horaTemp: horaTemp === "Sí", bluetoothSel, panelesAdicionales: inputs.panelesAdicionales,
       medida: `${ancho}x${alto}`, cantidad: inputs.cantidad,
       precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas,
     };
@@ -6208,9 +6223,10 @@ function Style() {
       .dg-preview3d-banda-simple { transition:background .25s ease; }
       .dg-preview3d-banda-esmerilada { transition:background .25s ease, box-shadow .25s ease; filter:blur(0.3px); }
       .dg-preview3d-banda-esmerilada::after { content:''; position:absolute; inset:0; border-radius:inherit; background:repeating-linear-gradient(115deg, rgba(255,255,255,0.12) 0 2px, transparent 2px 5px); mix-blend-mode:overlay; }
-      .dg-preview3d-touch { position:absolute; bottom:8%; left:50%; transform:translateX(-50%); width:11px; height:11px; border-radius:50%; background:#4FC3F7; box-shadow:0 0 9px 3px rgba(79,195,247,0.8); }
-      .dg-preview3d-horatemp { position:absolute; top:9%; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:2px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; color:#4FC3F7; text-shadow:0 0 6px rgba(79,195,247,0.9); letter-spacing:0.5px; }
-      .dg-preview3d-bt { position:absolute; top:9%; right:9%; width:18px; height:18px; border-radius:50%; background:rgba(0,0,0,0.35); color:#fff; display:flex; align-items:center; justify-content:center; }
+      .dg-preview3d-funciones { position:absolute; bottom:9%; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px; }
+      .dg-preview3d-touch { width:11px; height:11px; border-radius:50%; background:#4FC3F7; box-shadow:0 0 9px 3px rgba(79,195,247,0.8); }
+      .dg-preview3d-horatemp { display:flex; align-items:center; gap:6px; font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; color:#4FC3F7; text-shadow:0 0 6px rgba(79,195,247,0.9); letter-spacing:0.4px; }
+      .dg-preview3d-bt { width:16px; height:16px; border-radius:50%; background:rgba(0,0,0,0.35); color:#fff; display:flex; align-items:center; justify-content:center; }
       .dg-preview3d-caption { font-size:11px; color:var(--dg-text-faint); text-align:center; margin:2px 0 0; }
       .dg-preview3d-tag { display:flex; align-items:center; justify-content:center; gap:5px; font-size:11px; color:var(--dg-text-dim); text-align:center; margin:2px 0 0; }
       .dg-quote-section-title { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:var(--dg-accent); margin:14px 0 6px; }
