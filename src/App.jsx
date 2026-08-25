@@ -5052,17 +5052,31 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
 const TIPOS_PRODUCTO_LIST = Object.keys(TIPO_PRODUCTO_TABLE);
 
 function formaAEstilo(forma, ancho, alto) {
-  const ratio = ancho > 0 && alto > 0 ? ancho / alto : 1;
   switch (forma) {
     case "Redondo": return { borderRadius: "50%" };
     case "Ovalado": return { borderRadius: "50%" };
     case "Pastilla":
     case "Pastilla/Oval": return { borderRadius: "999px" };
     case "Puntas Curvas": return { borderRadius: "26%" };
-    case "Orgánico": return { borderRadius: "42% 58% 53% 47% / 55% 45% 55% 45%" };
+    case "Orgánico": return { borderRadius: "68% 32% 41% 59% / 46% 66% 34% 54%", transform: "rotate(-3deg)" };
     case "Soft": return { borderRadius: "34px 60px 34px 60px" };
     default: return { borderRadius: "10px" }; // Rectangular
   }
+}
+
+// Pastilla y Ovalado son siempre alargados en el catálogo real (nunca cuadrados),
+// así que la vista previa fuerza un mínimo de proporción aunque la medida
+// cargada sea más pareja — para que la forma se lea bien de entrada.
+function cajaPreview(forma, ancho, alto) {
+  let ratio = ancho > 0 && alto > 0 ? ancho / alto : 1;
+  const necesitaAlargado = forma === "Pastilla" || forma === "Pastilla/Oval" || forma === "Ovalado";
+  if (necesitaAlargado) {
+    const minEstrechez = 1.35;
+    if (ratio > 1 / minEstrechez && ratio < minEstrechez) ratio = ratio >= 1 ? minEstrechez : 1 / minEstrechez;
+  }
+  const anchoCaja = ratio >= 1 ? 220 : Math.max(120, 220 * ratio);
+  const altoCaja = ratio >= 1 ? Math.max(120, 220 / ratio) : 220;
+  return { anchoCaja, altoCaja };
 }
 
 const TONO_LUZ_COLOR = {
@@ -5078,10 +5092,12 @@ function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, 
   const estiloForma = formaAEstilo(forma, ancho, alto);
   const luz = TONO_LUZ_COLOR[tono] || TONO_LUZ_COLOR["3 tonos"];
   const sinLed = tono === "Sin led";
-
-  const ratio = ancho > 0 && alto > 0 ? ancho / alto : 1;
-  const anchoCaja = ratio >= 1 ? 220 : Math.max(140, 220 * ratio);
-  const altoCaja = ratio >= 1 ? Math.max(140, 220 / ratio) : 220;
+  const esEsmerilado = esmerilado !== "Ninguno";
+  const { anchoCaja, altoCaja } = cajaPreview(forma, ancho, alto);
+  // Simple (borde pulido): un marco angosto, la luz se difunde por fuera, sobre
+  // la pared. Esmerilado: la banda de vidrio esmerilado en sí se ve encendida
+  // por dentro, como un marco ancho pegado al borde interior (foto de referencia).
+  const anchoBanda = esEsmerilado ? Math.round(Math.min(anchoCaja, altoCaja) * 0.11) : 3;
 
   function handleMove(e) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -5095,21 +5111,37 @@ function EspejoPreview3D({ forma, esmerilado, ancho, alto, tono, touch, desemp, 
     <div className="dg-preview3d-wrap" onMouseMove={handleMove} onMouseLeave={handleLeave}>
       <div className="dg-preview3d-stage" style={{ transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)` }}>
         <div
-          className={`dg-preview3d-mirror ${esmerilado !== "Ninguno" ? "dg-preview3d-esmerilado" : ""}`}
+          className="dg-preview3d-mirror"
           style={{
             width: anchoCaja, height: altoCaja, ...estiloForma,
-            boxShadow: sinLed ? "0 20px 40px -18px rgba(0,0,0,0.6)" : `0 0 26px 6px ${luz.glow}, 0 0 60px 18px ${luz.glow}, 0 20px 40px -18px rgba(0,0,0,0.6)`,
-            border: sinLed ? "1px solid rgba(255,255,255,0.15)" : `2px solid ${luz.rim}`,
+            boxShadow: sinLed ? "0 20px 40px -18px rgba(0,0,0,0.6)" : `0 0 34px 10px ${luz.glow}, 0 20px 40px -18px rgba(0,0,0,0.6)`,
           }}
         >
-          <div className="dg-preview3d-reflejo" />
-          {touch && <span className="dg-preview3d-touch" title="Touch" />}
-          {horaTemp && <span className="dg-preview3d-horatemp" title="Hora y temperatura">12:34 · 23°</span>}
-          {bluetooth && <span className="dg-preview3d-bt" title="Bluetooth"><Bluetooth size={11} /></span>}
-          {desemp && <span className="dg-preview3d-desemp" title="Desempañante" />}
+          {/* banda del borde: angosta y prolija (simple) o ancha y esmerilada, encendida por dentro */}
+          <div
+            className={esEsmerilado ? "dg-preview3d-banda-esmerilada" : "dg-preview3d-banda-simple"}
+            style={{
+              position: "absolute", inset: 0, borderRadius: "inherit",
+              background: sinLed ? "transparent" : luz.rim,
+              boxShadow: sinLed || !esEsmerilado ? "none" : `inset 0 0 16px 3px rgba(255,255,255,0.5)`,
+              opacity: sinLed ? 0.25 : 1,
+            }}
+          />
+          {/* vidrio reflectante, inset por el ancho de la banda */}
+          <div className="dg-preview3d-vidrio" style={{ position: "absolute", inset: anchoBanda, borderRadius: "inherit" }}>
+            <div className="dg-preview3d-reflejo" />
+            {touch && <span className="dg-preview3d-touch" title="Touch (con dimmer)" />}
+            {horaTemp && (
+              <span className="dg-preview3d-horatemp" title="Hora y temperatura">
+                <b>16:20</b><b>24°c</b>
+              </span>
+            )}
+            {bluetooth && <span className="dg-preview3d-bt" title="Bluetooth"><Bluetooth size={11} /></span>}
+          </div>
         </div>
       </div>
       <p className="dg-preview3d-caption">Vista previa — moví el mouse para inclinarlo · {ancho || "—"}×{alto || "—"} cm</p>
+      {desemp && <p className="dg-preview3d-tag"><Sparkles size={11} /> Incluye desempañante (placa trasera, no se ve desde el frente)</p>}
     </div>
   );
 }
@@ -5140,11 +5172,30 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
   function saveQuote() {
-    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
+    const q = {
+      id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre",
+      tipoProducto, ancho: inputs.ancho, alto: inputs.alto, tono,
+      touch, desemp, horaTemp, bluetoothSel, panelesAdicionales: inputs.panelesAdicionales,
+      medida: `${ancho}x${alto}`, cantidad: inputs.cantidad,
+      precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas,
+    };
     onQuotesChange([q, ...quotes]);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
+    return q;
   }
   function removeQuote(id) { onQuotesChange(quotes.filter((q) => q.id !== id)); }
+  function linkCotizacion(q) { return `${window.location.origin}/cotizacion/${q.id}`; }
+  const [linkCopiadoId, setLinkCopiadoId] = useState(null);
+  async function copiarLinkCotizacion(q) {
+    const url = linkCotizacion(q);
+    try { await navigator.clipboard.writeText(url); } catch (e) { window.prompt("Copiá el link:", url); }
+    setLinkCopiadoId(q.id);
+    setTimeout(() => setLinkCopiadoId(null), 2500);
+  }
+  function guardarYCopiarLink() {
+    const q = saveQuote();
+    copiarLinkCotizacion(q);
+  }
 
   return (
     <div className="dg-page">
@@ -5247,7 +5298,9 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
               <button className="dg-btn-ghost" onClick={copyMessage}>{copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copiado" : "Copiar mensaje"}</button>
               <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Vista de impresión (PDF)</button>
               <button className="dg-btn-primary" onClick={saveQuote}>{saved ? <Check size={14} /> : <Save size={14} />} {saved ? "Guardado" : "Guardar cotización"}</button>
+              <button className="dg-btn-primary" onClick={guardarYCopiarLink}><ExternalLink size={14} /> Guardar y copiar link para el cliente</button>
             </div>
+            <p className="dg-hint" style={{ marginTop: 8 }}>El link abre una página con el render y el precio, para que el cliente la vea sin necesidad de entrar a la app.</p>
           </div>
         </div>
       </div>
@@ -5263,6 +5316,9 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
                   <span className="dg-pago-meta">{q.fecha}</span>
                 </div>
                 <span className="dg-pago-monto">{fmtMoney(roundTo1000(q.precioTransferencia))}</span>
+                <button className="dg-btn-ghost dg-mini-btn" onClick={() => copiarLinkCotizacion(q)}>
+                  {linkCopiadoId === q.id ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link</>}
+                </button>
                 <button className="dg-icon-btn dg-task-del" onClick={() => removeQuote(q.id)}><Trash2 size={14} /></button>
               </div>
             ))}
@@ -6146,14 +6202,17 @@ function Style() {
 
       .dg-preview3d-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; padding:18px 10px 6px; margin-bottom:16px; border-bottom:1px solid rgba(var(--dg-line-rgb),0.08); }
       .dg-preview3d-stage { perspective:900px; transition:transform .08s ease-out; }
-      .dg-preview3d-mirror { position:relative; background:linear-gradient(155deg, rgba(255,255,255,0.16), rgba(120,130,140,0.28) 45%, rgba(40,44,50,0.55)); backdrop-filter:blur(2px); transition:box-shadow .25s ease, border-color .25s ease; overflow:hidden; }
+      .dg-preview3d-mirror { position:relative; overflow:hidden; transition:box-shadow .25s ease; }
+      .dg-preview3d-vidrio { background:linear-gradient(155deg, rgba(255,255,255,0.16), rgba(120,130,140,0.28) 45%, rgba(40,44,50,0.55)); backdrop-filter:blur(2px); overflow:hidden; }
       .dg-preview3d-reflejo { position:absolute; top:-30%; left:-40%; width:75%; height:160%; background:linear-gradient(120deg, rgba(255,255,255,0.35), transparent 60%); transform:rotate(18deg); pointer-events:none; }
-      .dg-preview3d-esmerilado::after { content:''; position:absolute; inset:0; background:repeating-linear-gradient(115deg, rgba(255,255,255,0.05) 0 2px, transparent 2px 5px); mix-blend-mode:overlay; }
-      .dg-preview3d-touch { position:absolute; bottom:8%; left:50%; transform:translateX(-50%); width:11px; height:11px; border-radius:50%; background:rgba(255,255,255,0.85); box-shadow:0 0 8px 2px rgba(255,255,255,0.7); }
-      .dg-preview3d-horatemp { position:absolute; top:10%; left:50%; transform:translateX(-50%); font-family:'JetBrains Mono', monospace; font-size:10px; color:rgba(255,255,255,0.9); background:rgba(0,0,0,0.35); padding:2px 7px; border-radius:5px; letter-spacing:0.4px; }
+      .dg-preview3d-banda-simple { transition:background .25s ease; }
+      .dg-preview3d-banda-esmerilada { transition:background .25s ease, box-shadow .25s ease; filter:blur(0.3px); }
+      .dg-preview3d-banda-esmerilada::after { content:''; position:absolute; inset:0; border-radius:inherit; background:repeating-linear-gradient(115deg, rgba(255,255,255,0.12) 0 2px, transparent 2px 5px); mix-blend-mode:overlay; }
+      .dg-preview3d-touch { position:absolute; bottom:8%; left:50%; transform:translateX(-50%); width:11px; height:11px; border-radius:50%; background:#4FC3F7; box-shadow:0 0 9px 3px rgba(79,195,247,0.8); }
+      .dg-preview3d-horatemp { position:absolute; top:9%; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:2px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; color:#4FC3F7; text-shadow:0 0 6px rgba(79,195,247,0.9); letter-spacing:0.5px; }
       .dg-preview3d-bt { position:absolute; top:9%; right:9%; width:18px; height:18px; border-radius:50%; background:rgba(0,0,0,0.35); color:#fff; display:flex; align-items:center; justify-content:center; }
-      .dg-preview3d-desemp { position:absolute; inset:14% 14% 30% 14%; border:1px dashed rgba(255,255,255,0.25); border-radius:inherit; pointer-events:none; }
       .dg-preview3d-caption { font-size:11px; color:var(--dg-text-faint); text-align:center; margin:2px 0 0; }
+      .dg-preview3d-tag { display:flex; align-items:center; justify-content:center; gap:5px; font-size:11px; color:var(--dg-text-dim); text-align:center; margin:2px 0 0; }
       .dg-quote-section-title { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:var(--dg-accent); margin:14px 0 6px; }
       .dg-quote-section-title:first-child { margin-top:0; }
       .dg-alert { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),0.1); border:1px solid rgba(var(--dg-warning-rgb),0.3); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
@@ -7015,6 +7074,97 @@ function abrirGarantia(pedidosOEspejo) {
   if (ventana) { ventana.document.write(html); ventana.document.close(); }
 }
 
+function CotizacionPublica({ quoteId }) {
+  const [quote, setQuote] = useState(undefined); // undefined = cargando, null = no encontrada
+  const [tema] = useState(() => {
+    try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
+  });
+
+  useEffect(() => {
+    let activo = true;
+    async function cargar() {
+      try {
+        const row = await storage.get("quotes");
+        const lista = row ? JSON.parse(row.value) : [];
+        const encontrada = (lista || []).find((q) => q.id === quoteId) || null;
+        if (activo) setQuote(encontrada);
+      } catch (e) { if (activo) setQuote(null); }
+    }
+    cargar();
+    return () => { activo = false; };
+  }, [quoteId]);
+
+  if (quote === undefined) {
+    return (
+      <div className="dg-app dg-seguimiento" data-theme={tema}>
+        <Style />
+        <div className="dg-loading"><Loader2 className="dg-spin" size={26} /><span>Buscando tu cotización...</span></div>
+      </div>
+    );
+  }
+  if (quote === null) {
+    return (
+      <div className="dg-app dg-seguimiento" data-theme={tema}>
+        <Style />
+        <div className="dg-seguimiento-wrap">
+          <div className="dg-seguimiento-brand">DECOGLASS</div>
+          <div className="dg-empty" style={{ marginTop: 24 }}>No encontramos esta cotización. Puede que haya sido eliminada — consultanos si creés que es un error.</div>
+          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={`${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent("Hola! Tengo una consulta sobre una cotización")}`} target="_blank" rel="noopener noreferrer">
+            <MessageCircle size={15} /> Consultas por WhatsApp
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const info = TIPO_PRODUCTO_TABLE[quote.tipoProducto] || {};
+  const funciones = [
+    { on: quote.touch, label: "Touch" },
+    { on: quote.desemp, label: "Desempañante" },
+    { on: quote.horaTemp, label: "Hora y temperatura" },
+    { on: quote.bluetoothSel && quote.bluetoothSel !== "Sin Bluetooth", label: quote.bluetoothSel },
+  ].filter((f) => f.on);
+  const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi cotización (espejo ${quote.medida} cm)`)}`;
+
+  return (
+    <div className="dg-app dg-seguimiento" data-theme={tema}>
+      <Style />
+      <div className="dg-seguimiento-wrap">
+        <div className="dg-seguimiento-brand">DECOGLASS</div>
+        <div className="dg-seguimiento-card">
+          <EspejoPreview3D
+            forma={info.display || "Rectangular"} esmerilado={info.esmerilado || "Ninguno"}
+            ancho={Number(quote.ancho) || 0} alto={Number(quote.alto) || 0} tono={quote.tono || "3 tonos"}
+            touch={!!quote.touch} desemp={!!quote.desemp} horaTemp={!!quote.horaTemp} bluetooth={!!quote.bluetoothSel && quote.bluetoothSel !== "Sin Bluetooth"}
+          />
+
+          <div className="dg-seguimiento-head" style={{ marginTop: 6 }}>
+            <span>{quote.tipoProducto}</span>
+            <span className="dg-pago-meta">{quote.medida} cm{quote.cantidad > 1 ? ` × ${quote.cantidad}` : ""}</span>
+          </div>
+
+          {funciones.length > 0 && (
+            <div className="dg-fab-funciones" style={{ marginTop: 8 }}>
+              {funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}
+            </div>
+          )}
+
+          <div className="dg-price-card" style={{ marginTop: 16 }}>
+            <span className="dg-price-label">Transferencia (con IVA)</span>
+            <strong className="dg-price-main">{fmtMoney(roundTo1000(quote.precioTransferencia))}</strong>
+            {quote.precio3Cuotas && <span className="dg-price-sub">{fmtMoney(roundTo1000(quote.precio3Cuotas))} en 3 cuotas</span>}
+          </div>
+
+          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
+            <MessageCircle size={15} /> Consultas por WhatsApp
+          </a>
+        </div>
+        <p className="dg-seguimiento-footer">Cotización válida por tiempo limitado. Ante cualquier duda, escribinos.</p>
+      </div>
+    </div>
+  );
+}
+
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
   const [tema] = useState(() => {
@@ -7280,6 +7430,8 @@ function linkViaCargo(numeroGuia) {
 
 export default function Root() {
   const path = window.location.pathname;
+  const matchCotizacion = path.match(/^\/cotizacion\/([^/]+)\/?$/);
+  if (matchCotizacion) return <CotizacionPublica quoteId={matchCotizacion[1]} />;
   const matchGrupo = path.match(/^\/seguimiento\/grupo\/([^/]+)\/?$/);
   if (matchGrupo) return <SeguimientoGrupoPublico grupoId={matchGrupo[1]} />;
   const match = path.match(/^\/seguimiento\/([^/]+)\/?$/);
