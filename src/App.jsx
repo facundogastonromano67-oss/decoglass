@@ -3485,6 +3485,9 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         const renderCard = (grupo) => {
           const { principal: p, espejos } = grupo;
           const cantidadEspejos = totalUnidades(espejos);
+          const cantidadListos = totalUnidades(espejos.filter((espejo) => espejo.estado === "Espejo listo"));
+          const grupoTieneListos = cantidadListos > 0;
+          const grupoCompletamenteListo = cantidadEspejos > 0 && cantidadListos === cantidadEspejos;
           const saldo = espejos.reduce((total, espejo) => total + Math.max(0, pedidoSaldo(espejo)), 0);
           const metodos = [...new Set(espejos.map((espejo) => espejo.metodo || "A confirmar"))];
           const metodoLabel = metodos.length === 1 ? metodos[0] : "Entrega mixta";
@@ -3495,7 +3498,10 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
             return (actual.numero / actual.total) < (anterior.numero / anterior.total) ? actual : anterior;
           }, null);
           return (
-            <details className="dg-pedido-card dg-order-card dg-order-disclosure dg-order-group-card" key={grupo.key}>
+            <details
+              className={`dg-pedido-card dg-order-card dg-order-disclosure dg-order-group-card ${grupoTieneListos ? "dg-order-group-con-listos" : ""} ${grupoCompletamenteListo ? "dg-order-group-listo" : ""}`}
+              key={grupo.key}
+            >
               <summary className="dg-order-compact" aria-label={`Abrir pedido de ${p.cliente || "cliente sin nombre"}`}>
                 <span className="dg-order-compact-item dg-order-compact-client">
                   <small>Nombre</small>
@@ -3510,7 +3516,9 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                   <strong><MetodoIcon size={12} /> {metodoLabel}</strong>
                 </span>
                 <span className="dg-order-compact-item dg-order-compact-step">
-                  <small>Paso</small>
+                  <small className={grupoTieneListos ? "dg-order-ready-label" : ""}>
+                    {grupoCompletamenteListo ? "✓ Pedido listo" : grupoTieneListos ? `✓ ${cantidadListos}/${cantidadEspejos} listos` : "Paso"}
+                  </small>
                   <strong>{paso?.numero}/{paso?.total} · {paso?.label}</strong>
                 </span>
                 <span className={`dg-order-compact-item dg-order-compact-balance ${saldo > 0 ? "dg-order-balance-pending" : "dg-order-balance-paid"}`}>
@@ -6520,6 +6528,11 @@ function Style() {
 
       .dg-order-card { gap:0; overflow:hidden; padding:0; border-radius:12px; background:var(--dg-order-info); border-color:rgba(var(--dg-line-rgb),.18); box-shadow:0 8px 24px -22px var(--dg-shadow); }
       .dg-order-card:hover { transform:none; background:var(--dg-order-info); border-color:rgba(var(--dg-accent-rgb),.48); }
+      .dg-order-card.dg-order-group-con-listos { box-shadow:inset 4px 0 0 var(--dg-success),0 8px 24px -22px var(--dg-shadow); }
+      .dg-order-card.dg-order-group-listo { border:2px solid var(--dg-success); box-shadow:0 0 0 1px rgba(var(--dg-success-rgb),.12),0 10px 26px -20px rgba(var(--dg-success-rgb),.85); }
+      .dg-order-card.dg-order-group-listo:hover { border-color:var(--dg-success); }
+      .dg-order-group-listo > .dg-order-compact { background:linear-gradient(90deg,rgba(var(--dg-success-rgb),.105),var(--dg-order-info) 38%); }
+      .dg-order-ready-label { color:var(--dg-success) !important; }
       .dg-order-summary { display:flex; flex-direction:column; gap:5px; padding:10px 12px 9px; background:var(--dg-order-info); }
       .dg-order-summary-label, .dg-order-flow-title { color:var(--dg-accent); font-size:7.5px; font-weight:750; letter-spacing:.85px; line-height:1; text-transform:uppercase; }
       .dg-order-card .dg-pedido-card-top { min-height:24px; }
@@ -6732,6 +6745,8 @@ function Style() {
       .dg-app[data-theme="light"] .dg-pedido-search,
       .dg-app[data-theme="light"] textarea { background:#FFFFFF; border-color:rgba(var(--dg-line-rgb),.2); }
       .dg-app[data-theme="light"] .dg-order-card { border-color:rgba(var(--dg-line-rgb),.24); box-shadow:0 5px 14px -12px rgba(35,34,31,.52); }
+      .dg-app[data-theme="light"] .dg-order-card.dg-order-group-con-listos { box-shadow:inset 4px 0 0 var(--dg-success),0 5px 14px -12px rgba(35,34,31,.52); }
+      .dg-app[data-theme="light"] .dg-order-card.dg-order-group-listo { border-color:var(--dg-success); box-shadow:0 0 0 1px rgba(var(--dg-success-rgb),.15),0 8px 20px -16px rgba(var(--dg-success-rgb),.65); }
       .dg-app[data-theme="light"] .dg-order-flow { border-top-color:rgba(var(--dg-accent-rgb),.55); }
 
       @media (max-width:900px) {
