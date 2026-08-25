@@ -182,13 +182,20 @@ const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
 const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
 const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
-const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Mandar a grabar", "En grabado", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
+const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Mandar a grabar", "En grabado", "Sin pedir", "En biseladora", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
-const TALLER_PROCESOS = [
+const TALLER_MODELOS = [
   { id: "simples", label: "Simples", description: "Corte, pulido y armado estándar", color: "var(--dg-accent)" },
   { id: "esmerilados", label: "Esmerilados", description: "Grabado o esmerilado antes del armado", color: "var(--dg-warning)" },
   { id: "biselados", label: "Biselados", description: "Proceso de biselado y terminación especial", color: "#A66A75" },
+];
+const TALLER_LISTAS = [
+  { id: "armar", label: "Espejos para armar", shortLabel: "Para armar", description: "Corte, armado y embalado dentro del taller", color: "var(--dg-accent)" },
+  { id: "mandar_grabar", label: "Para mandar a grabar", shortLabel: "A grabar", description: "Esmerilados ya cortados que todavía no salieron", color: "var(--dg-warning)" },
+  { id: "en_grabado", label: "En grabado", shortLabel: "En grabado", description: "Esmerilados que están trabajando afuera", color: "#8A9161" },
+  { id: "bisel_sin_pedir", label: "Biselados sin pedir", shortLabel: "Sin pedir", description: "Biselados que todavía hay que encargar", color: "#A66A75" },
+  { id: "bisel_pedidos", label: "Biselados pedidos", shortLabel: "En biseladora", description: "Biselados pedidos que todavía no regresaron", color: "#B46F43" },
 ];
 const PRODUCCION_PASOS = [
   { id: "cortado", label: "Cortado", accion: "Marcar cortado", fechaCampo: "produccionCortadoFecha", responsableCampo: "produccionCortadoPor" },
@@ -301,7 +308,7 @@ const RECLAMO_COLORS = ["var(--dg-danger)", "var(--dg-warning)", "var(--dg-accen
 
 const ESTADO_PEDIDO_COLOR = {
   "Sin pasar a fábrica": "var(--dg-text-dim)", "Verificado": "var(--dg-warning)", "Pasado a fábrica": "var(--dg-accent)", "Mandar a grabar": "var(--dg-warning)",
-  "En grabado": "var(--dg-warning)", "Pedir biselado": "var(--dg-warning)", "Para armar": "var(--dg-warning)", "Espejo listo": "var(--dg-accent)", "Entregado": "var(--dg-success)",
+  "En grabado": "#8A9161", "Sin pedir": "#A66A75", "En biseladora": "#B46F43", "Pedir biselado": "#A66A75", "Para armar": "var(--dg-warning)", "Espejo listo": "var(--dg-accent)", "Entregado": "var(--dg-success)",
   "Cancelado": "var(--dg-danger)",
 };
 const COMISION_COLOR = { "No": "var(--dg-text-dim)", "Liquidar": "var(--dg-warning)", "Sí": "var(--dg-success)", "No aplica": "var(--dg-text-faint)" };
@@ -312,10 +319,12 @@ const ESTADO_STAGE = {
   "Sin pasar a fábrica": { stage: "Sin verificar", color: "var(--dg-text-dim)" },
   "Verificado": { stage: "Verificado", color: "var(--dg-warning)" },
   "Pasado a fábrica": { stage: "Verificado", color: "var(--dg-warning)" },
-  "Mandar a grabar": { stage: "Para cortar / grabar", color: "var(--dg-warning)" },
-  "En grabado": { stage: "Para cortar / grabar", color: "var(--dg-warning)" },
-  "Pedir biselado": { stage: "Para cortar / grabar", color: "var(--dg-warning)" },
-  "Para armar": { stage: "Para cortar / grabar", color: "var(--dg-warning)" },
+  "Mandar a grabar": { stage: "Para mandar a grabar", color: "var(--dg-warning)" },
+  "En grabado": { stage: "En grabado", color: "#8A9161" },
+  "Sin pedir": { stage: "Biselado sin pedir", color: "#A66A75" },
+  "En biseladora": { stage: "Biselado pedido · en biseladora", color: "#B46F43" },
+  "Pedir biselado": { stage: "Biselado sin pedir", color: "#A66A75" },
+  "Para armar": { stage: "Para armar", color: "var(--dg-warning)" },
   "Espejo listo": { stage: "Espejo listo", color: "var(--dg-accent)" },
   "Entregado": { stage: "Entregado", color: "var(--dg-success)" },
   "Cancelado": { stage: "Cancelado", color: "var(--dg-danger)" },
@@ -2813,7 +2822,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
     touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
   };
@@ -2866,9 +2875,93 @@ function textoComparable(value) {
 
 function pedidoProcesoTaller(pedido) {
   const descripcion = textoComparable(`${pedido?.tipo || ""} ${pedido?.grabado || ""}`);
-  if (descripcion.includes("bisel") || pedido?.estado === "Pedir biselado") return "biselados";
-  if (descripcion.includes("esmeril") || /(?:^|\s)esm\.?($|\s)/.test(descripcion)) return "esmerilados";
+  if (descripcion.includes("bisel") || ["Pedir biselado", "Sin pedir", "En biseladora"].includes(pedido?.estado)) return "biselados";
+  if (descripcion.includes("esmeril") || /(?:^|\s)esm\.?($|\s)/.test(descripcion) || ["Mandar a grabar", "En grabado"].includes(pedido?.estado)) return "esmerilados";
   return "simples";
+}
+
+function pedidoListaFabrica(pedido) {
+  if (pedido?.estado === "Mandar a grabar") return "mandar_grabar";
+  if (pedido?.estado === "En grabado") return "en_grabado";
+  if (pedido?.estado === "Sin pedir" || pedido?.estado === "Pedir biselado") return "bisel_sin_pedir";
+  if (pedido?.estado === "En biseladora") return "bisel_pedidos";
+  if (pedidoEstaListo(pedido) || pedido?.estado === "Para armar" || pedido?.produccionEtapa) return "armar";
+  return pedidoProcesoTaller(pedido) === "biselados" ? "bisel_sin_pedir" : "armar";
+}
+
+function estadoProduccionLabel(pedido) {
+  if (pedidoEstaListo(pedido)) return "Espejo listo";
+  const lista = TALLER_LISTAS.find((item) => item.id === pedidoListaFabrica(pedido));
+  return lista?.shortLabel || pedido?.estado || "En producción";
+}
+
+function pasosVisualesFabrica(pedido) {
+  const modelo = pedidoProcesoTaller(pedido);
+  const completados = pasosProduccionCompletados(pedido);
+  const terminado = pedidoEstaListo(pedido) || completados >= PRODUCCION_PASOS.length;
+  let pasos;
+
+  if (modelo === "esmerilados") {
+    const cortado = completados >= 1 || Boolean(pedido?.produccionCortadoFecha);
+    const enviado = Boolean(pedido?.grabadoEnviadoFecha) || ["En grabado", "Para armar", "Espejo listo", "Entregado"].includes(pedido?.estado);
+    const regreso = Boolean(pedido?.grabadoRegresoFecha) || ["Para armar", "Espejo listo", "Entregado"].includes(pedido?.estado);
+    pasos = [
+      { id: "cortado", label: "Cortado", done: cortado },
+      { id: "mandar_grabar", label: "A grabar", done: enviado },
+      { id: "en_grabado", label: "En grabado", done: regreso },
+      { id: "armado", label: "Armado", done: completados >= 2 },
+      { id: "embalado", label: "Embalado", done: terminado },
+    ];
+  } else if (modelo === "biselados") {
+    const pedidoHecho = Boolean(pedido?.biseladoPedidoFecha) || ["En biseladora", "Para armar", "Espejo listo", "Entregado"].includes(pedido?.estado) || completados >= 1;
+    const regreso = Boolean(pedido?.biseladoRegresoFecha) || ["Para armar", "Espejo listo", "Entregado"].includes(pedido?.estado) || completados >= 1;
+    pasos = [
+      { id: "pedir_biselado", label: "Pedir", done: pedidoHecho },
+      { id: "en_biseladora", label: "En biseladora", done: regreso },
+      { id: "armado", label: "Armado", done: completados >= 2 },
+      { id: "embalado", label: "Embalado", done: terminado },
+    ];
+  } else {
+    pasos = PRODUCCION_PASOS.map((paso, index) => ({ ...paso, done: index < completados }));
+  }
+
+  const actual = pasos.findIndex((paso) => !paso.done);
+  return pasos.map((paso, index) => ({ ...paso, current: !terminado && index === actual }));
+}
+
+function registrosFabrica(pedido) {
+  const modelo = pedidoProcesoTaller(pedido);
+  const embalado = { label: "Embalado", fecha: pedido?.produccionEmbaladoFecha || pedido?.produccionListaFecha, responsable: pedido?.produccionEmbaladoPor };
+  if (modelo === "esmerilados") {
+    return [
+      { label: "Cortado", fecha: pedido?.produccionCortadoFecha, responsable: pedido?.produccionCortadoPor },
+      { label: "Enviado a grabar", fecha: pedido?.grabadoEnviadoFecha, responsable: pedido?.grabadoEnviadoPor },
+      { label: "Volvió de grabado", fecha: pedido?.grabadoRegresoFecha, responsable: pedido?.grabadoRegresoPor },
+      { label: "Armado", fecha: pedido?.produccionArmadoFecha, responsable: pedido?.produccionArmadoPor },
+      embalado,
+    ];
+  }
+  if (modelo === "biselados") {
+    return [
+      { label: "Biselado pedido", fecha: pedido?.biseladoPedidoFecha, responsable: pedido?.biseladoPedidoPor },
+      { label: "Volvió de biseladora", fecha: pedido?.biseladoRegresoFecha, responsable: pedido?.biseladoRegresoPor },
+      { label: "Armado", fecha: pedido?.produccionArmadoFecha, responsable: pedido?.produccionArmadoPor },
+      embalado,
+    ];
+  }
+  return [
+    { label: "Cortado", fecha: pedido?.produccionCortadoFecha, responsable: pedido?.produccionCortadoPor },
+    { label: "Armado", fecha: pedido?.produccionArmadoFecha, responsable: pedido?.produccionArmadoPor },
+    embalado,
+  ];
+}
+
+function proximoControlTaller(pedido) {
+  if (pedido?.estado === "Mandar a grabar") return "Mandar a grabar";
+  if (pedido?.estado === "En grabado") return "Esperando regreso del grabado";
+  if (["Sin pedir", "Pedir biselado"].includes(pedido?.estado) || (pedidoProcesoTaller(pedido) === "biselados" && !pedido?.produccionEtapa && pedido?.estado === "Verificado")) return "Pedir biselado";
+  if (pedido?.estado === "En biseladora") return "Esperando regreso de la biseladora";
+  return PRODUCCION_PASOS[pasosProduccionCompletados(pedido)]?.label || "Producción";
 }
 
 function partesDetallePedido(detalle) {
@@ -2937,7 +3030,7 @@ function resumenPasoPedido(pedido) {
   if (pedido?.estado === "Cancelado") return { numero: 0, total, label: "Cancelado" };
   if (pedido?.estado === "Entregado") return { numero: total, total, label: "Entregado" };
   if (!pedidoFueVerificado(pedido)) return { numero: 1, total, label: "Verificar pedido" };
-  if (!pedidoEstaListo(pedido)) return { numero: 2, total, label: "Esperando producción" };
+  if (!pedidoEstaListo(pedido)) return { numero: 2, total, label: proximoControlTaller(pedido) };
   if (!pedido?.clienteAvisado || (conEnvio && !pedido?.envioConfirmado)) {
     return { numero: 3, total, label: conEnvio ? "Confirmar cliente y envío" : "Coordinar retiro" };
   }
@@ -3127,6 +3220,7 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
   const waEntrega = listo && !entregado ? entregaWaLink(pedido) : null;
   const produccionCompletada = pasosProduccionCompletados(pedido);
   const proximoPasoProduccion = PRODUCCION_PASOS[produccionCompletada];
+  const controlTaller = proximoControlTaller(pedido);
   const totalPasos = conEnvio ? 5 : 4;
   const pasoActual = entregado
     ? totalPasos - 1
@@ -3162,8 +3256,8 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
     <PasoPedido
       key="produccion"
       numero={2}
-      titulo={listo ? "Producción terminada" : produccionCompletada > 0 ? `Producción · ${produccionCompletada} de 3` : "Esperando producción"}
-      detalle={listo ? "Fábrica completó corte, armado y embalado." : verificado ? `Próximo control del taller: ${proximoPasoProduccion?.label || "producción"}.` : "Se habilita después de verificar el pedido."}
+      titulo={listo ? "Producción terminada" : verificado ? `Producción · ${controlTaller}` : "Esperando producción"}
+      detalle={listo ? "Fábrica completó corte, armado y embalado." : verificado ? `Estado actual del taller: ${controlTaller || proximoPasoProduccion?.label || "producción"}.` : "Se habilita después de verificar el pedido."}
       estado={listo ? "done" : verificado ? "active" : "pending"}
     />,
     <PasoPedido
@@ -3485,7 +3579,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   }
   function marcarVerificado(p) {
     if (p.estado !== "Sin pasar a fábrica") return;
-    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Verificado", pedidoVerificadoFecha: new Date().toISOString() } : x)));
+    const estadoInicialFabrica = pedidoProcesoTaller(p) === "biselados" ? "Sin pedir" : "Verificado";
+    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString() } : x)));
     if (onRegistrar) onRegistrar("Verificó un pedido", `#${p.orden} — ${p.cliente} — habilitado para fábrica`);
   }
   function reabrir(p) {
@@ -4746,7 +4841,7 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
 function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar }) {
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
-  const [proceso, setProceso] = useState("simples");
+  const [lista, setLista] = useState("armar");
   const [menuAbierto, setMenuAbierto] = useState(null);
 
   // Fábrica solo ve pedidos ya verificados por PostVenta. Los "Sin pasar a fábrica" no aparecen.
@@ -4763,11 +4858,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         : enFabrica;
   baseVisibles = baseVisibles
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
-  const procesoCounts = TALLER_PROCESOS.reduce((acc, item) => {
-    acc[item.id] = baseVisibles.filter((p) => pedidoProcesoTaller(p) === item.id).length;
+  const listaCounts = TALLER_LISTAS.reduce((acc, item) => {
+    acc[item.id] = totalUnidades(baseVisibles.filter((p) => pedidoListaFabrica(p) === item.id));
     return acc;
   }, {});
-  let visibles = baseVisibles.filter((p) => pedidoProcesoTaller(p) === proceso);
+  let visibles = filtroEstado === "historial" ? [...baseVisibles] : baseVisibles.filter((p) => pedidoListaFabrica(p) === lista);
   visibles = filtroEstado === "historial"
     ? visibles.sort((a, b) => (b.produccionListaFecha || b.fecha || "").localeCompare(a.produccionListaFecha || a.fecha || ""))
     : visibles.sort((a, b) => {
@@ -4808,6 +4903,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         [paso.fechaCampo]: ahora,
         [paso.responsableCampo]: responsable,
       };
+      if (paso.id === "cortado" && pedidoProcesoTaller(p) === "esmerilados") {
+        return { ...actualizado, estado: "Mandar a grabar" };
+      }
       if (!esUltimoPaso) return actualizado;
       return {
         ...actualizado,
@@ -4821,11 +4919,55 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     }));
     if (onRegistrar && pedidoActual && pasoActual) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${pasoActual.label}`);
   }
+  function avanzarFlujoFabrica(id) {
+    const pedidoActual = pedidos.find((p) => p.id === id);
+    if (!pedidoActual) return;
+    const cola = pedidoListaFabrica(pedidoActual);
+    if (cola === "armar") {
+      avanzarProduccion(id);
+      return;
+    }
+
+    const ahora = new Date().toISOString();
+    const responsable = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
+    let cambios = null;
+    let accion = "Actualizó producción externa";
+    let detalle = "";
+
+    if (cola === "mandar_grabar") {
+      cambios = { estado: "En grabado", grabadoEnviadoFecha: ahora, grabadoEnviadoPor: responsable };
+      accion = "Envió a grabar";
+      detalle = "enviado a grabado";
+    } else if (cola === "en_grabado") {
+      cambios = { estado: "Para armar", grabadoRegresoFecha: ahora, grabadoRegresoPor: responsable };
+      accion = "Recibió de grabado";
+      detalle = "volvió de grabado y queda para armar";
+    } else if (cola === "bisel_sin_pedir") {
+      cambios = { estado: "En biseladora", biseladoPedidoFecha: ahora, biseladoPedidoPor: responsable };
+      accion = "Pidió biselado";
+      detalle = "biselado pedido y enviado a biseladora";
+    } else if (cola === "bisel_pedidos") {
+      cambios = {
+        estado: "Para armar",
+        biseladoRegresoFecha: ahora,
+        biseladoRegresoPor: responsable,
+        produccionEtapa: "cortado",
+        produccionCortadoFecha: ahora,
+        produccionCortadoPor: `Biseladora · recibido por ${responsable}`,
+      };
+      accion = "Recibió de biseladora";
+      detalle = "volvió cortado y biselado; queda para armar";
+    }
+
+    if (!cambios) return;
+    onChange(pedidos.map((p) => (p.id === id ? { ...p, ...cambios } : p)));
+    if (onRegistrar) onRegistrar(accion, `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${detalle}`);
+  }
   function reabrirProduccion(id) {
     const pedidoActual = pedidos.find((p) => p.id === id);
     onChange(pedidos.map((p) => (p.id === id ? {
       ...p,
-      estado: "Verificado",
+      estado: "Para armar",
       produccionEtapa: "armado",
       produccionEmbaladoFecha: "",
       produccionEmbaladoPor: "",
@@ -4851,14 +4993,26 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   };
 
   const renderCard = (p, unidad, totalUnidadesPedido) => {
-    const stage = ESTADO_STAGE[p.estado] || { stage: p.estado, color: "var(--dg-text-dim)" };
+    const listaActual = pedidoListaFabrica(p);
+    const listaInfo = TALLER_LISTAS.find((item) => item.id === listaActual);
+    const stage = pedidoEstaListo(p)
+      ? ESTADO_STAGE[p.estado]
+      : { stage: estadoProduccionLabel(p), color: listaInfo?.color || "var(--dg-text-dim)" };
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
-    const procesoInfo = TALLER_PROCESOS.find((item) => item.id === pedidoProcesoTaller(p));
+    const procesoInfo = TALLER_MODELOS.find((item) => item.id === pedidoProcesoTaller(p));
     const funciones = funcionesPedido(p, true);
     const observaciones = detalleFabrica(p);
     const produccionCompletada = pasosProduccionCompletados(p);
     const proximoPaso = PRODUCCION_PASOS[produccionCompletada];
     const terminado = produccionCompletada >= PRODUCCION_PASOS.length;
+    const pasosVisuales = pasosVisualesFabrica(p);
+    const registros = registrosFabrica(p);
+    const tieneRegistro = registros.some((registro) => registro.fecha);
+    const accionPrincipal = listaActual === "mandar_grabar" ? "Marcar enviado a grabar"
+      : listaActual === "en_grabado" ? "Marcar regreso del grabado"
+      : listaActual === "bisel_sin_pedir" ? "Pedir biselado"
+      : listaActual === "bisel_pedidos" ? "Marcar regreso de biseladora"
+      : proximoPaso?.accion || "Continuar producción";
     const menuOpen = menuAbierto === p.id;
     return (
       <div className={`dg-fab-card dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
@@ -4890,31 +5044,24 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
         <div className="dg-fab-zona-proceso">
           <div className="dg-fab-steps" aria-label="Avance de producción">
-            {PRODUCCION_PASOS.map((paso, index) => {
-              const completado = index < produccionCompletada;
-              const actual = index === produccionCompletada;
-              return (
-                <span key={paso.id} className={`dg-fab-step ${completado ? "dg-fab-step-done" : ""}${actual ? " dg-fab-step-current" : ""}`}>
-                  {completado ? <Check size={11} /> : <em>{index + 1}</em>}{paso.label}
-                </span>
-              );
-            })}
+            {pasosVisuales.map((paso, index) => (
+              <span key={paso.id} className={`dg-fab-step ${paso.done ? "dg-fab-step-done" : ""}${paso.current ? " dg-fab-step-current" : ""}`}>
+                {paso.done ? <Check size={11} /> : <em>{index + 1}</em>}{paso.label}
+              </span>
+            ))}
           </div>
 
-          {terminado && (
+          {tieneRegistro && (
             <details className="dg-fab-audit">
               <summary><ClipboardList size={12} /> Registro de fabricación</summary>
               <div>
-                {PRODUCCION_PASOS.map((paso) => {
-                  const fecha = p[paso.fechaCampo] || (paso.id === "embalado" ? p.produccionListaFecha : "");
-                  return (
-                    <span key={paso.id}>
-                      <strong>{paso.label}</strong>
-                      <time>{fechaHoraProduccion(fecha)}</time>
-                      <small>{p[paso.responsableCampo] || "Responsable sin registrar"}</small>
-                    </span>
-                  );
-                })}
+                {registros.map((registro) => (
+                  <span key={registro.label}>
+                    <strong>{registro.label}</strong>
+                    <time>{fechaHoraProduccion(registro.fecha)}</time>
+                    <small>{registro.responsable || "Responsable sin registrar"}</small>
+                  </span>
+                ))}
               </div>
             </details>
           )}
@@ -4927,7 +5074,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             </span>
             {canEdit && (
               <div className="dg-fab-acciones">
-                {!terminado && <button className="dg-fab-btn-listo" onClick={() => avanzarProduccion(p.id)}><Check size={14} /> {proximoPaso?.accion}</button>}
+                {!terminado && <button className="dg-fab-btn-listo" onClick={() => avanzarFlujoFabrica(p.id)}><Check size={14} /> {accionPrincipal}</button>}
                 <div className="dg-fab-menu-wrap">
                   <button className="dg-icon-btn" aria-label="Más acciones" onClick={() => setMenuAbierto(menuOpen ? null : p.id)}><MoreVertical size={16} /></button>
                   {menuOpen && (
@@ -4952,13 +5099,23 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
   return (
     <div className="dg-page">
-      <div className="dg-process-tabs" role="tablist" aria-label="Proceso de fabricación">
-        {TALLER_PROCESOS.map((item) => (
-          <button key={item.id} role="tab" aria-selected={proceso === item.id} className={proceso === item.id ? "dg-process-tab-on" : ""} style={{ "--pc": item.color }} onClick={() => setProceso(item.id)}>
-            <span>{item.label}<small>{procesoCounts[item.id] || 0}</small></span>
-          </button>
-        ))}
-      </div>
+      {filtroEstado !== "historial" ? (
+        <>
+          <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
+            {TALLER_LISTAS.map((item) => (
+              <button key={item.id} role="tab" aria-selected={lista === item.id} className={lista === item.id ? "dg-process-tab-on" : ""} style={{ "--pc": item.color }} onClick={() => setLista(item.id)}>
+                <span>{item.label}<small>{listaCounts[item.id] || 0}</small></span>
+              </button>
+            ))}
+          </div>
+          <div className="dg-factory-queue-info" style={{ "--qc": TALLER_LISTAS.find((item) => item.id === lista)?.color }}>
+            <strong>{TALLER_LISTAS.find((item) => item.id === lista)?.label}</strong>
+            <span>{TALLER_LISTAS.find((item) => item.id === lista)?.description}</span>
+          </div>
+        </>
+      ) : (
+        <div className="dg-factory-queue-info" style={{ "--qc": "var(--dg-success)" }}><strong>Historial de fabricación</strong><span>Espejos terminados, con el registro de cada etapa.</span></div>
+      )}
       <div className="dg-crm-filters">
         <Filter size={14} />
         <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
@@ -4979,7 +5136,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <span style={{ "--ec": "var(--dg-text-dim)" }}>Retira</span>
       </div>
 
-      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay pedidos terminados en este proceso." : "No hay pedidos pendientes en esta vista."}</div>}
+      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {visibles.flatMap((p) => {
           const cant = Math.max(1, Number(p.cant) || 1);
@@ -4992,7 +5149,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <div className="dg-print-head">
           <div className="dg-print-brand">DECOGLASS — Fábrica</div>
           <div className="dg-print-sub">
-            {TALLER_PROCESOS.find((t) => t.id === proceso)?.label || proceso} — {new Date().toLocaleDateString("es-AR")} · {visibles.length} pedido(s)
+            {filtroEstado === "historial" ? "Historial de fabricación" : TALLER_LISTAS.find((t) => t.id === lista)?.label || lista} — {new Date().toLocaleDateString("es-AR")} · {totalUnidades(visibles)} espejo(s)
           </div>
         </div>
         <table className="dg-print-table">
@@ -6980,6 +7137,12 @@ function Style() {
       .dg-process-tabs button em { margin-top:4px; color:var(--dg-text-faint); font-size:9.5px; font-style:normal; line-height:1.35; }
       .dg-process-tabs .dg-process-tab-on { border-color:color-mix(in srgb,var(--pc) 52%,rgba(var(--dg-line-rgb),.1)); background:color-mix(in srgb,var(--pc) 8%,var(--dg-surface-2)); box-shadow:inset 3px 0 0 var(--pc); }
       .dg-process-tabs .dg-process-tab-on > span { color:var(--pc); }
+      .dg-factory-queue-tabs { grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px; margin-bottom:7px; }
+      .dg-factory-queue-tabs button { min-height:58px; padding:9px 10px; }
+      .dg-factory-queue-tabs button > span { gap:7px; font-size:10.5px; line-height:1.2; }
+      .dg-factory-queue-info { --qc:var(--dg-accent); display:flex; align-items:center; gap:9px; margin-bottom:10px; padding:7px 10px; border-left:3px solid var(--qc); border-radius:7px; background:color-mix(in srgb,var(--qc) 6%,var(--dg-surface)); }
+      .dg-factory-queue-info strong { color:var(--qc); font-size:10.5px; white-space:nowrap; }
+      .dg-factory-queue-info span { overflow:hidden; color:var(--dg-text-faint); font-size:9.5px; text-overflow:ellipsis; white-space:nowrap; }
 
       /* Contraste del tema claro: fondo de aplicación, superficies y controles se distinguen con claridad. */
       .dg-app[data-theme="light"] .dg-building-shell,
@@ -7082,6 +7245,11 @@ function Style() {
         .dg-bulk-actions button { flex:1 1 100%; justify-content:center; }
         .dg-process-tabs { grid-template-columns:1fr; gap:6px; }
         .dg-process-tabs button { min-height:57px; }
+        .dg-factory-queue-tabs { display:flex; gap:6px; overflow-x:auto; padding-bottom:3px; scrollbar-width:none; }
+        .dg-factory-queue-tabs::-webkit-scrollbar { display:none; }
+        .dg-factory-queue-tabs button { flex:0 0 145px; min-height:48px; padding:8px 9px; }
+        .dg-factory-queue-info { align-items:flex-start; flex-direction:column; gap:2px; padding:7px 9px; }
+        .dg-factory-queue-info span { width:100%; white-space:normal; }
         .dg-client-notice { align-items:stretch; }
         .dg-client-notice > div, .dg-client-notice .dg-btn-primary, .dg-client-notice .dg-btn-ghost, .dg-client-notice-badge { width:100%; justify-content:center; }
         .dg-month-items { gap:6px; padding:7px; }
