@@ -151,6 +151,51 @@ const PAYMENT_METHODS = {
 const CUENTA_INGRESO = { caja_efectivo: "Caja de efectivo", ingresos_bancarios: "Ingresos bancarios", ahorro_importados: "Ahorro de importados" };
 const IVA_RATE = 0.21;
 
+// Suma lo que se le paga a TODOS los empleados en un mes puntual (formato
+// "YYYY-MM"), usando exactamente el mismo cálculo que ya usa la planilla de
+// Sueldos — así "gastos fijos" nunca queda desactualizado con lo real.
+function totalSueldosDelMes(mes, empleados, liquidaciones, pedidos) {
+  if (!empleados || !liquidaciones) return 0;
+  return empleados.reduce((acc, emp) => {
+    const fila = liquidaciones.find((l) => l.empleadoId === emp.id && l.periodo === mes && l.semanas) || null;
+    const comisionAutomatica = emp.sector !== "Taller" ? (resumenComisionesLiquidadas(pedidos || [], emp, mes)?.total || 0) : 0;
+    return acc + totalesFila(emp, fila, comisionAutomatica).total;
+  }, 0);
+}
+
+function sumarMeses(mes, n) {
+  const [y, m] = String(mes || "").split("-").map(Number);
+  if (!y || !m) return mes;
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// Cómo funciona el IVA acá (así lo pediste vos):
+// - El IVA de lo que se vende (débito) generado en un mes, se paga recién 2
+//   meses después.
+// - El IVA de lo que se compra (crédito) se descuenta el MISMO mes en que se
+//   compra, contra el débito que corresponde pagar ese mes.
+// Entonces: lo que hay que pagar de IVA en el mes M = débito generado en
+// (M-2), menos el crédito de las compras hechas en M.
+function ivaDebitoGeneradoEnMes(mes, incomes) {
+  const base = (incomes || [])
+    .filter((i) => (i.fecha || "").slice(0, 7) === mes && (i.cuenta || "ingresos_bancarios") === "ingresos_bancarios" && i.estado === "pagado")
+    .reduce((a, i) => a + Number(i.monto || 0), 0);
+  return base * (IVA_RATE / (1 + IVA_RATE));
+}
+function ivaCreditoDeMes(mes, purchases) {
+  const base = (purchases || [])
+    .filter((p) => (p.fecha || "").slice(0, 7) === mes && p.conIva && p.estado === "pagado")
+    .reduce((a, p) => a + Number(p.monto || 0), 0);
+  return base * (IVA_RATE / (1 + IVA_RATE));
+}
+function ivaAPagarEnMes(mesDePago, incomes, purchases) {
+  const mesDeVentaOrigen = sumarMeses(mesDePago, -2);
+  const debito = ivaDebitoGeneradoEnMes(mesDeVentaOrigen, incomes);
+  const credito = ivaCreditoDeMes(mesDePago, purchases);
+  return { debito, credito, mesDeVentaOrigen, aPagar: Math.max(0, debito - credito) };
+}
+
 function determineCuentaPedido(pedido) {
   if (pedido.tipo === "Importado") return "ahorro_importados";
   if (pedido.tipoFactura === "Efectivo / No") return "caja_efectivo";
@@ -740,7 +785,7 @@ const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
   "vendedores", "recursos-venta", "facturas-manuales",
   "empleados-sueldo", "liquidaciones-sueldo",
-  "auditoria", "admins", "integraciones",
+  "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
 ];
 
 function App() {
@@ -751,6 +796,8 @@ function App() {
   const [quotes, setQuotes] = useState(null);
   const [leads, setLeads] = useState(null);
   const [vendedores, setVendedores] = useState(null);
+  const [proveedores, setProveedores] = useState(null);
+  const [gastosFijosPlantillas, setGastosFijosPlantillas] = useState(null);
   const [pedidos, setPedidos] = useState(null);
   const [recursos, setRecursos] = useState(null);
   const [facturas, setFacturas] = useState(null);
@@ -857,6 +904,8 @@ function App() {
       auditoria: setAuditoria,
       admins: setAdmins,
       integraciones: setIntegraciones,
+      proveedores: setProveedores,
+      "gastos-fijos-plantillas": setGastosFijosPlantillas,
     };
 
     setters[row.key]?.(parsed);
@@ -1025,6 +1074,14 @@ function App() {
       const v = await storage.get("vendedores", true);
       setVendedores(v ? JSON.parse(v.value) : DEFAULT_VENDEDORES);
     } catch (e) { setVendedores(DEFAULT_VENDEDORES); }
+    try {
+      const pr = await storage.get("proveedores", true);
+      setProveedores(pr ? JSON.parse(pr.value) : []);
+    } catch (e) { setProveedores([]); }
+    try {
+      const gf = await storage.get("gastos-fijos-plantillas", true);
+      setGastosFijosPlantillas(gf ? JSON.parse(gf.value) : []);
+    } catch (e) { setGastosFijosPlantillas([]); }
     try {
       let pedidosGuardados = await pedidosStore.getAll();
       if (pedidosGuardados.length === 0) {
@@ -1225,6 +1282,8 @@ function App() {
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
+  async function persistProveedores(next) { guardar("proveedores", next, () => setProveedores(next)); }
+  async function persistGastosFijosPlantillas(next) { guardar("gastos-fijos-plantillas", next, () => setGastosFijosPlantillas(next)); }
   async function persistEmpleadosSueldo(next) { guardar("empleados-sueldo", next, () => setEmpleadosSueldo(next)); }
   async function persistLiquidaciones(next) { guardar("liquidaciones-sueldo", next, () => setLiquidaciones(next)); }
 
@@ -1415,6 +1474,8 @@ function App() {
             stockMateriales={stockMateriales} onChangeStockMateriales={persistStockMateriales}
             empleadosSueldo={empleadosSueldo} onChangeEmpleadosSueldo={persistEmpleadosSueldo}
             liquidaciones={liquidaciones} onChangeLiquidaciones={persistLiquidaciones}
+            proveedores={proveedores} onChangeProveedores={persistProveedores}
+            gastosFijosPlantillas={gastosFijosPlantillas} onChangeGastosFijosPlantillas={persistGastosFijosPlantillas}
           />
         )}
       </div>
@@ -2707,17 +2768,215 @@ function EmpleadoForm({ empleado, onSave, onCancel }) {
   );
 }
 
-function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangePurchases }) {
-  const [tab, setTab] = useState("ingresos");
+function ProveedoresPanel({ proveedores, purchases, onChange }) {
+  const [editando, setEditando] = useState(null); // objeto en edición, o null
+  const vacio = { id: "", nombre: "", rubro: "", contacto: "", telefono: "", cuit: "", notas: "" };
+
+  function guardar(prov) {
+    const existe = (proveedores || []).some((p) => p.id === prov.id);
+    onChange(existe ? proveedores.map((p) => (p.id === prov.id ? prov : p)) : [{ ...prov, id: uid() }, ...(proveedores || [])]);
+    setEditando(null);
+  }
+  function borrar(id) {
+    if (!window.confirm("¿Borrar este proveedor? Las compras que ya le cargaste no se borran.")) return;
+    onChange((proveedores || []).filter((p) => p.id !== id));
+  }
+  function totalGastadoEn(id) {
+    return (purchases || []).filter((p) => p.proveedorId === id).reduce((a, p) => a + Number(p.monto || 0), 0);
+  }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 14 }}>
+        <button className="dg-btn-primary" onClick={() => setEditando(vacio)}><Plus size={14} /> Nuevo proveedor</button>
+      </div>
+
+      {(proveedores || []).length === 0 && <div className="dg-empty">Todavía no cargaste ningún proveedor.</div>}
+      <div className="dg-task-list">
+        {(proveedores || []).map((p) => (
+          <div className="dg-task dg-pago-row" key={p.id}>
+            <div className="dg-pago-info">
+              <span>{p.nombre}</span>
+              <span className="dg-pago-meta">{p.rubro || "Sin rubro"} · {p.contacto || "—"} · {p.telefono || "—"}{p.cuit ? ` · CUIT ${p.cuit}` : ""}</span>
+            </div>
+            <span className="dg-pago-monto">{money(totalGastadoEn(p.id))}</span>
+            <button className="dg-icon-btn" onClick={() => setEditando(p)}><Pencil size={14} /></button>
+            <button className="dg-icon-btn dg-task-del" onClick={() => borrar(p.id)}><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+
+      {editando && (
+        <div className="dg-overlay" onClick={() => setEditando(null)}>
+          <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head"><div className="dg-modal-title">{editando.id ? "Editar proveedor" : "Nuevo proveedor"}</div><button className="dg-icon-btn" onClick={() => setEditando(null)}><X size={18} /></button></div>
+            <div className="dg-form">
+              <label>Nombre</label><input value={editando.nombre} onChange={(e) => setEditando({ ...editando, nombre: e.target.value })} autoFocus />
+              <label>Rubro</label><input value={editando.rubro} onChange={(e) => setEditando({ ...editando, rubro: e.target.value })} placeholder="Ej: Vidrio, Aluminio, Electrónica, Embalaje" />
+              <label>Contacto</label><input value={editando.contacto} onChange={(e) => setEditando({ ...editando, contacto: e.target.value })} placeholder="Nombre de la persona de contacto" />
+              <label>Teléfono</label><input value={editando.telefono} onChange={(e) => setEditando({ ...editando, telefono: e.target.value })} />
+              <label>CUIT</label><input value={editando.cuit} onChange={(e) => setEditando({ ...editando, cuit: e.target.value })} />
+              <label>Notas</label><input value={editando.notas} onChange={(e) => setEditando({ ...editando, notas: e.target.value })} placeholder="Condiciones de pago, plazos, lo que sea útil" />
+            </div>
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              <button className="dg-btn-primary" disabled={!editando.nombre.trim()} onClick={() => guardar(editando)}><Save size={14} /> Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GastosFijosPanel({ plantillas, onChangePlantillas, proveedores, purchases, onChangePurchases }) {
+  const [editando, setEditando] = useState(null);
+  const vacio = { id: "", concepto: "", montoEstimado: "", proveedorId: "" };
+  const mesActual = new Date().toISOString().slice(0, 7);
+
+  function guardar(pl) {
+    const existe = (plantillas || []).some((p) => p.id === pl.id);
+    const limpio = { ...pl, montoEstimado: Number(pl.montoEstimado) || 0 };
+    onChangePlantillas(existe ? plantillas.map((p) => (p.id === pl.id ? limpio : p)) : [{ ...limpio, id: uid() }, ...(plantillas || [])]);
+    setEditando(null);
+  }
+  function borrar(id) {
+    if (!window.confirm("¿Borrar esta plantilla de gasto fijo?")) return;
+    onChangePlantillas((plantillas || []).filter((p) => p.id !== id));
+  }
+  function yaCargadoEsteMes(plantillaId) {
+    return (purchases || []).some((p) => p.plantillaId === plantillaId && (p.fecha || "").slice(0, 7) === mesActual);
+  }
+  function cargarEsteMes(pl) {
+    const nueva = {
+      id: uid(), concepto: pl.concepto, monto: pl.montoEstimado, tipo: "administracion",
+      proveedorId: pl.proveedorId || "", sectorId: "", fecha: new Date().toISOString().slice(0, 10),
+      estado: "pendiente", conIva: false, gastoFijo: true, plantillaId: pl.id,
+    };
+    onChangePurchases([...(purchases || []), nueva]);
+  }
+
+  return (
+    <div className="dg-page">
+      <p className="dg-hint" style={{ marginBottom: 14 }}>
+        Estas son plantillas con el monto habitual — no se cargan solas cada mes. Tocá "Cargar este mes" cuando corresponda, así queda como una compra real (editable, con su propio estado de pago) y no como un número fantasma.
+      </p>
+      <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 14 }}>
+        <button className="dg-btn-primary" onClick={() => setEditando(vacio)}><Plus size={14} /> Nueva plantilla</button>
+      </div>
+
+      {(plantillas || []).length === 0 && <div className="dg-empty">Todavía no armaste ninguna plantilla de gasto fijo (alquiler, servicios, etc.).</div>}
+      <div className="dg-task-list">
+        {(plantillas || []).map((pl) => {
+          const cargado = yaCargadoEsteMes(pl.id);
+          return (
+            <div className="dg-task dg-pago-row" key={pl.id}>
+              <div className="dg-pago-info">
+                <span>{pl.concepto}</span>
+                <span className="dg-pago-meta">{(proveedores || []).find((p) => p.id === pl.proveedorId)?.nombre || "Sin proveedor"}</span>
+              </div>
+              <span className="dg-pago-monto">{money(pl.montoEstimado)}</span>
+              {cargado
+                ? <span className="dg-badge" style={{ "--bc": "var(--dg-success)" }}><CheckCircle2 size={12} /> Ya cargado este mes</span>
+                : <button className="dg-btn-ghost dg-mini-btn" onClick={() => cargarEsteMes(pl)}><Plus size={13} /> Cargar este mes</button>}
+              <button className="dg-icon-btn" onClick={() => setEditando(pl)}><Pencil size={14} /></button>
+              <button className="dg-icon-btn dg-task-del" onClick={() => borrar(pl.id)}><Trash2 size={14} /></button>
+            </div>
+          );
+        })}
+      </div>
+
+      {editando && (
+        <div className="dg-overlay" onClick={() => setEditando(null)}>
+          <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head"><div className="dg-modal-title">{editando.id ? "Editar plantilla" : "Nueva plantilla de gasto fijo"}</div><button className="dg-icon-btn" onClick={() => setEditando(null)}><X size={18} /></button></div>
+            <div className="dg-form">
+              <label>Concepto</label><input value={editando.concepto} onChange={(e) => setEditando({ ...editando, concepto: e.target.value })} placeholder="Ej: Alquiler del local" autoFocus />
+              <label>Monto habitual</label><input type="number" value={editando.montoEstimado} onChange={(e) => setEditando({ ...editando, montoEstimado: e.target.value })} />
+              <label>Proveedor (opcional)</label>
+              <select value={editando.proveedorId} onChange={(e) => setEditando({ ...editando, proveedorId: e.target.value })}>
+                <option value="">Sin especificar</option>
+                {(proveedores || []).map((p) => (<option key={p.id} value={p.id}>{p.nombre}</option>))}
+              </select>
+            </div>
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              <button className="dg-btn-primary" disabled={!editando.concepto.trim()} onClick={() => guardar(editando)}><Save size={14} /> Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangePurchases, proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas, empleadosSueldo, liquidaciones, pedidos }) {
+  const [tab, setTab] = useState("resumen");
+  const mesActual = new Date().toISOString().slice(0, 7);
+
+  const facturacionMes = incomes.filter((i) => (i.fecha || "").slice(0, 7) === mesActual && i.estado === "pagado").reduce((a, i) => a + Number(i.monto || 0), 0);
+  const sueldosMes = totalSueldosDelMes(mesActual, empleadosSueldo || [], liquidaciones || [], pedidos || []);
+  const gastosFijosCargados = purchases.filter((p) => p.gastoFijo && (p.fecha || "").slice(0, 7) === mesActual).reduce((a, p) => a + Number(p.monto || 0), 0);
+  const plantillasPendientes = (gastosFijosPlantillas || []).filter((pl) => !purchases.some((p) => p.plantillaId === pl.id && (p.fecha || "").slice(0, 7) === mesActual));
+  const gastosFijosPendientesEstimado = plantillasPendientes.reduce((a, pl) => a + Number(pl.montoEstimado || 0), 0);
+  const gastosFijosTotalMes = sueldosMes + gastosFijosCargados + gastosFijosPendientesEstimado;
+
+  const iva = ivaAPagarEnMes(mesActual, incomes, purchases);
+
   return (
     <div className="dg-page">
       <div className="dg-quickviews" style={{ marginBottom: 16 }}>
+        <button className={`dg-quickview-btn ${tab === "resumen" ? "dg-quickview-on" : ""}`} onClick={() => setTab("resumen")}><Wallet size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Resumen</button>
         <button className={`dg-quickview-btn ${tab === "ingresos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("ingresos")}><TrendingUp size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Ingresos</button>
         <button className={`dg-quickview-btn ${tab === "compras" ? "dg-quickview-on" : ""}`} onClick={() => setTab("compras")}><TrendingDown size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Compras</button>
+        <button className={`dg-quickview-btn ${tab === "proveedores" ? "dg-quickview-on" : ""}`} onClick={() => setTab("proveedores")}><Truck size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Proveedores</button>
+        <button className={`dg-quickview-btn ${tab === "fijos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("fijos")}><CalendarDays size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Gastos fijos</button>
       </div>
-      {tab === "ingresos"
-        ? <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={onChangeIncomes} />
-        : <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={onChangePurchases} />}
+
+      {tab === "resumen" && (
+        <div className="dg-fin-resumen">
+          <div className="dg-panel-grid">
+            <div className="dg-panel-card">
+              <div className="dg-panel-card-label">Facturación de {labelMes(mesActual)}</div>
+              <div className="dg-panel-card-valor">{money(facturacionMes)}</div>
+            </div>
+            <div className="dg-panel-card">
+              <div className="dg-panel-card-label">Gastos fijos de {labelMes(mesActual)}</div>
+              <div className="dg-panel-card-valor" style={{ color: "var(--dg-danger)" }}>{money(gastosFijosTotalMes)}</div>
+              <div className="dg-panel-card-variacion">Sueldos {money(sueldosMes)} + fijos {money(gastosFijosCargados + gastosFijosPendientesEstimado)}</div>
+            </div>
+            <div className="dg-panel-card">
+              <div className="dg-panel-card-label">IVA a pagar este mes</div>
+              <div className="dg-panel-card-valor" style={{ color: "var(--dg-warning)" }}>{money(iva.aPagar)}</div>
+              <div className="dg-panel-card-variacion">Débito de {labelMes(iva.mesDeVentaOrigen)}: {money(iva.debito)} − crédito de compras de este mes: {money(iva.credito)}</div>
+            </div>
+          </div>
+
+          {plantillasPendientes.length > 0 && (
+            <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-warning-rgb),0.35)" }}>
+              <div className="dg-section-header" style={{ color: "var(--dg-warning)" }}><AlertTriangle size={14} /> Gastos fijos sin cargar este mes ({plantillasPendientes.length})</div>
+              <div className="dg-task-list" style={{ marginBottom: 0 }}>
+                {plantillasPendientes.map((pl) => (
+                  <div className="dg-task dg-pago-row" key={pl.id}>
+                    <div className="dg-pago-info"><span>{pl.concepto}</span></div>
+                    <span className="dg-pago-monto">{money(pl.montoEstimado)}</span>
+                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => setTab("fijos")}><ChevronRight size={13} /> Ir a cargar</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <p className="dg-hint" style={{ marginTop: 4 }}>
+            El IVA se calcula así: el IVA de lo que se vendió y cobró bancarizado en un mes se paga recién 2 meses después. El IVA de las compras con factura se descuenta el mismo mes en que se compra. Es una estimación — no reemplaza la liquidación real de tu contador.
+          </p>
+        </div>
+      )}
+
+      {tab === "ingresos" && <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={onChangeIncomes} proveedores={proveedores} onChangeProveedores={onChangeProveedores} />}
+      {tab === "compras" && <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={onChangePurchases} proveedores={proveedores} onChangeProveedores={onChangeProveedores} />}
+      {tab === "proveedores" && <ProveedoresPanel proveedores={proveedores} purchases={purchases} onChange={onChangeProveedores} />}
+      {tab === "fijos" && <GastosFijosPanel plantillas={gastosFijosPlantillas} onChangePlantillas={onChangeGastosFijosPlantillas} proveedores={proveedores} purchases={purchases} onChangePurchases={onChangePurchases} />}
     </div>
   );
 }
@@ -2776,21 +3035,51 @@ function RecursosVentaPanel({ recursos, onChange, isAdmin }) {
   );
 }
 
-function MoneyPage({ kind, entries, sectors, onChange }) {
+function ProveedorPicker({ proveedores, value, onChange, onCrearRapido }) {
+  const [creando, setCreando] = useState(false);
+  const [nombreNuevo, setNombreNuevo] = useState("");
+
+  if (creando) {
+    return (
+      <div className="dg-proveedor-picker-nuevo">
+        <input autoFocus value={nombreNuevo} onChange={(e) => setNombreNuevo(e.target.value)} placeholder="Nombre del proveedor" />
+        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => {
+          if (!nombreNuevo.trim()) return;
+          const id = onCrearRapido(nombreNuevo.trim());
+          onChange(id);
+          setNombreNuevo(""); setCreando(false);
+        }}><Check size={13} /></button>
+        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => { setCreando(false); setNombreNuevo(""); }}><X size={13} /></button>
+      </div>
+    );
+  }
+  return (
+    <select value={value || ""} onChange={(e) => { if (e.target.value === "__nuevo__") setCreando(true); else onChange(e.target.value); }}>
+      <option value="">Sin especificar</option>
+      {proveedores.map((p) => (<option key={p.id} value={p.id}>{p.nombre}</option>))}
+      <option value="__nuevo__">+ Nuevo proveedor…</option>
+    </select>
+  );
+}
+
+function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProveedores }) {
   const isIncome = kind === "income";
   const TYPES = isIncome ? INCOME_CHANNELS : PURCHASE_TYPES;
   const typeField = isIncome ? "canal" : "tipo";
-  const partyField = isIncome ? "cliente" : "proveedor";
+  const partyField = isIncome ? "cliente" : "proveedorId";
   const partyLabel = isIncome ? "Cliente" : "Proveedor";
 
   const [concepto, setConcepto] = useState("");
   const [monto, setMonto] = useState("");
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [masDetalles, setMasDetalles] = useState(false);
   const [tipo, setTipo] = useState(Object.keys(TYPES)[0]);
   const [party, setParty] = useState("");
   const [metodo, setMetodo] = useState(Object.keys(PAYMENT_METHODS)[0]);
   const [cuenta, setCuenta] = useState("ingresos_bancarios");
   const [sectorId, setSectorId] = useState("");
-  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [conIva, setConIva] = useState(false);
+  const [gastoFijo, setGastoFijo] = useState(false);
   const [filtro, setFiltro] = useState("todos");
 
   const totalPendiente = entries.filter((e) => e.estado === "pendiente").reduce((a, e) => a + Number(e.monto || 0), 0);
@@ -2801,23 +3090,27 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
   const cuentaTotals = isIncome ? Object.keys(CUENTA_INGRESO).map((k) => ({
     key: k, label: CUENTA_INGRESO[k], total: entries.filter((e) => (e.cuenta || "ingresos_bancarios") === k).reduce((a, e) => a + Number(e.monto || 0), 0),
   })) : [];
-  const bancarizadoPagado = entries.filter((e) => (e.cuenta || "ingresos_bancarios") === "ingresos_bancarios" && e.estado === "pagado").reduce((a, e) => a + Number(e.monto || 0), 0);
-  const ivaAPagar = bancarizadoPagado * (IVA_RATE / (1 + IVA_RATE));
-  const ivaChartData = isIncome ? monthlyTotals(entries.filter((e) => (e.cuenta || "ingresos_bancarios") === "ingresos_bancarios" && e.estado === "pagado")).map((m) => ({ mes: m.mes, total: m.total * (IVA_RATE / (1 + IVA_RATE)) })) : [];
 
   const visibles = entries.filter((e) => filtro === "todos" || e.estado === filtro).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+
+  function crearProveedorRapido(nombre) {
+    const id = uid();
+    onChangeProveedores([{ id, nombre, rubro: "", contacto: "", telefono: "", cuit: "", notas: "" }, ...(proveedores || [])]);
+    return id;
+  }
 
   function addEntry() {
     if (!concepto.trim() || !monto) return;
     const next = [...entries, {
       id: uid(), concepto: concepto.trim(), monto: Number(monto), [typeField]: tipo,
-      [partyField]: party.trim(), ...(isIncome ? { metodo, cuenta } : {}), sectorId, fecha, estado: "pendiente",
+      [partyField]: isIncome ? party.trim() : (party || ""), ...(isIncome ? { metodo, cuenta } : { conIva, gastoFijo }), sectorId, fecha, estado: "pendiente",
     }];
     onChange(next);
-    setConcepto(""); setMonto(""); setParty("");
+    setConcepto(""); setMonto(""); setParty(""); setConIva(false); setGastoFijo(false);
   }
   function toggleEstado(id) { onChange(entries.map((e) => (e.id === id ? { ...e, estado: e.estado === "pendiente" ? "pagado" : "pendiente" } : e))); }
   function removeEntry(id) { onChange(entries.filter((e) => e.id !== id)); }
+  function nombreProveedor(id) { return (proveedores || []).find((p) => p.id === id)?.nombre || "—"; }
 
   return (
     <div className="dg-page">
@@ -2831,24 +3124,6 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
           {cuentaTotals.map((c) => (
             <div className="dg-total-card" style={{ "--c": "var(--dg-accent)" }} key={c.key}><span>{c.label}</span><strong>{money(c.total)}</strong></div>
           ))}
-        </div>
-      )}
-
-      {isIncome && (
-        <div className="dg-iva-card">
-          <div className="dg-iva-head">
-            <div><span className="dg-chart-title">IVA estimado a pagar (solo ingresos bancarizados y cobrados)</span><strong className="dg-iva-amount">{money(ivaAPagar)}</strong></div>
-            <span className="dg-iva-note">Base: {money(bancarizadoPagado)} × {Math.round((IVA_RATE / (1 + IVA_RATE)) * 1000) / 10}% — cálculo estimado, no reemplaza la liquidación real.</span>
-          </div>
-          <ResponsiveContainer width="100%" height={120}>
-            <BarChart data={ivaChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--dg-line-rgb),0.06)" vertical={false} />
-              <XAxis dataKey="mes" stroke="var(--dg-text-dim)" fontSize={10} tickLine={false} axisLine={false} />
-              <YAxis stroke="var(--dg-text-dim)" fontSize={10} tickLine={false} axisLine={false} width={36} />
-              <Tooltip contentStyle={{ background: "var(--dg-surface)", border: "1px solid rgba(var(--dg-line-rgb),0.1)", borderRadius: 8, fontSize: 12 }} formatter={(v) => money(v)} />
-              <Bar dataKey="total" fill="var(--dg-warning)" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
         </div>
       )}
 
@@ -2882,31 +3157,51 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
         <div className="dg-form-row">
           <div style={{ flex: 2 }}><label>Concepto</label><input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={isIncome ? "Ej: Venta 4 espejos LED redondos" : "Ej: Vidrio importado - contenedor"} /></div>
           <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></div>
-        </div>
-        <div className="dg-form-row">
-          <div style={{ flex: 1 }}><label>{isIncome ? "Canal" : "Tipo"}</label>
-            <select value={tipo} onChange={(e) => setTipo(e.target.value)}>{Object.entries(TYPES).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
-          </div>
-          <div style={{ flex: 1 }}><label>{partyLabel}</label><input value={party} onChange={(e) => setParty(e.target.value)} placeholder="Opcional" /></div>
-          {isIncome && (
-            <div style={{ flex: 1 }}><label>Banco / Medio</label>
-              <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>{Object.entries(PAYMENT_METHODS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
-            </div>
-          )}
-          {isIncome && (
-            <div style={{ flex: 1 }}><label>Cuenta destino</label>
-              <select value={cuenta} onChange={(e) => setCuenta(e.target.value)}>{Object.entries(CUENTA_INGRESO).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
-            </div>
-          )}
-        </div>
-        <div className="dg-form-row">
-          <div style={{ flex: 1 }}><label>Sector (opcional)</label>
-            <select value={sectorId} onChange={(e) => setSectorId(e.target.value)}><option value="">General</option>{sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}</select>
-          </div>
           <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
-          <div style={{ flex: 1, display: "flex", alignItems: "flex-end" }}>
-            <button className="dg-btn-primary" style={{ width: "100%", justifyContent: "center" }} onClick={addEntry}><Plus size={16} /> Registrar</button>
-          </div>
+        </div>
+
+        <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 4 }} onClick={() => setMasDetalles((v) => !v)}>
+          {masDetalles ? <ChevronRight size={13} style={{ transform: "rotate(90deg)" }} /> : <ChevronRight size={13} />} {masDetalles ? "Ocultar detalles" : "Más detalles (opcional)"}
+        </button>
+
+        {masDetalles && (
+          <>
+            <div className="dg-form-row">
+              <div style={{ flex: 1 }}><label>{isIncome ? "Canal" : "Tipo"}</label>
+                <select value={tipo} onChange={(e) => setTipo(e.target.value)}>{Object.entries(TYPES).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+              </div>
+              <div style={{ flex: 1 }}><label>{partyLabel}</label>
+                {isIncome
+                  ? <input value={party} onChange={(e) => setParty(e.target.value)} placeholder="Opcional" />
+                  : <ProveedorPicker proveedores={proveedores || []} value={party} onChange={setParty} onCrearRapido={crearProveedorRapido} />}
+              </div>
+              {isIncome && (
+                <div style={{ flex: 1 }}><label>Banco / Medio</label>
+                  <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>{Object.entries(PAYMENT_METHODS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+                </div>
+              )}
+              {isIncome && (
+                <div style={{ flex: 1 }}><label>Cuenta destino</label>
+                  <select value={cuenta} onChange={(e) => setCuenta(e.target.value)}>{Object.entries(CUENTA_INGRESO).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+                </div>
+              )}
+            </div>
+            <div className="dg-form-row">
+              <div style={{ flex: 1 }}><label>Sector (opcional)</label>
+                <select value={sectorId} onChange={(e) => setSectorId(e.target.value)}><option value="">General</option>{sectors.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}</select>
+              </div>
+              {!isIncome && (
+                <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 14, paddingBottom: 8 }}>
+                  <label className="dg-check-inline"><input type="checkbox" checked={conIva} onChange={(e) => setConIva(e.target.checked)} /> Con IVA discriminado</label>
+                  <label className="dg-check-inline"><input type="checkbox" checked={gastoFijo} onChange={(e) => setGastoFijo(e.target.checked)} /> Gasto fijo mensual</label>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="dg-form-actions" style={{ marginTop: 8 }}>
+          <button className="dg-btn-primary" onClick={addEntry}><Plus size={16} /> Registrar</button>
         </div>
       </EnterFlow>
 
@@ -2923,7 +3218,12 @@ function MoneyPage({ kind, entries, sectors, onChange }) {
             <button className={`dg-checkbox ${e.estado === "pagado" ? "dg-checkbox-on" : ""}`} onClick={() => toggleEstado(e.id)} title="Marcar cobrado/pagado" />
             <div className="dg-pago-info">
               <span className={e.estado === "pagado" ? "dg-task-done" : ""}>{e.concepto}</span>
-              <span className="dg-pago-meta">{TYPES[e[typeField]]} · {e[partyField] || "—"} · {sectors.find((s) => s.id === e.sectorId)?.name || "General"} · {e.fecha}{isIncome && e.cuenta ? ` · ${CUENTA_INGRESO[e.cuenta]}` : ""}</span>
+              <span className="dg-pago-meta">
+                {TYPES[e[typeField]]} · {isIncome ? (e.cliente || "—") : nombreProveedor(e.proveedorId)} · {sectors.find((s) => s.id === e.sectorId)?.name || "General"} · {e.fecha}
+                {isIncome && e.cuenta ? ` · ${CUENTA_INGRESO[e.cuenta]}` : ""}
+                {!isIncome && e.conIva ? " · con IVA" : ""}
+                {!isIncome && e.gastoFijo ? " · gasto fijo" : ""}
+              </span>
             </div>
             <span className="dg-pago-monto">{money(e.monto)}</span>
             <button className="dg-icon-btn dg-task-del" onClick={() => removeEntry(e.id)}><Trash2 size={14} /></button>
@@ -6195,6 +6495,7 @@ function SectorPage({
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio,
+  proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
 }) {
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
   const [subpage, setSubpage] = useState(tabs[0].id);
@@ -6309,7 +6610,12 @@ function SectorPage({
       )}
 
       {subpage === "finanzas" && (
-        isAdmin ? <FinanzasPanel incomes={incomes} purchases={purchases} sectors={sectors} onChangeIncomes={onChangeIncomes} onChangePurchases={onChangePurchases} />
+        isAdmin ? <FinanzasPanel
+            incomes={incomes} purchases={purchases} sectors={sectors} onChangeIncomes={onChangeIncomes} onChangePurchases={onChangePurchases}
+            proveedores={proveedores} onChangeProveedores={onChangeProveedores}
+            gastosFijosPlantillas={gastosFijosPlantillas} onChangeGastosFijosPlantillas={onChangeGastosFijosPlantillas}
+            empleadosSueldo={empleadosSueldo} liquidaciones={liquidaciones} pedidos={pedidos}
+          />
           : <LockedPage label="Finanzas" onLogin={onRequestLogin} />
       )}
 
@@ -6580,6 +6886,11 @@ function Style() {
       .dg-suggest-btn { margin-top:10px; width:100%; justify-content:center; }
       .dg-locked-note { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:12px; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),0.03); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:10px; padding:10px 12px; }
       .dg-pago-form { margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid rgba(var(--dg-line-rgb),0.08); }
+      .dg-proveedor-picker-nuevo { display:flex; gap:6px; align-items:center; }
+      .dg-proveedor-picker-nuevo input { flex:1; }
+      .dg-check-inline { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--dg-text-dim); white-space:nowrap; cursor:pointer; }
+      .dg-check-inline input { width:auto; }
+      .dg-fin-resumen { display:flex; flex-direction:column; gap:16px; }
       .dg-filtros { display:flex; gap:6px; margin-bottom:10px; }
       .dg-filtro-btn { background:transparent; border:1px solid rgba(var(--dg-line-rgb),0.1); color:var(--dg-text-dim); border-radius:100px; padding:5px 12px; font-size:12px; cursor:pointer; }
       .dg-filtro-on { background: rgba(var(--dg-accent-rgb),0.15); border-color:var(--dg-accent); color:var(--dg-accent); }
