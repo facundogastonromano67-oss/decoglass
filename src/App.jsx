@@ -3240,7 +3240,7 @@ function emptyPedido(prefill) {
     vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
     provincia: prefill?.provincia || "", localidad: prefill?.localidad || "", codigoPostal: prefill?.codigoPostal || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
-    touch: "No", desemp: "No", desempTipo: "220", horaTemp: "No", bluetooth: "No", tono: "3 tonos",
+    touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
@@ -3324,7 +3324,7 @@ function pedidoAInputsCosteo(pedido) {
     desemp: pedidoTieneDesempanante(pedido) ? "Sí" : "No",
     horaTemp: pedido?.horaTemp === "Hora y Temperatura" ? "Sí" : "No",
     bluetoothSel: bt,
-    panelesAdicionales: 0,
+    panelesAdicionales: Math.max(0, (Number(pedido?.desempCantidad) || 1) - 1),
     envioInterior: pedido?.metodo === "Interior" ? "Sí" : "No",
     tipoCliente: "Consumidor Final",
     cantidad: 1,
@@ -3496,7 +3496,7 @@ function normalizarPedidoFunciones(pedido) {
 function funcionesPedido(pedido, incluirPulido = false) {
   const funciones = [
     { on: pedido?.touch === "Touch" || pedido?.touch === "Doble touch (frontal + perimetral)", label: pedido?.touch === "Doble touch (frontal + perimetral)" ? "DOBLE TOUCH" : "TOUCH" },
-    { on: pedidoTieneDesempanante(pedido), label: pedidoTipoDesempanante(pedido) === "Touch" ? "DESEMPAÑANTE T" : "DESEMPAÑANTE 220" },
+    { on: pedidoTieneDesempanante(pedido), label: (pedidoTipoDesempanante(pedido) === "Touch" ? "DESEMPAÑANTE T" : "DESEMPAÑANTE 220") + (Number(pedido?.desempCantidad) > 1 ? ` ×${pedido.desempCantidad}` : "") },
     { on: pedido?.horaTemp === "Hora y Temperatura", label: "HORA Y TEMP" },
     { on: pedido?.bluetooth && pedido.bluetooth !== "No", label: String(pedido.bluetooth).toUpperCase() },
     { on: incluirPulido && pedido?.pulido === "Sí", label: "PULIDO" },
@@ -4689,6 +4689,11 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Desempañante"><select disabled={!canEditFull} value={draft.desemp} onChange={(e) => set("desemp", e.target.value)}>{DESEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             {draft.desemp === "Desempañante" && (
               <Field label="Tipo de desempañante"><select disabled={!canEditFull} value={draft.desempTipo || "220"} onChange={(e) => set("desempTipo", e.target.value)}>{DESEMP_TIPO_OPTIONS.map((o) => (<option key={o} value={o}>{o === "220" ? "220V (enchufe)" : "Touch (T)"}</option>))}</select></Field>
+            )}
+            {draft.desemp === "Desempañante" && (
+              <Field label="Cantidad de paneles">
+                <input type="number" min="1" disabled={!canEditFull} value={draft.desempCantidad || 1} onChange={(e) => set("desempCantidad", Math.max(1, Number(e.target.value) || 1))} />
+              </Field>
             )}
             <Field label="Hora / Temp"><select disabled={!canEditFull} value={draft.horaTemp} onChange={(e) => set("horaTemp", e.target.value)}>{HORATEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Bluetooth"><select disabled={!canEditFull} value={draft.bluetooth} onChange={(e) => set("bluetooth", e.target.value)}>{BLUETOOTH_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
