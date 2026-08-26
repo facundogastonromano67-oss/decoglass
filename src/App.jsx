@@ -3570,8 +3570,9 @@ function PasoPedido({ numero, titulo, detalle, estado = "pending", children }) {
   );
 }
 
-function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio }) {
+function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio, onEditarCantidadDesemp }) {
   const funciones = funcionesPedido(pedido, true);
+  const tieneDesemp = pedidoTieneDesempanante(pedido);
   const linkWhatsapp = waLink(pedido.celular);
   const linkKommo = kommoSubdominio?.trim()
     ? `https://${kommoSubdominio.trim()}.kommo.com/contacts/list/?query=${encodeURIComponent(pedido.celular || pedido.cliente || "")}`
@@ -3600,6 +3601,16 @@ function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio }) {
             </div>
           )}
           {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+          {tieneDesemp && onEditarCantidadDesemp && (
+            <div className="dg-verif-desemp-cantidad">
+              <span>¿Cuántos paneles desempañante lleva?</span>
+              <input
+                type="number" min="1"
+                value={pedido.desempCantidad || 1}
+                onChange={(e) => onEditarCantidadDesemp(Math.max(1, Number(e.target.value) || 1))}
+              />
+            </div>
+          )}
         </div>
 
         <div className="dg-verif-contacto">
@@ -4356,6 +4367,10 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           kommoSubdominio={kommoSubdominio}
           onClose={() => setVerificando(null)}
           onConfirmar={() => { marcarVerificado(verificando); setVerificando(null); }}
+          onEditarCantidadDesemp={(cantidad) => {
+            onChange(pedidos.map((x) => (x.id === verificando.id ? { ...x, desempCantidad: cantidad } : x)));
+            setVerificando((v) => (v ? { ...v, desempCantidad: cantidad } : v));
+          }}
         />
       )}
     </div>
@@ -4450,6 +4465,19 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
   const [borrando, setBorrando] = useState(false);
   const [error, setError] = useState("");
 
+  // Cargar el número de guía significa que el paquete ya salió hacia Vía
+  // Cargo — para Interior eso es el final del proceso de nuestro lado, así
+  // que el pedido pasa solo a "Entregado" en ese momento.
+  function aplicarCambios(cambios) {
+    const yaTieneGuia = pedido.remitoNumeroGuia?.trim();
+    const nuevaGuia = cambios.remitoNumeroGuia?.trim();
+    if (nuevaGuia && !yaTieneGuia && pedido.metodo === "Interior" && pedido.estado !== "Entregado") {
+      onCambiar({ ...cambios, estado: "Entregado", entregadoFecha: new Date().toISOString().slice(0, 10) });
+    } else {
+      onCambiar(cambios);
+    }
+  }
+
   async function handleFile(e) {
     const archivo = e.target.files?.[0];
     if (!archivo) return;
@@ -4467,7 +4495,7 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
         setLeyendoGuia(false);
       }
 
-      onCambiar(cambios);
+      aplicarCambios(cambios);
     } catch (err) {
       setError("No se pudo subir. Revisá la conexión e intentá de nuevo.");
     } finally {
@@ -4497,7 +4525,7 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
           <input
             disabled={!canEdit}
             value={pedido.remitoNumeroGuia || ""}
-            onChange={(e) => onCambiar({ remitoNumeroGuia: e.target.value })}
+            onChange={(e) => aplicarCambios({ remitoNumeroGuia: e.target.value })}
             placeholder="Ej: 999036524031"
           />
         </Field>
@@ -4522,8 +4550,10 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
             )}
           </div>
           {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
-          {canEdit && !pedido.remitoNumeroGuia?.trim() && (
-            <p className="dg-hint" style={{ marginTop: 6, fontSize: 11 }}>Si subís una foto (no un PDF), el número de guía se completa solo — revisalo antes de guardar por si lo leyó mal.</p>
+          {canEdit && !pedido.remitoNumeroGuia?.trim() && pedido.metodo === "Interior" && (
+            <p className="dg-hint" style={{ marginTop: 6, fontSize: 11 }}>
+              Si subís una foto (no un PDF), el número de guía se completa solo — revisalo antes de guardar por si lo leyó mal. En cuanto quede cargada la guía, el pedido pasa solo a "Entregado" (se considera despachado).
+            </p>
           )}
         </Field>
       </div>
@@ -6990,6 +7020,8 @@ function Style() {
       .dg-notif-historial-detalle { padding:4px 13px 14px 37px; }
       .dg-modal-verificacion { max-width:460px; }
       .dg-verif-specs { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+      .dg-verif-desemp-cantidad { display:flex; align-items:center; gap:10px; margin-top:10px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),0.15); font-size:13px; color:var(--dg-text-dim); }
+      .dg-verif-desemp-cantidad input { width:56px; text-align:center; }
       .dg-verif-contacto { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 2px; border-top:1px solid rgba(var(--dg-line-rgb),0.08); border-bottom:1px solid rgba(var(--dg-line-rgb),0.08); margin-bottom:14px; }
       .dg-verif-cliente { font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:14px; }
       .dg-verif-links { display:flex; flex-direction:column; gap:8px; }
