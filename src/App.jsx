@@ -5177,7 +5177,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const [menuAbierto, setMenuAbierto] = useState(null);
   const [pedidoParaCancelar, setPedidoParaCancelar] = useState(null);
   const [pedidoParaReabrir, setPedidoParaReabrir] = useState(null);
-  const [grupoArmarAbierto, setGrupoArmarAbierto] = useState(null); // null = el primero que tenga pedidos
+  const [gruposArmarAbiertos, setGruposArmarAbiertos] = useState(() => new Set()); // vacío = los 3 empiezan cerrados
+  function toggleGrupoArmar(grupo) {
+    setGruposArmarAbiertos((prev) => {
+      const next = new Set(prev);
+      if (next.has(grupo)) next.delete(grupo); else next.add(grupo);
+      return next;
+    });
+  }
 
   // Fábrica solo ve pedidos ya verificados por PostVenta. Los "Sin pasar a fábrica" no aparecen.
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
@@ -5505,14 +5512,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           });
           if (grupoActual !== null) grupos.push({ grupo: grupoActual, items: bucket });
 
-          const grupoElegido = grupoArmarAbierto && grupos.some((g) => g.grupo === grupoArmarAbierto) ? grupoArmarAbierto : grupos[0]?.grupo;
-
           return grupos.map(({ grupo, items }) => {
-            const abierto = grupo === grupoElegido;
+            const abierto = gruposArmarAbiertos.has(grupo);
             const totalGrupo = items.reduce((a, p) => a + Math.max(1, Number(p.cant) || 1), 0);
             return (
               <div className="dg-fab-grupo-bloque" key={`grupo-${grupo}`}>
-                <button type="button" className={`dg-fab-grupo-header ${abierto ? "dg-fab-grupo-abierto" : ""}`} onClick={() => setGrupoArmarAbierto(grupo)}>
+                <button type="button" className={`dg-fab-grupo-header ${abierto ? "dg-fab-grupo-abierto" : ""}`} onClick={() => toggleGrupoArmar(grupo)}>
                   <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                   <span>{ETIQUETAS_GRUPO_ARMAR[grupo]}</span>
                   <span className="dg-fab-grupo-count">{totalGrupo}</span>
