@@ -107,6 +107,44 @@ export const pedidosStore = {
   },
 };
 
+// Fábrica genérica para colecciones que se guardan fila por fila (igual que
+// pedidos): cada ítem es una fila propia en su tabla, así que si dos personas
+// editan cosas distintas de la misma colección al mismo tiempo, ninguna pisa
+// el cambio de la otra — a diferencia del bloque único (kv_store) de antes.
+function createRowStore(tableName) {
+  return {
+    async getAll() {
+      const { data, error } = await supabase.from(tableName).select("id, data, updated_at");
+      if (error) throw error;
+      return (data || []).map((r) => r.data);
+    },
+    async upsertMany(lista) {
+      if (!lista.length) return;
+      const rows = lista.map((item) => ({ id: item.id, data: item, updated_at: new Date().toISOString() }));
+      const { error } = await supabase.from(tableName).upsert(rows);
+      if (error) throw error;
+      rows.forEach((r) => broadcastChange({ key: `${tableName}:${r.id}`, value: JSON.stringify(r.data), updated_at: r.updated_at }));
+    },
+    async removeMany(ids) {
+      if (!ids.length) return;
+      const { error } = await supabase.from(tableName).delete().in("id", ids);
+      if (error) throw error;
+      ids.forEach((id) => broadcastChange({ key: `${tableName}-borrado:${id}`, value: id, updated_at: new Date().toISOString() }));
+    },
+    subscribeRealtime(onChange) {
+      const channel = supabase
+        .channel(`${tableName}-live`)
+        .on("postgres_changes", { event: "*", schema: "public", table: tableName }, onChange)
+        .subscribe();
+      return () => { try { supabase.removeChannel(channel); } catch (e) {} };
+    },
+  };
+}
+
+export const stockMaterialesStore = createRowStore("stock_materiales_rows");
+export const stockEspejosStore = createRowStore("stock_espejos_rows");
+export const reclamosStore = createRowStore("reclamos_rows");
+
 export const documentosStore = {
   // Sube el PDF de la factura (emitida en otra app, como EcomApp) y devuelve
   // la URL pública para guardarla en el pedido. Requiere el bucket "facturas"

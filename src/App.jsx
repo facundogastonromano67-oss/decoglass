@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore } from "./lib/storage";
+import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore } from "./lib/storage";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
   Lock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
@@ -183,6 +183,8 @@ const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 par
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
 const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
 const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Mandar a grabar", "En grabado", "Sin pedir", "En biseladora", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
+const MOTIVOS_CANCELACION = ["Cliente se arrepintió", "Precio", "Demora en la entrega", "Cliente no responde", "Error de carga", "Otro"];
+const MOTIVOS_REPROCESO = ["Espejo dañado en fábrica", "Medida incorrecta", "Cliente pidió un cambio", "Falla en una función (touch, luz, etc)", "Se rompió en el transporte", "Otro"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
 const TALLER_MODELOS = [
@@ -736,8 +738,8 @@ function breakdownBy(entries, field, labels) {
 
 const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
-  "vendedores", "recursos-venta", "facturas-manuales", "reclamos",
-  "stock-espejos", "stock-materiales", "empleados-sueldo", "liquidaciones-sueldo",
+  "vendedores", "recursos-venta", "facturas-manuales",
+  "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones",
 ];
 
@@ -850,9 +852,6 @@ function App() {
       vendedores: setVendedores,
       "recursos-venta": setRecursos,
       "facturas-manuales": setFacturas,
-      reclamos: setReclamos,
-      "stock-espejos": setStockEspejos,
-      "stock-materiales": setStockMateriales,
       "empleados-sueldo": setEmpleadosSueldo,
       "liquidaciones-sueldo": setLiquidaciones,
       auditoria: setAuditoria,
@@ -937,18 +936,42 @@ function App() {
     }
   }
 
+  function crearRefrescador(store, setter, refreshingRef) {
+    return async function refrescar() {
+      if (refreshingRef.current) return;
+      refreshingRef.current = true;
+      try {
+        setter(await store.getAll());
+      } catch (e) {
+        // sin conexión: se mantiene lo que ya está visible
+      } finally {
+        refreshingRef.current = false;
+      }
+    };
+  }
+  const reclamosRefreshingRef = useRef(false);
+  const stockEspejosRefreshingRef = useRef(false);
+  const stockMaterialesRefreshingRef = useRef(false);
+  const refreshReclamos = crearRefrescador(reclamosStore, setReclamos, reclamosRefreshingRef);
+  const refreshStockEspejos = crearRefrescador(stockEspejosStore, setStockEspejos, stockEspejosRefreshingRef);
+  const refreshStockMateriales = crearRefrescador(stockMaterialesStore, setStockMateriales, stockMaterialesRefreshingRef);
+
   useEffect(() => {
     if (loading) return undefined;
     let active = true;
-    const unsubscribe = pedidosStore.subscribeRealtime(() => { if (active) refreshPedidos(); });
-    const interval = window.setInterval(() => { if (active) refreshPedidos(); }, 4000);
-    const refreshWhenVisible = () => { if (active && document.visibilityState === "visible") refreshPedidos(); };
+    const unsubPedidos = pedidosStore.subscribeRealtime(() => { if (active) refreshPedidos(); });
+    const unsubReclamos = reclamosStore.subscribeRealtime(() => { if (active) refreshReclamos(); });
+    const unsubStockEspejos = stockEspejosStore.subscribeRealtime(() => { if (active) refreshStockEspejos(); });
+    const unsubStockMateriales = stockMaterialesStore.subscribeRealtime(() => { if (active) refreshStockMateriales(); });
+    const refrescarTodo = () => { if (!active) return; refreshPedidos(); refreshReclamos(); refreshStockEspejos(); refreshStockMateriales(); };
+    const interval = window.setInterval(refrescarTodo, 4000);
+    const refreshWhenVisible = () => { if (active && document.visibilityState === "visible") refrescarTodo(); };
     window.addEventListener("focus", refreshWhenVisible);
     window.addEventListener("online", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
-      unsubscribe();
+      unsubPedidos(); unsubReclamos(); unsubStockEspejos(); unsubStockMateriales();
       window.clearInterval(interval);
       window.removeEventListener("focus", refreshWhenVisible);
       window.removeEventListener("online", refreshWhenVisible);
@@ -1032,16 +1055,46 @@ function App() {
       setFacturas(f ? JSON.parse(f.value) : []);
     } catch (e) { setFacturas([]); }
     try {
-      const rc = await storage.get("reclamos", true);
-      setReclamos(rc ? JSON.parse(rc.value) : []);
+      let reclamosGuardados = await reclamosStore.getAll();
+      if (reclamosGuardados.length === 0) {
+        try {
+          const viejo = await storage.get("reclamos", true);
+          const viejosArray = viejo ? JSON.parse(viejo.value) : [];
+          if (Array.isArray(viejosArray) && viejosArray.length > 0) {
+            await reclamosStore.upsertMany(viejosArray);
+            reclamosGuardados = viejosArray;
+          }
+        } catch (e) { /* sin datos viejos para migrar */ }
+      }
+      setReclamos(reclamosGuardados);
     } catch (e) { setReclamos([]); }
     try {
-      const st = await storage.get("stock-espejos", true);
-      setStockEspejos(st ? JSON.parse(st.value) : []);
+      let espejosGuardados = await stockEspejosStore.getAll();
+      if (espejosGuardados.length === 0) {
+        try {
+          const viejo = await storage.get("stock-espejos", true);
+          const viejosArray = viejo ? JSON.parse(viejo.value) : [];
+          if (Array.isArray(viejosArray) && viejosArray.length > 0) {
+            await stockEspejosStore.upsertMany(viejosArray);
+            espejosGuardados = viejosArray;
+          }
+        } catch (e) { /* sin datos viejos para migrar */ }
+      }
+      setStockEspejos(espejosGuardados);
     } catch (e) { setStockEspejos([]); }
     try {
-      const stm = await storage.get("stock-materiales", true);
-      setStockMateriales(stm ? JSON.parse(stm.value) : []);
+      let materialesGuardados = await stockMaterialesStore.getAll();
+      if (materialesGuardados.length === 0) {
+        try {
+          const viejo = await storage.get("stock-materiales", true);
+          const viejosArray = viejo ? JSON.parse(viejo.value) : [];
+          if (Array.isArray(viejosArray) && viejosArray.length > 0) {
+            await stockMaterialesStore.upsertMany(viejosArray);
+            materialesGuardados = viejosArray;
+          }
+        } catch (e) { /* sin datos viejos para migrar */ }
+      }
+      setStockMateriales(materialesGuardados);
     } catch (e) { setStockMateriales([]); }
     try {
       const emp = await storage.get("empleados-sueldo", true);
@@ -1113,6 +1166,43 @@ function App() {
   // pisan entre sí — cada una solo escribe su propia fila.
   const pedidosRef = useRef(pedidos);
   pedidosRef.current = pedidos;
+
+  // Helper genérico para las colecciones que ahora se guardan fila por fila
+  // (igual que pedidos): solo escribe lo que cambió, nunca reemplaza el
+  // conjunto entero — así dos personas editando cosas distintas al mismo
+  // tiempo no se pisan el cambio.
+  function crearPersistidorDeFilas(refActual, setter, store, claveError) {
+    return async function persist(next) {
+      const anterior = refActual.current || [];
+      const prevById = new Map(anterior.map((item) => [item.id, item]));
+      const nextIds = new Set(next.map((item) => item.id));
+      const aGuardar = next.filter((item) => JSON.stringify(prevById.get(item.id)) !== JSON.stringify(item));
+      const aBorrar = anterior.filter((item) => !nextIds.has(item.id)).map((item) => item.id);
+
+      setter(next);
+      if (aGuardar.length === 0 && aBorrar.length === 0) return;
+      setSaveState({ estado: "guardando" });
+      try {
+        if (aGuardar.length) await store.upsertMany(aGuardar);
+        if (aBorrar.length) await store.removeMany(aBorrar);
+        setSaveState({ estado: "ok", ts: Date.now() });
+      } catch (e) {
+        setSaveState({ estado: "error", clave: claveError, mensaje: "No se pudo guardar. Revisá la conexión.", reintentar: () => persist(next) });
+      }
+    };
+  }
+
+  const reclamosRef = useRef(reclamos);
+  reclamosRef.current = reclamos;
+  const stockEspejosRef = useRef(stockEspejos);
+  stockEspejosRef.current = stockEspejos;
+  const stockMaterialesRef = useRef(stockMateriales);
+  stockMaterialesRef.current = stockMateriales;
+
+  const persistReclamos = crearPersistidorDeFilas(reclamosRef, setReclamos, reclamosStore, "reclamos");
+  const persistStockEspejos = crearPersistidorDeFilas(stockEspejosRef, setStockEspejos, stockEspejosStore, "stock-espejos");
+  const persistStockMateriales = crearPersistidorDeFilas(stockMaterialesRef, setStockMateriales, stockMaterialesStore, "stock-materiales");
+
   async function persistPedidos(next) {
     const anterior = pedidosRef.current || [];
     const prevById = new Map(anterior.map((p) => [p.id, p]));
@@ -1133,9 +1223,6 @@ function App() {
   }
   async function persistRecursos(next) { guardar("recursos-venta", next, () => setRecursos(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
-  async function persistReclamos(next) { guardar("reclamos", next, () => setReclamos(next)); }
-  async function persistStockEspejos(next) { guardar("stock-espejos", next, () => setStockEspejos(next)); }
-  async function persistStockMateriales(next) { guardar("stock-materiales", next, () => setStockMateriales(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
   async function persistEmpleadosSueldo(next) { guardar("empleados-sueldo", next, () => setEmpleadosSueldo(next)); }
@@ -1253,7 +1340,7 @@ function App() {
         </nav>
 
         {vistaPanel && isAdmin && (
-          <PanelControlAdmin pedidos={pedidos} incomes={incomes} reclamos={reclamos} stockMateriales={stockMateriales} sectors={sectors} />
+          <PanelControlAdmin pedidos={pedidos} incomes={incomes} reclamos={reclamos} stockMateriales={stockMateriales} sectors={sectors} quoteConfig={quoteConfig} />
         )}
 
         {!activeSector && !vistaPanel && (
@@ -1533,7 +1620,7 @@ function labelMes(ym) {
   return nombre.charAt(0).toUpperCase() + nombre.slice(1).replace(".", "");
 }
 
-function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sectors }) {
+function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sectors, quoteConfig }) {
   const [resumenAlertas, setResumenAlertas] = useState(undefined);
 
   useEffect(() => {
@@ -1547,6 +1634,15 @@ function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sector
   const facturacionMes = incomes.filter((i) => (i.fecha || "").slice(0, 7) === mesActual).reduce((a, i) => a + (Number(i.monto) || 0), 0);
   const facturacionMesAnterior = incomes.filter((i) => (i.fecha || "").slice(0, 7) === mesAnterior).reduce((a, i) => a + (Number(i.monto) || 0), 0);
   const variacion = facturacionMesAnterior > 0 ? ((facturacionMes - facturacionMesAnterior) / facturacionMesAnterior) * 100 : null;
+
+  // Margen estimado: usa la misma fórmula de costos del presupuestador, con
+  // los precios de materiales ACTUALES — no es contabilidad exacta, es una
+  // referencia de tendencia (ver aviso en la propia tarjeta).
+  const entregadosMesParaMargen = pedidos.filter((p) => p.estado === "Entregado" && (p.entregadoFecha || "").slice(0, 7) === mesActual);
+  const ventaEntregadosMes = entregadosMesParaMargen.reduce((a, p) => a + (Number(p.monto) || 0), 0);
+  const costoEntregadosMes = quoteConfig ? entregadosMesParaMargen.reduce((a, p) => a + estimarCostoPedido(p, quoteConfig), 0) : 0;
+  const margenMes = ventaEntregadosMes - costoEntregadosMes;
+  const margenPorcentaje = ventaEntregadosMes > 0 ? (margenMes / ventaEntregadosMes) * 100 : null;
 
   const activos = pedidos.filter((p) => p.estado !== "Cancelado");
   const etapas = [
@@ -1590,6 +1686,22 @@ function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sector
           )}
         </div>
 
+        {quoteConfig && (
+          <div className="dg-panel-card">
+            <div className="dg-panel-card-label">Margen estimado del mes (entregados)</div>
+            {ventaEntregadosMes > 0 ? (
+              <>
+                <div className="dg-panel-card-valor" style={{ color: margenMes >= 0 ? "var(--dg-success)" : "var(--dg-danger)" }}>
+                  {money(margenMes)} {margenPorcentaje !== null && <small style={{ fontSize: 13 }}>({margenPorcentaje.toFixed(0)}%)</small>}
+                </div>
+                <div className="dg-panel-card-variacion">Venta {money(ventaEntregadosMes)} − costo est. {money(costoEntregadosMes)}</div>
+              </>
+            ) : (
+              <div className="dg-panel-card-valor" style={{ fontSize: 14, color: "var(--dg-text-dim)" }}>Sin entregas este mes</div>
+            )}
+          </div>
+        )}
+
         {etapas.map((e) => (
           <div className="dg-panel-card" key={e.id}>
             <div className="dg-panel-card-label">{e.label}</div>
@@ -1597,6 +1709,12 @@ function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sector
           </div>
         ))}
       </div>
+
+      {quoteConfig && ventaEntregadosMes > 0 && (
+        <p className="dg-hint" style={{ marginTop: -10, marginBottom: 18 }}>
+          El margen es una estimación con los precios de materiales de hoy, no el costo exacto de cada pedido en su momento — sirve para ver la tendencia, no como número contable exacto.
+        </p>
+      )}
 
       <div className="dg-section-card">
         <div className="dg-section-header"><Bell size={14} /> Alertas activas {totalAlertas > 0 && <span className="dg-badge" style={{ "--bc": "var(--dg-danger)" }}>{totalAlertas}</span>}</div>
@@ -2827,6 +2945,7 @@ function emptyPedido(prefill) {
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
+    motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0,
   };
 }
 
@@ -2873,6 +2992,59 @@ function agruparEspejosPorPedido(items) {
 
 function textoComparable(value) {
   return String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+// Traduce un pedido real (que usa sus propios nombres de campo) al formato
+// que espera computeQuote (el mismo motor de costos del presupuestador), para
+// poder estimar cuánto costó ese pedido puntual sin duplicar la fórmula.
+function tipoProductoDePedido(pedido) {
+  const forma = textoComparable(pedido?.forma || "");
+  const esEsmerilado = pedidoProcesoTaller(pedido) === "esmerilados";
+  if (esEsmerilado) {
+    if (forma.includes("redondo") || forma.includes("circular")) return "Esmerilado Redondo";
+    if (forma.includes("pastilla") || forma.includes("oval")) return "Esmerilado Pastilla/Oval";
+    return "Esmerilado Recto";
+  }
+  if (forma.includes("redondo") || forma.includes("circular")) return "Redondo Simple";
+  if (forma.includes("pastilla")) return "Pastilla Simple";
+  if (forma.includes("oval")) return "Ovalado Simple";
+  if (forma.includes("curva")) return "Puntas Curvas";
+  if (forma.includes("organico") || forma.includes("orgánico")) return "Orgánico";
+  if (forma.includes("soft")) return "Soft";
+  return "Rectangular Simple";
+}
+
+function pedidoAInputsCosteo(pedido) {
+  const bt = pedido?.bluetooth && pedido.bluetooth !== "No" ? pedido.bluetooth : "Sin Bluetooth";
+  return {
+    tipoProducto: tipoProductoDePedido(pedido),
+    ancho: Number(pedido?.ancho) || 0,
+    alto: Number(pedido?.alto) || 0,
+    touch: (pedido?.touch === "Touch" || pedido?.touch === "Doble touch (frontal + perimetral)") ? "Sí" : "No",
+    desemp: pedidoTieneDesempanante(pedido) ? "Sí" : "No",
+    horaTemp: pedido?.horaTemp === "Hora y Temperatura" ? "Sí" : "No",
+    bluetoothSel: bt,
+    panelesAdicionales: 0,
+    envioInterior: pedido?.metodo === "Interior" ? "Sí" : "No",
+    tipoCliente: "Consumidor Final",
+    cantidad: 1,
+  };
+}
+
+// Estimación, no un costo exacto: usa la configuración de precios ACTUAL, así
+// que un pedido viejo se recalcula como si se hubiera hecho hoy, no con los
+// precios de materiales de ese momento. Sirve para ver la tendencia, no para
+// contabilidad exacta.
+function estimarCostoPedido(pedido, cfg) {
+  if (!cfg) return 0;
+  try {
+    const inputs = pedidoAInputsCosteo(pedido);
+    if (!inputs.ancho || !inputs.alto) return 0;
+    const r = computeQuote(inputs, cfg);
+    return (Number(r.costoTotalEstimado) || 0) * (Number(pedido?.cant) || 1);
+  } catch (e) {
+    return 0;
+  }
 }
 
 function pedidoProcesoTaller(pedido) {
@@ -4121,6 +4293,31 @@ function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
   );
 }
 
+function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar }) {
+  const [motivo, setMotivo] = useState(opciones[0]);
+  const [detalle, setDetalle] = useState("");
+
+  return (
+    <div className="dg-overlay" onClick={onCancelar}>
+      <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head"><div className="dg-modal-title">{titulo}</div><button className="dg-icon-btn" onClick={onCancelar}><X size={18} /></button></div>
+        <div className="dg-form">
+          <label>Motivo</label>
+          <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+            {opciones.map((o) => (<option key={o}>{o}</option>))}
+          </select>
+          <label>Detalle (opcional)</label>
+          <input value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Agregá algún detalle más si hace falta" />
+        </div>
+        <div className="dg-form-actions">
+          <button className="dg-btn-ghost" onClick={onCancelar}>Volver</button>
+          <button className="dg-btn-primary" onClick={() => onConfirmar(detalle.trim() ? `${motivo} — ${detalle.trim()}` : motivo)}>Confirmar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete }) {
   const [draft, setDraft] = useState(() => normalizarPedidoFunciones(pedido));
   const [intentoGuardar, setIntentoGuardar] = useState(false);
@@ -4134,6 +4331,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   const err = (campo) => (intentoGuardar && errores[campo]) || null;
 
   function set(field, val) { setDraft((d) => ({ ...d, [field]: val })); }
+  const [pidiendoMotivoCancelacion, setPidiendoMotivoCancelacion] = useState(false);
 
   function intentarGuardar(opts) {
     setIntentoGuardar(true);
@@ -4251,7 +4449,11 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         <div className="dg-section-card">
           <div className="dg-section-header"><Truck size={14} /> Entrega</div>
           <div className="dg-field-grid">
-            <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => set("estado", e.target.value)}>{estadoOptions.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => {
+              const nuevo = e.target.value;
+              if (nuevo === "Cancelado" && draft.estado !== "Cancelado") setPidiendoMotivoCancelacion(true);
+              else set("estado", nuevo);
+            }}>{estadoOptions.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Listo para (fecha)"><input type="date" disabled={readOnly} value={draft.listo} onChange={(e) => set("listo", e.target.value)} /></Field>
             <Field label="Método de entrega" error={err("metodo")}><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
@@ -4300,6 +4502,18 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           )}
         </div>
       </div>
+
+      {pidiendoMotivoCancelacion && (
+        <ModalMotivo
+          titulo="¿Por qué se cancela este pedido?"
+          opciones={MOTIVOS_CANCELACION}
+          onCancelar={() => setPidiendoMotivoCancelacion(false)}
+          onConfirmar={(motivo) => {
+            setDraft((d) => ({ ...d, estado: "Cancelado", motivoCancelacion: motivo }));
+            setPidiendoMotivoCancelacion(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -4385,7 +4599,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
 
   const envios = pedidos
     .filter((p) => esPedidoConEnvio(p) && p.metodo !== "Interior")
-    .filter((p) => p.estado !== "Entregado")
+    .filter((p) => p.estado !== "Entregado" && pedidoEstaListo(p))
     .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.orden || 0) - (a.orden || 0));
 
@@ -4961,6 +5175,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const [busqueda, setBusqueda] = useState("");
   const [lista, setLista] = useState("armar");
   const [menuAbierto, setMenuAbierto] = useState(null);
+  const [pedidoParaCancelar, setPedidoParaCancelar] = useState(null);
+  const [pedidoParaReabrir, setPedidoParaReabrir] = useState(null);
+  const [grupoArmarAbierto, setGrupoArmarAbierto] = useState(null); // null = el primero que tenga pedidos
 
   // Fábrica solo ve pedidos ya verificados por PostVenta. Los "Sin pasar a fábrica" no aparecen.
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
@@ -5090,7 +5307,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     onChange(pedidos.map((p) => (p.id === id ? { ...p, ...cambios } : p)));
     if (onRegistrar) onRegistrar(accion, `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${detalle}`);
   }
-  function reabrirProduccion(id) {
+  function reabrirProduccion(id) { setMenuAbierto(null); setPedidoParaReabrir(id); }
+  function confirmarReabrirProduccion(motivo) {
+    const id = pedidoParaReabrir;
     const pedidoActual = pedidos.find((p) => p.id === id);
     onChange(pedidos.map((p) => (p.id === id ? {
       ...p,
@@ -5104,12 +5323,18 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       envioConfirmado: false,
       envioConfirmadoFecha: "",
       entregadoFecha: "",
+      motivoReproceso: motivo,
+      cantidadReprocesos: (Number(p.cantidadReprocesos) || 0) + 1,
     } : p)));
-    if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — vuelve a embalado`);
-    setMenuAbierto(null);
+    if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — vuelve a embalado — motivo: ${motivo}`);
+    setPedidoParaReabrir(null);
   }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); setMenuAbierto(null); }
-  function cancelar(id) { if (window.confirm("¿Cancelar este pedido?")) setEstado(id, "Cancelado"); }
+  function cancelar(id) { setMenuAbierto(null); setPedidoParaCancelar(id); }
+  function confirmarCancelar(motivo) {
+    onChange(pedidos.map((p) => (p.id === pedidoParaCancelar ? { ...p, estado: "Cancelado", motivoCancelacion: motivo } : p)));
+    setPedidoParaCancelar(null);
+  }
   function borrar(id) { if (window.confirm("¿Borrar este pedido definitivamente? No se puede deshacer.")) { onChange(pedidos.filter((p) => p.id !== id)); setMenuAbierto(null); } }
 
   const fechaHoraProduccion = (value) => {
@@ -5266,19 +5491,40 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {lista === "armar" ? (() => {
-          const elementos = [];
-          let grupoAnterior = null;
+          const grupos = [];
+          let grupoActual = null;
+          let bucket = [];
           visibles.forEach((p) => {
             const grupo = grupoListaArmar(p);
-            if (grupo !== grupoAnterior) {
-              elementos.push(<div className="dg-fab-grupo-header" key={`grupo-${grupo}`}>{ETIQUETAS_GRUPO_ARMAR[grupo]}</div>);
-              grupoAnterior = grupo;
+            if (grupo !== grupoActual) {
+              if (grupoActual !== null) grupos.push({ grupo: grupoActual, items: bucket });
+              grupoActual = grupo;
+              bucket = [];
             }
-            const cant = Math.max(1, Number(p.cant) || 1);
-            if (cant <= 1) elementos.push(renderCard(p, 1, 1));
-            else Array.from({ length: cant }, (_, i) => elementos.push(renderCard(p, i + 1, cant)));
+            bucket.push(p);
           });
-          return elementos;
+          if (grupoActual !== null) grupos.push({ grupo: grupoActual, items: bucket });
+
+          const grupoElegido = grupoArmarAbierto && grupos.some((g) => g.grupo === grupoArmarAbierto) ? grupoArmarAbierto : grupos[0]?.grupo;
+
+          return grupos.map(({ grupo, items }) => {
+            const abierto = grupo === grupoElegido;
+            const totalGrupo = items.reduce((a, p) => a + Math.max(1, Number(p.cant) || 1), 0);
+            return (
+              <div className="dg-fab-grupo-bloque" key={`grupo-${grupo}`}>
+                <button type="button" className={`dg-fab-grupo-header ${abierto ? "dg-fab-grupo-abierto" : ""}`} onClick={() => setGrupoArmarAbierto(grupo)}>
+                  <ChevronRight size={16} className="dg-fab-grupo-chevron" />
+                  <span>{ETIQUETAS_GRUPO_ARMAR[grupo]}</span>
+                  <span className="dg-fab-grupo-count">{totalGrupo}</span>
+                </button>
+                {abierto && items.flatMap((p) => {
+                  const cant = Math.max(1, Number(p.cant) || 1);
+                  if (cant <= 1) return [renderCard(p, 1, 1)];
+                  return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
+                })}
+              </div>
+            );
+          });
         })() : visibles.flatMap((p) => {
           const cant = Math.max(1, Number(p.cant) || 1);
           if (cant <= 1) return [renderCard(p, 1, 1)];
@@ -5309,6 +5555,23 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           </tbody>
         </table>
       </div>
+
+      {pedidoParaCancelar && (
+        <ModalMotivo
+          titulo="¿Por qué se cancela este pedido?"
+          opciones={MOTIVOS_CANCELACION}
+          onCancelar={() => setPedidoParaCancelar(null)}
+          onConfirmar={confirmarCancelar}
+        />
+      )}
+      {pedidoParaReabrir && (
+        <ModalMotivo
+          titulo="¿Por qué hay que rehacerlo?"
+          opciones={MOTIVOS_REPROCESO}
+          onCancelar={() => setPedidoParaReabrir(null)}
+          onConfirmar={confirmarReabrirProduccion}
+        />
+      )}
     </div>
   );
 }
@@ -6433,9 +6696,16 @@ function Style() {
 
       /* ---- FICHA DE FABRICA v3: un solo borde, checklist minimalista, menu de acciones ---- */
       .dg-fab-lista { display:flex; flex-direction:column; gap:10px; }
-      .dg-fab-grupo-header { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:13px; color:var(--dg-text-dim);
-        text-transform:uppercase; letter-spacing:0.4px; padding:10px 2px 2px; margin-top:4px; border-bottom:1.5px solid rgba(var(--dg-line-rgb),0.14); }
-      .dg-fab-grupo-header:first-child { margin-top:0; padding-top:0; }
+      .dg-fab-grupo-bloque { display:flex; flex-direction:column; gap:10px; }
+      .dg-fab-grupo-header { display:flex; align-items:center; gap:8px; width:100%; text-align:left; cursor:pointer;
+        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:10px; padding:12px 14px;
+        font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:14px; color:var(--dg-text-dim); }
+      .dg-fab-grupo-header span:first-of-type { flex:1; text-transform:uppercase; letter-spacing:0.4px; font-size:13px; }
+      .dg-fab-grupo-chevron { transition:transform .15s ease; color:var(--dg-text-faint); flex-shrink:0; }
+      .dg-fab-grupo-abierto .dg-fab-grupo-chevron { transform:rotate(90deg); }
+      .dg-fab-grupo-abierto { background:rgba(var(--dg-accent-rgb),0.08); border-color:rgba(var(--dg-accent-rgb),0.3); color:var(--dg-text); }
+      .dg-fab-grupo-count { font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; color:var(--dg-accent);
+        background:rgba(var(--dg-accent-rgb),0.12); border-radius:20px; padding:2px 9px; }
       .dg-fab-card { position:relative; background: var(--dg-surface); border:0.5px solid rgba(var(--dg-line-rgb),0.08);
         border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:10px; padding:0; }
       .dg-fab-interior { border-left-color:#A66A75; }
