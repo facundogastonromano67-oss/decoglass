@@ -227,7 +227,7 @@ const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
 const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
 const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
-const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Mandar a grabar", "En grabado", "Sin pedir", "En biseladora", "Pedir biselado", "Para armar", "Espejo listo", "Entregado", "Cancelado"];
+const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Mandar a grabar", "En grabado", "Sin pedir", "En biseladora", "Pedir biselado", "Para armar", "Espejo listo", "Despachado", "Entregado", "Cancelado"];
 const MOTIVOS_CANCELACION = ["Cliente se arrepintió", "Precio", "Demora en la entrega", "Cliente no responde", "Error de carga", "Otro"];
 const MOTIVOS_REPROCESO = ["Espejo dañado en fábrica", "Medida incorrecta", "Cliente pidió un cambio", "Falla en una función (touch, luz, etc)", "Se rompió en el transporte", "Otro"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
@@ -304,7 +304,7 @@ function pedidoFueVerificado(pedido) {
 }
 
 function pedidoEstaListo(pedido) {
-  return pedido?.estado === "Espejo listo" || pedido?.estado === "Entregado";
+  return pedido?.estado === "Espejo listo" || pedido?.estado === "Entregado" || pedido?.estado === "Despachado";
 }
 
 function pasosProduccionCompletados(pedido) {
@@ -3967,7 +3967,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   else if (quickView === "envios") visibles = visibles.filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.estado !== "Entregado");
   else if (quickView === "retiros") visibles = visibles.filter((p) => p.metodo === "Retira" && p.estado !== "Entregado");
   else visibles = visibles
-    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
+    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado" && p.estado !== "Despachado")
     .filter((p) => filtroEstado === "todos" || p.estado === filtroEstado || (filtroEstado === "Verificado" && p.estado === "Pasado a fábrica"));
 
   visibles = visibles
@@ -4466,13 +4466,13 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
   const [error, setError] = useState("");
 
   // Cargar el número de guía significa que el paquete ya salió hacia Vía
-  // Cargo — para Interior eso es el final del proceso de nuestro lado, así
-  // que el pedido pasa solo a "Entregado" en ese momento.
+  // Cargo — para Interior eso pasa el pedido a "Despachado" (no a
+  // "Entregado" todavía: eso queda para cuando se confirme que llegó).
   function aplicarCambios(cambios) {
     const yaTieneGuia = pedido.remitoNumeroGuia?.trim();
     const nuevaGuia = cambios.remitoNumeroGuia?.trim();
-    if (nuevaGuia && !yaTieneGuia && pedido.metodo === "Interior" && pedido.estado !== "Entregado") {
-      onCambiar({ ...cambios, estado: "Entregado", entregadoFecha: new Date().toISOString().slice(0, 10) });
+    if (nuevaGuia && !yaTieneGuia && pedido.metodo === "Interior" && pedido.estado !== "Despachado" && pedido.estado !== "Entregado") {
+      onCambiar({ ...cambios, estado: "Despachado", despachadoFecha: new Date().toISOString().slice(0, 10) });
     } else {
       onCambiar(cambios);
     }
@@ -4552,7 +4552,7 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
           {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
           {canEdit && !pedido.remitoNumeroGuia?.trim() && pedido.metodo === "Interior" && (
             <p className="dg-hint" style={{ marginTop: 6, fontSize: 11 }}>
-              Si subís una foto (no un PDF), el número de guía se completa solo — revisalo antes de guardar por si lo leyó mal. En cuanto quede cargada la guía, el pedido pasa solo a "Entregado" (se considera despachado).
+              Si subís una foto (no un PDF), el número de guía se completa solo — revisalo antes de guardar por si lo leyó mal. En cuanto quede cargada la guía, el pedido pasa solo a "Despachado" y sale de la lista general.
             </p>
           )}
         </Field>
@@ -4858,7 +4858,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
 
   const interior = pedidos
     .filter((p) => p.metodo === "Interior")
-    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
+    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado" && p.estado !== "Despachado")
     .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => {
       const aListo = pedidoEstaListo(a), bListo = pedidoEstaListo(b);
@@ -4866,15 +4866,22 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
       return (b.orden || 0) - (a.orden || 0);
     });
 
-  // Solo se imprime lo que ya está terminado — no tiene sentido armar un
-  // rótulo o pedirle a Vía Cargo el remito de un espejo que sigue en fábrica.
-  const listosParaDespachar = interior.filter((p) => pedidoEstaListo(p) && p.ancho && p.alto);
+  const despachados = pedidos
+    .filter((p) => p.metodo === "Interior" && p.estado === "Despachado")
+    .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
+    .sort((a, b) => (b.despachadoFecha || "").localeCompare(a.despachadoFecha || ""));
+
+  // Solo se imprime lo que ya está terminado y todavía no se despachó — no
+  // tiene sentido armar un rótulo de algo que sigue en fábrica, ni de algo
+  // que ya salió.
+  const listosParaDespachar = interior.filter((p) => p.estado === "Espejo listo" && p.ancho && p.alto);
 
   function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
   function updateGrupo(pedido, patch) {
     const grupo = pedido.grupoId || pedido.id;
     onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patch } : p)));
   }
+  function marcarEntregado(id) { update(id, { estado: "Entregado", entregadoFecha: new Date().toISOString().slice(0, 10) }); }
 
   return (
     <div className="dg-page">
@@ -4886,7 +4893,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
       {listosParaDespachar.length > 0 && (
         <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-success-rgb),.35)" }}>
           <div className="dg-section-header" style={{ color: "var(--dg-success)" }}><Truck size={14} /> Listos para despachar ({listosParaDespachar.length})</div>
-          <p className="dg-hint" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen los espejos que ya están terminados, nunca los que siguen en fábrica.</p>
+          <p className="dg-hint" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen los espejos que ya están terminados, nunca los que siguen en fábrica ni los que ya se despacharon.</p>
           <div className="dg-order-despacho-btns">
             <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(listosParaDespachar)}><FileText size={14} /> 1. Datos para Vía Cargo</button>
             <button className="dg-btn-ghost" onClick={() => abrirRotulos(listosParaDespachar)}><Printer size={14} /> 2. Rótulos ({listosParaDespachar.length})</button>
@@ -4923,6 +4930,26 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
             </div>
           );
         })}
+      </div>
+
+      <div className="dg-section-card" style={{ marginTop: 22 }}>
+        <div className="dg-section-header"><Check size={14} /> Despachados ({despachados.length})</div>
+        <p className="dg-hint" style={{ marginBottom: 10 }}>Ya salieron hacia Vía Cargo. No aparecen en la lista general de pedidos para no hacer bulto. Marcá "Confirmar entrega" recién cuando sepas que el cliente ya lo recibió.</p>
+        {despachados.length === 0 && <div className="dg-empty">Todavía no despachaste ninguno.</div>}
+        <div className="dg-task-list" style={{ marginBottom: 0 }}>
+          {despachados.map((p) => (
+            <div className="dg-task dg-pago-row" key={p.id}>
+              <div className="dg-pago-info">
+                <span>#{p.orden} · {p.cliente}</span>
+                <span className="dg-pago-meta">Despachado el {p.despachadoFecha || "—"} · Guía: {p.remitoNumeroGuia || "—"} · {p.localidad || "—"}{p.provincia ? `, ${p.provincia}` : ""}</span>
+              </div>
+              {p.remitoNumeroGuia?.trim() && (
+                <a className="dg-btn-ghost dg-mini-btn" href={linkViaCargo(p.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><ExternalLink size={13} /> Ver en Vía Cargo</a>
+              )}
+              <button className="dg-btn-primary dg-mini-btn" onClick={() => marcarEntregado(p.id)}><CheckCircle2 size={13} /> Confirmar entrega</button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

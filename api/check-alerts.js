@@ -141,13 +141,22 @@ async function ejecutar(req, res) {
   }
 
   // ---- enviar UNA push por persona, según a qué audiencia le corresponde ----
+  console.log(`check-alerts ${fecha}: ${suscripciones.length} suscripción(es) encontrada(s) en la base.`);
+  suscripciones.forEach((sub, i) => {
+    console.log(`  suscripción ${i + 1}: rol=${sub.rol || "?"} sector=${sub.sector_id || "-"} endpoint=${(sub.endpoint || "").slice(0, 60)}...`);
+  });
+
   let enviadas = 0;
   const bajas = [];
+  const errores = [];
   for (const sub of suscripciones) {
     const audiencia = sub.rol === "admin" ? "admin" : (sectorDeAudiencia(sub.sector_id) || "otros");
     const detalle = AUDIENCIAS[audiencia];
     const total = totalDeAudiencia(detalle);
-    if (total === 0) continue; // sin novedades para esta persona, no se le manda nada
+    if (total === 0) {
+      console.log(`  -> ${audiencia}: sin novedades (total=0), no se le manda nada a esta suscripción.`);
+      continue;
+    }
 
     const cuerpo = tituloDetalle(detalle);
     try {
@@ -161,12 +170,19 @@ async function ejecutar(req, res) {
         })
       );
       enviadas++;
+      console.log(`  -> ${audiencia}: notificación enviada OK.`);
     } catch (err) {
+      const detalleError = { subId: sub.id, audiencia, statusCode: err?.statusCode, mensaje: err?.body || err?.message || String(err) };
+      errores.push(detalleError);
+      console.error(`  -> ${audiencia}: FALLÓ el envío.`, detalleError);
       if (err.statusCode === 404 || err.statusCode === 410) bajas.push(sub.id);
     }
   }
 
   if (bajas.length) await supabase.from("push_subscriptions").delete().in("id", bajas);
 
-  return res.status(200).json({ ok: true, fecha, resumenes: resultados, enviadas, bajasEliminadas: bajas.length });
+  console.log(`check-alerts ${fecha}: ${suscripciones.length} suscripción(es) cargada(s), ${enviadas} notificación(es) enviada(s), ${bajas.length} suscripción(es) vencida(s) eliminada(s), ${errores.length} error(es).`);
+  if (errores.length) console.error("check-alerts errores detallados:", JSON.stringify(errores));
+
+  return res.status(200).json({ ok: true, fecha, resumenes: resultados, enviadas, bajasEliminadas: bajas.length, errores });
 }
