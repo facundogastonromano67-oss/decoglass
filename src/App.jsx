@@ -1373,7 +1373,6 @@ function App() {
               <ClipboardList size={17} />
             </button>
           )}
-          {panelNotifOpen && session && <PanelNotificaciones session={session} onClose={() => setPanelNotifOpen(false)} />}
           {session ? (
             <div className="dg-session">
               <span className="dg-session-badge">
@@ -1479,6 +1478,8 @@ function App() {
           />
         )}
       </div>
+
+      {panelNotifOpen && session && <PanelNotificaciones session={session} onClose={() => setPanelNotifOpen(false)} />}
 
       {ajustesOpen && isAdmin && (
         <AjustesModal
@@ -1679,6 +1680,16 @@ function labelMes(ym) {
   const [y, m] = ym.split("-").map(Number);
   const nombre = new Date(y, m - 1, 1).toLocaleDateString("es-AR", { month: "short" });
   return nombre.charAt(0).toUpperCase() + nombre.slice(1).replace(".", "");
+}
+
+// Fecha de entrega en formato corto para el equipo: "27 ago", sin año (no
+// hace falta para pedidos del año en curso, que es lo único que se ve acá).
+function fechaEntregaCorta(fechaISO) {
+  if (!fechaISO) return null;
+  const [y, m, d] = fechaISO.split("-").map(Number);
+  if (!y || !m || !d) return fechaISO;
+  const nombre = new Date(y, m - 1, d).toLocaleDateString("es-AR", { month: "short" }).replace(".", "");
+  return `${d} ${nombre}`;
 }
 
 function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sectors, quoteConfig }) {
@@ -5005,7 +5016,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
             <details className="dg-shipping-editor">
               <summary>
                 <span className="dg-shipping-editor-icon"><Pencil size={14} /></span>
-                <span><strong>Cargar o corregir datos de entrega</strong><small>{p.detalleEntrega || "Sin dirección"} · {p.listo || "sin fecha"}</small></span>
+                <span><strong>Cargar o corregir datos de entrega</strong><small>{p.detalleEntrega || "Sin dirección"} {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}</small></span>
                 <ChevronRight size={16} />
               </summary>
               <EnterFlow autoFocus={false} className="dg-shipping-editor-body">
@@ -5789,7 +5800,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
           <div className="dg-fab-foot">
             <span className="dg-fab-foot-txt">
-              {stage.stage}{p.listo ? ` · entrega ${p.listo}` : ""}
+              {stage.stage}
+              {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}
               {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
               {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
             </span>
@@ -6884,7 +6896,8 @@ function Style() {
       .dg-chart-card { flex:1; min-width:220px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:12px; }
       .dg-chart-title { font-size:12px; color:var(--dg-text-dim); margin-bottom:6px; font-family:'JetBrains Mono', monospace; }
 
-      .dg-overlay { position:fixed; inset:0; background:#0A0A0B; display:flex; align-items:center; align-items:safe center; justify-content:center; overflow-y:auto; padding:calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); z-index:50; }
+      .dg-overlay { position:fixed; inset:0; background:#0A0A0B; display:flex; flex-direction:column; align-items:center; overflow-y:auto; padding:calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); z-index:50; }
+      .dg-overlay::before, .dg-overlay::after { content:""; display:block; flex:0 0 auto; margin:auto 0; }
       .dg-modal { font-family:'Inter', sans-serif; color:var(--dg-text); width:100%; max-width:400px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
       @keyframes dg-modal-in { from { opacity:0; transform: translateY(8px) scale(0.99); } to { opacity:1; transform:none; } }
       .dg-modal-lg { max-width:540px; }
@@ -7147,6 +7160,7 @@ function Style() {
       .dg-fab-foot { display:flex; align-items:center; gap:10px; padding-top:10px; border-top:0.5px solid rgba(var(--dg-line-rgb),0.07); flex-wrap:wrap; }
       .dg-fab-foot-txt { font-size:11.5px; color:var(--dg-text-faint); flex:1; min-width:0; }
       .dg-fab-flag-demora { color:var(--dg-danger); font-weight:600; }
+      .dg-fecha-entrega-badge { display:inline-flex; align-items:center; gap:4px; margin-left:6px; padding:2px 8px; border:1px solid rgba(var(--dg-line-rgb),0.25); border-radius:6px; font-family:'JetBrains Mono', monospace; font-size:11.5px; font-weight:600; color:var(--dg-text); vertical-align:middle; }
       .dg-fab-flag-ok { color:var(--dg-success); font-weight:600; }
       .dg-fab-acciones { display:flex; align-items:center; gap:4px; }
       .dg-fab-btn-listo { display:flex; align-items:center; gap:6px; background: rgba(var(--dg-success-rgb),0.12); border:1px solid rgba(var(--dg-success-rgb),0.4);
