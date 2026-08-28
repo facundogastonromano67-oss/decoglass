@@ -3392,12 +3392,10 @@ const ETIQUETAS_GRUPO_ARMAR = {
   esmerilados_cortar: "Esmerilados — para cortar y mandar a grabar",
   biselados_armar: "Biselados — para armar",
 };
-const ORDEN_METODO_ARMAR = { "Retira": 0, "Envío": 1, "Envío flex": 1, "Colocación": 1, "Interior": 2 };
 function prioridadListaArmar(pedido) {
-  const grupo = grupoListaArmar(pedido);
-  const grupoIndex = ORDEN_GRUPOS_ARMAR.indexOf(grupo);
-  const subOrden = grupo === "simples" ? (ORDEN_METODO_ARMAR[pedido?.metodo] ?? 1.5) : 0;
-  return grupoIndex * 10 + subOrden;
+  // Dentro de cada grupo (simples, esmerilados, biselados) el único criterio
+  // de orden es la fecha de entrega — ya no se sub-ordena por método.
+  return ORDEN_GRUPOS_ARMAR.indexOf(grupoListaArmar(pedido));
 }
 
 function estadoProduccionLabel(pedido) {
@@ -3986,7 +3984,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     .filter((p) => !fechaHasta || (p.fecha && p.fecha <= fechaHasta))
     .filter((p) => filtroVendedor === "todos" || p.vendedor === filtroVendedor)
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
-    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+    .sort((a, b) => {
+      if (!a.listo && !b.listo) return (b.orden || 0) - (a.orden || 0);
+      if (!a.listo) return 1;
+      if (!b.listo) return -1;
+      return a.listo < b.listo ? -1 : a.listo > b.listo ? 1 : 0;
+    });
 
   // Si un espejo del pedido coincide con los filtros, la tarjeta conserva
   // todos los espejos de ese mismo número de orden para no partir el pedido.
