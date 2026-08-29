@@ -317,7 +317,7 @@ function pasosProduccionCompletados(pedido) {
 }
 
 const SECTOR_SUBPAGES = {
-  marketing: [{ id: "tareas", label: "Tareas" }],
+  marketing: [{ id: "biblioteca", label: "Biblioteca" }, { id: "calendario", label: "Calendario de contenido" }, { id: "tareas", label: "Tareas" }],
   ventas: [
     { id: "presupuestador", label: "Presupuestador" },
     { id: "pedidos", label: "Pedidos" },
@@ -786,6 +786,7 @@ const SHARED_SYNC_KEYS = [
   "vendedores", "recursos-venta", "facturas-manuales",
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
+  "marketing-biblioteca", "marketing-contenido",
 ];
 
 function App() {
@@ -798,6 +799,8 @@ function App() {
   const [vendedores, setVendedores] = useState(null);
   const [proveedores, setProveedores] = useState(null);
   const [gastosFijosPlantillas, setGastosFijosPlantillas] = useState(null);
+  const [bibliotecaMarketing, setBibliotecaMarketing] = useState(null);
+  const [contenidoMarketing, setContenidoMarketing] = useState(null);
   const [pedidos, setPedidos] = useState(null);
   const [recursos, setRecursos] = useState(null);
   const [facturas, setFacturas] = useState(null);
@@ -906,6 +909,8 @@ function App() {
       integraciones: setIntegraciones,
       proveedores: setProveedores,
       "gastos-fijos-plantillas": setGastosFijosPlantillas,
+      "marketing-biblioteca": setBibliotecaMarketing,
+      "marketing-contenido": setContenidoMarketing,
     };
 
     setters[row.key]?.(parsed);
@@ -1082,6 +1087,14 @@ function App() {
       const gf = await storage.get("gastos-fijos-plantillas", true);
       setGastosFijosPlantillas(gf ? JSON.parse(gf.value) : []);
     } catch (e) { setGastosFijosPlantillas([]); }
+    try {
+      const bm = await storage.get("marketing-biblioteca", true);
+      setBibliotecaMarketing(bm ? JSON.parse(bm.value) : []);
+    } catch (e) { setBibliotecaMarketing([]); }
+    try {
+      const cm = await storage.get("marketing-contenido", true);
+      setContenidoMarketing(cm ? JSON.parse(cm.value) : []);
+    } catch (e) { setContenidoMarketing([]); }
     try {
       let pedidosGuardados = await pedidosStore.getAll();
       if (pedidosGuardados.length === 0) {
@@ -1284,6 +1297,8 @@ function App() {
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
   async function persistProveedores(next) { guardar("proveedores", next, () => setProveedores(next)); }
   async function persistGastosFijosPlantillas(next) { guardar("gastos-fijos-plantillas", next, () => setGastosFijosPlantillas(next)); }
+  async function persistBibliotecaMarketing(next) { guardar("marketing-biblioteca", next, () => setBibliotecaMarketing(next)); }
+  async function persistContenidoMarketing(next) { guardar("marketing-contenido", next, () => setContenidoMarketing(next)); }
   async function persistEmpleadosSueldo(next) { guardar("empleados-sueldo", next, () => setEmpleadosSueldo(next)); }
   async function persistLiquidaciones(next) { guardar("liquidaciones-sueldo", next, () => setLiquidaciones(next)); }
 
@@ -1475,6 +1490,8 @@ function App() {
             liquidaciones={liquidaciones} onChangeLiquidaciones={persistLiquidaciones}
             proveedores={proveedores} onChangeProveedores={persistProveedores}
             gastosFijosPlantillas={gastosFijosPlantillas} onChangeGastosFijosPlantillas={persistGastosFijosPlantillas}
+            bibliotecaMarketing={bibliotecaMarketing} onChangeBibliotecaMarketing={persistBibliotecaMarketing}
+            contenidoMarketing={contenidoMarketing} onChangeContenidoMarketing={persistContenidoMarketing}
           />
         )}
       </div>
@@ -6080,6 +6097,177 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   );
 }
 
+function BibliotecaMarketingPanel({ biblioteca, onChange }) {
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleFiles(e) {
+    const archivos = Array.from(e.target.files || []);
+    if (archivos.length === 0) return;
+    setError(""); setSubiendo(true);
+    try {
+      const nuevos = [];
+      for (const archivo of archivos) {
+        const url = await documentosStore.subirArchivoMarketing(archivo);
+        nuevos.push({ id: uid(), url, nombre: archivo.name, fecha: new Date().toISOString().slice(0, 10) });
+      }
+      onChange([...nuevos, ...(biblioteca || [])]);
+    } catch (err) {
+      setError("No se pudo subir. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      setSubiendo(false);
+      e.target.value = "";
+    }
+  }
+
+  async function borrar(item) {
+    if (!window.confirm("¿Borrar este archivo de la biblioteca?")) return;
+    try { await documentosStore.borrarArchivoMarketing(item.url); } catch (e) { /* si ya no existe, seguimos igual */ }
+    onChange((biblioteca || []).filter((b) => b.id !== item.id));
+  }
+
+  return (
+    <div className="dg-page">
+      <p className="dg-hint" style={{ marginBottom: 14 }}>
+        Subí fotos reales de tus espejos acá. Desde el Calendario de contenido las vas a poder usar como referencia para que la IA genere imágenes de marketing.
+      </p>
+      <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 16 }}>
+        <label className="dg-btn-primary" style={{ cursor: "pointer" }}>
+          {subiendo ? <Loader2 size={14} className="dg-spin" /> : <PackagePlus size={14} />} {subiendo ? "Subiendo..." : "Subir fotos"}
+          <input type="file" accept="image/*" multiple onChange={handleFiles} disabled={subiendo} style={{ display: "none" }} />
+        </label>
+      </div>
+      {error && <div className="dg-error" style={{ marginBottom: 12 }}>{error}</div>}
+      {(biblioteca || []).length === 0 && <div className="dg-empty">Todavía no subiste ninguna foto.</div>}
+      <div className="dg-marketing-grid">
+        {(biblioteca || []).map((item) => (
+          <div className="dg-marketing-thumb" key={item.id}>
+            <img src={item.url} alt={item.nombre} />
+            <button type="button" className="dg-marketing-thumb-del" onClick={() => borrar(item)}><Trash2 size={13} /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const CONTENIDO_TIPOS = ["Historia", "Post", "Reel/Video", "Carrusel"];
+const CONTENIDO_ESTADOS = ["Idea", "En progreso", "Listo", "Publicado"];
+
+function emptyContenido() {
+  return { id: uid(), fecha: new Date().toISOString().slice(0, 10), tipo: "Post", estado: "Idea", texto: "", imagenUrl: "", promptImagen: "" };
+}
+
+function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
+  const [editando, setEditando] = useState(null);
+  const [generandoImagen, setGenerandoImagen] = useState(false);
+  const [errorImagen, setErrorImagen] = useState("");
+
+  const ordenado = [...(contenido || [])].sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+
+  function guardar(item) {
+    const existe = (contenido || []).some((c) => c.id === item.id);
+    onChange(existe ? contenido.map((c) => (c.id === item.id ? item : c)) : [item, ...(contenido || [])]);
+    setEditando(null);
+  }
+  function borrar(id) {
+    if (!window.confirm("¿Borrar esta idea de contenido?")) return;
+    onChange((contenido || []).filter((c) => c.id !== id));
+  }
+
+  async function generarImagen() {
+    if (!editando?.promptImagen?.trim()) return;
+    setErrorImagen(""); setGenerandoImagen(true);
+    try {
+      const resp = await fetch("/api/generar-imagen-marketing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: editando.promptImagen.trim() }),
+      });
+      const datos = await resp.json();
+      if (!resp.ok) throw new Error(datos?.error || "Falló la generación.");
+      const url = await documentosStore.subirImagenGenerada(datos.base64);
+      setEditando((d) => ({ ...d, imagenUrl: url }));
+    } catch (err) {
+      setErrorImagen(err.message || "No se pudo generar la imagen.");
+    } finally {
+      setGenerandoImagen(false);
+    }
+  }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 16 }}>
+        <button className="dg-btn-primary" onClick={() => setEditando(emptyContenido())}><Plus size={14} /> Nueva idea de contenido</button>
+      </div>
+
+      {ordenado.length === 0 && <div className="dg-empty">Todavía no armaste ningún contenido.</div>}
+      <div className="dg-task-list">
+        {ordenado.map((c) => (
+          <div className="dg-task dg-pago-row" key={c.id}>
+            {c.imagenUrl && <img src={c.imagenUrl} alt="" className="dg-marketing-mini-thumb" />}
+            <div className="dg-pago-info">
+              <span>{c.tipo} — {c.texto ? c.texto.slice(0, 60) : "Sin texto todavía"}{c.texto?.length > 60 ? "…" : ""}</span>
+              <span className="dg-pago-meta">{c.fecha} · {c.estado}</span>
+            </div>
+            <button className="dg-icon-btn" onClick={() => setEditando(c)}><Pencil size={14} /></button>
+            <button className="dg-icon-btn dg-task-del" onClick={() => borrar(c.id)}><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+
+      {editando && (
+        <div className="dg-overlay" onClick={() => setEditando(null)}>
+          <div className="dg-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head">
+              <div className="dg-modal-title">{(contenido || []).some((c) => c.id === editando.id) ? "Editar contenido" : "Nueva idea de contenido"}</div>
+              <button className="dg-icon-btn" onClick={() => setEditando(null)}><X size={18} /></button>
+            </div>
+            <div className="dg-form">
+              <div className="dg-form-row">
+                <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={editando.fecha} onChange={(e) => setEditando({ ...editando, fecha: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label>Tipo</label>
+                  <select value={editando.tipo} onChange={(e) => setEditando({ ...editando, tipo: e.target.value })}>
+                    {CONTENIDO_TIPOS.map((t) => (<option key={t}>{t}</option>))}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}><label>Estado</label>
+                  <select value={editando.estado} onChange={(e) => setEditando({ ...editando, estado: e.target.value })}>
+                    {CONTENIDO_ESTADOS.map((s) => (<option key={s}>{s}</option>))}
+                  </select>
+                </div>
+              </div>
+              <label>Texto / caption</label>
+              <textarea rows={3} value={editando.texto} onChange={(e) => setEditando({ ...editando, texto: e.target.value })} placeholder="El texto que va a acompañar la publicación" />
+
+              <label>Describí la imagen que querés generar</label>
+              <input value={editando.promptImagen} onChange={(e) => setEditando({ ...editando, promptImagen: e.target.value })} placeholder="Ej: espejo redondo con luz cálida en un baño moderno minimalista" />
+              <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 6 }}>
+                <button type="button" className="dg-btn-ghost dg-mini-btn" disabled={generandoImagen || !editando.promptImagen?.trim()} onClick={generarImagen}>
+                  {generandoImagen ? <Loader2 size={13} className="dg-spin" /> : <Sparkles size={13} />} {generandoImagen ? "Generando..." : "Generar imagen con IA"}
+                </button>
+              </div>
+              {errorImagen && <div className="dg-error" style={{ marginTop: 6 }}>{errorImagen}</div>}
+              {editando.imagenUrl && (
+                <div style={{ marginTop: 10 }}>
+                  <img src={editando.imagenUrl} alt="Generada" style={{ width: "100%", borderRadius: 10, maxHeight: 260, objectFit: "cover" }} />
+                </div>
+              )}
+              {biblioteca && biblioteca.length > 0 && (
+                <p className="dg-hint" style={{ marginTop: 8 }}>Tip: describí tu espejo real con detalle (forma, luz, ambiente) para que la imagen generada se le parezca lo más posible — no es una foto real, es una ilustración creada por IA.</p>
+              )}
+            </div>
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              <button className="dg-btn-primary" onClick={() => guardar(editando)}><Save size={14} /> Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AccesoKommoPanel({ kommoSubdominio, isAdmin }) {
   const configurado = kommoSubdominio?.trim();
   const link = configurado ? `https://${kommoSubdominio.trim()}.kommo.com` : null;
@@ -6723,6 +6911,7 @@ function SectorPage({
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
+  bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
 }) {
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
   const [subpage, setSubpage] = useState(tabs[0].id);
@@ -6811,6 +7000,14 @@ function SectorPage({
       {subpage === "crm" && (
         canQuote ? <AccesoKommoPanel kommoSubdominio={kommoSubdominio} isAdmin={isAdmin} />
           : <LockedPage label="El CRM" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "biblioteca" && sector.id === "marketing" && (
+        <BibliotecaMarketingPanel biblioteca={bibliotecaMarketing} onChange={onChangeBibliotecaMarketing} />
+      )}
+
+      {subpage === "calendario" && sector.id === "marketing" && (
+        <CalendarioContenidoPanel contenido={contenidoMarketing} onChange={onChangeContenidoMarketing} biblioteca={bibliotecaMarketing} />
       )}
 
       {subpage === "recursos" && <RecursosVentaPanel recursos={recursos} onChange={onChangeRecursos} isAdmin={isAdmin} />}
@@ -7121,6 +7318,11 @@ function Style() {
       .dg-check-inline { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--dg-text-dim); white-space:nowrap; cursor:pointer; }
       .dg-check-inline input { width:auto; }
       .dg-fin-resumen { display:flex; flex-direction:column; gap:16px; }
+      .dg-marketing-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px; }
+      .dg-marketing-thumb { position:relative; aspect-ratio:1; border-radius:10px; overflow:hidden; background:var(--dg-surface-2); }
+      .dg-marketing-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+      .dg-marketing-thumb-del { position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.6); border:none; border-radius:6px; color:#fff; padding:5px; cursor:pointer; }
+      .dg-marketing-mini-thumb { width:44px; height:44px; border-radius:8px; object-fit:cover; flex-shrink:0; }
       .dg-filtros { display:flex; gap:6px; margin-bottom:10px; }
       .dg-filtro-btn { background:transparent; border:1px solid rgba(var(--dg-line-rgb),0.1); color:var(--dg-text-dim); border-radius:100px; padding:5px 12px; font-size:12px; cursor:pointer; }
       .dg-filtro-on { background: rgba(var(--dg-accent-rgb),0.15); border-color:var(--dg-accent); color:var(--dg-accent); }

@@ -14,6 +14,7 @@
 import { supabase } from "./supabaseClient";
 
 const TABLE = "kv_store";
+function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 const SYNC_TOPIC = "decoglass-shared-data-v1";
 const SYNC_EVENT = "kv-change";
 
@@ -193,6 +194,38 @@ export const documentosStore = {
     if (idx === -1) return;
     const ruta = decodeURIComponent(url.slice(idx + marcador.length));
     await supabase.storage.from("remitos").remove([ruta]);
+  },
+
+  // Biblioteca de archivos de Marketing (fotos reales de espejos, para usar
+  // como base de contenido). Requiere el bucket "marketing" en Storage.
+  async subirArchivoMarketing(archivo) {
+    const ext = (archivo.name || "").split(".").pop() || "jpg";
+    const ruta = `biblioteca/${Date.now()}-${uid()}.${ext}`;
+    const { error } = await supabase.storage.from("marketing").upload(ruta, archivo, {
+      contentType: archivo.type || "application/octet-stream",
+      upsert: true,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from("marketing").getPublicUrl(ruta);
+    return data.publicUrl;
+  },
+  async borrarArchivoMarketing(url) {
+    if (!url) return;
+    const marcador = "/storage/v1/object/public/marketing/";
+    const idx = url.indexOf(marcador);
+    if (idx === -1) return;
+    const ruta = decodeURIComponent(url.slice(idx + marcador.length));
+    await supabase.storage.from("marketing").remove([ruta]);
+  },
+  // Sube una imagen ya generada por IA (recibida en base64 desde la función
+  // del servidor) al mismo bucket, para tener una URL pública estable.
+  async subirImagenGenerada(base64, mime = "image/png") {
+    const ruta = `generadas/${Date.now()}-${uid()}.png`;
+    const binario = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const { error } = await supabase.storage.from("marketing").upload(ruta, binario, { contentType: mime, upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from("marketing").getPublicUrl(ruta);
+    return data.publicUrl;
   },
 };
 
