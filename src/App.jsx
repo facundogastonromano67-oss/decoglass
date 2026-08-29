@@ -4637,15 +4637,24 @@ function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
   );
 }
 
-function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar }) {
+function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones }) {
   const [motivo, setMotivo] = useState(opciones[0]);
   const [detalle, setDetalle] = useState("");
+  const [etapa, setEtapa] = useState(etapaOpciones ? etapaOpciones[0].value : undefined);
 
   return (
     <div className="dg-overlay" onClick={onCancelar}>
       <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
         <div className="dg-modal-head"><div className="dg-modal-title">{titulo}</div><button className="dg-icon-btn" onClick={onCancelar}><X size={18} /></button></div>
         <div className="dg-form">
+          {etapaOpciones && (
+            <>
+              <label>¿En qué etapa está el espejo de verdad?</label>
+              <select value={etapa} onChange={(e) => setEtapa(e.target.value)}>
+                {etapaOpciones.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              </select>
+            </>
+          )}
           <label>Motivo</label>
           <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
             {opciones.map((o) => (<option key={o}>{o}</option>))}
@@ -4655,7 +4664,7 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar }) {
         </div>
         <div className="dg-form-actions">
           <button className="dg-btn-ghost" onClick={onCancelar}>Volver</button>
-          <button className="dg-btn-primary" onClick={() => onConfirmar(detalle.trim() ? `${motivo} — ${detalle.trim()}` : motivo)}>Confirmar</button>
+          <button className="dg-btn-primary" onClick={() => onConfirmar(detalle.trim() ? `${motivo} — ${detalle.trim()}` : motivo, etapa)}>Confirmar</button>
         </div>
       </div>
     </div>
@@ -5690,26 +5699,50 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     onChange(pedidos.map((p) => (p.id === id ? { ...p, ...cambios } : p)));
     if (onRegistrar) onRegistrar(accion, `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${detalle}`);
   }
+  const esAdmin = session?.role === "admin";
   function reabrirProduccion(id) { setMenuAbierto(null); setPedidoParaReabrir(id); }
-  function confirmarReabrirProduccion(motivo) {
+  function confirmarReabrirProduccion(motivo, etapaElegida) {
+    // etapaElegida: "" (nada hecho, ni cortar) | "cortado" | "armado" (ya cortado y armado, falta embalar)
+    // Solo el administrador puede elegir la etapa; los encargados siempre vuelven a "falta embalar" (el comportamiento de siempre).
+    const etapa = esAdmin ? etapaElegida : "armado";
     const id = pedidoParaReabrir;
     const pedidoActual = pedidos.find((p) => p.id === id);
-    onChange(pedidos.map((p) => (p.id === id ? {
-      ...p,
-      estado: "Para armar",
-      produccionEtapa: "armado",
-      produccionEmbaladoFecha: "",
-      produccionEmbaladoPor: "",
-      produccionListaFecha: "",
-      clienteAvisado: false,
-      clienteAvisadoFecha: "",
-      envioConfirmado: false,
-      envioConfirmadoFecha: "",
-      entregadoFecha: "",
-      motivoReproceso: motivo,
-      cantidadReprocesos: (Number(p.cantidadReprocesos) || 0) + 1,
-    } : p)));
-    if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — vuelve a embalado — motivo: ${motivo}`);
+    onChange(pedidos.map((p) => {
+      if (p.id !== id) return p;
+      const esEsmerilado = pedidoProcesoTaller(p) === "esmerilados";
+      const esBiselado = pedidoProcesoTaller(p) === "biselados";
+      const cambiosBase = {
+        ...p,
+        produccionEtapa: etapa,
+        produccionListaFecha: "", clienteAvisado: false, clienteAvisadoFecha: "",
+        envioConfirmado: false, envioConfirmadoFecha: "", entregadoFecha: "",
+        produccionEmbaladoFecha: "", produccionEmbaladoPor: "",
+        motivoReproceso: motivo, cantidadReprocesos: (Number(p.cantidadReprocesos) || 0) + 1,
+      };
+      if (etapa === "armado") {
+        // Ya cortado (y si vino de afuera, ya grabado/biselado) — falta armar y embalar.
+        return { ...cambiosBase, estado: "Para armar" };
+      }
+      if (etapa === "cortado") {
+        // Ya cortado, pero todavía no se armó ni se mandó a grabar/biselar si correspondía.
+        return {
+          ...cambiosBase,
+          estado: esEsmerilado ? "Mandar a grabar" : esBiselado ? "Sin pedir" : "Verificado",
+          produccionArmadoFecha: "", produccionArmadoPor: "",
+        };
+      }
+      // etapa === "": nada hecho todavía, ni siquiera cortado — vuelve al principio de todo.
+      return {
+        ...cambiosBase,
+        estado: "Verificado",
+        produccionCortadoFecha: "", produccionCortadoPor: "",
+        produccionArmadoFecha: "", produccionArmadoPor: "",
+        grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "",
+        biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "",
+      };
+    }));
+    const etapaLabel = etapa === "armado" ? "falta embalar" : etapa === "cortado" ? "falta armar" : "no se empezó (falta cortar)";
+    if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${etapaLabel} — motivo: ${motivo}`);
     setPedidoParaReabrir(null);
   }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); setMenuAbierto(null); }
@@ -5952,6 +5985,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           opciones={MOTIVOS_REPROCESO}
           onCancelar={() => setPedidoParaReabrir(null)}
           onConfirmar={confirmarReabrirProduccion}
+          etapaOpciones={esAdmin ? [
+            { value: "armado", label: "Ya está cortado y armado — falta embalar" },
+            { value: "cortado", label: "Ya está cortado — falta armar" },
+            { value: "", label: "No se empezó — falta cortar" },
+          ] : undefined}
         />
       )}
     </div>
