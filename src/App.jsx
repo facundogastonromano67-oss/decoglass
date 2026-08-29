@@ -6,7 +6,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -321,7 +321,7 @@ const SECTOR_SUBPAGES = {
   ventas: [
     { id: "presupuestador", label: "Presupuestador" },
     { id: "pedidos", label: "Pedidos" },
-    { id: "crm", label: "CRM" },
+    { id: "crm", label: "CRM (Kommo)" },
     { id: "recursos", label: "Catálogos y precios" },
     { id: "tareas", label: "Tareas" },
   ],
@@ -1694,6 +1694,7 @@ function fechaEntregaCorta(fechaISO) {
 
 function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sectors, quoteConfig }) {
   const [resumenAlertas, setResumenAlertas] = useState(undefined);
+  const [verDetalleMargen, setVerDetalleMargen] = useState(false);
 
   useEffect(() => {
     let activo = true;
@@ -1760,7 +1761,14 @@ function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sector
 
         {quoteConfig && (
           <div className="dg-panel-card">
-            <div className="dg-panel-card-label">Margen estimado del mes (entregados)</div>
+            <div className="dg-panel-card-label">
+              Margen estimado del mes (entregados)
+              {ventaEntregadosMes > 0 && (
+                <button type="button" className="dg-panel-info-btn" onClick={() => setVerDetalleMargen(true)} title="Ver el detalle pedido por pedido">
+                  <AlertCircle size={13} />
+                </button>
+              )}
+            </div>
             {ventaEntregadosMes > 0 ? (
               <>
                 <div className="dg-panel-card-valor" style={{ color: margenMes >= 0 ? "var(--dg-success)" : "var(--dg-danger)" }}>
@@ -1837,6 +1845,37 @@ function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sector
           </ResponsiveContainer>
         </div>
       </div>
+
+      {verDetalleMargen && (
+        <div className="dg-overlay" onClick={() => setVerDetalleMargen(false)}>
+          <div className="dg-modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head">
+              <div className="dg-modal-title">Detalle del margen — {labelMes(mesActual)}</div>
+              <button className="dg-icon-btn" onClick={() => setVerDetalleMargen(false)}><X size={18} /></button>
+            </div>
+            <p className="dg-hint" style={{ marginBottom: 12 }}>
+              Un pedido en rojo es uno donde el costo estimado quedó por encima de lo que se cobró — puede ser porque se vendió con descuento, porque el "Monto" quedó mal cargado, o porque el tipo de espejo se está estimando distinto a como es en realidad.
+            </p>
+            <div className="dg-task-list" style={{ marginBottom: 0, maxHeight: "50vh", overflowY: "auto" }}>
+              {entregadosMesParaMargen
+                .map((p) => ({ p, costo: estimarCostoPedido(p, quoteConfig), venta: Number(p.monto) || 0 }))
+                .sort((a, b) => (a.venta - a.costo) - (b.venta - b.costo))
+                .map(({ p, costo, venta }) => {
+                  const margenItem = venta - costo;
+                  return (
+                    <div className="dg-task dg-pago-row" key={p.id}>
+                      <div className="dg-pago-info">
+                        <span>#{p.orden} · {p.cliente || "Sin nombre"}</span>
+                        <span className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · venta {money(venta)} − costo est. {money(costo)}</span>
+                      </div>
+                      <span className="dg-pago-monto" style={{ color: margenItem >= 0 ? "var(--dg-success)" : "var(--dg-danger)" }}>{money(margenItem)}</span>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2721,7 +2760,7 @@ function SueldosPanel({ empleados, onChangeEmpleados, liquidaciones, onChangeLiq
                       return (
                         <div className="dg-workshop-week" key={numero}>
                           <div><strong>Semana {numero}</strong><small>Días {rangoSemanaLabel(periodo, numero)}</small></div>
-                          <span><small>Horas extra</small><strong>{he || 0} hs</strong></span>
+                          <span><small>Horas extra</small><strong>{he || 0} hs{he > 0 ? ` · ${money(he * nnum(e.valorHoraExtra))}` : ""}</strong></span>
                           <span><small>Adelanto</small><strong className={adelanto ? "dg-td-neg" : ""}>{adelanto ? `−${money(adelanto)}` : money(0)}</strong></span>
                         </div>
                       );
@@ -3256,7 +3295,7 @@ function emptyPedido(prefill) {
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
-    motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0,
+    motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "",
   };
 }
 
@@ -3954,7 +3993,7 @@ function validarPedido(p) {
   return errores;
 }
 
-function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio }) {
+function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio, stockEspejos, onChangeStockEspejos }) {
   const [quickView, setQuickView] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [filtroVendedor, setFiltroVendedor] = useState("todos");
@@ -4069,6 +4108,11 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     onChange(normalizarOrdenesPorGrupo(pedidosActualizados));
     if (onRegistrar) onRegistrar(exists ? "Editó un pedido" : "Cargó un pedido", `#${toSave.orden} — ${toSave.cliente} — ${money(toSave.monto)}`);
 
+    if (!exists && toSave.stockEspejoId && stockEspejos && onChangeStockEspejos) {
+      const cantidadUsada = Number(toSave.cant) || 1;
+      onChangeStockEspejos(stockEspejos.map((s) => (s.id === toSave.stockEspejoId ? { ...s, cantidad: Math.max(0, Number(s.cantidad || 0) - cantidadUsada) } : s)));
+    }
+
     if (opts?.addAnother) {
       setOpenPedido(null);
       setCreating(false);
@@ -4105,6 +4149,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     const estadoInicialFabrica = pedidoProcesoTaller(p) === "biselados" ? "Sin pedir" : "Verificado";
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString() } : x)));
     if (onRegistrar) onRegistrar("Verificó un pedido", `#${p.orden} — ${p.cliente} — habilitado para fábrica`);
+  }
+  function facturarGrupo(espejosDelGrupo) {
+    const idsGrupo = new Set(espejosDelGrupo.map((e) => e.id));
+    onChange(pedidos.map((x) => (idsGrupo.has(x.id) ? { ...x, facturado: true } : x)));
+    const primero = espejosDelGrupo[0];
+    if (onRegistrar && primero) onRegistrar("Facturó un pedido completo", `#${primero.orden} — ${primero.cliente} — ${espejosDelGrupo.length} espejo(s)`);
   }
   function reabrir(p) {
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Espejo listo", entregadoFecha: "" } : x)));
@@ -4237,6 +4287,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
             if (!anterior) return actual;
             return (actual.numero / actual.total) < (anterior.numero / anterior.total) ? actual : anterior;
           }, null);
+          const todosFacturados = espejos.every((e) => e.facturado);
           return (
             <details
               className={`dg-pedido-card dg-order-card dg-order-disclosure dg-order-group-card ${grupoTieneListos ? "dg-order-group-con-listos" : ""} ${grupoCompletamenteListo ? "dg-order-group-listo" : ""}`}
@@ -4261,6 +4312,16 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                   </small>
                   <strong>{paso?.numero}/{paso?.total} · {paso?.label}</strong>
                 </span>
+                {canEditFull && (
+                  <button
+                    type="button"
+                    className={`dg-order-compact-facturar ${todosFacturados ? "dg-order-compact-facturado" : ""}`}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!todosFacturados) facturarGrupo(espejos); }}
+                    title={todosFacturados ? "Pedido completo facturado" : "Marcar todo el pedido como facturado (una sola factura)"}
+                  >
+                    {todosFacturados ? <CheckCircle2 size={13} /> : <FileText size={13} />} {todosFacturados ? "Facturado" : "Facturar todo"}
+                  </button>
+                )}
                 <span className={`dg-order-compact-item dg-order-compact-balance ${saldo > 0 ? "dg-order-balance-pending" : "dg-order-balance-paid"}`}>
                   <small>Saldo restante</small>
                   <strong>{saldo > 0 ? money(saldo) : "Saldado"}</strong>
@@ -4348,6 +4409,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           onClose={() => { setOpenPedido(null); setCreating(false); setNextDraft(null); }}
           onSave={savePedido}
           onDelete={openPedido && puedeBorrar ? () => removePedido(openPedido.id) : null}
+          stockEspejos={stockEspejos}
+          esNuevo={!openPedido}
         />
       )}
 
@@ -4671,7 +4734,7 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones 
   );
 }
 
-function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete }) {
+function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo }) {
   const [draft, setDraft] = useState(() => normalizarPedidoFunciones(pedido));
   const [intentoGuardar, setIntentoGuardar] = useState(false);
   const readOnly = !canEditFull && !canEditEstadoOnly;
@@ -4753,6 +4816,27 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Tono de luz"><select disabled={!canEditFull} value={draft.tono} onChange={(e) => set("tono", e.target.value)}>{TONO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
         </div>
+
+        {esNuevo && stockEspejos && stockEspejos.length > 0 && (
+          <div className="dg-section-card">
+            <div className="dg-section-header"><Package size={14} /> ¿Es un espejo que ya está en stock?</div>
+            <div className="dg-field-grid">
+              <Field label="Espejo de stock (opcional)">
+                <select disabled={!canEditFull} value={draft.stockEspejoId || ""} onChange={(e) => set("stockEspejoId", e.target.value)}>
+                  <option value="">No — se fabrica a medida</option>
+                  {stockEspejos.map((s) => (
+                    <option key={s.id} value={s.id} disabled={Number(s.cantidad) <= 0}>
+                      {s.modelo ? `#${s.modelo} — ` : ""}{s.descripcion} ({s.cantidad} disponible{s.cantidad === 1 ? "" : "s"})
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            {draft.stockEspejoId && (
+              <p className="dg-hint" style={{ marginTop: 6 }}>Al guardar, se descuenta {Number(draft.cant) || 1} unidad(es) de este modelo del stock de espejos.</p>
+            )}
+          </div>
+        )}
 
         <div className="dg-section-card">
           <div className="dg-section-header"><User size={14} /> Cliente y pago</div>
@@ -5996,6 +6080,34 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   );
 }
 
+function AccesoKommoPanel({ kommoSubdominio, isAdmin }) {
+  const configurado = kommoSubdominio?.trim();
+  const link = configurado ? `https://${kommoSubdominio.trim()}.kommo.com` : null;
+
+  return (
+    <div className="dg-page">
+      <div className="dg-section-card" style={{ textAlign: "center", padding: "36px 24px" }}>
+        <ExternalLink size={32} style={{ color: "var(--dg-accent)", marginBottom: 12 }} />
+        <h2 style={{ margin: "0 0 8px", fontFamily: "'Space Grotesk', sans-serif" }}>El CRM de DECOGLASS es Kommo</h2>
+        <p className="dg-hint" style={{ maxWidth: 440, margin: "0 auto 20px" }}>
+          Los leads, el seguimiento de clientes y el pipeline de ventas se manejan directamente en Kommo, no acá adentro.
+        </p>
+        {link ? (
+          <a className="dg-btn-primary" href={link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex" }}>
+            <ExternalLink size={15} /> Abrir Kommo
+          </a>
+        ) : (
+          <div className="dg-empty" style={{ maxWidth: 440, margin: "0 auto" }}>
+            {isAdmin
+              ? <>Todavía no configuraste el subdominio de Kommo. Entrá a Ajustes → Integraciones para completarlo y que este botón funcione.</>
+              : <>Todavía no está configurado el acceso directo a Kommo. Pedile a un administrador que lo complete en Ajustes.</>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin }) {
   const [soyYo, setSoyYo] = useState(vendedores[0] || "");
   const [filtroVendedor, setFiltroVendedor] = useState("todos");
@@ -6697,7 +6809,7 @@ function SectorPage({
       )}
 
       {subpage === "crm" && (
-        canQuote ? <CRMPage leads={leads} onLeadsChange={onChangeLeads} vendedores={vendedores} onVendedoresChange={onChangeVendedores} isAdmin={isAdmin} />
+        canQuote ? <AccesoKommoPanel kommoSubdominio={kommoSubdominio} isAdmin={isAdmin} />
           : <LockedPage label="El CRM" onLogin={onRequestLogin} />
       )}
 
@@ -6705,7 +6817,7 @@ function SectorPage({
 
       {subpage === "pedidos" && sector.id !== "fabrica" && (
         canSeePedidos ? (
-          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} kommoSubdominio={kommoSubdominio} />
+          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} kommoSubdominio={kommoSubdominio} stockEspejos={stockEspejos} onChangeStockEspejos={onChangeStockEspejos} />
         ) : <LockedPage label="Pedidos" onLogin={onRequestLogin} />
       )}
 
@@ -6898,7 +7010,9 @@ function Style() {
       .dg-panel-control { max-width:960px; }
       .dg-panel-grid { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:12px; margin:18px 0 22px; }
       .dg-panel-card { background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:14px; padding:16px; }
-      .dg-panel-card-label { font-size:11.5px; color:var(--dg-text-dim); font-weight:600; margin-bottom:8px; }
+      .dg-panel-card-label { font-size:11.5px; color:var(--dg-text-dim); font-weight:600; margin-bottom:8px; display:flex; align-items:center; gap:5px; }
+      .dg-panel-info-btn { display:inline-flex; color:var(--dg-text-faint); background:none; border:none; padding:0; cursor:pointer; }
+      .dg-panel-info-btn:hover { color:var(--dg-accent); }
       .dg-panel-card-valor { font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:22px; }
       .dg-panel-card-variacion { display:flex; align-items:center; gap:5px; font-size:11.5px; margin-top:8px; color:var(--dg-text-faint); }
       .dg-panel-up { color:var(--dg-success); }
@@ -7878,6 +7992,10 @@ function Style() {
       .dg-order-compact-method strong { display:flex; align-items:center; gap:4px; }
       .dg-order-compact-step strong { color:var(--dg-accent-2); }
       .dg-order-compact-balance { align-items:flex-end; text-align:right; }
+      .dg-order-compact-facturar { display:flex; align-items:center; gap:5px; padding:6px 10px; border-radius:8px; font-size:11.5px; font-weight:700;
+        background:rgba(var(--dg-accent-rgb),0.12); border:1px solid rgba(var(--dg-accent-rgb),0.35); color:var(--dg-accent); white-space:nowrap; flex-shrink:0; }
+      .dg-order-compact-facturar:hover { background:rgba(var(--dg-accent-rgb),0.22); }
+      .dg-order-compact-facturado { background:rgba(var(--dg-success-rgb),0.1); border-color:rgba(var(--dg-success-rgb),0.3); color:var(--dg-success); cursor:default; }
       .dg-order-compact-balance strong { font-family:'JetBrains Mono',monospace; font-size:11px; }
       .dg-order-balance-pending strong { color:var(--dg-danger); }
       .dg-order-balance-paid strong { color:var(--dg-success); }
