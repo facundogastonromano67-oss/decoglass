@@ -6759,6 +6759,7 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
   const [sectorId, setSectorId] = useState(sectors[0]?.id || "");
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
+  const [verClave, setVerClave] = useState(false);
   const bootstrap = usuarios.length === 0; // nadie usó la app todavía: el primero en crear cuenta es admin
 
   // Entra con el usuario que la persona ya conoce, pero verificando contra el
@@ -6851,8 +6852,11 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
           <label>Usuario</label>
           <input value={nombre} onChange={(e) => setNombre(e.target.value)} autoCapitalize="off" autoCorrect="off" />
           <label>Clave{bootstrap || modo === "solicitar" ? " nueva" : ""}</label>
-          <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} />
-          {(bootstrap || modo === "solicitar") && (<><label>Repetir clave</label><input type="password" value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
+          <input type={verClave ? "text" : "password"} value={clave} onChange={(e) => setClave(e.target.value)} />
+          {(bootstrap || modo === "solicitar") && (<><label>Repetir clave</label><input type={verClave ? "text" : "password"} value={clave2} onChange={(e) => setClave2(e.target.value)} /></>)}
+          <button type="button" className="dg-btn-ghost" style={{ alignSelf: "flex-start", fontSize: 13, padding: "2px 4px", opacity: 0.85 }} onClick={() => setVerClave((v) => !v)}>
+            {verClave ? "Ocultar clave" : "Ver clave"}
+          </button>
           {!bootstrap && modo === "solicitar" && (
             <>
               <label>Sos</label>
