@@ -2130,7 +2130,6 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
   const [sectorId, setSectorId] = useState(sectors[0]?.id || "");
   const [error, setError] = useState("");
   const [aviso, setAviso] = useState("");
-  const [verClaves, setVerClaves] = useState(false);
 
   function agregar() {
     setError("");
@@ -2154,6 +2153,41 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
   function aprobar(id) { onChange(usuarios.map((x) => (x.id === id ? { ...x, aprobado: true } : x))); }
   function rechazar(id) { onChange(usuarios.filter((x) => x.id !== id)); }
 
+  // --- Solicitudes de acceso (auto-registro -> tabla profiles) ---
+  const [solicitudes, setSolicitudes] = useState([]);
+  const [msgSol, setMsgSol] = useState("");
+  async function cargarSolicitudes() {
+    try {
+      const { data } = await supabase.from("profiles").select("id, nombre, rol, sector_id").eq("aprobado", false);
+      setSolicitudes(data || []);
+    } catch (e) { setSolicitudes([]); }
+  }
+  useEffect(() => { cargarSolicitudes(); }, []);
+  async function aprobarSolicitud(id) {
+    setMsgSol("");
+    try {
+      const { error: e } = await supabase.from("profiles").update({ aprobado: true }).eq("id", id);
+      if (e) throw e;
+      setMsgSol("Cuenta aprobada. La persona ya puede entrar.");
+      cargarSolicitudes();
+    } catch (e) { setMsgSol("No se pudo aprobar. Probá de nuevo."); }
+  }
+  async function rechazarSolicitud(id) {
+    setMsgSol("");
+    try {
+      const { data: ses } = await supabase.auth.getSession();
+      const resp = await fetch("/api/rechazar-cuenta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ses?.session?.access_token || ""}` },
+        body: JSON.stringify({ id }),
+      });
+      const d = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(d.error || "Error");
+      setMsgSol("Solicitud rechazada.");
+      cargarSolicitudes();
+    } catch (e) { setMsgSol(e.message || "No se pudo rechazar."); }
+  }
+
   const pendientes = usuarios.filter((u) => u.aprobado === false);
   const aprobados = usuarios.filter((u) => u.aprobado !== false);
 
@@ -2167,9 +2201,25 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
         Un solo formulario de acceso para todos: usuario y clave. El sistema reconoce solo si es <strong>administrador</strong> (ve finanzas, comisiones, sueldos y ajustes) o <strong>encargado/operario</strong> de un sector.
       </p>
 
-      <button className="dg-btn-ghost" style={{ marginBottom: 14 }} onClick={() => setVerClaves((v) => !v)}>
-        {verClaves ? <XCircle size={14} /> : <ShieldCheck size={14} />} {verClaves ? "Ocultar" : "Mostrar"} las claves
-      </button>
+      {solicitudes.length > 0 && (
+        <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-warning-rgb),0.35)" }}>
+          <div className="dg-section-header" style={{ color: "var(--dg-warning)" }}><AlertTriangle size={14} /> Solicitudes de acceso ({solicitudes.length})</div>
+          <div className="dg-task-list" style={{ marginBottom: 0 }}>
+            {solicitudes.map((sol) => (
+              <div className="dg-task" key={sol.id}>
+                <UserPlus size={14} style={{ color: "var(--dg-warning)" }} />
+                <div className="dg-pago-info">
+                  <span>{sol.nombre}</span>
+                  <span className="dg-pago-meta">Pidió entrar como {rolLabel(sol.rol)}{sol.sector_id ? ` de ${sectorNombre(sol.sector_id)}` : ""}</span>
+                </div>
+                <button className="dg-btn-ghost dg-mini-btn" onClick={() => rechazarSolicitud(sol.id)}><XCircle size={13} /> Rechazar</button>
+                <button className="dg-btn-primary dg-mini-btn" onClick={() => aprobarSolicitud(sol.id)}><Check size={13} /> Aprobar</button>
+              </div>
+            ))}
+          </div>
+          {msgSol && <div style={{ marginTop: 8, fontSize: 12, color: "var(--dg-text-dim)" }}>{msgSol}</div>}
+        </div>
+      )}
 
       {pendientes.length > 0 && (
         <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-warning-rgb),0.35)" }}>
@@ -2181,7 +2231,7 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
                 <div className="dg-pago-info">
                   <span>{u.nombre}</span>
                   <span className="dg-pago-meta">
-                    Pidió ser {rolLabel(u.rol)}{u.sectorId ? ` de ${sectorNombre(u.sectorId)}` : ""} · {verClaves ? `Clave: ${u.clave}` : "Clave: ••••••••"}
+                    Pidió ser {rolLabel(u.rol)}{u.sectorId ? ` de ${sectorNombre(u.sectorId)}` : ""}
                   </span>
                 </div>
                 <button className="dg-btn-ghost dg-mini-btn" onClick={() => rechazar(u.id)}><XCircle size={13} /> Rechazar</button>
@@ -2201,7 +2251,7 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
               <div className="dg-pago-info">
                 <span>{u.nombre}{u.nombre === session?.nombre ? " (vos)" : ""}</span>
                 <span className="dg-pago-meta">
-                  {rolLabel(u.rol)}{u.sectorId ? ` · ${sectorNombre(u.sectorId)}` : ""} · {verClaves ? `Clave: ${u.clave}` : "Clave: ••••••••"}
+                  {rolLabel(u.rol)}{u.sectorId ? ` · ${sectorNombre(u.sectorId)}` : ""}
                 </span>
               </div>
               <button className="dg-icon-btn dg-task-del" onClick={() => quitar(u.id)}><Trash2 size={14} /></button>
@@ -6801,13 +6851,21 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
       if (!errAuth && data?.user) {
         let perfil = null;
         try {
-          const r = await supabase.from("profiles").select("nombre, rol, sector_id").eq("id", data.user.id).maybeSingle();
+          const r = await supabase.from("profiles").select("nombre, rol, sector_id, aprobado").eq("id", data.user.id).maybeSingle();
           perfil = r.data;
-        } catch (e) { /* si no se pudo leer el perfil, uso valores por defecto */ }
-        const rolReal = perfil?.rol || "operario";
-        const nombreMostrar = perfil?.nombre || usuario;
+        } catch (e) { /* decido abajo */ }
+        if (!perfil) {
+          await supabase.auth.signOut();
+          return setError("Tu cuenta no está habilitada. Hablá con un administrador.");
+        }
+        if (perfil.aprobado === false) {
+          await supabase.auth.signOut();
+          return setError("Tu cuenta está pendiente de aprobación por un administrador.");
+        }
+        const rolReal = perfil.rol || "operario";
+        const nombreMostrar = perfil.nombre || usuario;
         if (rolReal === "admin") onSuccess({ role: "admin", nombre: nombreMostrar, via: "portero" });
-        else onSuccess({ role: "sector", sectorId: perfil?.sector_id || null, tipo: rolReal, nombre: nombreMostrar, via: "portero" });
+        else onSuccess({ role: "sector", sectorId: perfil.sector_id || null, tipo: rolReal, nombre: nombreMostrar, via: "portero" });
         return;
       }
       const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === usuario.toLowerCase() && u.clave === clave);
@@ -6832,15 +6890,26 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
     onSuccess({ role: "admin", nombre: nuevo.nombre });
   }
 
-  function handleSolicitar() {
+  async function handleSolicitar() {
     setError("");
     if (!nombre.trim()) return setError("Elegí un nombre de usuario.");
-    if (usuarios.some((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase())) return setError("Ya existe un usuario con ese nombre.");
-    if (clave.length < 4) return setError("La clave debe tener al menos 4 caracteres.");
+    if (clave.length < 6) return setError("La clave debe tener al menos 6 caracteres.");
     if (clave !== clave2) return setError("Las claves no coinciden.");
-    const nuevo = { id: uid(), nombre: nombre.trim(), clave, rol, sectorId, aprobado: false };
-    onCreateUsuario(nuevo);
-    setModo("solicitud-enviada");
+    setCargando(true);
+    try {
+      const resp = await fetch("/api/solicitar-cuenta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario: nombre.trim(), clave, rol, sectorId }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) return setError(data.error || "No se pudo enviar la solicitud.");
+      setModo("solicitud-enviada");
+    } catch (e) {
+      setError("No se pudo conectar. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
   }
 
   const submit = bootstrap ? handleCrearPrimerAdmin : modo === "solicitar" ? handleSolicitar : handleEntrar;
