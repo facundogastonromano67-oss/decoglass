@@ -856,14 +856,34 @@ function App() {
     setSession(s);
     saveSession(s);
     setLoginOpen(false);
+    // Recargar los datos ahora que hay sesión: así cada uno ve lo que le
+    // corresponde según su rol, sin tener que refrescar la página.
+    load();
   }
-  function endSession() {
+  async function endSession() {
     setSession(null);
     saveSession(null);
-    try { supabase.auth.signOut(); } catch (e) { /* no bloquea el cierre de sesión local */ }
+    try { await supabase.auth.signOut(); } catch (e) { /* no bloquea el cierre de sesión local */ }
+    // Recargar sin sesión: saca de memoria los datos que ya no corresponden.
+    load();
   }
 
   useEffect(() => { load(); }, []);
+  // Al abrir: si hay una sesión guardada localmente pero el portero ya no la
+  // reconoce (entró con el sistema viejo, o la sesión venció), la limpiamos.
+  // Así vuelve a iniciar sesión y queda una sesión real del portero, que es
+  // lo que necesitan las reglas de seguridad de la base.
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      if (!loadSavedSession()) return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (vivo && !data?.session) { setSession(null); saveSession(null); }
+      } catch (e) { /* sin conexión: no forzamos nada */ }
+    })();
+    return () => { vivo = false; };
+  }, []);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("notificaciones") === "1") {
@@ -6760,19 +6780,20 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
   const [verClave, setVerClave] = useState(false);
-  const bootstrap = usuarios.length === 0; // nadie usó la app todavía: el primero en crear cuenta es admin
+  // El sistema ya está en uso (hay admins en el portero). El modo "crear primer
+  // admin" no aplica más y además la lista vieja ya no se lee sin sesión.
+  const bootstrap = false;
 
   // Entra con el usuario que la persona ya conoce, pero verificando contra el
   // portero (Supabase Auth). Si el portero no lo reconoce (o hay algún problema),
-  // cae al sistema viejo como red de seguridad, así nadie queda afuera durante
-  // la transición. El resto de la app no cambia: la "session" tiene la misma forma.
+  // cae al sistema viejo como red de seguridad. El resto de la app no cambia:
+  // la "session" tiene la misma forma de siempre.
   async function handleEntrar() {
     setError("");
     const usuario = nombre.trim();
     if (!usuario || !clave) return setError("Completá usuario y clave.");
     setCargando(true);
     try {
-      // 1) Portero nuevo
       const { data, error: errAuth } = await supabase.auth.signInWithPassword({
         email: usuarioAEmail(usuario),
         password: clave,
@@ -6789,8 +6810,6 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
         else onSuccess({ role: "sector", sectorId: perfil?.sector_id || null, tipo: rolReal, nombre: nombreMostrar, via: "portero" });
         return;
       }
-
-      // 2) Red de seguridad: sistema viejo
       const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === usuario.toLowerCase() && u.clave === clave);
       if (!match) return setError("Usuario o clave incorrectos.");
       if (match.aprobado === false) return setError("Tu cuenta todavía está pendiente de aprobación por un administrador.");
