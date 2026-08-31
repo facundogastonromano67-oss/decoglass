@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore } from "./lib/storage";
+import { supabase } from "./lib/supabaseClient";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
   Lock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
@@ -712,6 +713,13 @@ function getStatus(tasks) {
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function money(n) { return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n || 0); }
 
+// Convierte el usuario que la persona tipea ("Facundo", "franco") en el
+// email interno con el que está registrada en el portero (Supabase Auth).
+function usuarioAEmail(nombre) {
+  const limpio = (nombre || "").normalize("NFD").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return `${limpio}@decoglass.app`;
+}
+
 const SESSION_KEY = "dg-session-v1";
 function loadSavedSession() {
   try {
@@ -852,6 +860,7 @@ function App() {
   function endSession() {
     setSession(null);
     saveSession(null);
+    try { supabase.auth.signOut(); } catch (e) { /* no bloquea el cierre de sesión local */ }
   }
 
   useEffect(() => { load(); }, []);
@@ -6749,15 +6758,48 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
   const [rol, setRol] = useState("encargado");
   const [sectorId, setSectorId] = useState(sectors[0]?.id || "");
   const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
   const bootstrap = usuarios.length === 0; // nadie usó la app todavía: el primero en crear cuenta es admin
 
-  function handleEntrar() {
+  // Entra con el usuario que la persona ya conoce, pero verificando contra el
+  // portero (Supabase Auth). Si el portero no lo reconoce (o hay algún problema),
+  // cae al sistema viejo como red de seguridad, así nadie queda afuera durante
+  // la transición. El resto de la app no cambia: la "session" tiene la misma forma.
+  async function handleEntrar() {
     setError("");
-    const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === nombre.trim().toLowerCase() && u.clave === clave);
-    if (!match) return setError("Usuario o clave incorrectos.");
-    if (match.aprobado === false) return setError("Tu cuenta todavía está pendiente de aprobación por un administrador.");
-    if (match.rol === "admin") onSuccess({ role: "admin", nombre: match.nombre });
-    else onSuccess({ role: "sector", sectorId: match.sectorId, tipo: match.rol, nombre: match.nombre });
+    const usuario = nombre.trim();
+    if (!usuario || !clave) return setError("Completá usuario y clave.");
+    setCargando(true);
+    try {
+      // 1) Portero nuevo
+      const { data, error: errAuth } = await supabase.auth.signInWithPassword({
+        email: usuarioAEmail(usuario),
+        password: clave,
+      });
+      if (!errAuth && data?.user) {
+        let perfil = null;
+        try {
+          const r = await supabase.from("profiles").select("nombre, rol, sector_id").eq("id", data.user.id).maybeSingle();
+          perfil = r.data;
+        } catch (e) { /* si no se pudo leer el perfil, uso valores por defecto */ }
+        const rolReal = perfil?.rol || "operario";
+        const nombreMostrar = perfil?.nombre || usuario;
+        if (rolReal === "admin") onSuccess({ role: "admin", nombre: nombreMostrar, via: "portero" });
+        else onSuccess({ role: "sector", sectorId: perfil?.sector_id || null, tipo: rolReal, nombre: nombreMostrar, via: "portero" });
+        return;
+      }
+
+      // 2) Red de seguridad: sistema viejo
+      const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === usuario.toLowerCase() && u.clave === clave);
+      if (!match) return setError("Usuario o clave incorrectos.");
+      if (match.aprobado === false) return setError("Tu cuenta todavía está pendiente de aprobación por un administrador.");
+      if (match.rol === "admin") onSuccess({ role: "admin", nombre: match.nombre, via: "viejo" });
+      else onSuccess({ role: "sector", sectorId: match.sectorId, tipo: match.rol, nombre: match.nombre, via: "viejo" });
+    } catch (e) {
+      setError("No se pudo iniciar sesión. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
   }
 
   function handleCrearPrimerAdmin() {
@@ -6831,7 +6873,7 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
                 {modo === "solicitar" ? "Ya tengo cuenta" : "No tengo cuenta"}
               </button>
             )}
-            <button className="dg-btn-primary" onClick={submit}>{bootstrap ? "Crear cuenta y entrar" : modo === "solicitar" ? "Enviar solicitud" : "Entrar"}</button>
+            <button className="dg-btn-primary" onClick={submit} disabled={cargando}>{cargando ? "Entrando…" : bootstrap ? "Crear cuenta y entrar" : modo === "solicitar" ? "Enviar solicitud" : "Entrar"}</button>
           </div>
         </EnterFlow>
       </div>
