@@ -4313,6 +4313,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Espejo listo", entregadoFecha: "" } : x)));
     if (onRegistrar) onRegistrar("Reabrió un pedido", `#${p.orden} — ${p.cliente}`);
   }
+  // Abre la verificacion del primer espejo sin verificar del pedido.
+  // Al confirmar cada uno, el modal salta solo al siguiente (ver abajo).
+  function verificarPrimeroDelGrupo(espejos) {
+    const primero = espejos.find((e) => e.estado === "Sin pasar a fábrica");
+    if (primero) setVerificando(primero);
+  }
   function removePedido(id) {
     const p = pedidos.find((x) => x.id === id);
     onChange(pedidos.filter((x) => x.id !== id));
@@ -4483,32 +4489,42 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               </summary>
 
               <div className="dg-order-expanded">
-                {canEditFull && espejos.length > 1 && (() => {
+                {canEditFull && (() => {
                   const activos = espejos.filter((e) => e.estado !== "Entregado" && e.estado !== "Cancelado");
                   if (activos.length === 0) return null;
+                  const nEsp = activos.length;
+                  const unico = nEsp === 1;
+                  const sinVerificar = activos.filter((e) => e.estado === "Sin pasar a fábrica");
                   const listos = activos.filter((e) => e.estado === "Espejo listo");
-                  const todosListos = listos.length === activos.length;
+                  const enFabrica = activos.filter((e) => e.estado !== "Sin pasar a fábrica" && e.estado !== "Espejo listo");
                   const conEnvio = activos.some((e) => esPedidoConEnvio(e));
                   const faltaAviso = listos.filter((e) => !e.clienteAvisado);
                   const faltaEnvio = listos.filter((e) => e.clienteAvisado && esPedidoConEnvio(e) && !e.envioConfirmado);
                   const paraEntregar = activos.filter((e) => e.estado === "Espejo listo" && e.clienteAvisado && (!esPedidoConEnvio(e) || e.envioConfirmado));
                   return (
                     <div className="dg-order-group-flow" onClick={(ev) => ev.stopPropagation()}>
-                      <span className="dg-order-group-flow-label">Todo el pedido · {activos.length} espejos</span>
-                      {!todosListos && <span className="dg-order-group-flow-wait">Fábrica terminó {listos.length}/{activos.length}</span>}
+                      <span className="dg-order-group-flow-label">{unico ? "Este pedido" : `Todo el pedido · ${nEsp} espejos`}</span>
+                      {sinVerificar.length > 0 && (
+                        <button className="dg-btn-primary dg-mini-btn" onClick={() => verificarPrimeroDelGrupo(espejos)}>
+                          <CheckCircle2 size={13} /> {unico ? "Verificar y pasar a fábrica" : `Verificar y pasar a fábrica (${sinVerificar.length})`}
+                        </button>
+                      )}
+                      {sinVerificar.length === 0 && enFabrica.length > 0 && (
+                        <span className="dg-order-group-flow-wait">Fábrica está trabajando · {listos.length}/{nEsp} listos</span>
+                      )}
                       {faltaAviso.length > 0 && (
                         <button className="dg-btn-primary dg-mini-btn" onClick={() => avisarClienteGrupo(espejos)}>
-                          <MessageCircle size={13} /> Cliente avisado ({faltaAviso.length})
+                          <MessageCircle size={13} /> {unico ? "Cliente avisado" : `Cliente avisado (${faltaAviso.length})`}
                         </button>
                       )}
                       {conEnvio && faltaAviso.length === 0 && faltaEnvio.length > 0 && (
                         <button className="dg-btn-primary dg-mini-btn" onClick={() => confirmarEnvioGrupo(espejos)}>
-                          <Truck size={13} /> Envío confirmado ({faltaEnvio.length})
+                          <Truck size={13} /> {unico ? "Envío confirmado" : `Envío confirmado (${faltaEnvio.length})`}
                         </button>
                       )}
                       {paraEntregar.length > 0 && (
                         <button className="dg-btn-primary dg-mini-btn dg-order-group-flow-entregar" onClick={() => entregarGrupo(espejos)}>
-                          <CheckCircle2 size={13} /> Entregar los {paraEntregar.length} espejos
+                          <CheckCircle2 size={13} /> {unico ? "Entregar y archivar" : `Entregar los ${paraEntregar.length} espejos`}
                         </button>
                       )}
                     </div>
@@ -4627,7 +4643,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           pedido={verificando}
           kommoSubdominio={kommoSubdominio}
           onClose={() => setVerificando(null)}
-          onConfirmar={() => { marcarVerificado(verificando); setVerificando(null); }}
+          onConfirmar={() => {
+            marcarVerificado(verificando);
+            const gk = verificando.grupoId || verificando.id;
+            const siguiente = pedidos.find((x) => (x.grupoId || x.id) === gk && x.id !== verificando.id && x.estado === "Sin pasar a fábrica");
+            setVerificando(siguiente || null);
+          }}
           onEditarCantidadDesemp={(cantidad) => {
             onChange(pedidos.map((x) => (x.id === verificando.id ? { ...x, desempCantidad: cantidad } : x)));
             setVerificando((v) => (v ? { ...v, desempCantidad: cantidad } : v));
