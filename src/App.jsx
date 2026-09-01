@@ -4536,9 +4536,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
                     const espejoStage = ESTADO_STAGE[espejo.estado] || { stage: espejo.estado, color: "var(--dg-text-dim)" };
                     const funciones = funcionesPedido(espejo, true);
-                    const espejoListo = pedidoEstaListo(espejo) && espejo.estado !== "Entregado";
                     return (
-                      <details className={`dg-order-mirror ${espejoListo ? "dg-order-mirror-listo" : ""}`} key={espejo.id}>
+                      <details className="dg-order-mirror" key={espejo.id}>
                         <summary>
                           <span className="dg-order-mirror-index">Espejo {index + 1}</span>
                           <span className="dg-order-mirror-main">
@@ -8455,7 +8454,6 @@ function Style() {
       .dg-order-expanded-hint { margin:0; padding:0 10px 9px; background:var(--dg-order-flow); }
       .dg-order-mirror-list { display:flex; flex-direction:column; gap:6px; padding:7px; }
       .dg-order-mirror { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:10px; background:var(--dg-order-info); }
-      .dg-order-mirror-listo { box-shadow: 0 0 0 2px var(--dg-success); border-color: transparent; }
       .dg-order-mirror > summary { min-height:50px; display:grid; grid-template-columns:72px minmax(170px,1fr) minmax(105px,auto) minmax(95px,auto) 16px; align-items:center; gap:8px; padding:6px 10px; list-style:none; cursor:pointer; }
       .dg-order-mirror > summary:hover { background:rgba(var(--dg-line-rgb),.035); }
       .dg-order-mirror-index { color:var(--dg-accent); font-size:8px; font-weight:750; letter-spacing:.65px; text-transform:uppercase; }
@@ -8794,6 +8792,20 @@ function Style() {
 }
 
 // ---- Portal público de seguimiento (sin login) ----
+// Mensaje de etapa para el seguimiento del cliente. En esmerilados avisa
+// si el espejo está en el grabador o ya volvió.
+function etapaFabricaPublica(pedido) {
+  const esEsmerilado = pedidoProcesoTaller(pedido) === "esmerilados" || Boolean(pedido?.grabadoEnviadoFecha);
+  if (esEsmerilado) {
+    if (pedido?.estado === "Mandar a grabar") return "Preparando el espejo para enviarlo al taller de grabado.";
+    if (pedido?.estado === "En grabado") return "Tu espejo está en el taller de grabado.";
+    if (pedido?.grabadoRegresoFecha || pedido?.estado === "Para armar") return "El espejo ya volvió del grabado. Ahora en armado y embalado.";
+  }
+  const completados = pasosProduccionCompletados(pedido);
+  if (completados < PRODUCCION_PASOS.length) return `Etapa actual en fábrica: ${PRODUCCION_PASOS[completados]?.label || "producción"}.`;
+  return null;
+}
+
 function pasosPublicosDe(pedido) {
   const pasos = [
     { id: "confirmado", label: "Pedido confirmado" },
@@ -9142,10 +9154,8 @@ function SeguimientoPublico({ pedidoId }) {
             ))}
           </div>
 
-          {pasoActual === 1 && produccionCompletada < PRODUCCION_PASOS.length && (
-            <p className="dg-hint" style={{ marginTop: 10 }}>
-              Etapa actual en fábrica: <strong>{PRODUCCION_PASOS[produccionCompletada]?.label}</strong>
-            </p>
+          {pasoActual === 1 && etapaFabricaPublica(pedido) && (
+            <p className="dg-hint" style={{ marginTop: 10 }}><strong>{etapaFabricaPublica(pedido)}</strong></p>
           )}
           {pedido.listo && pasoActual < pasosPub.length && (
             <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{pedido.listo}</strong></p>
@@ -9306,8 +9316,8 @@ function SeguimientoGrupoPublico({ grupoId }) {
                       </div>
                     ))}
                   </div>
-                  {pasoActual === 1 && produccionCompletada < PRODUCCION_PASOS.length && (
-                    <p className="dg-hint" style={{ marginTop: 8 }}>Etapa actual en fábrica: <strong>{PRODUCCION_PASOS[produccionCompletada]?.label}</strong></p>
+                  {pasoActual === 1 && etapaFabricaPublica(pedido) && (
+                    <p className="dg-hint" style={{ marginTop: 8 }}><strong>{etapaFabricaPublica(pedido)}</strong></p>
                   )}
                   {pasoActual === 3 && !esInterior && (
                     <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
