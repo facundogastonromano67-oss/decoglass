@@ -522,6 +522,7 @@ const DEFAULT_QUOTE_CONFIG = {
   },
   opcionales: {
     touch: { costo: 3500, carga: 0 },
+    dobleTouch: { costo: 9000, carga: 8000 },
     desemp: { costo: 4500, carga: 10000 },
     horaTemp: { costo: 6000, carga: 2000 },
     bluetooth: {
@@ -597,7 +598,11 @@ function computeQuote(inputs, cfg) {
     + costoEsmerilado + burbuja + stretch + cinta + pitones + tarugos + alcohol + cargaBaseOperativa
     + cargaEmbalajeInterior + materialesEmbalajeInterior + cartonPuntas;
 
-  const touchCostoReal = touch === "Sí" ? O.touch.costo : 0;
+  const touchDoble = touch === "Doble" || touch === "Doble touch (frontal + perimetral)";
+  const hayTouch = touch === "Sí" || touchDoble;
+  const touchCostoReal = touchDoble
+    ? (O.dobleTouch?.costo ?? ((O.touch.costo || 0) * 2))
+    : (touch === "Sí" ? O.touch.costo : 0);
   const desempCostoReal = desemp === "Sí" ? O.desemp.costo : 0;
   const horaTempCostoReal = horaTemp === "Sí" ? O.horaTemp.costo : 0;
   const bt = O.bluetooth[bluetoothSel] || O.bluetooth["Sin Bluetooth"];
@@ -610,7 +615,9 @@ function computeQuote(inputs, cfg) {
   const cantidadTotalPaneles = panelDisponible ? 1 + panelesAdicionales : 0;
   const precioAdicionalPaneles = panelDisponible && panelesAdicionales > 0 ? panelesAdicionales * O.paneles[panelSize].minimoAgregado : 0;
 
-  const cargaTouch = touch === "Sí" ? O.touch.carga : 0;
+  const cargaTouch = touchDoble
+    ? (O.dobleTouch?.carga ?? ((O.touch.carga || 0) + 8000))
+    : (touch === "Sí" ? O.touch.carga : 0);
   const cargaDesemp = desemp === "Sí" ? O.desemp.carga : 0;
   const cargaHoraTemp = horaTemp === "Sí" ? O.horaTemp.carga : 0;
   const cargaBluetooth = bt.carga;
@@ -634,7 +641,7 @@ function computeQuote(inputs, cfg) {
     const base = (costoBaseSinFunciones / (1 - m)) * factorTamaño * (1 + tipoRow.recargoForma) * (1 + R.iva);
     const term = (costo, carga, activo) => (activo ? Math.max(R.minimoAgregado, ((costo + carga) / (1 - m)) * (1 + R.iva)) : 0);
     const funciones =
-      term(touchCostoReal, cargaTouch, touch === "Sí") +
+      term(touchCostoReal, cargaTouch, hayTouch) +
       term(desempCostoReal + panelPrincipalCosto, cargaDesemp, desemp === "Sí") +
       term(horaTempCostoReal, cargaHoraTemp, horaTemp === "Sí") +
       term(bluetoothCostoReal, cargaBluetooth, bluetoothSel !== "Sin Bluetooth");
@@ -675,7 +682,7 @@ function computeQuote(inputs, cfg) {
   const tiempoFabricacion = esEsmeriladoOBiselado ? "25 días hábiles" : (desemp === "Sí" || bluetoothSel !== "Sin Bluetooth") ? "10 a 12 días hábiles" : "5 a 7 días hábiles";
 
   const modeloComercial = (tipoRow.esmerilado !== "Ninguno" ? "Esmerilado" : "Simple")
-    + (touch === "Sí" ? " + Touch" : "")
+    + (touchDoble ? " + Doble touch (frontal + perimetral)" : touch === "Sí" ? " + Touch" : "")
     + (desemp === "Sí" ? " + Desempañante" : "")
     + (horaTemp === "Sí" ? " + Hora/Temperatura" : "")
     + (bluetoothSel !== "Sin Bluetooth" ? ` + ${bluetoothSel}` : "")
@@ -3471,7 +3478,7 @@ function pedidoAInputsCosteo(pedido) {
     tipoProducto: tipoProductoDePedido(pedido),
     ancho: Number(pedido?.ancho) || 0,
     alto: Number(pedido?.alto) || 0,
-    touch: (pedido?.touch === "Touch" || pedido?.touch === "Doble touch (frontal + perimetral)") ? "Sí" : "No",
+    touch: pedido?.touch === "Doble touch (frontal + perimetral)" ? "Doble" : (pedido?.touch === "Touch" ? "Sí" : "No"),
     desemp: pedidoTieneDesempanante(pedido) ? "Sí" : "No",
     horaTemp: pedido?.horaTemp === "Hora y Temperatura" ? "Sí" : "No",
     bluetoothSel: bt,
@@ -6753,7 +6760,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
           <div className="dg-section-card">
             <div className="dg-section-header"><Sparkles size={14} /> Funciones</div>
             <div className="dg-field-grid">
-              <Field label="Touch"><select value={touch} onChange={(e) => setTouch(e.target.value)}><option>No</option><option>Sí</option></select></Field>
+              <Field label="Touch"><select value={touch} onChange={(e) => setTouch(e.target.value)}><option value="No">No</option><option value="Sí">Touch simple</option><option value="Doble">Doble touch (frontal + perimetral)</option></select></Field>
               <Field label="Desempañante"><select value={desemp} onChange={(e) => setDesemp(e.target.value)}><option>No</option><option>Sí</option></select></Field>
               <Field label="Hora / Temperatura"><select value={horaTemp} onChange={(e) => setHoraTemp(e.target.value)}><option>No</option><option>Sí</option></select></Field>
               <Field label="Bluetooth">
@@ -6902,7 +6909,9 @@ function ConfigEditor({ config, onChange }) {
 
       <div className="dg-config-group-title">Funciones (costo componente / carga operativa)</div>
       <div className="dg-config-grid">
-        <ConfigField label="Touch — costo" value={O.touch.costo} onChange={(v) => setNested("opcionales", "touch", "costo", v)} />
+        <ConfigField label="Touch simple — costo" value={O.touch.costo} onChange={(v) => setNested("opcionales", "touch", "costo", v)} />
+        <ConfigField label="Doble touch — costo" value={(O.dobleTouch || {}).costo ?? 0} onChange={(v) => setNested("opcionales", "dobleTouch", "costo", v)} />
+        <ConfigField label="Doble touch — carga" value={(O.dobleTouch || {}).carga ?? 0} onChange={(v) => setNested("opcionales", "dobleTouch", "carga", v)} />
         <ConfigField label="Desempañante — costo" value={O.desemp.costo} onChange={(v) => setNested("opcionales", "desemp", "costo", v)} />
         <ConfigField label="Desempañante — carga" value={O.desemp.carga} onChange={(v) => setNested("opcionales", "desemp", "carga", v)} />
         <ConfigField label="Hora/Temp — costo" value={O.horaTemp.costo} onChange={(v) => setNested("opcionales", "horaTemp", "costo", v)} />
