@@ -1342,7 +1342,11 @@ function App() {
     try { await storage.set("auditoria", JSON.stringify(next), true); } catch (e) {}
   }
 
-  function createIncomeFromPedido(entry) { persistIncomes([entry, ...incomes]); }
+  function createIncomeFromPedido(entry) {
+    const arr = Array.isArray(entry) ? entry : [entry];
+    if (!arr.length) return;
+    persistIncomes([...arr, ...incomes]);
+  }
   function createPurchaseEntry(entry) { persistPurchases([entry, ...purchases]); }
 
   function updateSector(id, patch) { persistSectors(sectors.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
@@ -4252,6 +4256,59 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     const primero = espejosDelGrupo[0];
     if (onRegistrar && primero) onRegistrar("Facturó un pedido completo", `#${primero.orden} — ${primero.cliente} — ${espejosDelGrupo.length} espejo(s)`);
   }
+
+  // --- Acciones sobre TODO el pedido: todos los espejos del grupo de una sola vez ---
+  function avisarClienteGrupo(espejos) {
+    const elegibles = espejos.filter((e) => pedidoEstaListo(e) && !e.clienteAvisado && e.estado !== "Entregado");
+    if (!elegibles.length) return;
+    const ids = new Set(elegibles.map((e) => e.id));
+    const fecha = new Date().toISOString();
+    onChange(pedidos.map((x) => (ids.has(x.id) ? { ...x, clienteAvisado: true, clienteAvisadoFecha: fecha } : x)));
+    if (onRegistrar) onRegistrar("Avisó al cliente", `#${espejos[0].orden} — ${espejos[0].cliente} — ${elegibles.length} espejo(s)`);
+  }
+  function confirmarEnvioGrupo(espejos) {
+    const elegibles = espejos.filter((e) => pedidoEstaListo(e) && e.clienteAvisado && !e.envioConfirmado && e.estado !== "Entregado");
+    if (!elegibles.length) return;
+    const ids = new Set(elegibles.map((e) => e.id));
+    const fecha = new Date().toISOString();
+    onChange(pedidos.map((x) => (ids.has(x.id) ? { ...x, envioConfirmado: true, envioConfirmadoFecha: fecha } : x)));
+    if (onRegistrar) onRegistrar("Confirmó un envío", `#${espejos[0].orden} — ${espejos[0].cliente} — ${elegibles.length} espejo(s)`);
+  }
+  function entregarGrupo(espejos) {
+    const pendientes = espejos.filter((e) => e.estado === "Espejo listo");
+    if (!pendientes.length) return;
+    if (pendientes.some((e) => !e.clienteAvisado)) { window.alert("Antes de entregar, avisá al cliente que el pedido está listo."); return; }
+    if (pendientes.some((e) => esPedidoConEnvio(e) && !e.envioConfirmado)) { window.alert("Antes de entregar, confirmá el envío del pedido."); return; }
+    const saldoTotal = pendientes.reduce((t, e) => t + Math.max(0, (Number(e.monto) || 0) - (Number(e.montoRegistrado) || 0)), 0);
+    const cuantos = pendientes.length;
+    const msg = saldoTotal > 0
+      ? `El pedido tiene ${money(saldoTotal)} de saldo pendiente en total.\n\nAl marcarlo entregado se registra ese saldo como ingreso cobrado.\n\n¿Confirmás la entrega de los ${cuantos} espejo(s)?`
+      : `¿Confirmás la entrega de los ${cuantos} espejo(s) de este pedido?`;
+    if (!window.confirm(msg)) return;
+    const ingresos = [];
+    pendientes.forEach((e) => {
+      const delta = (Number(e.monto) || 0) - (Number(e.montoRegistrado) || 0);
+      if (delta !== 0) {
+        const cuenta = determineCuentaPedido(e);
+        ingresos.push({
+          id: uid(),
+          concepto: `${(Number(e.montoRegistrado) || 0) > 0 ? "Saldo" : "Anticipo"} pedido #${e.orden || "?"} — ${e.cliente || "Sin nombre"}`,
+          monto: delta,
+          canal: e.tipo === "Importado" ? "local_importados" : "local_nuestros",
+          cuenta, cliente: e.cliente || "",
+          metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
+          sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
+        });
+      }
+    });
+    if (ingresos.length && onCreateIncome) onCreateIncome(ingresos);
+    const ids = new Set(pendientes.map((e) => e.id));
+    const ahora = new Date().toISOString();
+    onChange(normalizarOrdenesPorGrupo(pedidos.map((x) => (ids.has(x.id)
+      ? { ...x, estado: "Entregado", entregadoFecha: ahora, montoRegistrado: Number(x.monto) || 0 }
+      : x))));
+    if (onRegistrar) onRegistrar("Marcó entregado", `#${espejos[0].orden} — ${espejos[0].cliente} — ${cuantos} espejo(s)`);
+  }
   function reabrir(p) {
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Espejo listo", entregadoFecha: "" } : x)));
     if (onRegistrar) onRegistrar("Reabrió un pedido", `#${p.orden} — ${p.cliente}`);
@@ -4426,6 +4483,37 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               </summary>
 
               <div className="dg-order-expanded">
+                {canEditFull && espejos.length > 1 && (() => {
+                  const activos = espejos.filter((e) => e.estado !== "Entregado" && e.estado !== "Cancelado");
+                  if (activos.length === 0) return null;
+                  const listos = activos.filter((e) => e.estado === "Espejo listo");
+                  const todosListos = listos.length === activos.length;
+                  const conEnvio = activos.some((e) => esPedidoConEnvio(e));
+                  const faltaAviso = listos.filter((e) => !e.clienteAvisado);
+                  const faltaEnvio = listos.filter((e) => e.clienteAvisado && esPedidoConEnvio(e) && !e.envioConfirmado);
+                  const paraEntregar = activos.filter((e) => e.estado === "Espejo listo" && e.clienteAvisado && (!esPedidoConEnvio(e) || e.envioConfirmado));
+                  return (
+                    <div className="dg-order-group-flow" onClick={(ev) => ev.stopPropagation()}>
+                      <span className="dg-order-group-flow-label">Todo el pedido · {activos.length} espejos</span>
+                      {!todosListos && <span className="dg-order-group-flow-wait">Fábrica terminó {listos.length}/{activos.length}</span>}
+                      {faltaAviso.length > 0 && (
+                        <button className="dg-btn-primary dg-mini-btn" onClick={() => avisarClienteGrupo(espejos)}>
+                          <MessageCircle size={13} /> Cliente avisado ({faltaAviso.length})
+                        </button>
+                      )}
+                      {conEnvio && faltaAviso.length === 0 && faltaEnvio.length > 0 && (
+                        <button className="dg-btn-primary dg-mini-btn" onClick={() => confirmarEnvioGrupo(espejos)}>
+                          <Truck size={13} /> Envío confirmado ({faltaEnvio.length})
+                        </button>
+                      )}
+                      {paraEntregar.length > 0 && (
+                        <button className="dg-btn-primary dg-mini-btn dg-order-group-flow-entregar" onClick={() => entregarGrupo(espejos)}>
+                          <CheckCircle2 size={13} /> Entregar los {paraEntregar.length} espejos
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="dg-order-mirror-list">
                   {espejos.map((espejo, index) => {
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
@@ -8318,7 +8406,7 @@ function Style() {
       .dg-order-mirror > summary::-webkit-details-marker,
       .dg-shipping-editor > summary::-webkit-details-marker,
       .dg-logistics-mirror > summary::-webkit-details-marker { display:none; }
-      .dg-order-compact { display:grid; grid-template-columns:minmax(180px,1.4fr) minmax(92px,.7fr) minmax(112px,.8fr) minmax(175px,1.2fr) minmax(125px,.8fr) 18px; align-items:center; gap:10px; min-height:61px; padding:9px 12px; list-style:none; background:var(--dg-order-info); cursor:pointer; }
+      .dg-order-compact { display:grid; grid-template-columns:minmax(150px,1.35fr) minmax(78px,.55fr) minmax(96px,.66fr) minmax(140px,1fr) auto minmax(104px,.62fr) 18px; align-items:center; gap:10px; min-height:61px; padding:9px 12px; list-style:none; background:var(--dg-order-info); cursor:pointer; }
       .dg-order-compact:hover { background:color-mix(in srgb,var(--dg-order-info) 92%,var(--dg-accent) 8%); }
       .dg-order-compact-item { min-width:0; display:flex; flex-direction:column; gap:2px; }
       .dg-order-compact-item small { color:var(--dg-text-faint); font-size:7.5px; font-weight:750; letter-spacing:.65px; line-height:1; text-transform:uppercase; }
@@ -8327,17 +8415,21 @@ function Style() {
       .dg-order-compact-client i { margin-right:3px; color:var(--dg-accent); font-family:'JetBrains Mono',monospace; font-size:9px; font-style:normal; }
       .dg-order-compact-method strong { display:flex; align-items:center; gap:4px; }
       .dg-order-compact-step strong { color:var(--dg-accent-2); }
-      .dg-order-compact-balance { align-items:flex-end; text-align:right; }
+      .dg-order-compact-balance { align-items:flex-end; text-align:right; grid-column:6; }
       .dg-order-compact-facturar { display:flex; align-items:center; gap:5px; padding:6px 10px; border-radius:8px; font-size:11.5px; font-weight:700;
-        background:rgba(var(--dg-accent-rgb),0.12); border:1px solid rgba(var(--dg-accent-rgb),0.35); color:var(--dg-accent); white-space:nowrap; flex-shrink:0; }
+        background:rgba(var(--dg-accent-rgb),0.12); border:1px solid rgba(var(--dg-accent-rgb),0.35); color:var(--dg-accent); white-space:nowrap; flex-shrink:0; grid-column:5; justify-self:end; }
       .dg-order-compact-facturar:hover { background:rgba(var(--dg-accent-rgb),0.22); }
       .dg-order-compact-facturado { background:rgba(var(--dg-success-rgb),0.1); border-color:rgba(var(--dg-success-rgb),0.3); color:var(--dg-success); cursor:default; }
       .dg-order-compact-balance strong { font-family:'JetBrains Mono',monospace; font-size:11px; }
       .dg-order-balance-pending strong { color:var(--dg-danger); }
       .dg-order-balance-paid strong { color:var(--dg-success); }
-      .dg-order-disclosure-chevron { color:var(--dg-text-faint); transition:transform .18s ease,color .18s ease; }
+      .dg-order-disclosure-chevron { color:var(--dg-text-faint); transition:transform .18s ease,color .18s ease; grid-column:7; }
       .dg-order-disclosure[open] .dg-order-disclosure-chevron { transform:rotate(90deg); color:var(--dg-accent); }
       .dg-order-expanded { overflow:hidden; border-top:1px solid rgba(var(--dg-line-rgb),.13); background:var(--dg-order-flow); }
+      .dg-order-group-flow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:9px 11px; background:var(--dg-order-flow); border-bottom:1px solid rgba(var(--dg-line-rgb),.13); }
+      .dg-order-group-flow-label { font-size:10px; font-weight:800; letter-spacing:.5px; color:var(--dg-text-dim); text-transform:uppercase; }
+      .dg-order-group-flow-wait { font-size:11px; color:var(--dg-text-faint); }
+      .dg-order-group-flow .dg-order-group-flow-entregar { background:rgba(var(--dg-success-rgb),.16); border-color:rgba(var(--dg-success-rgb),.42); color:var(--dg-success); }
       .dg-order-despacho-btns { display:flex; flex-wrap:wrap; gap:6px; }
       .dg-order-detail-actions { display:flex; justify-content:flex-end; gap:6px; padding:8px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-order-flow); }
       .dg-order-detail-actions .dg-btn-ghost { min-height:31px; padding:6px 9px; font-size:9px; }
@@ -8565,7 +8657,8 @@ function Style() {
         .dg-month-header { padding:9px 11px; }
         .dg-pedido-card:not(.dg-fabrica-card) { gap:5px; padding:9px 10px; }
         .dg-order-card { gap:0 !important; padding:0 !important; }
-        .dg-order-compact { grid-template-columns:minmax(0,1.25fr) minmax(82px,.8fr) minmax(100px,1fr) 16px; grid-template-rows:auto auto; gap:4px 8px; min-height:72px; padding:6px 9px; }
+        .dg-order-compact { grid-template-columns:minmax(0,1.25fr) minmax(82px,.8fr) minmax(100px,1fr) 16px; grid-template-rows:auto auto auto; gap:4px 8px; min-height:72px; padding:6px 9px; }
+        .dg-order-compact-facturar { grid-column:1 / -1; grid-row:3; justify-self:start; }
         .dg-order-compact-client { grid-column:1 / 3; grid-row:1; }
         .dg-order-compact-balance { grid-column:3; grid-row:1; }
         .dg-order-compact-measure { grid-column:1; grid-row:2; }
