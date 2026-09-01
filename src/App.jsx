@@ -375,6 +375,7 @@ const ESTADO_STAGE = {
   "Pedir biselado": { stage: "Biselado sin pedir", color: "#A66A75" },
   "Para armar": { stage: "Para armar", color: "var(--dg-warning)" },
   "Espejo listo": { stage: "Espejo listo", color: "var(--dg-accent)" },
+  "Despachado": { stage: "Despachado", color: "var(--dg-success)" },
   "Entregado": { stage: "Entregado", color: "var(--dg-success)" },
   "Cancelado": { stage: "Cancelado", color: "var(--dg-danger)" },
 };
@@ -6053,7 +6054,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const listaActual = pedidoListaFabrica(p);
     const listaInfo = TALLER_LISTAS.find((item) => item.id === listaActual);
     const stage = pedidoEstaListo(p)
-      ? ESTADO_STAGE[p.estado]
+      ? (ESTADO_STAGE[p.estado] || { stage: p.estado || "Terminado", color: "var(--dg-success)" })
       : { stage: estadoProduccionLabel(p), color: listaInfo?.color || "var(--dg-text-dim)" };
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
     const procesoInfo = TALLER_MODELOS.find((item) => item.id === pedidoProcesoTaller(p));
@@ -6197,19 +6198,16 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {lista === "armar" ? (() => {
-          const grupos = [];
-          let grupoActual = null;
-          let bucket = [];
+          const mapaGrupos = new Map();
           visibles.forEach((p) => {
             const grupo = grupoListaArmar(p);
-            if (grupo !== grupoActual) {
-              if (grupoActual !== null) grupos.push({ grupo: grupoActual, items: bucket });
-              grupoActual = grupo;
-              bucket = [];
-            }
-            bucket.push(p);
+            if (!mapaGrupos.has(grupo)) mapaGrupos.set(grupo, []);
+            mapaGrupos.get(grupo).push(p);
           });
-          if (grupoActual !== null) grupos.push({ grupo: grupoActual, items: bucket });
+          const grupos = [
+            ...ORDEN_GRUPOS_ARMAR.filter((g) => mapaGrupos.has(g)),
+            ...[...mapaGrupos.keys()].filter((g) => !ORDEN_GRUPOS_ARMAR.includes(g)),
+          ].map((grupo) => ({ grupo, items: mapaGrupos.get(grupo) }));
 
           return grupos.map(({ grupo, items }) => {
             const abierto = gruposArmarAbiertos.has(grupo);
