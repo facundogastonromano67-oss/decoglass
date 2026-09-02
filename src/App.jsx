@@ -7,7 +7,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -4916,11 +4916,18 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
               </button>
             )}
             {canEdit && (
-              <label className={`dg-btn-ghost dg-mini-btn dg-factura-upload-btn ${leyendoGuia ? "dg-btn-leyendo" : ""}`}>
-                {subiendo || leyendoGuia ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />}
-                {subiendo ? "Subiendo..." : leyendoGuia ? "Leyendo guía..." : pedido.remitoUrl ? "Reemplazar" : "Subir remito"}
-                <input type="file" accept="application/pdf,image/*" onChange={handleFile} disabled={subiendo || leyendoGuia} style={{ display: "none" }} />
-              </label>
+              <>
+                <label className={`dg-btn-ghost dg-mini-btn ${leyendoGuia ? "dg-btn-leyendo" : ""}`}>
+                  {subiendo || leyendoGuia ? <Loader2 size={13} className="dg-spin" /> : <Camera size={13} />}
+                  {subiendo ? "Subiendo..." : leyendoGuia ? "Leyendo guía..." : "Sacar foto"}
+                  <input type="file" accept="image/*" capture="environment" onChange={handleFile} disabled={subiendo || leyendoGuia} style={{ display: "none" }} />
+                </label>
+                <label className={`dg-btn-ghost dg-mini-btn dg-factura-upload-btn ${leyendoGuia ? "dg-btn-leyendo" : ""}`}>
+                  {subiendo || leyendoGuia ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />}
+                  {subiendo ? "Subiendo..." : leyendoGuia ? "Leyendo guía..." : pedido.remitoUrl ? "Reemplazar" : "Subir archivo"}
+                  <input type="file" accept="application/pdf,image/*" onChange={handleFile} disabled={subiendo || leyendoGuia} style={{ display: "none" }} />
+                </label>
+              </>
             )}
           </div>
           {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
@@ -9050,6 +9057,7 @@ const TABLA_PESOS_INTERIOR = [
   { ancho: 50, alto: 80, forma: "rect", peso: 8 },
   { ancho: 60, alto: 80, forma: "rect", peso: 9 },
   { ancho: 60, alto: 90, forma: "rect", peso: 10 },
+  { ancho: 50, alto: 110, forma: "rect", peso: 9 },
   { ancho: 50, alto: 85, forma: "pastilla", peso: 8.5 },
   { ancho: 60, alto: 85, forma: "pastilla", peso: 9.5 },
   { ancho: 50, alto: 50, forma: "redondo", peso: 4.5 },
@@ -9117,7 +9125,7 @@ function abrirDatosDespacho(lista) {
 </style></head>
 <body>
   <h1>DECOGLASS SRL — Lista de envíos al interior</h1>
-  <div class="remitente">CUIT: 30-71826423-3 · José Marmol 1660 · Tel: 11 7059-4088 · decoglass@hotmail.com · ${new Date().toLocaleDateString("es-AR")}</div>
+  <div class="remitente">CUIT: 30-71826423-1 · José Marmol 1660 · Tel: 11 7059-4088 · decoglass@hotmail.com · ${new Date().toLocaleDateString("es-AR")}</div>
   <table>
     <thead>
       <tr><th>Nombre</th><th>Tel</th><th>DNI/CUIT</th><th>Cant</th><th>Medida caja</th><th>Peso</th><th>Provincia</th><th>Localidad</th><th>CP</th></tr>
@@ -9172,7 +9180,7 @@ function abrirRotulos(pedidosOPedido) {
       <div class="bloque">
         <div class="titulo">Remitente</div>
         <div class="nombre">DECOGLASS SRL</div>
-        <div class="dato">CUIT: 30-71826423-3</div>
+        <div class="dato">CUIT: 30-71826423-1</div>
         <div class="dato">José Marmol 1660</div>
         <div class="dato">Tel: 11 7059-4088</div>
       </div>
