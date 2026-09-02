@@ -310,6 +310,13 @@ function pedidoEstaListo(pedido) {
 
 function pasosProduccionCompletados(pedido) {
   if (pedidoEstaListo(pedido)) return PRODUCCION_PASOS.length;
+  const cant = Math.max(1, Number(pedido?.cant) || 1);
+  if (cant > 1 && Array.isArray(pedido?.unidades) && pedido.unidades.length === cant) {
+    return Math.min(...pedido.unidades.map((u) => {
+      const j = PRODUCCION_PASOS.findIndex((x) => x.id === u?.etapa);
+      return j >= 0 ? j + 1 : 0;
+    }));
+  }
   const index = PRODUCCION_PASOS.findIndex((paso) => paso.id === pedido?.produccionEtapa);
   if (index >= 0) return index + 1;
   // Compatibilidad con pedidos antiguos que usaban estados operativos del Excel.
@@ -3551,6 +3558,61 @@ function estadoProduccionLabel(pedido) {
   return lista?.shortLabel || pedido?.estado || "En producción";
 }
 
+// --- Producción por unidad: solo simples con cant > 1, y solo en Fábrica ---
+function esPedidoMultiUnidad(pedido) {
+  return pedidoProcesoTaller(pedido) === "simples" && (Number(pedido?.cant) || 1) > 1;
+}
+function unidadNueva(base) {
+  return {
+    etapa: base?.etapa || "",
+    produccionCortadoFecha: base?.produccionCortadoFecha || "", produccionCortadoPor: base?.produccionCortadoPor || "",
+    produccionArmadoFecha: base?.produccionArmadoFecha || "", produccionArmadoPor: base?.produccionArmadoPor || "",
+    produccionEmbaladoFecha: base?.produccionEmbaladoFecha || "", produccionEmbaladoPor: base?.produccionEmbaladoPor || "",
+    reprocesos: 0, motivoReproceso: "",
+  };
+}
+function unidadesDePedido(pedido) {
+  const cant = Math.max(1, Number(pedido?.cant) || 1);
+  if (Array.isArray(pedido?.unidades) && pedido.unidades.length === cant) return pedido.unidades;
+  // primera vez: todas las unidades arrancan en la etapa actual del pedido
+  const etapaBase = pedidoEstaListo(pedido) ? "embalado" : (pedido?.produccionEtapa || "");
+  return Array.from({ length: cant }, () => unidadNueva({
+    etapa: etapaBase,
+    produccionCortadoFecha: pedido?.produccionCortadoFecha, produccionCortadoPor: pedido?.produccionCortadoPor,
+    produccionArmadoFecha: pedido?.produccionArmadoFecha, produccionArmadoPor: pedido?.produccionArmadoPor,
+    produccionEmbaladoFecha: pedido?.produccionEmbaladoFecha, produccionEmbaladoPor: pedido?.produccionEmbaladoPor,
+  }));
+}
+function unidadPasosCompletados(unidad) {
+  const i = PRODUCCION_PASOS.findIndex((p) => p.id === unidad?.etapa);
+  return i >= 0 ? i + 1 : 0;
+}
+// Recalcula los campos del pedido a partir del estado de todas sus unidades.
+function sincronizarPedidoConUnidades(pedido, unidades, ahora) {
+  const compl = unidades.map(unidadPasosCompletados);
+  const minC = Math.min(...compl);
+  const todasEmbaladas = unidades.every((u) => u.etapa === "embalado");
+  let r = { ...pedido, unidades, produccionEtapa: minC === 0 ? "" : PRODUCCION_PASOS[minC - 1].id };
+  PRODUCCION_PASOS.forEach((paso, k) => {
+    if (compl.every((c) => c > k)) {
+      const fechas = unidades.map((u) => u[paso.fechaCampo]).filter(Boolean).sort();
+      r[paso.fechaCampo] = fechas[fechas.length - 1] || ahora;
+      const pers = [...new Set(unidades.map((u) => u[paso.responsableCampo]).filter(Boolean))];
+      r[paso.responsableCampo] = pers.length === 1 ? pers[0] : pers.length > 1 ? "Varios" : "";
+    } else {
+      r[paso.fechaCampo] = "";
+      r[paso.responsableCampo] = "";
+    }
+  });
+  const cerrado = pedido.estado === "Entregado" || pedido.estado === "Despachado";
+  if (todasEmbaladas && pedido.estado !== "Espejo listo" && !cerrado) {
+    r = { ...r, estado: "Espejo listo", produccionListaFecha: ahora, clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "" };
+  } else if (!todasEmbaladas && pedido.estado === "Espejo listo") {
+    r = { ...r, estado: "Para armar", produccionListaFecha: "", clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "" };
+  }
+  return r;
+}
+
 function pasosVisualesFabrica(pedido) {
   const modelo = pedidoProcesoTaller(pedido);
   const completados = pasosProduccionCompletados(pedido);
@@ -5858,6 +5920,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const [menuAbierto, setMenuAbierto] = useState(null);
   const [pedidoParaCancelar, setPedidoParaCancelar] = useState(null);
   const [pedidoParaReabrir, setPedidoParaReabrir] = useState(null);
+  const [unidadParaReabrir, setUnidadParaReabrir] = useState(null);
   const [gruposArmarAbiertos, setGruposArmarAbiertos] = useState(() => new Set()); // vacío = los 3 empiezan cerrados
   function toggleGrupoArmar(grupo) {
     setGruposArmarAbiertos((prev) => {
@@ -6041,6 +6104,47 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${etapaLabel} — motivo: ${motivo}`);
     setPedidoParaReabrir(null);
   }
+  function avanzarUnidad(id, idx) {
+    const ahora = new Date().toISOString();
+    const responsable = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
+    const pedidoActual = pedidos.find((p) => p.id === id);
+    let labelPaso = "";
+    onChange(pedidos.map((p) => {
+      if (p.id !== id) return p;
+      const unids = unidadesDePedido(p).map((u) => ({ ...u }));
+      const u = unids[idx];
+      if (!u) return p;
+      const paso = PRODUCCION_PASOS[unidadPasosCompletados(u)];
+      if (!paso) return p;
+      labelPaso = paso.label;
+      unids[idx] = { ...u, etapa: paso.id, [paso.fechaCampo]: ahora, [paso.responsableCampo]: responsable };
+      return sincronizarPedidoConUnidades(p, unids, ahora);
+    }));
+    if (onRegistrar && pedidoActual && labelPaso) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — unidad ${idx + 1} · ${labelPaso}`);
+  }
+  function reabrirUnidad(id, idx) { setMenuAbierto(null); setUnidadParaReabrir({ id, idx }); }
+  function confirmarReabrirUnidad(motivo, etapaElegida) {
+    const ref = unidadParaReabrir;
+    if (!ref) return;
+    const { id, idx } = ref;
+    const ahora = new Date().toISOString();
+    const etapa = esAdmin ? (etapaElegida ?? "armado") : "armado";
+    const pedidoActual = pedidos.find((p) => p.id === id);
+    onChange(pedidos.map((p) => {
+      if (p.id !== id) return p;
+      const unids = unidadesDePedido(p).map((u) => ({ ...u }));
+      const u = unids[idx];
+      if (!u) return p;
+      const nu = { ...u, etapa, reprocesos: (Number(u.reprocesos) || 0) + 1, motivoReproceso: motivo,
+        produccionEmbaladoFecha: "", produccionEmbaladoPor: "" };
+      if (etapa === "" || etapa === "cortado") { nu.produccionArmadoFecha = ""; nu.produccionArmadoPor = ""; }
+      if (etapa === "") { nu.produccionCortadoFecha = ""; nu.produccionCortadoPor = ""; }
+      unids[idx] = nu;
+      return sincronizarPedidoConUnidades(p, unids, ahora);
+    }));
+    if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — unidad ${idx + 1} — motivo: ${motivo}`);
+    setUnidadParaReabrir(null);
+  }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); setMenuAbierto(null); }
   function cancelar(id) { setMenuAbierto(null); setPedidoParaCancelar(id); }
   function confirmarCancelar(motivo) {
@@ -6068,15 +6172,32 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const observaciones = detalleFabrica(p);
     const produccionCompletada = pasosProduccionCompletados(p);
     const proximoPaso = PRODUCCION_PASOS[produccionCompletada];
-    const terminado = produccionCompletada >= PRODUCCION_PASOS.length;
-    const pasosVisuales = pasosVisualesFabrica(p);
-    const registros = registrosFabrica(p);
+    const perUnidad = totalUnidadesPedido > 1 && pedidoProcesoTaller(p) === "simples";
+    const uni = perUnidad ? (unidadesDePedido(p)[unidad - 1] || unidadNueva()) : null;
+    const compUni = uni ? unidadPasosCompletados(uni) : 0;
+    const terminado = perUnidad ? (uni.etapa === "embalado") : (produccionCompletada >= PRODUCCION_PASOS.length);
+    const pasosVisuales = perUnidad
+      ? PRODUCCION_PASOS.map((paso, i) => ({ id: paso.id, label: paso.label, done: i < compUni, current: uni.etapa !== "embalado" && i === compUni }))
+      : pasosVisualesFabrica(p);
+    const registros = perUnidad
+      ? [
+          { label: "Cortado", fecha: uni.produccionCortadoFecha, responsable: uni.produccionCortadoPor },
+          { label: "Armado", fecha: uni.produccionArmadoFecha, responsable: uni.produccionArmadoPor },
+          { label: "Embalado", fecha: uni.produccionEmbaladoFecha, responsable: uni.produccionEmbaladoPor },
+        ]
+      : registrosFabrica(p);
     const tieneRegistro = registros.some((registro) => registro.fecha);
-    const accionPrincipal = listaActual === "mandar_grabar" ? "Marcar enviado a grabar"
+    const accionPrincipal = perUnidad
+      ? (PRODUCCION_PASOS[compUni]?.accion || "Continuar producción")
+      : listaActual === "mandar_grabar" ? "Marcar enviado a grabar"
       : listaActual === "en_grabado" ? "Marcar regreso del grabado"
       : listaActual === "bisel_sin_pedir" ? "Pedir biselado"
       : listaActual === "bisel_pedidos" ? "Marcar regreso de biseladora"
       : proximoPaso?.accion || "Continuar producción";
+    const onAccionPrincipal = perUnidad ? () => avanzarUnidad(p.id, unidad - 1) : () => avanzarFlujoFabrica(p.id);
+    const stageTxt = perUnidad
+      ? (uni.etapa === "embalado" ? "Unidad embalada" : PRODUCCION_PASOS[compUni] ? `Falta ${PRODUCCION_PASOS[compUni].label.toLowerCase()}` : "En producción")
+      : stage.stage;
     const menuOpen = menuAbierto === p.id;
     return (
       <div className={`dg-fab-card dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
@@ -6132,21 +6253,23 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
           <div className="dg-fab-foot">
             <span className="dg-fab-foot-txt">
-              {stage.stage}
+              {stageTxt}
               {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}
               {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
               {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
             </span>
             {canEdit && (
               <div className="dg-fab-acciones">
-                {!terminado && <button className="dg-fab-btn-listo" onClick={() => avanzarFlujoFabrica(p.id)}><Check size={14} /> {accionPrincipal}</button>}
+                {!terminado && <button className="dg-fab-btn-listo" onClick={onAccionPrincipal}><Check size={14} /> {accionPrincipal}</button>}
                 <div className="dg-fab-menu-wrap">
                   <button className="dg-icon-btn" aria-label="Más acciones" onClick={() => setMenuAbierto(menuOpen ? null : p.id)}><MoreVertical size={16} /></button>
                   {menuOpen && (
                     <>
                       <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
                       <div className="dg-fab-menu">
-                        {terminado && <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>}
+                        {terminado && (perUnidad
+                          ? <button onClick={() => reabrirUnidad(p.id, unidad - 1)}><RotateCcw size={13} /> Reabrir esta unidad</button>
+                          : <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>)}
                         <button onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
                         <button onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
                         {puedeBorrar && <button className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
@@ -6281,6 +6404,19 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           etapaOpciones={esAdmin ? [
             { value: "armado", label: "Ya está cortado y armado — falta embalar" },
             { value: "cortado", label: "Ya está cortado — falta armar" },
+            { value: "", label: "No se empezó — falta cortar" },
+          ] : undefined}
+        />
+      )}
+      {unidadParaReabrir && (
+        <ModalMotivo
+          titulo={`¿Por qué hay que rehacer la unidad ${unidadParaReabrir.idx + 1}?`}
+          opciones={MOTIVOS_REPROCESO}
+          onCancelar={() => setUnidadParaReabrir(null)}
+          onConfirmar={confirmarReabrirUnidad}
+          etapaOpciones={esAdmin ? [
+            { value: "armado", label: "Ya está cortada y armada — falta embalar" },
+            { value: "cortado", label: "Ya está cortada — falta armar" },
             { value: "", label: "No se empezó — falta cortar" },
           ] : undefined}
         />
