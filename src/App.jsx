@@ -3739,7 +3739,7 @@ function detalleFabrica(pedido) {
 
 const QUICK_VIEWS = [
   { id: "todos", label: "Activos" },
-  { id: "historial", label: "Historial (entregados)" },
+  { id: "historial", label: "Historial" },
   { id: "retiros", label: "Retiros de la semana" },
   { id: "envios", label: "Envíos de la semana" },
   { id: "verificados", label: "Verificados → listos para fábrica" },
@@ -3757,6 +3757,7 @@ function resumenPasoPedido(pedido) {
   const total = conEnvio ? 5 : 4;
   if (pedido?.estado === "Cancelado") return { numero: 0, total, label: "Cancelado" };
   if (pedido?.estado === "Entregado") return { numero: total, total, label: "Entregado" };
+  if (pedido?.estado === "Despachado") return { numero: total, total, label: "Despachado" };
   if (!pedidoFueVerificado(pedido)) return { numero: 1, total, label: "Verificar pedido" };
   if (!pedidoEstaListo(pedido)) return { numero: 2, total, label: proximoControlTaller(pedido) };
   if (!pedido?.clienteAvisado || (conEnvio && !pedido?.envioConfirmado)) {
@@ -4191,7 +4192,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const canEditEstadoOnly = !canEditFull && ["fabrica", "logistica", "postventa"].includes(sessionSectorId);
 
   let visibles = pedidos.slice();
-  if (quickView === "historial") visibles = visibles.filter((p) => p.estado === "Entregado" || p.estado === "Cancelado");
+  if (quickView === "historial") visibles = visibles.filter((p) => ["Entregado", "Despachado", "Cancelado"].includes(p.estado));
   else if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado" || p.estado === "Pasado a fábrica");
   else if (quickView === "facturar") visibles = visibles.filter((p) => !pedidoFacturadoOEfectivo(p));
   else if (quickView === "envios") visibles = visibles.filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.estado !== "Entregado");
