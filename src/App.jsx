@@ -9098,7 +9098,7 @@ function abrirRotulos(pedidosOPedido) {
 
   const bloques = lista.map((pedido) => {
     const { anchoCaja, altoCaja, espesorCaja } = medidasCajaInterior(pedido);
-    const { peso, estimado } = pesoCajaInterior(pedido);
+    const { peso } = pesoCajaInterior(pedido);
     return `
     <div class="rotulo">
       <div class="pedido-num">PEDIDO #${pedido.orden}</div>
@@ -9124,7 +9124,6 @@ function abrirRotulos(pedidosOPedido) {
         <div class="titulo">Paquete</div>
         <div class="medidas"><span>Caja</span><strong>${anchoCaja} × ${altoCaja} × ${espesorCaja} cm</strong></div>
         <div class="medidas"><span>Peso aprox.</span><strong>${peso} kg</strong></div>
-        ${estimado ? `<div class="aviso-peso">⚠ Peso estimado — pesar si hay dudas.</div>` : ""}
         <div class="medidas"><span>Bultos</span><strong>${Number(pedido.cant) > 1 ? pedido.cant : 1}</strong></div>
       </div>
     </div>`;
@@ -9134,19 +9133,19 @@ function abrirRotulos(pedidosOPedido) {
 <html lang="es"><head><meta charset="utf-8"><title>Rótulos (${lista.length})</title>
 <style>
   * { box-sizing:border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:8mm; }
-  .grilla { display:grid; grid-template-columns:1fr 1fr; gap:6mm; }
-  .rotulo { border:2.5px solid #111; border-radius:8px; padding:10px; page-break-inside:avoid; break-inside:avoid; }
-  .bloque { margin-bottom:8px; padding-bottom:7px; border-bottom:1px dashed #999; }
+  @page { size:A4; margin:7mm; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; background:#fff; margin:0; }
+  .grilla { display:grid; grid-template-columns:1fr 1fr; gap:7mm; }
+  .rotulo { height:138mm; display:flex; flex-direction:column; border:3px solid #111; border-radius:8px; padding:14px 16px; page-break-inside:avoid; break-inside:avoid; overflow:hidden; }
+  .bloque { margin-bottom:11px; padding-bottom:10px; border-bottom:1.5px dashed #888; }
   .bloque:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
-  .titulo { font-size:9px; font-weight:700; letter-spacing:0.5px; color:#666; text-transform:uppercase; margin-bottom:3px; }
-  .nombre { font-size:13px; font-weight:700; }
-  .dato { font-size:11px; margin-top:1px; }
-  .medidas { display:flex; justify-content:space-between; font-size:11px; margin-top:4px; }
-  .medidas strong { font-size:12px; }
-  .pedido-num { text-align:center; font-size:15px; font-weight:800; letter-spacing:0.5px; margin-bottom:8px; }
-  .aviso-peso { font-size:9px; color:#a15c00; margin-top:3px; }
-  @media print { body { margin:5mm; } }
+  .titulo { font-size:12px; font-weight:700; letter-spacing:0.5px; color:#555; text-transform:uppercase; margin-bottom:4px; }
+  .nombre { font-size:19px; font-weight:800; line-height:1.15; }
+  .dato { font-size:15px; margin-top:3px; }
+  .medidas { display:flex; justify-content:space-between; font-size:15px; margin-top:5px; }
+  .medidas strong { font-size:17px; }
+  .pedido-num { text-align:center; font-size:22px; font-weight:800; letter-spacing:0.5px; margin-bottom:10px; padding-bottom:8px; border-bottom:2px solid #111; }
+  @media print { body { margin:0; } }
 </style></head>
 <body>
   <div class="grilla">${bloques}
