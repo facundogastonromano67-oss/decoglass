@@ -228,6 +228,16 @@ const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
 const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
 const TIPOFACTURA_OPTIONS = ["Efectivo / No", "Cons. Final / B", "EcomApp", "Factura A", "No aplica", "Cambio de espejo"];
+// El efectivo (y "no aplica" / cambio de espejo) no se factura: ya cuenta como facturado.
+function noRequiereFactura(pedido) {
+  return ["Efectivo / No", "No aplica", "Cambio de espejo"].includes(pedido?.tipoFactura);
+}
+function pedidoFacturadoOEfectivo(pedido) {
+  return !!pedido?.facturado || noRequiereFactura(pedido);
+}
+function esUrgente(pedido) {
+  return !!pedido?.urgente || pedido?.tipoPedido === "reclamo";
+}
 const ESTADO_PEDIDO_OPTIONS = ["Sin pasar a fábrica", "Verificado", "Mandar a grabar", "En grabado", "Sin pedir", "En biseladora", "Pedir biselado", "Para armar", "Espejo listo", "Despachado", "Entregado", "Cancelado"];
 const MOTIVOS_CANCELACION = ["Cliente se arrepintió", "Precio", "Demora en la entrega", "Cliente no responde", "Error de carga", "Otro"];
 const MOTIVOS_REPROCESO = ["Espejo dañado en fábrica", "Medida incorrecta", "Cliente pidió un cambio", "Falla en una función (touch, luz, etc)", "Se rompió en el transporte", "Otro"];
@@ -3404,13 +3414,14 @@ function emptyPedido(prefill) {
     id: uid(), orden: prefill?.orden || null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
     vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
     provincia: prefill?.provincia || "", localidad: prefill?.localidad || "", codigoPostal: prefill?.codigoPostal || "",
-    ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: "",
+    ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
     touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
     motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "",
+    tipoPedido: prefill?.tipoPedido || "venta", urgente: prefill?.urgente || false, reclamoId: prefill?.reclamoId || null,
   };
 }
 
@@ -4170,6 +4181,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const [busqueda, setBusqueda] = useState("");
   const [openPedido, setOpenPedido] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [nuevoTipoAbierto, setNuevoTipoAbierto] = useState(false);
   const [verificando, setVerificando] = useState(null);
   const [nextDraft, setNextDraft] = useState(null);
   const [agrupado, setAgrupado] = useState("mes");
@@ -4181,7 +4193,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   let visibles = pedidos.slice();
   if (quickView === "historial") visibles = visibles.filter((p) => p.estado === "Entregado" || p.estado === "Cancelado");
   else if (quickView === "verificados") visibles = visibles.filter((p) => p.estado === "Verificado" || p.estado === "Pasado a fábrica");
-  else if (quickView === "facturar") visibles = visibles.filter((p) => !p.facturado);
+  else if (quickView === "facturar") visibles = visibles.filter((p) => !pedidoFacturadoOEfectivo(p));
   else if (quickView === "envios") visibles = visibles.filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.estado !== "Entregado");
   else if (quickView === "retiros") visibles = visibles.filter((p) => p.metodo === "Retira" && p.estado !== "Entregado");
   else visibles = visibles
@@ -4468,7 +4480,18 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         </div>
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
         {canEditFull && (
-          <button className="dg-btn-primary" style={{ marginLeft: "auto" }} onClick={() => setCreating(true)}><Plus size={14} /> Nuevo pedido</button>
+          <div style={{ marginLeft: "auto", position: "relative" }}>
+            <button className="dg-btn-primary" onClick={() => setNuevoTipoAbierto((v) => !v)}><Plus size={14} /> Nuevo pedido</button>
+            {nuevoTipoAbierto && (
+              <>
+                <div className="dg-fab-menu-backdrop" onClick={() => setNuevoTipoAbierto(false)} />
+                <div className="dg-fab-menu" style={{ right: 0, left: "auto", minWidth: 220 }}>
+                  <button onClick={() => { setNuevoTipoAbierto(false); setNextDraft(emptyPedido({ tipoPedido: "venta" })); setCreating(true); }}><ShoppingCart size={13} /> Venta normal</button>
+                  <button onClick={() => { setNuevoTipoAbierto(false); setNextDraft(emptyPedido({ tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo" })); setCreating(true); }}><AlertTriangle size={13} /> Reclamo / cambio / falla</button>
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
 
@@ -4516,7 +4539,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
             if (!anterior) return actual;
             return (actual.numero / actual.total) < (anterior.numero / anterior.total) ? actual : anterior;
           }, null);
-          const todosFacturados = espejos.every((e) => e.facturado);
+          const todosFacturados = espejos.every(pedidoFacturadoOEfectivo);
           return (
             <details
               className={`dg-pedido-card dg-order-card dg-order-disclosure dg-order-group-card ${grupoTieneListos ? "dg-order-group-con-listos" : ""} ${grupoCompletamenteListo ? "dg-order-group-listo" : ""}`}
@@ -4525,7 +4548,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               <summary className="dg-order-compact" aria-label={`Abrir pedido de ${p.cliente || "cliente sin nombre"}`}>
                 <span className="dg-order-compact-item dg-order-compact-client">
                   <small>Nombre</small>
-                  <strong><i>#{p.orden}</i> {p.cliente || "Sin nombre"}</strong>
+                  <strong><i>#{p.orden}</i> {p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</strong>
                 </span>
                 <span className="dg-order-compact-item dg-order-compact-measure">
                   <small>{cantidadEspejos === 1 ? "Medida" : "Espejos"}</small>
@@ -4619,8 +4642,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                         </summary>
                         <div className="dg-order-mirror-body">
                           <div className="dg-order-mirror-meta">
-                            <span className={`dg-order-mirror-invoice ${espejo.facturado ? "dg-order-mirror-invoice-on" : "dg-order-mirror-invoice-off"}`}>
-                              {espejo.facturado ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {espejo.facturado ? "Facturado" : "Sin facturar"}
+                            <span className={`dg-order-mirror-invoice ${pedidoFacturadoOEfectivo(espejo) ? "dg-order-mirror-invoice-on" : "dg-order-mirror-invoice-off"}`}>
+                              {pedidoFacturadoOEfectivo(espejo) ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {pedidoFacturadoOEfectivo(espejo) ? "Facturado" : (espejo.tipoFactura === "EcomApp" ? "Facturar en EcomApp" : "Sin facturar")}
                             </span>
                             <div className="dg-order-mirror-functions">
                               {funciones.length > 0
@@ -5057,6 +5080,16 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         )}
 
         <EnterFlow onSubmit={intentarGuardar}>
+        {draft.tipoPedido === "reclamo" && (
+          <div className="dg-validacion-banner dg-banner-reclamo">
+            <AlertTriangle size={15} />
+            <div><strong>Pedido de reclamo / cambio / falla</strong> — no requiere factura y va primero en fábrica.</div>
+          </div>
+        )}
+        <label className="dg-urgente-toggle">
+          <input type="checkbox" disabled={!canEditFull} checked={!!draft.urgente} onChange={(e) => set("urgente", e.target.checked)} />
+          <AlertTriangle size={14} /> Pedido urgente — va primero en la cola de fábrica
+        </label>
         <div className="dg-section-card">
           <div className="dg-section-header"><Calculator size={14} /> Medida y producto</div>
           <div className="dg-field-grid">
@@ -5478,7 +5511,26 @@ function mensajeSolucionReclamo(r) {
   return `${saludo} Con respecto a tu reclamo por "${r.tipo}"${contexto}, te contamos cómo lo solucionamos:\n\n${r.solucion || "(completá la solución antes de enviar)"}\n\nCualquier consulta quedamos a disposición.`;
 }
 
-function ReclamosPanel({ reclamos, onChange }) {
+// Input que solo guarda al salir del campo (onBlur), no en cada tecla.
+// Evita que el guardado automático + la sincronización en vivo te pisen lo
+// que estás escribiendo letra por letra.
+function CampoTextoGuardado({ value, onGuardar, placeholder, className }) {
+  const [draft, setDraft] = useState(value || "");
+  const editando = useRef(false);
+  useEffect(() => { if (!editando.current) setDraft(value || ""); }, [value]);
+  return (
+    <input
+      className={className}
+      value={draft}
+      placeholder={placeholder}
+      onFocus={() => { editando.current = true; }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { editando.current = false; if (draft !== (value || "")) onGuardar(draft); }}
+    />
+  );
+}
+
+function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
   const [tipo, setTipo] = useState(null);
   const [cliente, setCliente] = useState("");
   const [celular, setCelular] = useState("");
@@ -5584,8 +5636,16 @@ function ReclamosPanel({ reclamos, onChange }) {
                 </>
               ) : (
                 <>
+                  {onCrearPedido && (
+                    r.pedidoCreado
+                      ? <div className="dg-pago-meta" style={{ marginBottom: 10, color: "var(--dg-success)" }}>✓ Pedido de cambio creado. Completá las medidas en la pestaña Pedidos.</div>
+                      : <button className="dg-btn-ghost dg-mini-btn" style={{ marginBottom: 12 }} onClick={() => {
+                          onCrearPedido({ tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo", cliente: r.cliente, celular: r.celular, reclamoId: r.id, grabado: r.notas ? `Reclamo (${r.tipo}): ${r.notas}` : `Reclamo: ${r.tipo}` });
+                          onChange(reclamos.map((x) => (x.id === r.id ? { ...x, pedidoCreado: true } : x)));
+                        }}><Plus size={13} /> Mandar a hacer un espejo nuevo</button>
+                  )}
                   <Field label="Solución que le ofrecemos al cliente">
-                    <input value={r.solucion || ""} onChange={(e) => setSolucion(r.id, e.target.value)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
+                    <CampoTextoGuardado value={r.solucion} onGuardar={(v) => setSolucion(r.id, v)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
                   </Field>
                   <div className="dg-form-actions" style={{ marginTop: 10 }}>
                     {tieneCelular ? (
@@ -5966,6 +6026,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         if (!b.listo) return -1;
         return a.listo < b.listo ? -1 : a.listo > b.listo ? 1 : 0;
       });
+  // Urgentes / reclamos primero (sort estable: mantiene el orden entre los del mismo nivel).
+  visibles = [...visibles].sort((a, b) => (esUrgente(b) ? 1 : 0) - (esUrgente(a) ? 1 : 0));
 
   function setEstado(id, estado) {
     onChange(pedidos.map((p) => {
@@ -6207,7 +6269,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           )}
           <div className="dg-fab-head">
             <span className="dg-fab-orden">{p.orden}</span>
-            <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}</span>
+            <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
             <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span>
           </div>
 
@@ -7459,7 +7521,7 @@ function SectorPage({
       )}
 
       {subpage === "reclamos" && (
-        canSeePedidos ? <ReclamosPanel reclamos={reclamos} onChange={onChangeReclamos} />
+        canSeePedidos ? <ReclamosPanel reclamos={reclamos} onChange={onChangeReclamos} onCrearPedido={(prefill) => onChangePedidos(normalizarOrdenesPorGrupo([...pedidos, emptyPedido(prefill)]))} />
           : <LockedPage label="Reclamos" onLogin={onRequestLogin} />
       )}
     </div>
@@ -8508,6 +8570,10 @@ function Style() {
       .dg-order-card.dg-order-group-listo:hover { border-color:var(--dg-success); }
       .dg-order-group-listo > .dg-order-compact { background:linear-gradient(90deg,rgba(var(--dg-success-rgb),.105),var(--dg-order-info) 38%); }
       .dg-order-ready-label { color:var(--dg-success) !important; }
+      .dg-pedido-flag { display:inline-block; margin-left:7px; padding:1px 6px; border-radius:5px; font-family:'JetBrains Mono',monospace; font-size:8.5px; font-weight:700; letter-spacing:.5px; background:var(--dg-danger); color:#fff; vertical-align:middle; }
+      .dg-urgente-toggle { display:flex; align-items:center; gap:7px; margin:0 0 12px; padding:8px 11px; border:1px solid rgba(var(--dg-danger-rgb),.3); border-radius:9px; background:rgba(var(--dg-danger-rgb),.05); font-size:12.5px; font-weight:600; color:var(--dg-text); cursor:pointer; }
+      .dg-urgente-toggle input { width:15px; height:15px; flex:none; }
+      .dg-banner-reclamo { border-color:var(--dg-danger) !important; background:color-mix(in srgb, var(--dg-danger) 10%, var(--dg-surface)) !important; }
       .dg-order-summary { display:flex; flex-direction:column; gap:5px; padding:10px 12px 9px; background:var(--dg-order-info); }
       .dg-order-summary-label, .dg-order-flow-title { color:var(--dg-accent); font-size:7.5px; font-weight:750; letter-spacing:.85px; line-height:1; text-transform:uppercase; }
       .dg-order-card .dg-pedido-card-top { min-height:24px; }
