@@ -498,7 +498,7 @@ function entregaWaLink(p) {
   } else if (p.metodo === "Colocación") {
     cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo. ¿Coordinamos día y horario para la colocación?\n\n${saldoTexto}`;
   } else {
-    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo para el envío. Por favor confirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto: ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
+    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo para el envío. Por favor confirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
   }
   const mensaje = `Hola${nombre}! 👋 ${cuerpo}`;
   return `${base}?text=${encodeURIComponent(mensaje)}`;
@@ -3417,7 +3417,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
     touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
     motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "",
@@ -4302,7 +4302,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       setTimeout(() => {
         setNextDraft(emptyPedido({
           orden: toSave.orden, grupoId: toSave.grupoId, cliente: toSave.cliente, celular: toSave.celular, dniCuit: toSave.dniCuit,
-          vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, detalleEntrega: toSave.detalleEntrega,
+          vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, barrio: toSave.barrio, detalleEntrega: toSave.detalleEntrega, piso: toSave.piso,
         }));
       }, 0);
     } else {
@@ -5223,8 +5223,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Método de entrega" error={err("metodo")}><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
-            <Field label="Dirección / detalle de entrega" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Dirección, costo de envío..." /></Field>
-            <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} /></Field>
+            <Field label="Barrio"><input disabled={!canEditFull} value={draft.barrio} onChange={(e) => set("barrio", e.target.value)} placeholder="Ej: Palermo, Centro..." /></Field>
+            <Field label="Dirección" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Calle y número" /></Field>
+            <Field label="Piso / Depto (o casa)"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
             <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
             <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
           </div>
@@ -5403,7 +5404,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
 
   function mensaje(p) {
     const saldoTexto = detalleCobroEntrega(p);
-    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\nEspejo ${p.ancho}×${p.alto} cm\n📞 Teléfono: ${p.celular || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto: ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha estimada: ${p.listo || "a coordinar"}\n\n${saldoTexto}\n\n¿Podés confirmarnos que estos datos son correctos?`;
+    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\nEspejo ${p.ancho}×${p.alto} cm\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha estimada: ${p.listo || "a coordinar"}\n\n${saldoTexto}\n\n¿Podés confirmarnos que estos datos son correctos?`;
   }
   function copiar(p) {
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje(p)).then(() => { setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); });
@@ -5435,14 +5436,15 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
             <details className="dg-shipping-editor">
               <summary>
                 <span className="dg-shipping-editor-icon"><Pencil size={14} /></span>
-                <span><strong>Cargar o corregir datos de entrega</strong><small>{p.detalleEntrega || "Sin dirección"} {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}</small></span>
+                <span><strong>Cargar o corregir datos de entrega</strong><small>{[p.barrio, p.detalleEntrega].filter(Boolean).join(" · ") || "Sin dirección"} {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}</small></span>
                 <ChevronRight size={16} />
               </summary>
               <EnterFlow autoFocus={false} className="dg-shipping-editor-body">
                 <div className="dg-shipping-fields">
                   <div className="dg-shipping-field"><Field label="Teléfono"><input disabled={!canEdit} value={p.celular || ""} onChange={(e) => updateShipping(p, { celular: e.target.value })} /></Field></div>
-                  <div className="dg-shipping-field"><Field label="Piso / Timbre"><input disabled={!canEdit} value={p.piso || ""} onChange={(e) => updateShipping(p, { piso: e.target.value })} /></Field></div>
-                  <div className="dg-shipping-field dg-shipping-address"><Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega || ""} onChange={(e) => updateShipping(p, { detalleEntrega: e.target.value })} /></Field></div>
+                  <div className="dg-shipping-field"><Field label="Barrio"><input disabled={!canEdit} value={p.barrio || ""} onChange={(e) => updateShipping(p, { barrio: e.target.value })} placeholder="Ej: Palermo" /></Field></div>
+                  <div className="dg-shipping-field dg-shipping-address"><Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega || ""} onChange={(e) => updateShipping(p, { detalleEntrega: e.target.value })} placeholder="Calle y número" /></Field></div>
+                  <div className="dg-shipping-field"><Field label="Piso / Depto (o casa)"><input disabled={!canEdit} value={p.piso || ""} onChange={(e) => updateShipping(p, { piso: e.target.value })} placeholder="Ej: 3° B — o 'casa'" /></Field></div>
                   <div className="dg-shipping-field"><Field label="Horario"><input disabled={!canEdit} value={p.horarioEntrega || ""} onChange={(e) => updateShipping(p, { horarioEntrega: e.target.value })} placeholder="Ej: 13 a 17 hs" /></Field></div>
                   <div className="dg-shipping-field"><Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo || ""} onChange={(e) => updateShipping(p, { listo: e.target.value })} /></Field></div>
                 </div>
@@ -5738,7 +5740,8 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
           const nombre = datoEntrega(items, "cliente", "Sin nombre");
           const telefono = datoEntrega(items, "celular", "Sin teléfono");
           const direccion = datoEntrega(items, "detalleEntrega", "Sin dirección");
-          const piso = datoEntrega(items, "piso", "Sin piso / timbre");
+          const barrio = datoEntrega(items, "barrio", "");
+          const piso = datoEntrega(items, "piso", "Sin piso / depto");
           const fecha = datoEntrega(items, "listo", "Sin fecha");
           const saldo = items.reduce((total, p) => total + Math.max(0, pedidoSaldo(p)), 0);
           const costoEnvio = items.reduce((mayor, p) => Math.max(mayor, costoEnvioPedido(p)), 0);
@@ -5768,9 +5771,10 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
                 <div className="dg-logistics-datum dg-logistics-address">
                   <span><MapPin size={13} /> Dirección</span>
                   <strong>{direccion}</strong>
+                  {barrio && <small>Barrio: {barrio}</small>}
                 </div>
                 <div className="dg-logistics-datum dg-logistics-floor">
-                  <span><Building2 size={13} /> Piso / Timbre</span>
+                  <span><Building2 size={13} /> Piso / Depto</span>
                   <strong>{piso}</strong>
                 </div>
                 <div className="dg-logistics-datum dg-logistics-mirror-total">
