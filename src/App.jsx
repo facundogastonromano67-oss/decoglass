@@ -6043,6 +6043,19 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
   );
 }
 
+function MultiPasoControl({ max, pasado, onMarcar }) {
+  const [n, setN] = useState("");
+  const val = Math.max(0, Math.min(max, Math.floor(Number(n) || 0)));
+  return (
+    <div className="dg-fab-multi-ctrl">
+      <span className="dg-fab-multi-ctrl-lbl">Hoy {pasado}:</span>
+      <input type="number" min="1" max={max} inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} placeholder={`0–${max}`} />
+      <button type="button" disabled={val < 1} onClick={() => { onMarcar(val); setN(""); }}>Marcar {val || ""}</button>
+      <button type="button" className="dg-fab-multi-ctrl-todas" onClick={() => { onMarcar(max); setN(""); }}>las {max}</button>
+    </div>
+  );
+}
+
 function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar }) {
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
@@ -6056,6 +6069,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     setGruposArmarAbiertos((prev) => {
       const next = new Set(prev);
       if (next.has(grupo)) next.delete(grupo); else next.add(grupo);
+      return next;
+    });
+  }
+  const [multiAbierto, setMultiAbierto] = useState(() => new Set());
+  function toggleMulti(id) {
+    setMultiAbierto((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   }
@@ -6254,6 +6275,29 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     }));
     if (onRegistrar && pedidoActual && labelPaso) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — unidad ${idx + 1} · ${labelPaso}`);
   }
+  // Avanza de golpe `cantidad` unidades que están justo en el paso anterior a `pasoId`.
+  function avanzarUnidadesBulk(id, pasoId, cantidad) {
+    const ahora = new Date().toISOString();
+    const responsable = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
+    const destinoIdx = PRODUCCION_PASOS.findIndex((paso) => paso.id === pasoId);
+    if (destinoIdx < 0 || !(cantidad > 0)) return;
+    const paso = PRODUCCION_PASOS[destinoIdx];
+    const pedidoActual = pedidos.find((p) => p.id === id);
+    let movidas = 0;
+    onChange(pedidos.map((p) => {
+      if (p.id !== id) return p;
+      const unids = unidadesDePedido(p).map((u) => ({ ...u }));
+      let restan = cantidad;
+      for (let i = 0; i < unids.length && restan > 0; i++) {
+        if (unidadPasosCompletados(unids[i]) === destinoIdx) {
+          unids[i] = { ...unids[i], etapa: paso.id, [paso.fechaCampo]: ahora, [paso.responsableCampo]: responsable };
+          restan--; movidas++;
+        }
+      }
+      return sincronizarPedidoConUnidades(p, unids, ahora);
+    }));
+    if (onRegistrar && pedidoActual && movidas > 0) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${movidas} unidad(es) · ${paso.label}`);
+  }
   function reabrirUnidad(id, idx) { setMenuAbierto(null); setUnidadParaReabrir({ id, idx }); }
   function confirmarReabrirUnidad(motivo, etapaElegida) {
     const ref = unidadParaReabrir;
@@ -6417,6 +6461,113 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     );
   };
 
+  const renderMultiCard = (p, cant) => {
+    const unids = unidadesDePedido(p);
+    const hechos = (n) => unids.filter((u) => unidadPasosCompletados(u) >= n).length;
+    const enPaso = (n) => unids.filter((u) => unidadPasosCompletados(u) === n).length;
+    const cortados = hechos(1), armados = hechos(2), embalados = hechos(3);
+    const terminado = embalados >= cant;
+    const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
+    const procesoInfo = TALLER_MODELOS.find((item) => item.id === pedidoProcesoTaller(p));
+    const funciones = funcionesPedido(p, true);
+    const observaciones = detalleFabrica(p);
+    const abierto = multiAbierto.has(p.id);
+    const menuOpen = menuAbierto === p.id;
+    const resumen = cortados < cant ? `cortados ${cortados}/${cant}`
+      : armados < cant ? `armados ${armados}/${cant}`
+      : embalados < cant ? `embalados ${embalados}/${cant}`
+      : "todo embalado";
+    const PASOS = [
+      { id: "cortado", hecho: "Cortados", pasado: "cortaron", n: 1 },
+      { id: "armado", hecho: "Armados", pasado: "armaron", n: 2 },
+      { id: "embalado", hecho: "Embalados", pasado: "embalaron", n: 3 },
+    ];
+    return (
+      <div className={`dg-fab-card dg-fab-multi dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""}`} key={p.id}>
+        <button type="button" className={`dg-fab-multi-head ${abierto ? "dg-fab-multi-abierto" : ""}`} onClick={() => toggleMulti(p.id)}>
+          <ChevronRight size={16} className="dg-fab-multi-chevron" />
+          <span className="dg-fab-orden">{p.orden}</span>
+          <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
+          <span className="dg-fab-multi-med">{p.ancho}×{p.alto} <em>×{cant}</em></span>
+          <span className="dg-fab-multi-resumen">{resumen}</span>
+        </button>
+
+        {abierto && (
+          <div className="dg-fab-multi-body">
+            <div className="dg-fab-linea">{p.forma} · {p.tipo} · <span className="dg-fab-tono">{p.tono || "—"}</span> · <span className="dg-fab-proceso" style={{ color: procesoInfo?.color }}>{procesoInfo?.label || "Simple"}</span> · <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span></div>
+            {funciones.length > 0 && (
+              <div className="dg-fab-funciones">{funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}</div>
+            )}
+            {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+
+            <div className="dg-fab-multi-pasos">
+              {PASOS.map((paso, k) => {
+                const done = hechos(paso.n);
+                const listas = enPaso(paso.n - 1);
+                return (
+                  <div className="dg-fab-multi-paso" key={paso.id}>
+                    <div className="dg-fab-multi-paso-top">
+                      <strong>{paso.hecho}</strong>
+                      <span className="dg-fab-multi-frac">{done}/{cant}</span>
+                    </div>
+                    <div className="dg-fab-multi-barra"><i style={{ width: `${Math.round((done / cant) * 100)}%` }} /></div>
+                    {canEdit && listas > 0 && (
+                      <MultiPasoControl max={listas} pasado={paso.pasado} onMarcar={(qty) => avanzarUnidadesBulk(p.id, paso.id, qty)} />
+                    )}
+                    {canEdit && listas === 0 && done < cant && k > 0 && (
+                      <span className="dg-fab-multi-espera">Primero hay que terminar {PASOS[k - 1].hecho.toLowerCase()}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <details className="dg-fab-multi-unidades">
+              <summary>Ver y marcar unidad por unidad</summary>
+              <div>
+                {unids.map((u, i) => {
+                  const c = unidadPasosCompletados(u);
+                  const sig = PRODUCCION_PASOS[c];
+                  return (
+                    <div className="dg-fab-multi-uni" key={i}>
+                      <span className="dg-fab-multi-uni-n">#{i + 1}</span>
+                      <span className="dg-fab-multi-uni-est">{c === 0 ? "Falta cortar" : c >= 3 ? "Embalada" : `Falta ${PRODUCCION_PASOS[c].label.toLowerCase()}`}</span>
+                      {canEdit && sig && <button type="button" className="dg-fab-multi-uni-btn" onClick={() => avanzarUnidad(p.id, i)}><Check size={11} /> {sig.label}</button>}
+                      {canEdit && c >= 3 && <button type="button" className="dg-fab-multi-uni-btn dg-fab-multi-uni-reab" onClick={() => reabrirUnidad(p.id, i)}><RotateCcw size={11} /></button>}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+
+            <div className="dg-fab-foot">
+              <span className="dg-fab-foot-txt">
+                {cortados}/{cant} cortados · {armados}/{cant} armados · {embalados}/{cant} embalados
+                {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}
+                {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
+              </span>
+              {canEdit && (
+                <div className="dg-fab-menu-wrap">
+                  <button type="button" className="dg-icon-btn" aria-label="Más acciones" onClick={() => setMenuAbierto(menuOpen ? null : p.id)}><MoreVertical size={16} /></button>
+                  {menuOpen && (
+                    <>
+                      <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
+                      <div className="dg-fab-menu">
+                        <button type="button" onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
+                        <button type="button" onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
+                        {puedeBorrar && <button type="button" className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="dg-page">
       {filtroEstado !== "historial" ? (
@@ -6504,6 +6655,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 {abierto && items.flatMap((p) => {
                   const cant = Math.max(1, Number(p.cant) || 1);
                   if (cant <= 1) return [renderCard(p, 1, 1)];
+                  if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
                   return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
                 })}
               </div>
@@ -6512,6 +6664,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         })() : visibles.flatMap((p) => {
           const cant = Math.max(1, Number(p.cant) || 1);
           if (cant <= 1) return [renderCard(p, 1, 1)];
+          if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
           return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
         })}
       </div>
@@ -8011,6 +8164,46 @@ function Style() {
       .dg-fab-retira { border-left-color: rgba(var(--dg-line-rgb),0.15); }
       .dg-fab-terminado { box-shadow: 0 0 0 2px var(--dg-success); }
       .dg-fab-terminado .dg-fab-zona-datos { background: rgba(var(--dg-success-rgb),0.06); }
+
+      .dg-fab-multi { padding:0; overflow:hidden; }
+      .dg-fab-multi-head { display:flex; align-items:center; gap:9px; width:100%; text-align:left; cursor:pointer;
+        background:var(--dg-surface); border:none; padding:13px 15px; font-family:'Inter',sans-serif; color:var(--dg-text); border-radius:9px; }
+      .dg-fab-multi-chevron { flex:none; color:var(--dg-text-faint); transition:transform .15s ease; }
+      .dg-fab-multi-abierto .dg-fab-multi-chevron { transform:rotate(90deg); color:var(--dg-accent); }
+      .dg-fab-multi-head .dg-fab-cliente { flex:1; }
+      .dg-fab-multi-med { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--dg-text-dim); white-space:nowrap; }
+      .dg-fab-multi-med em { font-style:normal; font-weight:700; color:var(--dg-warning); }
+      .dg-fab-multi-resumen { font-size:10.5px; font-weight:700; color:var(--dg-accent); white-space:nowrap;
+        background:rgba(var(--dg-accent-rgb),0.1); border-radius:100px; padding:3px 9px; }
+      .dg-fab-multi-body { background:var(--dg-bg); padding:12px 15px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.09); border-radius:0 0 9px 9px; }
+      .dg-fab-multi-pasos { display:flex; flex-direction:column; gap:13px; margin:8px 0 4px; }
+      .dg-fab-multi-paso-top { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:5px; }
+      .dg-fab-multi-paso-top strong { font-family:'Space Grotesk',sans-serif; font-size:12.5px; color:var(--dg-text); }
+      .dg-fab-multi-frac { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--dg-text-dim); }
+      .dg-fab-multi-barra { height:6px; border-radius:100px; background:rgba(var(--dg-line-rgb),0.1); overflow:hidden; }
+      .dg-fab-multi-barra i { display:block; height:100%; border-radius:100px; background:var(--dg-success); transition:width .2s ease; }
+      .dg-fab-multi-espera { display:block; margin-top:5px; font-size:10.5px; color:var(--dg-text-faint); }
+      .dg-fab-multi-ctrl { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px; }
+      .dg-fab-multi-ctrl-lbl { font-size:11px; color:var(--dg-text-dim); }
+      .dg-fab-multi-ctrl input { width:66px; min-height:35px; padding:5px 8px; text-align:center;
+        background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:8px; color:var(--dg-text); font-size:14px; }
+      .dg-fab-multi-ctrl button { min-height:35px; padding:5px 12px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+        font-family:'Inter',sans-serif; background:rgba(var(--dg-success-rgb),0.13); border:1px solid rgba(var(--dg-success-rgb),0.4); color:var(--dg-success); white-space:nowrap; }
+      .dg-fab-multi-ctrl button:disabled { opacity:0.4; cursor:not-allowed; }
+      .dg-fab-multi-ctrl-todas { background:transparent !important; border-color:rgba(var(--dg-line-rgb),0.2) !important; color:var(--dg-text-dim) !important; }
+      .dg-fab-multi-unidades { margin-top:13px; font-size:11.5px; }
+      .dg-fab-multi-unidades summary { cursor:pointer; color:var(--dg-text-faint); font-weight:600; list-style:none; display:flex; align-items:center; gap:5px; }
+      .dg-fab-multi-unidades summary::-webkit-details-marker { display:none; }
+      .dg-fab-multi-unidades summary:hover { color:var(--dg-accent); }
+      .dg-fab-multi-unidades > div { margin-top:8px; display:flex; flex-direction:column; gap:0; }
+      .dg-fab-multi-uni { display:flex; align-items:center; gap:8px; padding:7px 0; border-top:0.5px solid rgba(var(--dg-line-rgb),0.08); }
+      .dg-fab-multi-uni:first-child { border-top:none; }
+      .dg-fab-multi-uni-n { font-family:'JetBrains Mono',monospace; color:var(--dg-text-faint); width:34px; flex:none; }
+      .dg-fab-multi-uni-est { flex:1; color:var(--dg-text-dim); }
+      .dg-fab-multi-uni-btn { display:flex; align-items:center; gap:4px; padding:5px 10px; border-radius:7px; font-size:11px; font-weight:600;
+        cursor:pointer; font-family:'Inter',sans-serif; background:rgba(var(--dg-success-rgb),0.12); border:1px solid rgba(var(--dg-success-rgb),0.35); color:var(--dg-success); white-space:nowrap; }
+      .dg-fab-multi-uni-reab { background:transparent; border-color:rgba(var(--dg-line-rgb),0.2); color:var(--dg-text-faint); }
+      .dg-fab-multi-body .dg-fab-foot { margin-top:13px; }
 
       .dg-fab-zona-datos { background: var(--dg-surface); padding:14px 16px 12px; border-radius:9px 9px 0 0; }
       .dg-fab-zona-proceso { background: var(--dg-bg); padding:12px 16px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.09); border-radius:0 0 9px 9px; }
