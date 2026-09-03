@@ -6461,6 +6461,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         if (urgentes.length === 0) return null;
         const reclamos = urgentes.filter((p) => p.tipoPedido === "reclamo").length;
         const soloUrgentes = urgentes.length - reclamos;
+        const totalEspejos = totalUnidades(urgentes);
         const detalle = [
           reclamos > 0 ? `${reclamos} de reclamo / cambio` : null,
           soloUrgentes > 0 ? `${soloUrgentes} marcado${soloUrgentes === 1 ? "" : "s"} como urgente` : null,
@@ -6469,7 +6470,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <div className="dg-fab-alerta-urgente">
             <AlertTriangle size={18} />
             <div>
-              <strong>{urgentes.length === 1 ? "Hay 1 espejo con prioridad" : `Hay ${urgentes.length} espejos con prioridad`}</strong>
+              <strong>{`Hay ${urgentes.length} ${urgentes.length === 1 ? "pedido" : "pedidos"} con prioridad`}{totalEspejos !== urgentes.length ? ` (${totalEspejos} espejos en total)` : ""}</strong>
               <span>{detalle} — hacelos primero. Van marcados con la etiqueta CAMBIO / URGENTE arriba de cada lista.</span>
               <span className="dg-fab-alerta-ordenes">{urgentes.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{urgentes.length > 8 ? "  ·  …" : ""}</span>
             </div>
