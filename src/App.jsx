@@ -3949,6 +3949,43 @@ function BotonCompartirSeguimiento({ pedido }) {
   );
 }
 
+// Al facturar en EcomApp: copia los datos del cliente al portapapeles y abre EcomApp.
+// EcomApp es de terceros; cuando sepamos si su formulario acepta parámetros en la
+// URL, se agregan acá sobre ECOMAPP_FACTURA_URL.
+const ECOMAPP_FACTURA_URL = "https://admin.ecomm-app.com/facturacion/factura/editar";
+function datosClienteParaFactura(p) {
+  const dir = [p?.detalleEntrega, p?.barrio && `Barrio ${p.barrio}`, p?.piso && `(${p.piso})`].filter(Boolean).join(" ");
+  const detalle = [(p?.ancho && p?.alto) ? `Espejo ${p.ancho}×${p.alto} cm` : "", detalleFabrica(p)].filter((x) => x && String(x).trim()).join(" · ");
+  return [
+    `Cliente: ${p?.cliente || "-"}`,
+    `DNI/CUIT: ${p?.dniCuit || "-"}`,
+    `Teléfono: ${p?.celular || "-"}`,
+    dir ? `Dirección: ${dir}` : null,
+    detalle ? `Detalle: ${detalle}` : null,
+    `Importe: ${money(p?.monto)}`,
+  ].filter(Boolean).join("\n");
+}
+function FacturarEcomAppBtn({ pedido }) {
+  const [copiado, setCopiado] = useState(false);
+  async function abrir() {
+    const datos = datosClienteParaFactura(pedido);
+    try {
+      await navigator.clipboard.writeText(datos);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 3000);
+    } catch (e) {
+      window.prompt("Copiá los datos del cliente para EcomApp:", datos);
+    }
+    const w = window.open(ECOMAPP_FACTURA_URL, "_blank");
+    if (w) w.opener = null;
+  }
+  return (
+    <button type="button" className="dg-link-ecomapp" onClick={abrir} title="Copia los datos del cliente y abre EcomApp para facturar">
+      {copiado ? <><Check size={12} /> Datos copiados — pegalos en EcomApp</> : <><ExternalLink size={12} /> Facturar en EcomApp</>}
+    </button>
+  );
+}
+
 function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar }) {
   const conEnvio = esPedidoConEnvio(pedido);
   const entregado = pedido.estado === "Entregado";
@@ -4646,6 +4683,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                             <span className={`dg-order-mirror-invoice ${pedidoFacturadoOEfectivo(espejo) ? "dg-order-mirror-invoice-on" : "dg-order-mirror-invoice-off"}`}>
                               {pedidoFacturadoOEfectivo(espejo) ? <CheckCircle2 size={12} /> : <XCircle size={12} />} {pedidoFacturadoOEfectivo(espejo) ? "Facturado" : (espejo.tipoFactura === "EcomApp" ? "Facturar en EcomApp" : "Sin facturar")}
                             </span>
+                            {!pedidoFacturadoOEfectivo(espejo) && espejo.tipoFactura === "EcomApp" && <FacturarEcomAppBtn pedido={espejo} />}
                             <div className="dg-order-mirror-functions">
                               {funciones.length > 0
                                 ? funciones.map((funcion) => <span key={funcion.label}>{funcion.label}</span>)
@@ -5069,7 +5107,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
     } catch (e) {}
   }
 
-  // Evita perder lo cargado si tocas fuera de la tarjeta sin querer.
+  // El modal de pedido NO se cierra al tocar afuera (se perdía lo cargado).
+  // Solo cierra con la X o con los botones; la X pregunta si hay cambios.
   const baseline = useRef(JSON.stringify(normalizarPedidoFunciones(pedido)));
   const hayCambiosSinGuardar = JSON.stringify(draft) !== baseline.current;
   function pedirCerrar() {
@@ -5078,8 +5117,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   }
 
   return (
-    <div className="dg-overlay" onClick={pedirCerrar}>
-      <div className="dg-modal dg-modal-lg" onClick={(e) => e.stopPropagation()}>
+    <div className="dg-overlay">
+      <div className="dg-modal dg-modal-lg">
         <div className="dg-modal-head">
           <div className="dg-modal-title">{draft.orden ? `Pedido #${draft.orden}` : "Nuevo pedido"}</div>
           <button className="dg-icon-btn" onClick={pedirCerrar}><X size={18} /></button>
@@ -5175,9 +5214,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 {draft.facturado ? <Check size={14} /> : null} {draft.facturado ? "Facturado" : "Sin facturar"}
               </button>
               {!draft.facturado && (
-                <a href="https://admin.ecomm-app.com/facturacion/factura/editar" target="_blank" rel="noopener noreferrer" className="dg-link-ecomapp">
-                  <ExternalLink size={12} /> Facturar en EcomApp
-                </a>
+                <FacturarEcomAppBtn pedido={draft} />
               )}
             </Field>
             <Field label="Comprobante de factura (PDF)">
@@ -5255,6 +5292,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         </EnterFlow>
 
         <div className="dg-form-actions" style={{ marginTop: 4 }}>
+          <button className="dg-btn-ghost" onClick={pedirCerrar}>Cerrar</button>
           {onDelete && canEditFull && <button className="dg-btn-ghost" onClick={onDelete}><Trash2 size={14} /> Eliminar</button>}
           {canEditFull && (
             <button className="dg-btn-ghost" onClick={() => intentarGuardar({ addAnother: true })}>
@@ -9014,7 +9052,7 @@ function Style() {
       .dg-seguimiento-espejo-titulo { display:flex; align-items:center; justify-content:space-between; gap:8px; font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:13px; color:var(--dg-text-dim); text-transform:uppercase; letter-spacing:0.3px; }
       .dg-seguimiento-docs a.dg-btn-ghost, .dg-seguimiento-docs button.dg-btn-ghost { text-decoration:none; justify-content:center; }
       .dg-seguimiento-doc-pendiente { text-align:center; padding:9px; }
-      .dg-link-ecomapp { display:inline-flex; align-items:center; gap:5px; margin-top:6px; font-size:11.5px; color:var(--dg-accent); text-decoration:none; }
+      .dg-link-ecomapp { display:inline-flex; align-items:center; gap:5px; margin-top:6px; padding:0; border:0; background:none; font-family:inherit; font-size:11.5px; line-height:1.3; text-align:left; color:var(--dg-accent); text-decoration:none; cursor:pointer; }
       .dg-link-ecomapp:hover { text-decoration:underline; }
       .dg-factura-campo { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
       .dg-factura-actual { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--dg-success); text-decoration:none; }
