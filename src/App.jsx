@@ -6486,14 +6486,32 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       <div className={`dg-fab-card dg-fab-multi dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""}`} key={p.id}>
         <button type="button" className={`dg-fab-multi-head ${abierto ? "dg-fab-multi-abierto" : ""}`} onClick={() => toggleMulti(p.id)}>
           <ChevronRight size={16} className="dg-fab-multi-chevron" />
-          <span className="dg-fab-orden">{p.orden}</span>
-          <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
-          <span className="dg-fab-multi-med">{p.ancho}×{p.alto} <em>×{cant}</em></span>
-          <span className="dg-fab-multi-resumen">{resumen}</span>
+          <div className="dg-fab-multi-htxt">
+            <div className="dg-fab-multi-l1">
+              <span className="dg-fab-orden">{p.orden}</span>
+              <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
+              <span className="dg-fab-multi-resumen">{resumen}</span>
+            </div>
+            <div className="dg-fab-multi-l2">
+              <strong>{p.ancho} × {p.alto} cm</strong>
+              <span>{p.forma} · {p.tipo}</span>
+              {p.tono && <span>tono {p.tono}</span>}
+              <span className="dg-fab-multi-l2-cant">× {cant}</span>
+              {procesoInfo && <span style={{ color: procesoInfo.color }}>{procesoInfo.label}</span>}
+              <span style={{ color: entrega.color }}>{p.metodo}</span>
+              {(funciones.length > 0 || observaciones) && (
+                <span className="dg-fab-multi-l2-esp">{[...funciones.map((f) => f.label), observaciones].filter(Boolean).join(" · ")}</span>
+              )}
+            </div>
+          </div>
         </button>
 
         {abierto && (
           <div className="dg-fab-multi-body">
+            <div className="dg-fab-medida dg-fab-multi-medida">
+              <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
+              <span className="dg-fab-cant">× {cant}</span>
+            </div>
             <div className="dg-fab-linea">{p.forma} · {p.tipo} · <span className="dg-fab-tono">{p.tono || "—"}</span> · <span className="dg-fab-proceso" style={{ color: procesoInfo?.color }}>{procesoInfo?.label || "Simple"}</span> · <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span></div>
             {funciones.length > 0 && (
               <div className="dg-fab-funciones">{funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}</div>
@@ -8166,13 +8184,18 @@ function Style() {
       .dg-fab-terminado .dg-fab-zona-datos { background: rgba(var(--dg-success-rgb),0.06); }
 
       .dg-fab-multi { padding:0; overflow:hidden; }
-      .dg-fab-multi-head { display:flex; align-items:center; gap:9px; width:100%; text-align:left; cursor:pointer;
+      .dg-fab-multi-head { display:flex; align-items:flex-start; gap:9px; width:100%; text-align:left; cursor:pointer;
         background:var(--dg-surface); border:none; padding:13px 15px; font-family:'Inter',sans-serif; color:var(--dg-text); border-radius:9px; }
-      .dg-fab-multi-chevron { flex:none; color:var(--dg-text-faint); transition:transform .15s ease; }
+      .dg-fab-multi-chevron { flex:none; margin-top:3px; color:var(--dg-text-faint); transition:transform .15s ease; }
       .dg-fab-multi-abierto .dg-fab-multi-chevron { transform:rotate(90deg); color:var(--dg-accent); }
-      .dg-fab-multi-head .dg-fab-cliente { flex:1; }
-      .dg-fab-multi-med { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--dg-text-dim); white-space:nowrap; }
-      .dg-fab-multi-med em { font-style:normal; font-weight:700; color:var(--dg-warning); }
+      .dg-fab-multi-htxt { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-fab-multi-l1 { display:flex; align-items:baseline; gap:9px; }
+      .dg-fab-multi-l1 .dg-fab-cliente { flex:1; }
+      .dg-fab-multi-l2 { display:flex; align-items:baseline; gap:5px 10px; flex-wrap:wrap; font-size:11px; color:var(--dg-text-dim); line-height:1.35; }
+      .dg-fab-multi-l2 strong { font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; color:var(--dg-text); }
+      .dg-fab-multi-l2-cant { font-weight:700; color:var(--dg-warning); }
+      .dg-fab-multi-l2-esp { color:var(--dg-success); font-weight:600; }
+      .dg-fab-multi-medida { margin-bottom:4px; }
       .dg-fab-multi-resumen { font-size:10.5px; font-weight:700; color:var(--dg-accent); white-space:nowrap;
         background:rgba(var(--dg-accent-rgb),0.1); border-radius:100px; padding:3px 9px; }
       .dg-fab-multi-body { background:var(--dg-bg); padding:12px 15px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.09); border-radius:0 0 9px 9px; }
