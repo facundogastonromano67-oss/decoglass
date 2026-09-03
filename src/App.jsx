@@ -5069,12 +5069,20 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
     } catch (e) {}
   }
 
+  // Evita perder lo cargado si tocas fuera de la tarjeta sin querer.
+  const baseline = useRef(JSON.stringify(normalizarPedidoFunciones(pedido)));
+  const hayCambiosSinGuardar = JSON.stringify(draft) !== baseline.current;
+  function pedirCerrar() {
+    if (hayCambiosSinGuardar && !window.confirm("Tenés cambios sin guardar en este pedido. ¿Cerrás y descartás lo que cargaste?")) return;
+    onClose();
+  }
+
   return (
-    <div className="dg-overlay" onClick={onClose}>
+    <div className="dg-overlay" onClick={pedirCerrar}>
       <div className="dg-modal dg-modal-lg" onClick={(e) => e.stopPropagation()}>
         <div className="dg-modal-head">
           <div className="dg-modal-title">{draft.orden ? `Pedido #${draft.orden}` : "Nuevo pedido"}</div>
-          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+          <button className="dg-icon-btn" onClick={pedirCerrar}><X size={18} /></button>
         </div>
 
         {intentoGuardar && cantErrores > 0 && (
