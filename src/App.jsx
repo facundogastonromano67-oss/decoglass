@@ -3417,7 +3417,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
     touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
     motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "",
@@ -3537,6 +3537,52 @@ function pedidoListaFabrica(pedido) {
   if (pedido?.estado === "En biseladora") return "bisel_pedidos";
   if (pedidoEstaListo(pedido) || pedido?.estado === "Para armar" || pedido?.produccionEtapa) return "armar";
   return pedidoProcesoTaller(pedido) === "biselados" ? "bisel_sin_pedir" : "armar";
+}
+
+// --- Reloj de etapa: cuántos días hace que el pedido está frenado donde está ---
+const UMBRAL_ETAPA_DIAS = { armar: 4, mandar_grabar: 2, en_grabado: 8, bisel_sin_pedir: 3, bisel_pedidos: 12 };
+function umbralEtapa(pedido) { return UMBRAL_ETAPA_DIAS[pedidoListaFabrica(pedido)] || 5; }
+function fechaEntradaEtapa(pedido) {
+  if (!pedido || pedidoEstaListo(pedido)) return null;
+  const hitos = [
+    pedido.pedidoVerificadoFecha, pedido.produccionCortadoFecha, pedido.produccionArmadoFecha,
+    pedido.grabadoEnviadoFecha, pedido.grabadoRegresoFecha, pedido.biseladoPedidoFecha, pedido.biseladoRegresoFecha,
+  ].filter(Boolean).sort();
+  return hitos.length ? hitos[hitos.length - 1] : null;
+}
+function diasEnEtapa(pedido) {
+  const desde = fechaEntradaEtapa(pedido);
+  if (!desde) return null;
+  const ms = Date.now() - new Date(desde).getTime();
+  if (Number.isNaN(ms) || ms < 0) return 0;
+  return Math.floor(ms / 86400000);
+}
+function nivelDemoraEtapa(pedido) {
+  const d = diasEnEtapa(pedido);
+  if (d == null) return "ok";
+  const u = umbralEtapa(pedido);
+  if (d >= u * 2) return "critico";
+  if (d >= u) return "alerta";
+  return "ok";
+}
+function estaDemoradoAuto(pedido) {
+  return !pedidoEstaListo(pedido) && nivelDemoraEtapa(pedido) !== "ok";
+}
+
+// --- Trabajo afuera del taller: grabado / biseladora, con fecha prometida de regreso ---
+function campoPrometidaAfuera(pedido) {
+  const l = pedidoListaFabrica(pedido);
+  if (l === "en_grabado") return "grabadoRegresoPrometido";
+  if (l === "bisel_pedidos") return "biseladoRegresoPrometido";
+  return null;
+}
+function estaAfueraDelTaller(pedido) {
+  return !pedidoEstaListo(pedido) && ["en_grabado", "bisel_pedidos"].includes(pedidoListaFabrica(pedido));
+}
+function trabajoAfueraVencido(pedido) {
+  const campo = campoPrometidaAfuera(pedido);
+  if (!campo || !pedido[campo]) return false;
+  return pedido[campo] < new Date().toISOString().slice(0, 10);
 }
 
 // Agrupa la lista "Espejos para armar" para que no se mezclen simples,
@@ -6085,23 +6131,28 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
   const activos = enFabrica.filter((p) => !pedidoEstaListo(p));
   const historial = enFabrica.filter((p) => pedidoEstaListo(p));
-  const demorados = activos.filter((p) => p.demorado);
+  const demorados = activos.filter((p) => p.demorado || estaDemoradoAuto(p));
+  const afuera = activos.filter(estaAfueraDelTaller);
   let baseVisibles = filtroEstado === "activos"
     ? activos
     : filtroEstado === "historial"
       ? historial
       : filtroEstado === "demorados"
         ? demorados
-        : enFabrica;
+        : filtroEstado === "afuera"
+          ? afuera
+          : enFabrica;
   baseVisibles = baseVisibles
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
   const listaCounts = TALLER_LISTAS.reduce((acc, item) => {
     acc[item.id] = totalUnidades(baseVisibles.filter((p) => pedidoListaFabrica(p) === item.id));
     return acc;
   }, {});
-  let visibles = filtroEstado === "historial" ? [...baseVisibles] : baseVisibles.filter((p) => pedidoListaFabrica(p) === lista);
+  let visibles = (filtroEstado === "historial" || filtroEstado === "afuera") ? [...baseVisibles] : baseVisibles.filter((p) => pedidoListaFabrica(p) === lista);
   visibles = filtroEstado === "historial"
     ? visibles.sort((a, b) => (b.produccionListaFecha || b.fecha || "").localeCompare(a.produccionListaFecha || a.fecha || ""))
+    : filtroEstado === "afuera"
+    ? visibles.sort((a, b) => (a[campoPrometidaAfuera(a)] || "9999-99-99").localeCompare(b[campoPrometidaAfuera(b)] || "9999-99-99"))
     : lista === "armar"
     ? visibles.sort((a, b) => {
         const pa = prioridadListaArmar(a), pb = prioridadListaArmar(b);
@@ -6322,6 +6373,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     setUnidadParaReabrir(null);
   }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); setMenuAbierto(null); }
+  function setCampoPedido(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
   function cancelar(id) { setMenuAbierto(null); setPedidoParaCancelar(id); }
   function confirmarCancelar(motivo) {
     onChange(pedidos.map((p) => (p.id === pedidoParaCancelar ? { ...p, estado: "Cancelado", motivoCancelacion: motivo } : p)));
@@ -6412,6 +6464,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             ))}
           </div>
 
+          {canEdit && (listaActual === "en_grabado" || listaActual === "bisel_pedidos") && (
+            <div className={`dg-fab-prometido ${trabajoAfueraVencido(p) ? "dg-fab-prometido-vencido" : ""}`}>
+              <span>{listaActual === "en_grabado" ? "Grabado vuelve el" : "Biselado vuelve el"}:</span>
+              <input type="date" value={p[campoPrometidaAfuera(p)] || ""} onChange={(e) => setCampoPedido(p.id, { [campoPrometidaAfuera(p)]: e.target.value })} />
+              {trabajoAfueraVencido(p) && <strong>¡pasó la fecha!</strong>}
+            </div>
+          )}
+
           {tieneRegistro && (
             <details className="dg-fab-audit">
               <summary><ClipboardList size={12} /> Registro de fabricación</summary>
@@ -6430,6 +6490,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <div className="dg-fab-foot">
             <span className="dg-fab-foot-txt">
               {stageTxt}
+              {!terminado && !perUnidad && diasEnEtapa(p) != null && (
+                <span className={`dg-fab-reloj dg-fab-reloj-${nivelDemoraEtapa(p)}`}> · {diasEnEtapa(p) === 0 ? "hoy" : `hace ${diasEnEtapa(p)}d`} acá</span>
+              )}
               {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}
               {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
               {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
@@ -6561,6 +6624,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             <div className="dg-fab-foot">
               <span className="dg-fab-foot-txt">
                 {cortados}/{cant} cortados · {armados}/{cant} armados · {embalados}/{cant} embalados
+                {!terminado && diasEnEtapa(p) != null && (
+                  <span className={`dg-fab-reloj dg-fab-reloj-${nivelDemoraEtapa(p)}`}> · hace {diasEnEtapa(p)}d acá</span>
+                )}
                 {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}
                 {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
               </span>
@@ -6610,7 +6676,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
           <option value="activos">En producción ({activos.length})</option>
           <option value="historial">Historial de terminados ({historial.length})</option>
-          <option value="demorados">Solo demorados ({demorados.length})</option>
+          <option value="demorados">Demorados ({demorados.length})</option>
+          <option value="afuera">Afuera del taller ({afuera.length})</option>
           <option value="todos">Todos ({enFabrica.length})</option>
         </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
@@ -6646,9 +6713,28 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           </div>
         );
       })()}
+      {filtroEstado !== "historial" && (() => {
+        const dem = activos.filter(estaDemoradoAuto);
+        const venc = activos.filter(trabajoAfueraVencido);
+        const todos = [...new Map([...dem, ...venc].map((p) => [p.id, p])).values()];
+        if (todos.length === 0) return null;
+        const lineas = [];
+        if (dem.length) lineas.push(`${dem.length} frenado${dem.length === 1 ? "" : "s"} hace varios días en una etapa`);
+        if (venc.length) lineas.push(`${venc.length} pasado${venc.length === 1 ? "" : "s"} de la fecha prometida (grabado / biseladora)`);
+        return (
+          <div className="dg-fab-alerta-demora">
+            <AlertTriangle size={18} />
+            <div>
+              <strong>{`Revisá ${todos.length} pedido${todos.length === 1 ? "" : "s"} que se está${todos.length === 1 ? "" : "n"} atrasando`}</strong>
+              <span>{lineas.join(" · ")}. Miralos con los filtros “Demorados” y “Afuera del taller”.</span>
+              <span className="dg-fab-alerta-ordenes">{todos.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{todos.length > 8 ? "  ·  …" : ""}</span>
+            </div>
+          </div>
+        );
+      })()}
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
-        {lista === "armar" ? (() => {
+        {(lista === "armar" && filtroEstado !== "afuera" && filtroEstado !== "historial") ? (() => {
           const mapaGrupos = new Map();
           visibles.forEach((p) => {
             const grupo = grupoListaArmar(p);
@@ -8157,6 +8243,20 @@ function Style() {
       .dg-fab-alerta-urgente strong { display:block; font-family:'Space Grotesk', sans-serif; font-size:14px; color:var(--dg-text); }
       .dg-fab-alerta-urgente span { display:block; margin-top:3px; font-size:12px; color:var(--dg-text-dim); line-height:1.4; }
       .dg-fab-alerta-ordenes { font-family:'JetBrains Mono', monospace; font-size:11px !important; color:var(--dg-danger) !important; margin-top:5px !important; }
+      .dg-fab-alerta-demora { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-warning); border-radius:12px; background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface)); }
+      .dg-fab-alerta-demora > svg { flex:none; margin-top:1px; color:var(--dg-warning); }
+      .dg-fab-alerta-demora strong { display:block; font-family:'Space Grotesk', sans-serif; font-size:14px; color:var(--dg-text); }
+      .dg-fab-alerta-demora span { display:block; margin-top:3px; font-size:12px; color:var(--dg-text-dim); line-height:1.4; }
+      .dg-fab-alerta-demora .dg-fab-alerta-ordenes { color:var(--dg-warning) !important; }
+      .dg-fab-reloj { font-weight:600; }
+      .dg-fab-reloj-ok { color:var(--dg-text-faint); }
+      .dg-fab-reloj-alerta { color:var(--dg-warning); }
+      .dg-fab-reloj-critico { color:var(--dg-danger); }
+      .dg-fab-prometido { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px; padding:8px 11px; border:1px solid rgba(var(--dg-line-rgb),0.14); border-radius:9px; font-size:11.5px; color:var(--dg-text-dim); }
+      .dg-fab-prometido > span { font-weight:600; }
+      .dg-fab-prometido input { min-height:33px; padding:5px 8px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:7px; color:var(--dg-text); font-size:12px; font-family:'Inter',sans-serif; }
+      .dg-fab-prometido-vencido { border-color:var(--dg-danger); background:color-mix(in srgb, var(--dg-danger) 8%, var(--dg-surface)); }
+      .dg-fab-prometido-vencido > strong { color:var(--dg-danger); }
       .dg-fab-leyenda { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
       .dg-fab-leyenda span { --ec:var(--dg-text-dim); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px;
         padding:4px 10px; border-radius:100px; border-left:3px solid var(--ec); background: rgba(var(--dg-line-rgb),0.03); color:var(--dg-text-dim); }
