@@ -4343,7 +4343,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         }));
       }, 0);
     } else {
-      setOpenPedido(null); setCreating(false);
+      setOpenPedido(null); setCreating(false); setNextDraft(null);
     }
   }
   function marcarEntregado(p) {
@@ -5095,8 +5095,20 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   function intentarGuardar(opts) {
     setIntentoGuardar(true);
     if (Object.keys(validarPedido(draft)).length > 0) {
-      const primer = ref_scrollTop();
+      ref_scrollTop();
       return;
+    }
+    if (esNuevo && !opts?.addAnother) {
+      const cant = Number(draft.cant) || 1;
+      const ok = window.confirm(
+        "Antes de guardar el pedido, repasá:\n\n" +
+        "•  ¿El pedido NO lleva un segundo espejo?\n" +
+        "     (si lleva otro, cerrá este aviso y usá\n" +
+        "     \"Guardar y agregar otro espejo del mismo cliente\")\n\n" +
+        "•  ¿La cantidad está bien? Cargaste " + cant + " unidad" + (cant === 1 ? "" : "es") + ".\n\n" +
+        "Aceptar = guardar y cerrar."
+      );
+      if (!ok) return;
     }
     onSave(draft, opts);
   }
@@ -6444,6 +6456,26 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <span style={{ "--ec": "var(--dg-text-dim)" }}>Retira</span>
       </div>
 
+      {filtroEstado !== "historial" && (() => {
+        const urgentes = activos.filter(esUrgente);
+        if (urgentes.length === 0) return null;
+        const reclamos = urgentes.filter((p) => p.tipoPedido === "reclamo").length;
+        const soloUrgentes = urgentes.length - reclamos;
+        const detalle = [
+          reclamos > 0 ? `${reclamos} de reclamo / cambio` : null,
+          soloUrgentes > 0 ? `${soloUrgentes} marcado${soloUrgentes === 1 ? "" : "s"} como urgente` : null,
+        ].filter(Boolean).join(" · ");
+        return (
+          <div className="dg-fab-alerta-urgente">
+            <AlertTriangle size={18} />
+            <div>
+              <strong>{urgentes.length === 1 ? "Hay 1 espejo con prioridad" : `Hay ${urgentes.length} espejos con prioridad`}</strong>
+              <span>{detalle} — hacelos primero. Van marcados con la etiqueta CAMBIO / URGENTE arriba de cada lista.</span>
+              <span className="dg-fab-alerta-ordenes">{urgentes.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{urgentes.length > 8 ? "  ·  …" : ""}</span>
+            </div>
+          </div>
+        );
+      })()}
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {lista === "armar" ? (() => {
@@ -7948,6 +7980,11 @@ function Style() {
       .dg-save-error span { color:var(--dg-text-dim); font-size:11.5px; }
       @media (max-width:680px) { .dg-save-toast { left:12px; right:12px; bottom:12px; max-width:none; } }
 
+      .dg-fab-alerta-urgente { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-danger); border-radius:12px; background:color-mix(in srgb, var(--dg-danger) 12%, var(--dg-surface)); }
+      .dg-fab-alerta-urgente > svg { flex:none; margin-top:1px; color:var(--dg-danger); }
+      .dg-fab-alerta-urgente strong { display:block; font-family:'Space Grotesk', sans-serif; font-size:14px; color:var(--dg-text); }
+      .dg-fab-alerta-urgente span { display:block; margin-top:3px; font-size:12px; color:var(--dg-text-dim); line-height:1.4; }
+      .dg-fab-alerta-ordenes { font-family:'JetBrains Mono', monospace; font-size:11px !important; color:var(--dg-danger) !important; margin-top:5px !important; }
       .dg-fab-leyenda { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
       .dg-fab-leyenda span { --ec:var(--dg-text-dim); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px;
         padding:4px 10px; border-radius:100px; border-left:3px solid var(--ec); background: rgba(var(--dg-line-rgb),0.03); color:var(--dg-text-dim); }
