@@ -46,10 +46,10 @@ const SECTOR_DESCRIPTIONS = {
 const SECTOR_VISUAL = {
   marketing:      { accent: "#C96F5D", position: "0% 0%" },
   ventas:         { accent: "#C28B47", position: "50% 0%" },
-  administracion: { accent: "#8A9161", position: "100% 0%" },
+  administracion: { accent: "var(--dg-estado-grabado)", position: "100% 0%" },
   fabrica:        { accent: "#A89782", position: "0% 100%" },
-  postventa:      { accent: "#A66A75", position: "50% 100%" },
-  logistica:      { accent: "#B46F43", position: "100% 100%" },
+  postventa:      { accent: "var(--dg-estado-bisel)", position: "50% 100%" },
+  logistica:      { accent: "var(--dg-estado-biseladora)", position: "100% 100%" },
 };
 
 function RoomScene({ sector }) {
@@ -63,7 +63,7 @@ function RoomScene({ sector }) {
     </div>
   );
 }
-const CHART_PALETTE = ["var(--dg-accent)", "var(--dg-warning)", "var(--dg-danger)", "var(--dg-success)", "#A66A75", "#8A9161"];
+const CHART_PALETTE = ["var(--dg-accent)", "var(--dg-warning)", "var(--dg-danger)", "var(--dg-success)", "var(--dg-estado-bisel)", "var(--dg-estado-grabado)"];
 
 const DEFAULT_SECTORS = [
   { id: "marketing",      name: "Marketing y Publicidad",  icon: "Megaphone",    tipo: "oficina",  encargado: "", clave: null, operarios: [], tasks: [] },
@@ -246,14 +246,14 @@ const PULIDO_OPTIONS = ["No", "Sí"];
 const TALLER_MODELOS = [
   { id: "simples", label: "Simples", description: "Corte, pulido y armado estándar", color: "var(--dg-accent)" },
   { id: "esmerilados", label: "Esmerilados", description: "Grabado o esmerilado antes del armado", color: "var(--dg-warning)" },
-  { id: "biselados", label: "Biselados", description: "Proceso de biselado y terminación especial", color: "#A66A75" },
+  { id: "biselados", label: "Biselados", description: "Proceso de biselado y terminación especial", color: "var(--dg-estado-bisel)" },
 ];
 const TALLER_LISTAS = [
   { id: "armar", label: "Espejos para armar", shortLabel: "Para armar", description: "Corte, armado y embalado dentro del taller", color: "var(--dg-accent)" },
   { id: "mandar_grabar", label: "Para mandar a grabar", shortLabel: "A grabar", description: "Esmerilados ya cortados que todavía no salieron", color: "var(--dg-warning)" },
-  { id: "en_grabado", label: "En grabado", shortLabel: "En grabado", description: "Esmerilados que están trabajando afuera", color: "#8A9161" },
-  { id: "bisel_sin_pedir", label: "Biselados sin pedir", shortLabel: "Sin pedir", description: "Biselados que todavía hay que encargar", color: "#A66A75" },
-  { id: "bisel_pedidos", label: "Biselados pedidos", shortLabel: "En biseladora", description: "Biselados pedidos que todavía no regresaron", color: "#B46F43" },
+  { id: "en_grabado", label: "En grabado", shortLabel: "En grabado", description: "Esmerilados que están trabajando afuera", color: "var(--dg-estado-grabado)" },
+  { id: "bisel_sin_pedir", label: "Biselados sin pedir", shortLabel: "Sin pedir", description: "Biselados que todavía hay que encargar", color: "var(--dg-estado-bisel)" },
+  { id: "bisel_pedidos", label: "Biselados pedidos", shortLabel: "En biseladora", description: "Biselados pedidos que todavía no regresaron", color: "var(--dg-estado-biseladora)" },
 ];
 const PRODUCCION_PASOS = [
   { id: "cortado", label: "Cortado", accion: "Marcar cortado", fechaCampo: "produccionCortadoFecha", responsableCampo: "produccionCortadoPor" },
@@ -261,10 +261,10 @@ const PRODUCCION_PASOS = [
   { id: "embalado", label: "Embalado", accion: "Marcar embalado", fechaCampo: "produccionEmbaladoFecha", responsableCampo: "produccionEmbaladoPor" },
 ];
 const ENTREGA_ESTILO = {
-  "Interior": { clase: "interior", color: "#A66A75", icono: "🚚" },
+  "Interior": { clase: "interior", color: "var(--dg-estado-bisel)", icono: "🚚" },
   "Envío flex": { clase: "flex", color: "var(--dg-warning)", icono: "⚡" },
   "Envío": { clase: "envio", color: "var(--dg-accent)", icono: "🚚" },
-  "Colocación": { clase: "coloca", color: "#8A9161", icono: "🔧" },
+  "Colocación": { clase: "coloca", color: "var(--dg-estado-grabado)", icono: "🔧" },
   "Retira": { clase: "retira", color: "var(--dg-text-dim)", icono: "🏢" },
   default: { clase: "otro", color: "var(--dg-text-dim)", icono: "📦" },
 };
@@ -370,11 +370,11 @@ const SECTOR_SUBPAGES = {
 };
 
 const RECLAMO_TIPOS = ["Producto dañado", "Demora en entrega", "Falla eléctrica/LED", "Error en el pedido", "Mal trato/atención", "Garantía", "Otro"];
-const RECLAMO_COLORS = ["var(--dg-danger)", "var(--dg-warning)", "var(--dg-accent)", "var(--dg-text-dim)", "#A66A75", "#8A9161", "var(--dg-success)"];
+const RECLAMO_COLORS = ["var(--dg-danger)", "var(--dg-warning)", "var(--dg-accent)", "var(--dg-text-dim)", "var(--dg-estado-bisel)", "var(--dg-estado-grabado)", "var(--dg-success)"];
 
 const ESTADO_PEDIDO_COLOR = {
   "Sin pasar a fábrica": "var(--dg-text-dim)", "Verificado": "var(--dg-warning)", "Pasado a fábrica": "var(--dg-accent)", "Mandar a grabar": "var(--dg-warning)",
-  "En grabado": "#8A9161", "Sin pedir": "#A66A75", "En biseladora": "#B46F43", "Pedir biselado": "#A66A75", "Para armar": "var(--dg-warning)", "Espejo listo": "var(--dg-accent)", "Entregado": "var(--dg-success)",
+  "En grabado": "var(--dg-estado-grabado)", "Sin pedir": "var(--dg-estado-bisel)", "En biseladora": "var(--dg-estado-biseladora)", "Pedir biselado": "var(--dg-estado-bisel)", "Para armar": "var(--dg-warning)", "Espejo listo": "var(--dg-accent)", "Entregado": "var(--dg-success)",
   "Cancelado": "var(--dg-danger)",
 };
 const COMISION_COLOR = { "No": "var(--dg-text-dim)", "Liquidar": "var(--dg-warning)", "Sí": "var(--dg-success)", "No aplica": "var(--dg-text-faint)" };
@@ -386,10 +386,10 @@ const ESTADO_STAGE = {
   "Verificado": { stage: "Verificado", color: "var(--dg-warning)" },
   "Pasado a fábrica": { stage: "Verificado", color: "var(--dg-warning)" },
   "Mandar a grabar": { stage: "Para mandar a grabar", color: "var(--dg-warning)" },
-  "En grabado": { stage: "En grabado", color: "#8A9161" },
-  "Sin pedir": { stage: "Biselado sin pedir", color: "#A66A75" },
-  "En biseladora": { stage: "Biselado pedido · en biseladora", color: "#B46F43" },
-  "Pedir biselado": { stage: "Biselado sin pedir", color: "#A66A75" },
+  "En grabado": { stage: "En grabado", color: "var(--dg-estado-grabado)" },
+  "Sin pedir": { stage: "Biselado sin pedir", color: "var(--dg-estado-bisel)" },
+  "En biseladora": { stage: "Biselado pedido · en biseladora", color: "var(--dg-estado-biseladora)" },
+  "Pedir biselado": { stage: "Biselado sin pedir", color: "var(--dg-estado-bisel)" },
   "Para armar": { stage: "Para armar", color: "var(--dg-warning)" },
   "Espejo listo": { stage: "Espejo listo", color: "var(--dg-accent)" },
   "Despachado": { stage: "Despachado", color: "var(--dg-success)" },
@@ -6387,10 +6387,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       </div>
 
       <div className="dg-fab-leyenda">
-        <span style={{ "--ec": "#A66A75" }}>Interior</span>
+        <span style={{ "--ec": "var(--dg-estado-bisel)" }}>Interior</span>
         <span style={{ "--ec": "var(--dg-warning)" }}>Envío flex</span>
         <span style={{ "--ec": "var(--dg-accent)" }}>Envío</span>
-        <span style={{ "--ec": "#8A9161" }}>Colocación</span>
+        <span style={{ "--ec": "var(--dg-estado-grabado)" }}>Colocación</span>
         <span style={{ "--ec": "var(--dg-text-dim)" }}>Retira</span>
       </div>
 
@@ -7549,15 +7549,16 @@ function Style() {
       .dg-app ::-webkit-scrollbar-thumb { background: rgba(var(--dg-line-rgb),0.13); border-radius:100px; }
       .dg-app ::-webkit-scrollbar-thumb:hover { background: rgba(var(--dg-line-rgb),0.22); }
       .dg-app {
-        --dg-bg:#0C0C0D; --dg-surface:#19191A; --dg-surface-2:#212122; --dg-surface-3:#29292A;
-        --dg-order-info:#242425; --dg-order-flow:#141415;
+        --dg-bg:#0E0E10; --dg-surface:#1C1C1F; --dg-surface-2:#26262A; --dg-surface-3:#313136;
+        --dg-order-info:#242427; --dg-order-flow:#151517;
         --dg-line-rgb:235,235,233;
-        --dg-text:#F1F1EF; --dg-text-dim:#9C9C99; --dg-text-faint:#6E6E6B;
+        --dg-text:#F2F1EE; --dg-text-dim:#A2A29C; --dg-text-faint:#8A8A85;
         --dg-accent:#F2622F; --dg-accent-rgb:242,98,47; --dg-accent-2:#FF8352; --dg-on-accent:#FFFFFF;
-        --dg-success:#7FA35C; --dg-success-rgb:127,163,92;
-        --dg-warning:#D9A441; --dg-warning-rgb:217,164,65;
-        --dg-danger:#C2574A; --dg-danger-rgb:194,87,74;
-        --dg-shadow:rgba(0,0,0,.6);
+        --dg-success:#84B368; --dg-success-rgb:132,179,104;
+        --dg-warning:#E0AC4B; --dg-warning-rgb:224,172,75;
+        --dg-danger:#E36D5F; --dg-danger-rgb:227,109,95;
+        --dg-estado-grabado:#A6AE7C; --dg-estado-bisel:#C88F98; --dg-estado-biseladora:#CD8A5E;
+        --dg-shadow:rgba(0,0,0,.55);
         --bg:var(--dg-bg); --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22); --text:var(--dg-text); --text-dim:var(--dg-text-dim);
         font-family:'Inter', sans-serif; color: var(--text);
         color-scheme:dark;
@@ -7566,15 +7567,16 @@ function Style() {
         padding:calc(28px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(60px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
         box-sizing:border-box; transition: background .2s ease, color .2s ease; }
       .dg-app[data-theme="light"] {
-        --dg-bg:#E6E3DE; --dg-surface:#FAF9F6; --dg-surface-2:#FFFFFF; --dg-surface-3:#DCD8D1;
-        --dg-order-info:#FFFFFF; --dg-order-flow:#DDD8D0;
+        --dg-bg:#EEECE7; --dg-surface:#FBFAF7; --dg-surface-2:#FFFFFF; --dg-surface-3:#E4E1DA;
+        --dg-order-info:#FFFFFF; --dg-order-flow:#E4E0D8;
         --dg-line-rgb:35,34,31;
-        --dg-text:#1F1F1D; --dg-text-dim:#5D5C57; --dg-text-faint:#74716A;
-        --dg-accent:#C1501F; --dg-accent-rgb:193,80,31; --dg-accent-2:#A6431A; --dg-on-accent:#FFFFFF;
-        --dg-success:#4E673D; --dg-success-rgb:78,103,61;
-        --dg-warning:#805515; --dg-warning-rgb:128,85,21;
-        --dg-danger:#A44F43; --dg-danger-rgb:164,79,67;
-        --dg-shadow:rgba(65,52,39,.16);
+        --dg-text:#201F1C; --dg-text-dim:#59564F; --dg-text-faint:#77736A;
+        --dg-accent:#B4471B; --dg-accent-rgb:180,71,27; --dg-accent-2:#98401A; --dg-on-accent:#FFFFFF;
+        --dg-success:#46613A; --dg-success-rgb:70,97,58;
+        --dg-warning:#8F5A0F; --dg-warning-rgb:143,90,15;
+        --dg-danger:#AF4A3E; --dg-danger-rgb:175,74,62;
+        --dg-estado-grabado:#5B6337; --dg-estado-bisel:#8B4A57; --dg-estado-biseladora:#8A4E28;
+        --dg-shadow:rgba(65,52,39,.15);
         --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22);
         color-scheme:light;
         background:radial-gradient(ellipse 75% 42% at 50% -10%,rgba(var(--dg-accent-rgb),.07),transparent),var(--dg-bg);
@@ -7595,7 +7597,7 @@ function Style() {
       .dg-brand-sub { font-size:12px; color: var(--text-dim); }
       .dg-session { display:flex; align-items:center; gap:8px; }
       .dg-session-badge { display:flex; align-items:center; gap:6px; font-size:12px; padding:7px 12px; border-radius:100px; background: var(--panel); border:1px solid var(--panel-border); }
-      .dg-login-btn, .dg-btn-primary { display:flex; align-items:center; gap:6px; font-family:'Inter',sans-serif; font-weight:600; font-size:13px; background: linear-gradient(145deg, var(--dg-accent), var(--dg-accent-2)); color:var(--dg-on-accent); border:none; border-radius:10px; padding:9px 14px; cursor:pointer; box-shadow: 0 2px 14px -2px rgba(var(--dg-accent-rgb),0.45); transition: filter .15s ease, transform .1s ease, box-shadow .15s ease; }
+      .dg-login-btn, .dg-btn-primary { display:flex; align-items:center; gap:6px; font-family:'Inter',sans-serif; font-weight:600; font-size:13px; background: var(--dg-accent); color:var(--dg-on-accent); border:none; border-radius:10px; padding:9px 14px; cursor:pointer; box-shadow: 0 1px 8px -2px rgba(var(--dg-accent-rgb),0.22); transition: filter .15s ease, transform .1s ease, box-shadow .15s ease; }
       .dg-login-btn:active, .dg-btn-primary:active { transform: scale(0.97); }
       .dg-login-btn:hover, .dg-btn-primary:hover { filter: brightness(1.08); }
       .dg-icon-btn { background:transparent; border:none; color:var(--text-dim); cursor:pointer; padding:6px; border-radius:8px; display:flex; transition: background .15s ease, color .15s ease; }
@@ -7705,7 +7707,7 @@ function Style() {
 
       .dg-overlay { position:fixed; inset:0; background:#0A0A0B; display:flex; flex-direction:column; align-items:center; overflow-y:auto; padding:calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); z-index:50; }
       .dg-overlay::before, .dg-overlay::after { content:""; display:block; flex:0 0 auto; margin:auto 0; }
-      .dg-modal { font-family:'Inter', sans-serif; color:var(--dg-text); width:100%; max-width:400px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
+      .dg-modal { font-family:'Inter', sans-serif; color:var(--dg-text); width:100%; max-width:400px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.14); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
       @keyframes dg-modal-in { from { opacity:0; transform: translateY(8px) scale(0.99); } to { opacity:1; transform:none; } }
       .dg-modal-lg { max-width:540px; }
       .dg-modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
@@ -7787,7 +7789,8 @@ function Style() {
       .dg-pago-monto { font-family:'JetBrains Mono', monospace; font-size:13px; margin-right:6px; }
       .dg-pago-list { max-height:320px; }
 
-      .dg-section-card { background: rgba(var(--dg-line-rgb),0.02); border:1px solid rgba(var(--dg-line-rgb),0.055); border-radius:14px; padding:16px 17px 18px; margin-bottom:14px; transition: border-color .15s ease; }
+      .dg-section-card { background: rgba(var(--dg-line-rgb),0.025); border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:14px; padding:16px 17px 18px; margin-bottom:14px; transition: border-color .15s ease; }
+      .dg-app[data-theme="light"] .dg-section-card { border-color: rgba(var(--dg-line-rgb),0.14); }
       .dg-section-card:hover { border-color: rgba(var(--dg-line-rgb),0.12); }
       .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:var(--dg-accent); font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:12.5px; text-transform:uppercase; letter-spacing:0.4px; }
       .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; }
@@ -7911,12 +7914,12 @@ function Style() {
       .dg-fab-grupo-abierto { background:rgba(var(--dg-accent-rgb),0.08); border-color:rgba(var(--dg-accent-rgb),0.3); color:var(--dg-text); }
       .dg-fab-grupo-count { font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; color:var(--dg-accent);
         background:rgba(var(--dg-accent-rgb),0.12); border-radius:20px; padding:2px 9px; }
-      .dg-fab-card { position:relative; background: var(--dg-surface); border:0.5px solid rgba(var(--dg-line-rgb),0.08);
+      .dg-fab-card { position:relative; background: var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12);
         border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:10px; padding:0; }
-      .dg-fab-interior { border-left-color:#A66A75; }
+      .dg-fab-interior { border-left-color:var(--dg-estado-bisel); }
       .dg-fab-flex { border-left-color:var(--dg-warning); }
       .dg-fab-envio { border-left-color:var(--dg-accent); }
-      .dg-fab-coloca { border-left-color:#8A9161; }
+      .dg-fab-coloca { border-left-color:var(--dg-estado-grabado); }
       .dg-fab-retira { border-left-color: rgba(var(--dg-line-rgb),0.15); }
       .dg-fab-terminado { box-shadow: 0 0 0 2px var(--dg-success); }
       .dg-fab-terminado .dg-fab-zona-datos { background: rgba(var(--dg-success-rgb),0.06); }
