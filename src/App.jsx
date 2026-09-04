@@ -871,6 +871,7 @@ function App() {
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [panelNotifOpen, setPanelNotifOpen] = useState(false);
   const [vistaPanel, setVistaPanel] = useState(false);
+  const [vistaPendientes, setVistaPendientes] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
   const syncRefreshingRef = useRef(false);
@@ -1400,7 +1401,7 @@ function App() {
         key={sector.id}
         className={`dg-room-tile dg-room-tile-${sector.tipo}`}
         style={{ "--glow": glow }}
-        onClick={() => { setActiveSectorId(sector.id); setVistaPanel(false); }}
+        onClick={() => { setActiveSectorId(sector.id); setVistaPanel(false); setVistaPendientes(false); }}
         aria-label={`Abrir sector ${sector.name}`}
       >
         <RoomScene sector={sector} />
@@ -1461,20 +1462,30 @@ function App() {
         </header>
 
         <nav className="dg-nav dg-nav-breadcrumb">
-          <button className={`dg-nav-btn ${!activeSectorId && !vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setActiveSectorId(null); setVistaPanel(false); }} aria-current={!activeSectorId && !vistaPanel ? "page" : undefined}><Building2 size={14} /> Edificio</button>
-          {isAdmin && (
-            <button className={`dg-nav-btn ${vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setVistaPanel(true); setActiveSectorId(null); }} aria-current={vistaPanel ? "page" : undefined}><BarChart3 size={14} /> Panel de control</button>
+          <button className={`dg-nav-btn ${!activeSectorId && !vistaPanel && !vistaPendientes ? "dg-nav-on" : ""}`} onClick={() => { setActiveSectorId(null); setVistaPanel(false); setVistaPendientes(false); }} aria-current={!activeSectorId && !vistaPanel && !vistaPendientes ? "page" : undefined}><Building2 size={14} /> Edificio</button>
+          {session && (
+            <button className={`dg-nav-btn ${vistaPendientes ? "dg-nav-on" : ""}`} onClick={() => { setVistaPendientes(true); setActiveSectorId(null); setVistaPanel(false); }} aria-current={vistaPendientes ? "page" : undefined}><ClipboardList size={14} /> Pendientes</button>
           )}
-          {activeSector && !vistaPanel && (
+          {isAdmin && (
+            <button className={`dg-nav-btn ${vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setVistaPanel(true); setActiveSectorId(null); setVistaPendientes(false); }} aria-current={vistaPanel ? "page" : undefined}><BarChart3 size={14} /> Panel de control</button>
+          )}
+          {activeSector && !vistaPanel && !vistaPendientes && (
             <span className="dg-nav-btn dg-nav-on dg-nav-crumb"><ChevronRight size={13} /> {activeSector.name}</span>
           )}
         </nav>
+
+        {vistaPendientes && session && (
+          <TableroPendientes
+            pedidos={pedidos} reclamos={reclamos} stockMateriales={stockMateriales} session={session}
+            onIrASector={(sid) => { setActiveSectorId(sid); setVistaPendientes(false); setVistaPanel(false); }}
+          />
+        )}
 
         {vistaPanel && isAdmin && (
           <PanelControlAdmin pedidos={pedidos} incomes={incomes} reclamos={reclamos} stockMateriales={stockMateriales} sectors={sectors} quoteConfig={quoteConfig} />
         )}
 
-        {!activeSector && !vistaPanel && (
+        {!activeSector && !vistaPanel && !vistaPendientes && (
           <>
             <section className="dg-overview-head">
               <div className="dg-overview-copy">
@@ -3793,6 +3804,112 @@ const QUICK_VIEWS = [
 ];
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
+
+// ---- Tablero "Pendientes": junta todo lo que está esperando algo, en vivo ----
+const SECTOR_PENDIENTES = [
+  { id: "fabrica", label: "Fábrica" },
+  { id: "ventas", label: "Ventas" },
+  { id: "postventa", label: "PostVenta" },
+  { id: "logistica", label: "Logística" },
+  { id: "administracion", label: "Administración" },
+];
+function calcularPendientes(pedidos, reclamos, stockMateriales) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const manana = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const dias = (f) => { const t = new Date(f).getTime(); return Number.isNaN(t) ? 0 : Math.floor((Date.now() - t) / 86400000); };
+  const rows = [];
+  const add = (sector, nivel, id, titulo, detalle) => rows.push({ sector, nivel, id, titulo, detalle });
+
+  (pedidos || []).forEach((p) => {
+    if (p.estado === "Cancelado") return;
+    const cerrado = p.estado === "Entregado" || p.estado === "Despachado";
+    const quien = `#${p.orden} ${p.cliente || "Sin nombre"}`;
+
+    if (p.estado === "Sin pasar a fábrica" && dias(p.fecha) >= 2)
+      add("ventas", "media", `ver-${p.id}`, quien, `sin verificar hace ${dias(p.fecha)} días`);
+
+    if (estaDemoradoAuto(p))
+      add("fabrica", nivelDemoraEtapa(p) === "critico" ? "alta" : "media", `dem-${p.id}`, quien, `frenado hace ${diasEnEtapa(p)} días en "${estadoProduccionLabel(p)}"`);
+
+    if (trabajoAfueraVencido(p)) {
+      const campo = campoPrometidaAfuera(p);
+      add("fabrica", "alta", `afu-${p.id}`, quien, `${pedidoListaFabrica(p) === "en_grabado" ? "grabado" : "biselado"} pasado de fecha (prometido ${p[campo]})`);
+    }
+
+    if (p.estado === "Espejo listo" && esPedidoConEnvio(p) && !p.listo)
+      add("postventa", "media", `lst-${p.id}`, quien, "espejo listo — falta coordinar la fecha de entrega");
+
+    if (p.listo && (p.listo === hoy || p.listo === manana) && esPedidoConEnvio(p) && !p.envioConfirmado && !cerrado)
+      add("postventa", "alta", `ent-${p.id}`, quien, `entrega ${p.listo === hoy ? "HOY" : "mañana"} sin confirmar con el cliente`);
+
+    if (cerrado && pedidoSaldo(p) > 0)
+      add("logistica", "alta", `sld-${p.id}`, quien, `entregado con saldo sin cobrar: ${money(pedidoSaldo(p))}`);
+
+    if (cerrado && !pedidoFacturadoOEfectivo(p) && dias(p.entregadoFecha || p.fecha) >= 3)
+      add("administracion", "media", `fac-${p.id}`, quien, "entregado y todavía sin factura");
+
+    if (!p.comisionPagada && !p.comisionExcluida && p.vendedor && pedidoSaldo(p) <= 0 && dias(p.fecha) >= 7)
+      add("administracion", "media", `com-${p.id}`, quien, `comisión sin liquidar (${p.vendedor})`);
+  });
+
+  (reclamos || []).forEach((r) => {
+    if (reclamoFinalizado(r)) return;
+    const d = dias(r.fecha);
+    if (!r.solucion && d >= 2)
+      add("postventa", "alta", `rec-${r.id}`, `Reclamo · ${r.cliente || "Sin nombre"}`, `${r.tipo || "sin tipo"} — abierto hace ${d} días, sin solución cargada`);
+    else if (r.solucion && d >= 5)
+      add("postventa", "media", `rec-${r.id}`, `Reclamo · ${r.cliente || "Sin nombre"}`, `${r.tipo || "sin tipo"} — con solución pero sin cerrar hace ${d} días`);
+  });
+
+  (stockMateriales || []).forEach((m) => {
+    if (Number(m.cantidad) <= Number(m.minimo))
+      add("fabrica", "media", `stk-${m.id}`, m.nombre || "Material", `quedan ${m.cantidad}, mínimo ${m.minimo} ${m.unidad || ""}`);
+  });
+
+  return rows;
+}
+
+function TableroPendientes({ pedidos, reclamos, stockMateriales, session, onIrASector }) {
+  const rows = calcularPendientes(pedidos, reclamos, stockMateriales);
+  const miSector = session?.role === "sector" ? session.sectorId : null;
+  const [filtro, setFiltro] = useState(miSector && SECTOR_PENDIENTES.some((x) => x.id === miSector) ? miSector : "todos");
+  const nivelOrden = { alta: 0, media: 1 };
+  const visibles = (filtro === "todos" ? rows : rows.filter((r) => r.sector === filtro))
+    .slice().sort((a, b) => (nivelOrden[a.nivel] - nivelOrden[b.nivel]) || (a.sector < b.sector ? -1 : a.sector > b.sector ? 1 : 0));
+  const porSector = SECTOR_PENDIENTES.map((x) => ({ ...x, n: rows.filter((r) => r.sector === x.id).length })).filter((x) => x.n > 0);
+  const altas = rows.filter((r) => r.nivel === "alta").length;
+
+  return (
+    <div className="dg-page dg-pendientes">
+      <section className="dg-pendientes-head">
+        <span className="dg-eyebrow">Pendientes de hoy</span>
+        <h1>{rows.length === 0 ? "Todo al día 🎉" : `${rows.length} ${rows.length === 1 ? "cosa necesita" : "cosas necesitan"} acción`}</h1>
+        <p>{rows.length === 0 ? "Ninguna parte de los procesos quedó a medias." : (altas > 0 ? `${altas} ${altas === 1 ? "es urgente" : "son urgentes"}. ` : "Nada urgente. ") + "Tocá una fila para ir al sector."}</p>
+      </section>
+
+      {rows.length > 0 && (
+        <div className="dg-pendientes-filtros">
+          <button className={filtro === "todos" ? "dg-pf-on" : ""} onClick={() => setFiltro("todos")}>Todo ({rows.length})</button>
+          {porSector.map((x) => (
+            <button key={x.id} className={filtro === x.id ? "dg-pf-on" : ""} onClick={() => setFiltro(x.id)}>{x.label} ({x.n})</button>
+          ))}
+        </div>
+      )}
+
+      <div className="dg-pendientes-lista">
+        {visibles.length === 0 && rows.length > 0 && <div className="dg-empty">Nada pendiente en este filtro.</div>}
+        {visibles.map((r) => (
+          <button key={r.id} className={`dg-pendiente-fila dg-pendiente-${r.nivel}`} onClick={() => onIrASector(r.sector)}>
+            <span className="dg-pendiente-pin">{r.nivel === "alta" ? "URGENTE" : "PENDIENTE"}</span>
+            <span className="dg-pendiente-txt"><b>{r.titulo}</b><small>{r.detalle}</small></span>
+            <span className="dg-pendiente-sector">{SECTOR_PENDIENTES.find((x) => x.id === r.sector)?.label || r.sector}</span>
+            <ChevronRight size={15} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 // Un pedido puede tener varias unidades iguales (cant > 1) en un solo registro.
 // Para contar "espejos" hay que sumar cant, no contar registros — si no, un
 // grupo de 3 registros donde uno tiene cant=2 muestra "3 espejos" en vez de 4.
@@ -8243,6 +8360,27 @@ function Style() {
       .dg-fab-alerta-urgente strong { display:block; font-family:'Space Grotesk', sans-serif; font-size:14px; color:var(--dg-text); }
       .dg-fab-alerta-urgente span { display:block; margin-top:3px; font-size:12px; color:var(--dg-text-dim); line-height:1.4; }
       .dg-fab-alerta-ordenes { font-family:'JetBrains Mono', monospace; font-size:11px !important; color:var(--dg-danger) !important; margin-top:5px !important; }
+      .dg-pendientes-head { margin-bottom:16px; }
+      .dg-pendientes-head h1 { font-family:'Space Grotesk', sans-serif; font-size:24px; margin:6px 0 6px; letter-spacing:-0.3px; }
+      .dg-pendientes-head p { color:var(--dg-text-dim); font-size:13.5px; margin:0; }
+      .dg-pendientes-filtros { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px; }
+      .dg-pendientes-filtros button { padding:6px 12px; border-radius:100px; border:1px solid rgba(var(--dg-line-rgb),0.14); background:var(--dg-surface); color:var(--dg-text-dim); font-size:12px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif; }
+      .dg-pendientes-filtros .dg-pf-on { background:rgba(var(--dg-accent-rgb),0.12); border-color:rgba(var(--dg-accent-rgb),0.4); color:var(--dg-accent); }
+      .dg-pendientes-lista { display:flex; flex-direction:column; gap:8px; }
+      .dg-pendiente-fila { display:flex; align-items:center; gap:11px; width:100%; text-align:left; cursor:pointer; font-family:'Inter',sans-serif;
+        background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12); border-left:3px solid var(--dg-text-faint); border-radius:11px; padding:12px 14px; color:var(--dg-text); }
+      .dg-pendiente-fila:hover { border-color:rgba(var(--dg-accent-rgb),0.35); }
+      .dg-pendiente-alta { border-left-color:var(--dg-danger); }
+      .dg-pendiente-media { border-left-color:var(--dg-warning); }
+      .dg-pendiente-pin { flex:none; font-family:'JetBrains Mono', monospace; font-size:9px; font-weight:700; letter-spacing:0.5px; padding:3px 7px; border-radius:5px; }
+      .dg-pendiente-alta .dg-pendiente-pin { background:rgba(var(--dg-danger-rgb),0.16); color:var(--dg-danger); }
+      .dg-pendiente-media .dg-pendiente-pin { background:rgba(var(--dg-warning-rgb),0.18); color:var(--dg-warning); }
+      .dg-pendiente-txt { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-pendiente-txt b { font-family:'Space Grotesk', sans-serif; font-size:13.5px; font-weight:600; }
+      .dg-pendiente-txt small { font-size:11.5px; color:var(--dg-text-dim); line-height:1.35; }
+      .dg-pendiente-sector { flex:none; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; color:var(--dg-text-faint); white-space:nowrap; }
+      .dg-pendiente-fila > svg { flex:none; color:var(--dg-text-faint); }
+      @media (max-width:560px) { .dg-pendiente-sector { display:none; } }
       .dg-fab-alerta-demora { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-warning); border-radius:12px; background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface)); }
       .dg-fab-alerta-demora > svg { flex:none; margin-top:1px; color:var(--dg-warning); }
       .dg-fab-alerta-demora strong { display:block; font-family:'Space Grotesk', sans-serif; font-size:14px; color:var(--dg-text); }
