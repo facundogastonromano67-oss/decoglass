@@ -7,7 +7,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -870,6 +870,7 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [panelNotifOpen, setPanelNotifOpen] = useState(false);
+  const [buscadorOpen, setBuscadorOpen] = useState(false);
   const [vistaPanel, setVistaPanel] = useState(false);
   const [vistaPendientes, setVistaPendientes] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
@@ -1443,6 +1444,11 @@ function App() {
           </button>
           {session && <BotonNotificaciones session={session} />}
           {session && (
+            <button className="dg-icon-btn" onClick={() => setBuscadorOpen(true)} title="Buscar pedido o reclamo">
+              <Search size={17} />
+            </button>
+          )}
+          {session && (
             <button className="dg-icon-btn" onClick={() => setPanelNotifOpen(true)} title="Ver resumen del día">
               <ClipboardList size={17} />
             </button>
@@ -1566,6 +1572,14 @@ function App() {
       </div>
 
       {panelNotifOpen && session && <PanelNotificaciones session={session} onClose={() => setPanelNotifOpen(false)} />}
+
+      {buscadorOpen && session && (
+        <BuscadorGlobal
+          pedidos={pedidos} reclamos={reclamos}
+          onClose={() => setBuscadorOpen(false)}
+          onIr={(sid) => { setActiveSectorId(sid); setBuscadorOpen(false); setVistaPendientes(false); setVistaPanel(false); }}
+        />
+      )}
 
       {ajustesOpen && isAdmin && (
         <AjustesModal
@@ -3428,7 +3442,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
     touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: "", anticipo: "", comision: "No aplica", facturado: false, montoRegistrado: 0,
-    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
+    estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
     motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "",
@@ -3805,6 +3819,129 @@ const QUICK_VIEWS = [
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
 
+const RECLAMO_CICLO = ["Abierto", "Solución ofrecida", "Cliente aceptó", "Espejo en fábrica", "Resuelto"];
+function estadoReclamo(r) {
+  if (reclamoFinalizado(r)) return "Resuelto";
+  if (r.pedidoCreado) return "Espejo en fábrica";
+  if (r.clienteAcepto) return "Cliente aceptó";
+  if (r.solucion && String(r.solucion).trim()) return "Solución ofrecida";
+  return "Abierto";
+}
+function diasDesde(fecha) {
+  const t = new Date(fecha).getTime();
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+// Un pedido que pasó de Ventas a Fábrica (verificado) y nadie tomó todavía.
+function esperaAcuseFabrica(p) {
+  return !p?.vistoFabrica && p?.estado === "Verificado" && !p?.produccionEtapa && !pedidoEstaListo(p);
+}
+// Un pedido que Fábrica terminó y PostVenta todavía no tomó.
+function esperaAcusePostventa(p) {
+  return !p?.vistoPostventa && p?.estado === "Espejo listo" && esPedidoConEnvio(p);
+}
+
+function fechaCortaTimeline(v) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+// Todos los pasos del pedido, de la venta a la entrega, con fecha y responsable.
+function lineaDeTiempoPedido(p) {
+  if (!p) return [];
+  const proceso = pedidoProcesoTaller(p);
+  const pasos = [
+    { label: "Pedido cargado", fecha: p.fecha, quien: p.vendedor },
+    { label: "Verificado", fecha: p.pedidoVerificadoFecha, quien: p.pedidoVerificadoPor },
+  ];
+  if (proceso === "esmerilados") {
+    pasos.push({ label: "Cortado", fecha: p.produccionCortadoFecha, quien: p.produccionCortadoPor });
+    pasos.push({ label: "Enviado a grabar", fecha: p.grabadoEnviadoFecha, quien: p.grabadoEnviadoPor });
+    pasos.push({ label: "Volvió de grabado", fecha: p.grabadoRegresoFecha, quien: p.grabadoRegresoPor });
+  } else if (proceso === "biselados") {
+    pasos.push({ label: "Biselado pedido", fecha: p.biseladoPedidoFecha, quien: p.biseladoPedidoPor });
+    pasos.push({ label: "Volvió de biseladora", fecha: p.biseladoRegresoFecha, quien: p.biseladoRegresoPor });
+  } else {
+    pasos.push({ label: "Cortado", fecha: p.produccionCortadoFecha, quien: p.produccionCortadoPor });
+  }
+  pasos.push({ label: "Armado", fecha: p.produccionArmadoFecha, quien: p.produccionArmadoPor });
+  pasos.push({ label: "Embalado", fecha: p.produccionEmbaladoFecha || p.produccionListaFecha, quien: p.produccionEmbaladoPor });
+  pasos.push({ label: "Cliente avisado", fecha: p.clienteAvisadoFecha, quien: null });
+  if (esPedidoConEnvio(p)) pasos.push({ label: "Envío confirmado", fecha: p.envioConfirmadoFecha, quien: null });
+  if (p.estado === "Despachado" || p.despachadoFecha) pasos.push({ label: "Despachado", fecha: p.despachadoFecha, quien: null });
+  pasos.push({ label: "Entregado", fecha: p.entregadoFecha, quien: null });
+  return pasos.map((x) => ({ ...x, hecho: !!x.fecha }));
+}
+// Checklist de cabos sueltos antes de dar por cerrado un pedido.
+function checklistCierrePedido(p) {
+  const items = [
+    { label: "Espejo entregado", ok: p.estado === "Entregado" || p.estado === "Despachado" },
+    { label: "Saldo cobrado", ok: pedidoSaldo(p) <= 0, detalle: pedidoSaldo(p) > 0 ? `falta ${money(pedidoSaldo(p))}` : "" },
+    { label: "Facturado", ok: pedidoFacturadoOEfectivo(p), detalle: noRequiereFactura(p) ? "no requiere" : "" },
+  ];
+  if (Number(p.costoEnvio) > 0) items.push({ label: "Envío cobrado", ok: !!p.envioPagado });
+  items.push({ label: "Cliente avisado", ok: !!p.clienteAvisado });
+  return items;
+}
+
+// Buscador global: encuentra pedidos y reclamos por cliente, teléfono o N° de orden.
+function buscarGlobal(q, pedidos, reclamos) {
+  const t = String(q || "").trim().toLowerCase();
+  if (t.length < 2) return { pedidos: [], reclamos: [] };
+  const norm = (x) => String(x || "").toLowerCase();
+  const digitos = (x) => String(x || "").replace(/\D/g, "");
+  const td = digitos(t);
+  const mp = (pedidos || []).filter((p) =>
+    norm(p.cliente).includes(t) || String(p.orden || "").includes(t) ||
+    norm(p.dniCuit).includes(t) || (td.length >= 4 && digitos(p.celular).includes(td))
+  ).slice(0, 25);
+  const mr = (reclamos || []).filter((r) =>
+    norm(r.cliente).includes(t) || (td.length >= 4 && digitos(r.celular).includes(td))
+  ).slice(0, 12);
+  return { pedidos: mp, reclamos: mr };
+}
+
+function BuscadorGlobal({ pedidos, reclamos, onClose, onIr }) {
+  const [q, setQ] = useState("");
+  const inputRef = useRef(null);
+  useEffect(() => { const t = setTimeout(() => inputRef.current?.focus(), 60); return () => clearTimeout(t); }, []);
+  const res = buscarGlobal(q, pedidos, reclamos);
+  const total = res.pedidos.length + res.reclamos.length;
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-buscador" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-buscador-input">
+          <Search size={17} />
+          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cliente, teléfono o N° de pedido..." />
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="dg-buscador-res">
+          {q.trim().length < 2 && <div className="dg-empty">Escribí al menos 2 letras.</div>}
+          {q.trim().length >= 2 && total === 0 && <div className="dg-empty">No encontré nada con “{q.trim()}”.</div>}
+          {res.pedidos.map((p) => (
+            <button key={p.id} className="dg-buscador-fila" onClick={() => onIr("ventas")}>
+              <span className="dg-buscador-tag">#{p.orden}</span>
+              <span className="dg-buscador-txt">
+                <b>{p.cliente || "Sin nombre"}</b>
+                <small>{p.estado} · {p.ancho}×{p.alto} cm{p.celular ? ` · ${p.celular}` : ""}{pedidoSaldo(p) > 0 ? ` · saldo ${money(pedidoSaldo(p))}` : ""}</small>
+              </span>
+              <ChevronRight size={15} />
+            </button>
+          ))}
+          {res.reclamos.map((r) => (
+            <button key={r.id} className="dg-buscador-fila" onClick={() => onIr("postventa")}>
+              <span className="dg-buscador-tag dg-buscador-tag-rec">Reclamo</span>
+              <span className="dg-buscador-txt"><b>{r.cliente || "Sin nombre"}</b><small>{r.tipo || "sin tipo"}{r.celular ? ` · ${r.celular}` : ""}</small></span>
+              <ChevronRight size={15} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- Tablero "Pendientes": junta todo lo que está esperando algo, en vivo ----
 const SECTOR_PENDIENTES = [
   { id: "fabrica", label: "Fábrica" },
@@ -3850,6 +3987,11 @@ function calcularPendientes(pedidos, reclamos, stockMateriales) {
 
     if (!p.comisionPagada && !p.comisionExcluida && p.vendedor && pedidoSaldo(p) <= 0 && dias(p.fecha) >= 7)
       add("administracion", "media", `com-${p.id}`, quien, `comisión sin liquidar (${p.vendedor})`);
+
+    if (esperaAcuseFabrica(p) && dias(p.pedidoVerificadoFecha) >= 1)
+      add("fabrica", "media", `nvf-${p.id}`, quien, `verificado hace ${dias(p.pedidoVerificadoFecha)} días y Fábrica todavía no lo tomó`);
+    if (esperaAcusePostventa(p) && dias(p.produccionListaFecha) >= 1)
+      add("postventa", "media", `nvp-${p.id}`, quien, "espejo listo y PostVenta todavía no lo tomó");
   });
 
   (reclamos || []).forEach((r) => {
@@ -5443,6 +5585,34 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           </div>
         </div>
 
+        {["Espejo listo", "Entregado", "Despachado"].includes(draft.estado) && (
+          <div className="dg-section-card">
+            <div className="dg-section-header"><CheckCircle2 size={14} /> Cierre del pedido</div>
+            <div className="dg-cierre-lista">
+              {checklistCierrePedido(draft).map((it, i) => (
+                <div key={i} className={`dg-cierre-item ${it.ok ? "dg-cierre-ok" : "dg-cierre-falta"}`}>
+                  {it.ok ? <Check size={13} /> : <AlertCircle size={13} />}
+                  <span>{it.label}</span>
+                  {it.detalle && <small>{it.detalle}</small>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <details className="dg-section-card dg-timeline-card">
+          <summary><ClipboardList size={14} /> Línea de tiempo del pedido</summary>
+          <div className="dg-timeline">
+            {lineaDeTiempoPedido(draft).map((paso, i) => (
+              <div key={i} className={`dg-timeline-paso ${paso.hecho ? "dg-timeline-done" : ""}`}>
+                <span className="dg-timeline-dot" />
+                <span className="dg-timeline-label">{paso.label}</span>
+                <span className="dg-timeline-meta">{paso.hecho ? fechaCortaTimeline(paso.fecha) + (paso.quien ? ` · ${paso.quien}` : "") : "pendiente"}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+
         {draft.metodo === "Interior" && (
           <div className="dg-section-card">
             <div className="dg-section-header"><MapPin size={14} /> Dirección para el envío al interior</div>
@@ -5627,7 +5797,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
       window.alert("Esperá a que fábrica marque el espejo como listo antes de confirmar con el cliente.");
       return;
     }
-    update(p.id, { clienteAvisado: true, clienteAvisadoFecha: new Date().toISOString() });
+    update(p.id, { clienteAvisado: true, clienteAvisadoFecha: new Date().toISOString(), vistoPostventa: p.vistoPostventa || new Date().toISOString() });
   }
   function marcarEnvioConfirmado(p) {
     if (!pedidoEstaListo(p) || !p.clienteAvisado) {
@@ -5644,7 +5814,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
         {envios.length === 0 && <div className="dg-empty">No hay pedidos con envío o interior pendientes.</div>}
         {envios.map((p) => (
           <div className="dg-section-card dg-shipping-confirm-card" key={p.id}>
-            <div className="dg-section-header"><Truck size={14} /> #{p.orden} · {p.cliente} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
+            <div className="dg-section-header"><Truck size={14} /> #{p.orden} · {p.cliente} {esperaAcusePostventa(p) && <span className="dg-pedido-flag dg-flag-nuevo" style={{ marginLeft: 8 }}>NUEVO</span>} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
             <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma} · Método: {p.metodo}</div>
             <details className="dg-shipping-editor">
               <summary>
@@ -5779,6 +5949,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
   }
   function removeReclamo(id) { onChange(reclamos.filter((r) => r.id !== id)); }
   function setSolucion(id, solucion) { onChange(reclamos.map((r) => (r.id === id ? { ...r, solucion } : r))); }
+  function setClienteAcepto(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, clienteAcepto: new Date().toISOString().slice(0, 10) } : r))); }
   function finalizar(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: true, estado: "Finalizado", finalizadoFecha: new Date().toISOString().slice(0, 10) } : r))); }
   function reabrir(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: false, estado: "Pendiente" } : r))); }
 
@@ -5856,6 +6027,10 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
                 <span className="dg-pago-meta">{r.fecha}</span>
                 {!reclamoFinalizado(r) && <button className="dg-icon-btn dg-task-del" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>}
               </div>
+              <div className="dg-reclamo-ciclo">
+                {(() => { const clase = { "Abierto": "abierto", "Solución ofrecida": "ofrecida", "Cliente aceptó": "acepto", "Espejo en fábrica": "fabrica", "Resuelto": "resuelto" }[estadoReclamo(r)] || "abierto"; return <span className={`dg-reclamo-estado dg-reclamo-estado-${clase}`}>{estadoReclamo(r)}</span>; })()}
+                {!reclamoFinalizado(r) && <span className={`dg-reclamo-edad ${diasDesde(r.fecha) >= 3 ? "dg-reclamo-edad-alerta" : ""}`}>abierto hace {diasDesde(r.fecha)} {diasDesde(r.fecha) === 1 ? "día" : "días"}</span>}
+              </div>
               {r.notas && <div className="dg-pago-meta" style={{ marginBottom: 8 }}>{r.notas}</div>}
 
               {reclamoFinalizado(r) ? (
@@ -5886,7 +6061,10 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
                     ) : (
                       <span className="dg-pago-meta">Cargá el celular del cliente para poder escribirle.</span>
                     )}
-                    <button className="dg-btn-primary" onClick={() => finalizar(r.id)}><CheckCircle2 size={14} /> Marcar como finalizado</button>
+                    {r.solucion && !r.clienteAcepto && !r.pedidoCreado && (
+                      <button className="dg-btn-ghost" onClick={() => setClienteAcepto(r.id)}><Check size={14} /> El cliente aceptó</button>
+                    )}
+                    <button className="dg-btn-primary" onClick={() => finalizar(r.id)}><CheckCircle2 size={14} /> Marcar como resuelto</button>
                   </div>
                 </>
               )}
@@ -6315,6 +6493,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       const actualizado = {
         ...p,
         estado: p.estado === "Pasado a fábrica" ? "Verificado" : p.estado,
+        vistoFabrica: p.vistoFabrica || ahora,
+        vistoFabricaPor: p.vistoFabricaPor || responsable,
         produccionEtapa: paso.id,
         [paso.fechaCampo]: ahora,
         [paso.responsableCampo]: responsable,
@@ -6376,7 +6556,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     }
 
     if (!cambios) return;
-    onChange(pedidos.map((p) => (p.id === id ? { ...p, ...cambios } : p)));
+    onChange(pedidos.map((p) => (p.id === id ? { ...p, ...cambios, vistoFabrica: p.vistoFabrica || ahora, vistoFabricaPor: p.vistoFabricaPor || responsable } : p)));
     if (onRegistrar) onRegistrar(accion, `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${detalle}`);
   }
   const esAdmin = session?.role === "admin";
@@ -6491,6 +6671,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); setMenuAbierto(null); }
   function setCampoPedido(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
+  function marcarTodosVistosFabrica() {
+    const ahora = new Date().toISOString();
+    const responsable = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
+    onChange(pedidos.map((p) => (esperaAcuseFabrica(p) ? { ...p, vistoFabrica: ahora, vistoFabricaPor: responsable } : p)));
+  }
   function cancelar(id) { setMenuAbierto(null); setPedidoParaCancelar(id); }
   function confirmarCancelar(motivo) {
     onChange(pedidos.map((p) => (p.id === pedidoParaCancelar ? { ...p, estado: "Cancelado", motivoCancelacion: motivo } : p)));
@@ -6552,7 +6737,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           )}
           <div className="dg-fab-head">
             <span className="dg-fab-orden">{p.orden}</span>
-            <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
+            <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esperaAcuseFabrica(p) && <span className="dg-pedido-flag dg-flag-nuevo">NUEVO</span>}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
             <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span>
           </div>
 
@@ -6669,7 +6854,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <div className="dg-fab-multi-htxt">
             <div className="dg-fab-multi-l1">
               <span className="dg-fab-orden">{p.orden}</span>
-              <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
+              <span className="dg-fab-cliente">{p.cliente || "Sin nombre"}{esperaAcuseFabrica(p) && <span className="dg-pedido-flag dg-flag-nuevo">NUEVO</span>}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}</span>
               <span className="dg-fab-multi-resumen">{resumen}</span>
             </div>
             <div className="dg-fab-multi-l2">
@@ -6827,6 +7012,20 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <span>{detalle} — hacelos primero. Van marcados con la etiqueta CAMBIO / URGENTE arriba de cada lista.</span>
               <span className="dg-fab-alerta-ordenes">{urgentes.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{urgentes.length > 8 ? "  ·  …" : ""}</span>
             </div>
+          </div>
+        );
+      })()}
+      {filtroEstado !== "historial" && (() => {
+        const nuevos = activos.filter(esperaAcuseFabrica);
+        if (nuevos.length === 0) return null;
+        return (
+          <div className="dg-fab-alerta-nuevos">
+            <PackagePlus size={18} />
+            <div>
+              <strong>{nuevos.length === 1 ? "1 pedido nuevo de Ventas" : `${nuevos.length} pedidos nuevos de Ventas`}</strong>
+              <span>Verificados y esperando que Fábrica los tome — {nuevos.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{nuevos.length > 8 ? "  ·  …" : ""}</span>
+            </div>
+            {canEdit && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={marcarTodosVistosFabrica}>Marcar todos vistos</button>}
           </div>
         );
       })()}
@@ -7865,10 +8064,11 @@ function SectorPage({
   const canSeePedidos = !!session;
   const sessionSectorId = session?.role === "sector" ? session.sectorId : null;
   const canEditPedidoFull = isAdmin || esEncargado;
-  const canEditFabrica = isAdmin || esEncargado;
-  // El stock lo pueden cargar también los operarios de Fábrica (no solo el
-  // encargado): es trabajo del día a día del taller, a pedido explícito.
+  // Los operarios de Fábrica manejan todo el sector de Fábrica: avanzar
+  // producción, trabajo afuera, demoras, stock. El borrado definitivo sigue
+  // siendo solo de encargado/admin (eso se controla con puedeBorrar).
   const esOperarioFabrica = session?.role === "sector" && session.tipo === "operario" && session.sectorId === "fabrica";
+  const canEditFabrica = isAdmin || esEncargado || esOperarioFabrica;
   const canEditStock = canEditFabrica || esOperarioFabrica;
   const canEditPostventa = isAdmin || esEncargado;
   const canEditLogistica = isAdmin || esEncargado;
@@ -8381,6 +8581,59 @@ function Style() {
       .dg-pendiente-sector { flex:none; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; color:var(--dg-text-faint); white-space:nowrap; }
       .dg-pendiente-fila > svg { flex:none; color:var(--dg-text-faint); }
       @media (max-width:560px) { .dg-pendiente-sector { display:none; } }
+
+      .dg-cierre-lista { display:flex; flex-direction:column; gap:7px; }
+      .dg-cierre-item { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--dg-text); }
+      .dg-cierre-item > svg { flex:none; }
+      .dg-cierre-item small { color:var(--dg-text-faint); font-size:11px; }
+      .dg-cierre-ok > svg { color:var(--dg-success); }
+      .dg-cierre-falta { color:var(--dg-text-dim); }
+      .dg-cierre-falta > svg { color:var(--dg-warning); }
+
+      .dg-timeline-card > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:7px; font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:13px; color:var(--dg-text); }
+      .dg-timeline-card > summary::-webkit-details-marker { display:none; }
+      .dg-timeline-card > summary > svg { color:var(--dg-accent); }
+      .dg-timeline { margin-top:12px; display:flex; flex-direction:column; }
+      .dg-timeline-paso { display:grid; grid-template-columns:14px 1fr auto; align-items:center; gap:9px; padding:5px 0; }
+      .dg-timeline-dot { width:9px; height:9px; border-radius:50%; border:1.5px solid rgba(var(--dg-line-rgb),0.3); justify-self:center; }
+      .dg-timeline-done .dg-timeline-dot { background:var(--dg-success); border-color:var(--dg-success); }
+      .dg-timeline-label { font-size:12.5px; color:var(--dg-text-dim); }
+      .dg-timeline-done .dg-timeline-label { color:var(--dg-text); font-weight:600; }
+      .dg-timeline-meta { font-family:'JetBrains Mono', monospace; font-size:10.5px; color:var(--dg-text-faint); white-space:nowrap; }
+
+      .dg-modal-buscador { max-width:520px; padding:0; overflow:hidden; }
+      .dg-buscador-input { display:flex; align-items:center; gap:9px; padding:13px 15px; border-bottom:1px solid rgba(var(--dg-line-rgb),0.1); }
+      .dg-buscador-input > svg { flex:none; color:var(--dg-text-faint); }
+      .dg-buscador-input input { flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--dg-text); font-size:15px; font-family:'Inter',sans-serif; }
+      .dg-buscador-res { max-height:min(60vh, 460px); overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:6px; }
+      .dg-buscador-res .dg-empty { padding:24px 10px; }
+      .dg-buscador-fila { display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer; font-family:'Inter',sans-serif;
+        background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:10px; padding:10px 12px; color:var(--dg-text); }
+      .dg-buscador-fila:hover { border-color:rgba(var(--dg-accent-rgb),0.35); }
+      .dg-buscador-tag { flex:none; font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; color:var(--dg-accent);
+        background:rgba(var(--dg-accent-rgb),0.1); border-radius:6px; padding:3px 7px; }
+      .dg-buscador-tag-rec { color:var(--dg-danger); background:rgba(var(--dg-danger-rgb),0.1); }
+      .dg-buscador-txt { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+      .dg-buscador-txt b { font-family:'Space Grotesk', sans-serif; font-size:13px; }
+      .dg-buscador-txt small { font-size:11px; color:var(--dg-text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-buscador-fila > svg { flex:none; color:var(--dg-text-faint); }
+
+      .dg-flag-nuevo { background:var(--dg-accent) !important; }
+      .dg-fab-alerta-nuevos { display:flex; align-items:center; gap:11px; flex-wrap:wrap; margin:0 0 14px; padding:12px 15px; border:1px solid rgba(var(--dg-accent-rgb),0.4); border-radius:12px; background:color-mix(in srgb, var(--dg-accent) 9%, var(--dg-surface)); }
+      .dg-fab-alerta-nuevos > svg { flex:none; color:var(--dg-accent); }
+      .dg-fab-alerta-nuevos > div { flex:1; min-width:180px; }
+      .dg-fab-alerta-nuevos strong { display:block; font-family:'Space Grotesk', sans-serif; font-size:13.5px; color:var(--dg-text); }
+      .dg-fab-alerta-nuevos span { display:block; margin-top:2px; font-size:11.5px; color:var(--dg-text-dim); font-family:'JetBrains Mono', monospace; }
+
+      .dg-reclamo-ciclo { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:2px 0 9px; }
+      .dg-reclamo-estado { font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; padding:3px 8px; border-radius:6px; background:rgba(var(--dg-line-rgb),0.08); color:var(--dg-text-dim); }
+      .dg-reclamo-estado-abierto { background:rgba(var(--dg-danger-rgb),0.15); color:var(--dg-danger); }
+      .dg-reclamo-estado-ofrecida { background:rgba(var(--dg-warning-rgb),0.18); color:var(--dg-warning); }
+      .dg-reclamo-estado-acepto { background:rgba(var(--dg-accent-rgb),0.14); color:var(--dg-accent); }
+      .dg-reclamo-estado-fabrica { background:rgba(var(--dg-accent-rgb),0.14); color:var(--dg-accent); }
+      .dg-reclamo-estado-resuelto { background:rgba(var(--dg-success-rgb),0.16); color:var(--dg-success); }
+      .dg-reclamo-edad { font-size:11px; color:var(--dg-text-faint); }
+      .dg-reclamo-edad-alerta { color:var(--dg-danger); font-weight:600; }
       .dg-fab-alerta-demora { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-warning); border-radius:12px; background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface)); }
       .dg-fab-alerta-demora > svg { flex:none; margin-top:1px; color:var(--dg-warning); }
       .dg-fab-alerta-demora strong { display:block; font-family:'Space Grotesk', sans-serif; font-size:14px; color:var(--dg-text); }
