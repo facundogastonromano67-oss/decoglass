@@ -7183,7 +7183,7 @@ function BibliotecaMarketingPanel({ biblioteca, onChange }) {
   return (
     <div className="dg-page">
       <p className="dg-hint" style={{ marginBottom: 14 }}>
-        Subí fotos reales de tus espejos acá. Desde el Calendario de contenido las vas a poder usar como referencia para que la IA genere imágenes de marketing.
+        Subí fotos reales de tus espejos acá. Cuando generás ideas del mes en el Calendario de contenido, se las asigna automáticamente rotando entre ellas — sin costo.
       </p>
       <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 16 }}>
         <label className="dg-btn-primary" style={{ cursor: "pointer" }}>
@@ -7207,6 +7207,185 @@ function BibliotecaMarketingPanel({ biblioteca, onChange }) {
 
 const CONTENIDO_TIPOS = ["Historia", "Post", "Reel/Video", "Carrusel"];
 const CONTENIDO_ESTADOS = ["Idea", "En progreso", "Listo", "Publicado"];
+const CALENDARIO_DIAS_NOM = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+// ---- Motor interno de ideas de contenido: nada de esto sale a internet, es
+// una biblioteca de frases con huecos que se completan al azar. Gratis y
+// funciona sin conexión. No es "inteligente" — es plantillas bien armadas. ----
+const CAL_FORMAS = ["redondo", "ovalado", "rectangular", "de cuerpo entero", "con marco negro", "sin marco, biselado"];
+const CAL_TEMPS = ["cálida", "fría", "regulable, cálida y fría"];
+const CAL_AMBIENTES = ["el baño", "el vestidor", "el living", "una peluquería", "un gimnasio", "una recepción"];
+const CAL_MEDIDAS = ["60×80 cm", "70×90 cm", "80×100 cm", "a la medida exacta que necesites"];
+const CAL_EXTRAS = ["antivaho", "con sensor táctil", "con memoria de última posición", "con marco de aluminio"];
+
+const CALENDARIO_BANCO = [
+  { pilar: "Producto", tipo: "Post", variantes: [
+    "Espejo {forma}, con luz {temp} — {medida}. Fabricado en nuestro taller, a tu medida. ¿Para qué ambiente lo estás pensando?",
+    "¿{ambienteCap} sin espejo con luz todavía? Este modelo {forma} con luz {temp} cambia la escena por completo.",
+    "Hoy en el taller: espejo {forma}, {extra}. Se hace en el tamaño que necesites, no solo en los estándar.",
+    "El detalle que transforma {ambiente}: un espejo con luz {temp}. Simple, elegante, hecho para durar.",
+  ]},
+  { pilar: "Detrás de escena", tipo: "Reel/Video", variantes: [
+    "Así se corta un espejo {forma} en nuestro taller — del vidrio en bruto a la pieza lista para armar.",
+    "Un espejo con luz LED no es solo vidrio: te mostramos cómo integramos la luz {temp} paso a paso.",
+    "De la medida que nos pasa el cliente al espejo terminado: así es un día en Decoglass.",
+  ]},
+  { pilar: "Antes y después", tipo: "Carrusel", variantes: [
+    "Antes: una pared vacía en {ambiente}. Después: un espejo {forma} con luz {temp} que cambia todo el ambiente.",
+    "Mirá cómo quedó este espejo {forma} instalado en {ambiente} — de la medida al resultado final.",
+  ]},
+  { pilar: "Testimonio", tipo: "Post", variantes: [
+    "\"Quedó mejor de lo que imaginé\" — así nos lo contó un cliente después de instalar su espejo {forma} en {ambiente}.",
+    "Nos encanta cuando un cliente nos manda la foto del espejo ya instalado. Esto pasó esta semana en {ambiente}.",
+  ]},
+  { pilar: "Tip de decoración", tipo: "Historia", variantes: [
+    "Tip rápido: un espejo grande en {ambiente} hace que el espacio se vea el doble de grande.",
+    "¿Cómo elegir el tamaño del espejo? Que ocupe al menos 2/3 del ancho del mueble o la pared.",
+    "La luz {temp} cambia totalmente cómo se ve tu piel y tu maquillaje frente al espejo.",
+  ]},
+  { pilar: "Pregunta / interacción", tipo: "Historia", variantes: [
+    "Encuesta: ¿preferís un espejo {forma} o uno {forma2}?",
+    "¿Para qué ambiente comprarías un espejo con luz? Baño, vestidor o living — preguntale a tu gente.",
+  ]},
+  { pilar: "Promoción", tipo: "Post", variantes: [
+    "Esta semana: consultanos por tu espejo a medida, {extra} incluido. Escribinos y te asesoramos sin compromiso.",
+    "¿Estás remodelando {ambiente}? Es el momento de sumar un espejo con luz LED hecho a tu medida.",
+  ]},
+  { pilar: "Dato curioso", tipo: "Post", variantes: [
+    "Dato: la función antivaho evita que el espejo se empañe con el agua caliente de la ducha.",
+    "¿Sabías que la luz cálida y la fría cambian cómo se ve el maquillaje? Por eso ofrecemos luz regulable.",
+    "Un espejo con marco no es solo estético: también protege los bordes del vidrio.",
+  ]},
+  { pilar: "Institucional", tipo: "Post", variantes: [
+    "En Decoglass hacemos cada espejo a medida — no vendemos solo lo que entra en un catálogo, hacemos lo que vos necesitás.",
+    "Atención personalizada, medida exacta, fabricación propia. Así trabajamos en Decoglass.",
+  ]},
+];
+
+function barajar(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function elegirRelleno() {
+  const forma = CAL_FORMAS[Math.floor(Math.random() * CAL_FORMAS.length)];
+  let forma2 = CAL_FORMAS[Math.floor(Math.random() * CAL_FORMAS.length)];
+  if (forma2 === forma) forma2 = CAL_FORMAS[(CAL_FORMAS.indexOf(forma) + 1) % CAL_FORMAS.length];
+  const temp = CAL_TEMPS[Math.floor(Math.random() * CAL_TEMPS.length)];
+  const ambiente = CAL_AMBIENTES[Math.floor(Math.random() * CAL_AMBIENTES.length)];
+  const medida = CAL_MEDIDAS[Math.floor(Math.random() * CAL_MEDIDAS.length)];
+  const extra = CAL_EXTRAS[Math.floor(Math.random() * CAL_EXTRAS.length)];
+  return { forma, forma2, temp, ambiente, medida, extra, ambienteCap: ambiente.charAt(0).toUpperCase() + ambiente.slice(1) };
+}
+function rellenarPlantilla(plantilla, r) {
+  return plantilla
+    .replace(/\{forma2\}/g, r.forma2).replace(/\{forma\}/g, r.forma)
+    .replace(/\{temp\}/g, r.temp).replace(/\{ambienteCap\}/g, r.ambienteCap)
+    .replace(/\{ambiente\}/g, r.ambiente).replace(/\{medida\}/g, r.medida)
+    .replace(/\{extra\}/g, r.extra);
+}
+// Arma una idea por cada fecha, rotando los pilares de contenido (no repite
+// uno hasta usar todos) y variando las frases dentro de cada pilar. Si hay
+// fotos reales en la Biblioteca, les asigna una rotando entre ellas — es
+// gratis y más creíble que una imagen inventada.
+function generarIdeasLocal(fechas, notas, biblioteca) {
+  let cola = barajar(CALENDARIO_BANCO);
+  const usadas = new Set();
+  const fotos = (biblioteca || []).map((b) => b.url).filter(Boolean);
+  const ideas = fechas.map((fecha, i) => {
+    if (cola.length === 0) cola = barajar(CALENDARIO_BANCO);
+    const pilar = cola.shift();
+    let opciones = pilar.variantes.filter((v) => !usadas.has(pilar.pilar + "|" + v));
+    if (opciones.length === 0) { opciones = pilar.variantes; usadas.clear(); }
+    const plantilla = opciones[Math.floor(Math.random() * opciones.length)];
+    usadas.add(pilar.pilar + "|" + plantilla);
+    const r = elegirRelleno();
+    const texto = rellenarPlantilla(plantilla, r);
+    const promptImagen = `Espejo ${r.forma}, luz ${r.temp}, en ${r.ambiente}, estilo fotográfico realista y cálido`;
+    const imagenUrl = fotos.length ? fotos[i % fotos.length] : "";
+    return { fecha, tipo: pilar.tipo, texto, promptImagen, imagenUrl };
+  });
+  if (notas && notas.trim() && ideas.length > 0) {
+    ideas[ideas.length - 1] = { ...ideas[ideas.length - 1], texto: `${notas.trim()}. Contactanos para más info sobre nuestros espejos a medida.` };
+  }
+  return ideas;
+}
+
+// Tarjeta gráfica simple (texto sobre fondo de marca) hecha en el navegador
+// con Canvas — sin ninguna llamada externa, sin costo. No es una foto real,
+// es una placa de texto: sirve para Historias, frases y promos.
+function wrapCanvasText(ctx, texto, x, y, maxWidth, lineHeight, maxLineas) {
+  const palabras = String(texto || "").split(" ");
+  let linea = "", cy = y, lineas = 0;
+  for (const palabra of palabras) {
+    const prueba = linea ? `${linea} ${palabra}` : palabra;
+    if (ctx.measureText(prueba).width > maxWidth && linea) {
+      ctx.fillText(linea, x, cy);
+      linea = palabra; cy += lineHeight; lineas++;
+      if (maxLineas && lineas >= maxLineas - 1) { linea += "…"; break; }
+    } else {
+      linea = prueba;
+    }
+  }
+  if (linea) ctx.fillText(linea, x, cy);
+}
+function generarTarjetaLocal(texto) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1080; canvas.height = 1080;
+  const ctx = canvas.getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 1080, 1080);
+  grad.addColorStop(0, "#141315");
+  grad.addColorStop(1, "#26221E");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 1080, 1080);
+  ctx.fillStyle = "#F2622F";
+  ctx.fillRect(0, 0, 1080, 14);
+  ctx.font = "700 36px Arial, sans-serif";
+  ctx.fillStyle = "#F2622F";
+  ctx.fillText("DECOGLASS", 64, 110);
+  ctx.font = "600 54px Arial, sans-serif";
+  ctx.fillStyle = "#F5F3F0";
+  wrapCanvasText(ctx, texto || "Espejos a medida", 64, 320, 950, 68, 6);
+  ctx.font = "500 26px Arial, sans-serif";
+  ctx.fillStyle = "#A29E96";
+  ctx.fillText("Espejos a medida · decoglass.com.ar", 64, 1000);
+  return canvas.toDataURL("image/png");
+}
+
+function diasDelMes(anio, mes) {
+  const ultimo = new Date(anio, mes, 0).getDate();
+  return Array.from({ length: ultimo }, (_, i) => `${anio}-${String(mes).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`);
+}
+// Parte el mes en semanas de lunes a domingo, sin salirse del mes (la primera
+// y la última semana pueden quedar cortas).
+function semanasDelMes(anio, mes) {
+  const dias = diasDelMes(anio, mes);
+  const semanas = [];
+  let actual = [];
+  dias.forEach((f) => {
+    const dow = (new Date(f + "T00:00:00").getDay() + 6) % 7; // 0 = lunes
+    if (dow === 0 && actual.length) { semanas.push(actual); actual = []; }
+    actual.push(f);
+  });
+  if (actual.length) semanas.push(actual);
+  return semanas;
+}
+// Elige, dentro de cada semana del mes, "porSemana" días bien distribuidos.
+function elegirDiasDelMes(anio, mes, porSemana) {
+  const elegidos = [];
+  semanasDelMes(anio, mes).forEach((semana) => {
+    if (porSemana >= semana.length) { elegidos.push(...semana); return; }
+    const paso = semana.length / porSemana;
+    for (let i = 0; i < porSemana; i++) {
+      const idx = Math.min(semana.length - 1, Math.round(i * paso));
+      elegidos.push(semana[idx]);
+    }
+  });
+  return [...new Set(elegidos)].sort();
+}
 
 function emptyContenido() {
   return { id: uid(), fecha: new Date().toISOString().slice(0, 10), tipo: "Post", estado: "Idea", texto: "", imagenUrl: "", promptImagen: "" };
@@ -7215,9 +7394,49 @@ function emptyContenido() {
 function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
   const [editando, setEditando] = useState(null);
   const [generandoImagen, setGenerandoImagen] = useState(false);
+  const [generandoTarjeta, setGenerandoTarjeta] = useState(false);
   const [errorImagen, setErrorImagen] = useState("");
 
-  const ordenado = [...(contenido || [])].sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+  const hoy = new Date();
+  const [vistaMes, setVistaMes] = useState({ anio: hoy.getFullYear(), mes: hoy.getMonth() + 1 });
+  const [generarAbierto, setGenerarAbierto] = useState(false);
+  const [porSemana, setPorSemana] = useState(4);
+  const [notasGenerar, setNotasGenerar] = useState("");
+  const [generandoMes, setGenerandoMes] = useState(false);
+  const [errorGenerar, setErrorGenerar] = useState("");
+  const [revision, setRevision] = useState(null);
+
+  function cambiarMes(delta) {
+    setVistaMes((v) => {
+      let mes = v.mes + delta, anio = v.anio;
+      if (mes < 1) { mes = 12; anio -= 1; }
+      if (mes > 12) { mes = 1; anio += 1; }
+      return { anio, mes };
+    });
+  }
+
+  function generarMes() {
+    setErrorGenerar(""); setGenerandoMes(true);
+    try {
+      const fechas = elegirDiasDelMes(vistaMes.anio, vistaMes.mes, porSemana);
+      const ideas = generarIdeasLocal(fechas, notasGenerar, biblioteca);
+      setRevision(ideas.map((it) => ({ ...it, id: uid(), seleccionado: true })));
+      setGenerarAbierto(false);
+    } catch (err) {
+      setErrorGenerar("No se pudieron generar las ideas. Probá de nuevo.");
+    } finally {
+      setGenerandoMes(false);
+    }
+  }
+  function toggleRevision(id) {
+    setRevision((prev) => prev.map((r) => (r.id === id ? { ...r, seleccionado: !r.seleccionado } : r)));
+  }
+  function confirmarRevision() {
+    const elegidas = (revision || []).filter((r) => r.seleccionado);
+    const nuevos = elegidas.map((r) => ({ id: uid(), fecha: r.fecha, tipo: r.tipo, estado: "Idea", texto: r.texto, imagenUrl: r.imagenUrl || "", promptImagen: r.promptImagen }));
+    onChange([...nuevos, ...(contenido || [])]);
+    setRevision(null);
+  }
 
   function guardar(item) {
     const existe = (contenido || []).some((c) => c.id === item.id);
@@ -7227,6 +7446,24 @@ function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
   function borrar(id) {
     if (!window.confirm("¿Borrar esta idea de contenido?")) return;
     onChange((contenido || []).filter((c) => c.id !== id));
+  }
+
+  // Genera la tarjeta local (Canvas, gratis) y la sube al mismo storage que
+  // las imágenes generadas por IA, para no guardar 1 MB de base64 adentro
+  // del documento del calendario — queda una URL liviana, como las demás.
+  async function generarTarjeta() {
+    if (!editando) return;
+    setErrorImagen(""); setGenerandoTarjeta(true);
+    try {
+      const dataUrl = generarTarjetaLocal(editando.texto);
+      const base64 = dataUrl.split(",")[1];
+      const url = await documentosStore.subirImagenGenerada(base64);
+      setEditando((d) => ({ ...d, imagenUrl: url }));
+    } catch (e) {
+      setErrorImagen("No se pudo armar la tarjeta. Probá de nuevo.");
+    } finally {
+      setGenerandoTarjeta(false);
+    }
   }
 
   async function generarImagen() {
@@ -7249,26 +7486,121 @@ function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
     }
   }
 
+  const semanas = semanasDelMes(vistaMes.anio, vistaMes.mes);
+  const porFecha = new Map();
+  (contenido || []).forEach((c) => {
+    if (!porFecha.has(c.fecha)) porFecha.set(c.fecha, []);
+    porFecha.get(c.fecha).push(c);
+  });
+
   return (
     <div className="dg-page">
-      <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 16 }}>
-        <button className="dg-btn-primary" onClick={() => setEditando(emptyContenido())}><Plus size={14} /> Nueva idea de contenido</button>
+      <div className="dg-calendario-topbar">
+        <div className="dg-calendario-mes">
+          <button type="button" className="dg-icon-btn" onClick={() => cambiarMes(-1)} aria-label="Mes anterior"><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /></button>
+          <strong>{MESES_NOM[vistaMes.mes - 1]} {vistaMes.anio}</strong>
+          <button type="button" className="dg-icon-btn" onClick={() => cambiarMes(1)} aria-label="Mes siguiente"><ChevronRight size={16} /></button>
+        </div>
+        <div className="dg-form-actions" style={{ marginLeft: "auto", marginTop: 0 }}>
+          <button className="dg-btn-ghost" onClick={() => setGenerarAbierto(true)}><Sparkles size={14} /> Generar ideas del mes</button>
+          <button className="dg-btn-primary" onClick={() => setEditando({ ...emptyContenido(), fecha: `${vistaMes.anio}-${String(vistaMes.mes).padStart(2, "0")}-01` })}><Plus size={14} /> Nueva idea</button>
+        </div>
       </div>
 
-      {ordenado.length === 0 && <div className="dg-empty">Todavía no armaste ningún contenido.</div>}
-      <div className="dg-task-list">
-        {ordenado.map((c) => (
-          <div className="dg-task dg-pago-row" key={c.id}>
-            {c.imagenUrl && <img src={c.imagenUrl} alt="" className="dg-marketing-mini-thumb" />}
-            <div className="dg-pago-info">
-              <span>{c.tipo} — {c.texto ? c.texto.slice(0, 60) : "Sin texto todavía"}{c.texto?.length > 60 ? "…" : ""}</span>
-              <span className="dg-pago-meta">{c.fecha} · {c.estado}</span>
-            </div>
-            <button className="dg-icon-btn" onClick={() => setEditando(c)}><Pencil size={14} /></button>
-            <button className="dg-icon-btn dg-task-del" onClick={() => borrar(c.id)}><Trash2 size={14} /></button>
+      <div className="dg-calendario-semanas">
+        {semanas.map((semana, i) => (
+          <div className="dg-calendario-semana" key={i}>
+            <div className="dg-calendario-semana-titulo">Semana del {Number(semana[0].slice(8))} al {Number(semana[semana.length - 1].slice(8))}</div>
+            {semana.map((fecha) => {
+              const items = porFecha.get(fecha) || [];
+              const dow = (new Date(fecha + "T00:00:00").getDay() + 6) % 7;
+              return (
+                <div className="dg-calendario-dia" key={fecha}>
+                  <div className="dg-calendario-dia-fecha"><span>{CALENDARIO_DIAS_NOM[dow]}</span><strong>{Number(fecha.slice(8))}</strong></div>
+                  <div className="dg-calendario-dia-items">
+                    {items.length === 0 && <span className="dg-calendario-vacio">sin contenido</span>}
+                    {items.map((c) => (
+                      <button type="button" className={`dg-calendario-item dg-calendario-item-${c.estado === "Publicado" ? "pub" : c.estado === "Listo" ? "listo" : "idea"}`} key={c.id} onClick={() => setEditando(c)}>
+                        {c.imagenUrl && <img src={c.imagenUrl} alt="" />}
+                        <span className="dg-calendario-item-tipo">{c.tipo}</span>
+                        <span className="dg-calendario-item-txt">{c.texto ? c.texto.slice(0, 70) : "Sin texto todavía"}{c.texto?.length > 70 ? "…" : ""}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ))}
       </div>
+
+      {generarAbierto && (
+        <div className="dg-overlay" onClick={() => !generandoMes && setGenerarAbierto(false)}>
+          <div className="dg-modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head">
+              <div className="dg-modal-title">Generar ideas para {MESES_NOM[vistaMes.mes - 1]}</div>
+              <button className="dg-icon-btn" onClick={() => setGenerarAbierto(false)}><X size={18} /></button>
+            </div>
+            <div className="dg-form">
+              <label>Publicaciones por semana</label>
+              <select value={porSemana} onChange={(e) => setPorSemana(Number(e.target.value))}>
+                <option value={2}>2 por semana</option>
+                <option value={3}>3 por semana</option>
+                <option value={4}>4 por semana</option>
+                <option value={5}>5 por semana</option>
+                <option value={7}>Todos los días</option>
+              </select>
+              <label>Algo para tener en cuenta (opcional)</label>
+              <textarea rows={2} value={notasGenerar} onChange={(e) => setNotasGenerar(e.target.value)} placeholder="Ej: esta semana lanzamos la línea de espejos redondos" />
+              {errorGenerar && <div className="dg-error" style={{ marginTop: 6 }}>{errorGenerar}</div>}
+              <p className="dg-hint" style={{ marginTop: 10 }}>Arma un texto para cada fecha con un banco de frases propio de Decoglass — sin conexión, sin costo. Si tenés fotos en la Biblioteca, les asigna una rotando entre ellas. Después vas a poder revisar y elegir cuáles agregar.</p>
+            </div>
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => setGenerarAbierto(false)} disabled={generandoMes}>Cancelar</button>
+              <button className="dg-btn-primary" onClick={generarMes} disabled={generandoMes}>
+                {generandoMes ? <Loader2 size={14} className="dg-spin" /> : <Sparkles size={14} />} {generandoMes ? "Generando..." : "Generar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {revision && (
+        <div className="dg-overlay" onClick={() => setRevision(null)}>
+          <div className="dg-modal dg-modal-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head">
+              <div className="dg-modal-title">Revisá las ideas antes de agregarlas</div>
+              <button className="dg-icon-btn" onClick={() => setRevision(null)}><X size={18} /></button>
+            </div>
+            <p className="dg-hint">Desmarcá las que no te sirvan. Las vas a poder editar después de agregarlas.</p>
+            <div className="dg-calendario-revision">
+              {semanas.map((semana, i) => {
+                const items = revision.filter((r) => semana.includes(r.fecha));
+                if (items.length === 0) return null;
+                return (
+                  <div key={i} className="dg-calendario-revision-semana">
+                    <div className="dg-calendario-semana-titulo">Semana del {Number(semana[0].slice(8))} al {Number(semana[semana.length - 1].slice(8))}</div>
+                    {items.map((r) => (
+                      <label className="dg-calendario-revision-item" key={r.id}>
+                        <input type="checkbox" checked={r.seleccionado} onChange={() => toggleRevision(r.id)} />
+                        {r.imagenUrl && <img src={r.imagenUrl} alt="" className="dg-marketing-mini-thumb" />}
+                        <div>
+                          <div className="dg-calendario-revision-head"><strong>{CALENDARIO_DIAS_NOM[(new Date(r.fecha + "T00:00:00").getDay() + 6) % 7]} {Number(r.fecha.slice(8))}</strong><span className="dg-badge" style={{ "--bc": "var(--dg-accent)" }}>{r.tipo}</span></div>
+                          <p>{r.texto}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => setRevision(null)}>Descartar todo</button>
+              <button className="dg-btn-primary" onClick={confirmarRevision}><Check size={14} /> Agregar {revision.filter((r) => r.seleccionado).length} al calendario</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editando && (
         <div className="dg-overlay" onClick={() => setEditando(null)}>
@@ -7294,11 +7626,14 @@ function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
               <label>Texto / caption</label>
               <textarea rows={3} value={editando.texto} onChange={(e) => setEditando({ ...editando, texto: e.target.value })} placeholder="El texto que va a acompañar la publicación" />
 
-              <label>Describí la imagen que querés generar</label>
+              <label>Describí la imagen (solo hace falta para la opción paga de abajo)</label>
               <input value={editando.promptImagen} onChange={(e) => setEditando({ ...editando, promptImagen: e.target.value })} placeholder="Ej: espejo redondo con luz cálida en un baño moderno minimalista" />
-              <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 6 }}>
+              <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 6, flexWrap: "wrap" }}>
+                <button type="button" className="dg-btn-ghost dg-mini-btn" disabled={generandoTarjeta} onClick={generarTarjeta}>
+                  {generandoTarjeta ? <Loader2 size={13} className="dg-spin" /> : <Sparkles size={13} />} {generandoTarjeta ? "Armando..." : "Generar tarjeta (sin costo)"}
+                </button>
                 <button type="button" className="dg-btn-ghost dg-mini-btn" disabled={generandoImagen || !editando.promptImagen?.trim()} onClick={generarImagen}>
-                  {generandoImagen ? <Loader2 size={13} className="dg-spin" /> : <Sparkles size={13} />} {generandoImagen ? "Generando..." : "Generar imagen con IA"}
+                  {generandoImagen ? <Loader2 size={13} className="dg-spin" /> : <Sparkles size={13} />} {generandoImagen ? "Generando..." : "Generar imagen con OpenAI (tiene costo)"}
                 </button>
               </div>
               {errorImagen && <div className="dg-error" style={{ marginTop: 6 }}>{errorImagen}</div>}
@@ -8437,6 +8772,38 @@ function Style() {
       .dg-marketing-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
       .dg-marketing-thumb-del { position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.6); border:none; border-radius:6px; color:#fff; padding:5px; cursor:pointer; }
       .dg-marketing-mini-thumb { width:44px; height:44px; border-radius:8px; object-fit:cover; flex-shrink:0; }
+
+      .dg-calendario-topbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+      .dg-calendario-mes { display:flex; align-items:center; gap:8px; }
+      .dg-calendario-mes strong { font-family:'Space Grotesk', sans-serif; font-size:15px; min-width:150px; text-align:center; text-transform:capitalize; }
+      .dg-calendario-semanas { display:flex; flex-direction:column; gap:14px; }
+      .dg-calendario-semana { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:12px; padding:12px 14px; }
+      .dg-calendario-semana-titulo { font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--dg-text-faint); margin-bottom:9px; }
+      .dg-calendario-dia { display:grid; grid-template-columns:46px 1fr; gap:10px; padding:7px 0; border-top:1px solid rgba(var(--dg-line-rgb),0.07); }
+      .dg-calendario-dia:first-of-type { border-top:none; }
+      .dg-calendario-dia-fecha { display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--dg-text-dim); }
+      .dg-calendario-dia-fecha span { font-family:'JetBrains Mono', monospace; font-size:9px; text-transform:uppercase; }
+      .dg-calendario-dia-fecha strong { font-family:'Space Grotesk', sans-serif; font-size:15px; color:var(--dg-text); }
+      .dg-calendario-dia-items { display:flex; flex-direction:column; gap:6px; min-width:0; }
+      .dg-calendario-vacio { font-size:11.5px; color:var(--dg-text-faint); padding:6px 2px; }
+      .dg-calendario-item { display:flex; align-items:center; gap:8px; width:100%; text-align:left; cursor:pointer; font-family:'Inter',sans-serif;
+        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-left:3px solid var(--dg-text-faint); border-radius:8px; padding:7px 10px; color:var(--dg-text); }
+      .dg-calendario-item:hover { border-color:rgba(var(--dg-accent-rgb),0.35); }
+      .dg-calendario-item img { width:28px; height:28px; border-radius:6px; object-fit:cover; flex:none; }
+      .dg-calendario-item-idea { border-left-color:var(--dg-text-faint); }
+      .dg-calendario-item-listo { border-left-color:var(--dg-warning); }
+      .dg-calendario-item-pub { border-left-color:var(--dg-success); }
+      .dg-calendario-item-tipo { flex:none; font-family:'JetBrains Mono', monospace; font-size:9.5px; font-weight:700; text-transform:uppercase; color:var(--dg-accent); }
+      .dg-calendario-item-txt { flex:1; min-width:0; font-size:12px; color:var(--dg-text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+      .dg-calendario-revision { max-height:52vh; overflow-y:auto; margin:12px 0; display:flex; flex-direction:column; gap:14px; }
+      .dg-calendario-revision-semana { background:var(--dg-surface-2); border-radius:10px; padding:10px 12px; }
+      .dg-calendario-revision-item { display:flex; align-items:flex-start; gap:10px; padding:7px 2px; border-top:1px solid rgba(var(--dg-line-rgb),0.07); cursor:pointer; }
+      .dg-calendario-revision-item:first-of-type { border-top:none; }
+      .dg-calendario-revision-item input { margin-top:3px; flex:none; }
+      .dg-calendario-revision-head { display:flex; align-items:center; gap:8px; margin-bottom:2px; }
+      .dg-calendario-revision-head strong { font-family:'Space Grotesk', sans-serif; font-size:12.5px; }
+      .dg-calendario-revision-item p { margin:0; font-size:12.5px; color:var(--dg-text-dim); line-height:1.4; }
       .dg-filtros { display:flex; gap:6px; margin-bottom:10px; }
       .dg-filtro-btn { background:transparent; border:1px solid rgba(var(--dg-line-rgb),0.1); color:var(--dg-text-dim); border-radius:100px; padding:5px 12px; font-size:12px; cursor:pointer; }
       .dg-filtro-on { background: rgba(var(--dg-accent-rgb),0.15); border-color:var(--dg-accent); color:var(--dg-accent); }
