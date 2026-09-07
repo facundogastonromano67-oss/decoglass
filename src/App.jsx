@@ -3310,9 +3310,16 @@ function useFacturaFoto({ fecha, concepto, driveUrl }) {
   const [driveFileUrl, setDriveFileUrl] = useState("");
   const [driveInfo, setDriveInfo] = useState("");
 
-  async function subirADrive(blob) {
+  async function subirADrive(blob, fechaForzada, saltearConfirm) {
     const d = ref.current;
     if (!d.driveUrl || !String(d.driveUrl).trim()) { setDriveInfo("noconfig"); return; }
+    const fechaUsar = fechaForzada || d.fecha || "";
+    const ym = String(fechaUsar).slice(0, 7);
+    const etiqueta = /^\d{4}-\d{2}$/.test(ym) ? periodoLabel(ym) : "este mes";
+    if (!saltearConfirm && typeof window !== "undefined" &&
+        !window.confirm(`La factura se va a guardar en la carpeta de ${etiqueta}.\n\n¿Es correcto? Si no, cancelá, corregí la fecha y tocá "Reenviar a Drive".`)) {
+      setDriveInfo("cancelado"); return;
+    }
     setDriveInfo("subiendo");
     try {
       const base64 = await blobABase64(blob);
@@ -3321,7 +3328,7 @@ function useFacturaFoto({ fecha, concepto, driveUrl }) {
       const r = await fetch("/api/subir-factura-drive", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          scriptUrl: String(d.driveUrl).trim(), base64, fecha: d.fecha, mime: blob.type || "image/jpeg",
+          scriptUrl: String(d.driveUrl).trim(), base64, fecha: fechaUsar, mime: blob.type || "image/jpeg",
           nombre: `factura-${(d.concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg`,
         }),
         signal: ctrl.signal,
@@ -3331,6 +3338,7 @@ function useFacturaFoto({ fecha, concepto, driveUrl }) {
       else setDriveInfo(`error:${(datos && datos.error) || ("HTTP " + r.status)}`);
     } catch (e) { setDriveInfo(`error:${e && e.message ? e.message : "no se pudo conectar"}`); }
   }
+  function reenviarDrive() { if (archivo) subirADrive(archivo, ref.current.fecha, true); }
   async function leer(imagen) {
     const src = imagen || archivo || url;
     if (!src) return null;
@@ -3352,8 +3360,10 @@ function useFacturaFoto({ fecha, concepto, driveUrl }) {
       setArchivo(comp);
       const u = await documentosStore.subirFacturaCompra(comp, ref.current.fecha);
       setUrl(u);
-      leer(comp).then((p) => { if (p && onDatos) onDatos(p); });
-      await subirADrive(comp);
+      let datos = null;
+      try { datos = await leer(comp); } catch (e2) { datos = null; }
+      if (datos && onDatos) onDatos(datos);
+      await subirADrive(comp, (datos && datos.fecha) || ref.current.fecha);
     } catch (err) {
       console.error("subir factura:", err);
       setError("No se pudo subir la foto: " + (err && err.message ? err.message : "error desconocido"));
@@ -3363,7 +3373,7 @@ function useFacturaFoto({ fecha, concepto, driveUrl }) {
   }
   function quitar() { setUrl(""); setArchivo(null); setTexto(""); setDriveFileUrl(""); setDriveInfo(""); setError(""); }
 
-  return { url, archivo, subiendo, error, leyendo, progreso, texto, driveInfo, driveFileUrl, tomar, leer, quitar };
+  return { url, archivo, subiendo, error, leyendo, progreso, texto, driveInfo, driveFileUrl, tomar, leer, quitar, reenviarDrive };
 }
 
 function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProveedores, driveFacturasUrl }) {
@@ -3495,6 +3505,12 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
                 {foto.driveInfo.startsWith("ok") && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-success)" }}>✓ También en tu Drive{foto.driveInfo.slice(3) ? ` (carpeta ${foto.driveInfo.slice(3)})` : ""}.</p>}
                 {foto.driveInfo === "noconfig" && <p className="dg-hint" style={{ marginTop: 4 }}>Para mandarla también a tu Drive, configurá el script en Ajustes → Integraciones.</p>}
                 {foto.driveInfo.startsWith("error") && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-warning)" }}>No se pudo subir a Drive ({foto.driveInfo.slice(6) || "error"}).</p>}
+                {foto.driveInfo === "cancelado" && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-warning)" }}>No se guardó en Drive. Corregí la fecha de arriba si hace falta y tocá "Reenviar a Drive".</p>}
+                {(foto.driveInfo === "cancelado" || foto.driveInfo.startsWith("error")) && (
+                  <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 4 }} onClick={foto.reenviarDrive}>
+                    <Sparkles size={13} /> Reenviar a Drive (carpeta {/^\d{4}-\d{2}/.test(fecha) ? periodoLabel(fecha.slice(0, 7)) : "de este mes"})
+                  </button>
+                )}
               </>
             ) : (
               <div className="dg-mov-factura-btns">
@@ -8454,7 +8470,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
 
   async function leerFactura(imagen) {
     const src = imagen || facturaArchivo || facturaUrl;
-    if (!src) return;
+    if (!src) return null;
     setLeyendoOcr(true); setProgresoOcr(0);
     try {
       const texto = await leerTextoImagen(src, setProgresoOcr);
@@ -8465,14 +8481,23 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
       if (p.fecha && !fechaTocada) { setFecha(p.fecha); puestos.push(`fecha ${p.fecha.split("-").reverse().join("/")}`); }
       if (p.concepto && !conceptoTocado && !concepto.trim()) { setConcepto(p.concepto); puestos.push("descripción"); }
       setAutoResumen(puestos.length ? `De la factura: ${puestos.join(" · ")}. Revisá que esté bien.` : "");
+      return p;
     } catch (e) {
       setTextoOcr("");
+      return null;
     } finally {
       setLeyendoOcr(false);
     }
   }
-  async function subirADrive(blob) {
+  async function subirADrive(blob, fechaForzada, saltearConfirm) {
     if (!driveUrl || !driveUrl.trim()) { setDriveInfo("noconfig"); return; }
+    const fechaUsar = fechaForzada || fecha || "";
+    const ym = String(fechaUsar).slice(0, 7);
+    const etiqueta = /^\d{4}-\d{2}$/.test(ym) ? periodoLabel(ym) : "este mes";
+    if (!saltearConfirm &&
+        !window.confirm(`La factura se va a guardar en la carpeta de ${etiqueta}.\n\n¿Es correcto? Si no, cancelá, corregí la fecha y tocá "Reenviar a Drive".`)) {
+      setDriveInfo("cancelado"); return;
+    }
     setDriveInfo("subiendo");
     try {
       const base64 = await blobABase64(blob);
@@ -8484,7 +8509,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          scriptUrl: driveUrl.trim(), base64, fecha, mime: blob.type || "image/jpeg",
+          scriptUrl: driveUrl.trim(), base64, fecha: fechaUsar, mime: blob.type || "image/jpeg",
           nombre: `factura-${(concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg`,
         }),
         signal: ctrl.signal,
@@ -8507,8 +8532,9 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
       setFacturaArchivo(comprimido);
       const url = await documentosStore.subirFacturaCompra(comprimido, fecha);
       setFacturaUrl(url);
-      leerFactura(comprimido); // el OCR sigue en segundo plano, no bloquea
-      await subirADrive(comprimido); // Drive sí se espera, así queda guardado el link
+      let p = null;
+      try { p = await leerFactura(comprimido); } catch (e2) { p = null; }
+      await subirADrive(comprimido, (p && p.fecha) || fecha); // primero la fecha, después a Drive
     } catch (err) {
       console.error("subir factura (modal):", err);
       setErrorFoto("No se pudo subir la foto: " + (err && err.message ? err.message : "error desconocido"));
@@ -8517,6 +8543,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
     }
   }
   function quitarFoto() { setFacturaUrl(""); setFacturaArchivo(null); setTextoOcr(""); setFacturaDriveUrl(""); setDriveInfo(""); setAutoResumen(""); }
+  function reenviarFacturaDrive() { if (facturaArchivo) subirADrive(facturaArchivo, fecha, true); }
 
   function guardar() {
     if (subiendoFoto || driveInfo === "subiendo") { setError("Esperá a que termine de subir la factura."); return; }
@@ -8568,6 +8595,14 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
                   )}
                   {driveInfo.startsWith("error") && (
                     <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-warning)" }}>No se pudo subir a Drive ({driveInfo.slice(6) || "error"}). Igual quedó guardada acá en la app.</p>
+                  )}
+                  {driveInfo === "cancelado" && (
+                    <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-warning)" }}>No se guardó en Drive. Corregí la fecha de arriba si hace falta y tocá "Reenviar a Drive".</p>
+                  )}
+                  {(driveInfo === "cancelado" || driveInfo.startsWith("error")) && (
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 4 }} onClick={reenviarFacturaDrive}>
+                      <Sparkles size={13} /> Reenviar a Drive (carpeta {/^\d{4}-\d{2}/.test(fecha) ? periodoLabel(fecha.slice(0, 7)) : "de este mes"})
+                    </button>
                   )}
                 </>
               ) : (
