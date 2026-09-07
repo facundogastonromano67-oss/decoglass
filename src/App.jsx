@@ -3451,12 +3451,17 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
             <div className="dg-pago-info">
               <span className={e.estado === "pagado" ? "dg-task-done" : ""}>{e.concepto}</span>
               <span className="dg-pago-meta">
-                {TYPES[e[typeField]]} · {isIncome ? (e.cliente || "—") : nombreProveedor(e.proveedorId)} · {sectors.find((s) => s.id === e.sectorId)?.name || "General"} · {e.fecha}
+                {TYPES[e[typeField]] || e[typeField]} · {isIncome ? (e.cliente || "—") : (e.proveedorId ? nombreProveedor(e.proveedorId) : "—")} · {sectors.find((s) => s.id === e.sectorId)?.name || "General"} · {e.fecha}
                 {isIncome && e.cuenta ? ` · ${CUENTA_INGRESO[e.cuenta]}` : ""}
+                {e.cuentaBanco && PAYMENT_METHODS[e.cuentaBanco] ? ` · ${PAYMENT_METHODS[e.cuentaBanco]}` : ""}
                 {!isIncome && e.conIva ? " · con IVA" : ""}
                 {!isIncome && e.gastoFijo ? " · gasto fijo" : ""}
+                {e.detalle ? ` · ${e.detalle}` : ""}
               </span>
             </div>
+            {e.facturaUrl && (
+              <a className="dg-icon-btn" href={e.facturaUrl} target="_blank" rel="noopener noreferrer" title="Ver la factura"><FileText size={14} /></a>
+            )}
             <span className="dg-pago-monto">{money(e.monto)}</span>
             <button className="dg-icon-btn dg-task-del" onClick={() => removeEntry(e.id)}><Trash2 size={14} /></button>
           </div>
@@ -8331,7 +8336,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
     }
   }
   async function subirADrive(blob) {
-    if (!driveUrl || !driveUrl.trim()) return;
+    if (!driveUrl || !driveUrl.trim()) { setDriveInfo("noconfig"); return; }
     setDriveInfo("subiendo");
     try {
       const base64 = await blobABase64(blob);
@@ -8340,11 +8345,12 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ base64, fecha, mime: blob.type || "image/jpeg", nombre: `factura-${(concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg` }),
       });
-      const datos = await r.json();
+      let datos = null;
+      try { datos = await r.json(); } catch (e2) { datos = null; }
       if (datos && datos.ok) { setFacturaDriveUrl(datos.url || ""); setDriveInfo(`ok:${datos.carpeta || ""}`); }
-      else setDriveInfo("error");
+      else setDriveInfo(`error:${(datos && datos.error) || ("respuesta \u2260 200 (" + r.status + ")")}`);
     } catch (e) {
-      setDriveInfo("error");
+      setDriveInfo(`error:${e && e.message ? e.message : "no se pudo conectar"}`);
     }
   }
   async function handleFoto(e) {
@@ -8406,9 +8412,17 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
                   </div>
                   {driveInfo === "subiendo" && <p className="dg-hint" style={{ marginTop: 4 }}>Subiendo también a tu Drive…</p>}
                   {driveInfo.startsWith("ok") && (
-                    <p className="dg-hint" style={{ marginTop: 4 }}>✓ También guardada en tu Drive{driveInfo.slice(3) ? ` (carpeta ${driveInfo.slice(3)})` : ""}.</p>
+                    <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-success)" }}>
+                      ✓ También en tu Drive{driveInfo.slice(3) ? ` (carpeta ${driveInfo.slice(3)})` : ""}{facturaDriveUrl ? " — " : ""}
+                      {facturaDriveUrl && <a href={facturaDriveUrl} target="_blank" rel="noopener noreferrer">abrir en Drive</a>}
+                    </p>
                   )}
-                  {driveInfo === "error" && <p className="dg-hint" style={{ marginTop: 4 }}>No se pudo subir a Drive (queda igual en la app).</p>}
+                  {driveInfo === "noconfig" && (
+                    <p className="dg-hint" style={{ marginTop: 4 }}>Para guardarla también en tu Drive, configurá el script en <strong>Ajustes → Integraciones</strong>. Igual quedó guardada acá en la app.</p>
+                  )}
+                  {driveInfo.startsWith("error") && (
+                    <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-warning)" }}>No se pudo subir a Drive ({driveInfo.slice(6) || "error"}). Igual quedó guardada acá en la app.</p>
+                  )}
                 </>
               ) : (
                 <div className="dg-mov-factura-btns">
