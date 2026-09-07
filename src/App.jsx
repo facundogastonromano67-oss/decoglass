@@ -1584,16 +1584,16 @@ function App() {
             contenidoMarketing={contenidoMarketing} onChangeContenidoMarketing={persistContenidoMarketing}
           />
         )}
-      </div>
 
-      {isAdmin && session && (
-        <button className="dg-fab-money" onClick={() => setMovMoneyOpen(true)} title="Cargar movimiento de dinero" aria-label="Cargar movimiento de dinero">
-          <CircleDollarSign size={22} />
-        </button>
-      )}
-      {movMoneyOpen && isAdmin && (
-        <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} />
-      )}
+        {isAdmin && session && (
+          <button className="dg-fab-money" onClick={() => setMovMoneyOpen(true)} title="Cargar movimiento de dinero" aria-label="Cargar movimiento de dinero">
+            <CircleDollarSign size={24} />
+          </button>
+        )}
+        {movMoneyOpen && isAdmin && (
+          <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} />
+        )}
+      </div>
 
       {panelNotifOpen && session && <PanelNotificaciones session={session} onClose={() => setPanelNotifOpen(false)} />}
 
@@ -9059,6 +9059,10 @@ function Style() {
       .dg-form input, .dg-form select { width:100%; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:10px; padding:10px 12px; color:var(--dg-text); font-family:'Inter',sans-serif; font-size:14px; outline:none; box-sizing:border-box; }
       .dg-form input:focus, .dg-form select:focus { border-color:var(--dg-accent); }
       .dg-form-row { display:flex; gap:10px; }
+      .dg-form-row > div { min-width:0; }
+      .dg-form textarea { width:100%; box-sizing:border-box; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1);
+        border-radius:10px; padding:10px 12px; color:var(--dg-text); font-family:'Inter',sans-serif; font-size:14px; outline:none; resize:vertical; }
+      .dg-form textarea:focus { border-color:var(--dg-accent); }
       .dg-hint { font-size:12px; color:var(--dg-text-dim); background:rgba(var(--dg-accent-rgb),0.06); border:1px solid rgba(var(--dg-accent-rgb),0.2); border-radius:8px; padding:8px 10px; }
       .dg-error { font-size:12px; color:var(--dg-danger); }
       .dg-form-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
@@ -9184,11 +9188,11 @@ function Style() {
       .dg-operario-form { display:flex; gap:6px; flex-wrap:wrap; }
       .dg-operario-form input { flex:1 1 130px; min-width:0; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:8px 10px; color:var(--dg-text); font-size:12px; outline:none; }
       .dg-operario-form input:focus { border-color:var(--dg-accent); }
-      .dg-fab-money { position:fixed; z-index:40;
+      .dg-fab-money { position:fixed; z-index:60;
         right:calc(18px + env(safe-area-inset-right, 0px)); bottom:calc(18px + env(safe-area-inset-bottom, 0px));
-        width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-        background:var(--dg-accent); color:var(--dg-on-accent); border:none; cursor:pointer;
-        box-shadow:0 10px 28px -8px rgba(var(--dg-accent-rgb),0.55); transition:transform .1s ease, filter .15s ease; }
+        width:58px; height:58px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:var(--dg-accent); color:#fff; border:none; cursor:pointer;
+        box-shadow:0 12px 30px -6px rgba(var(--dg-accent-rgb),0.65), 0 0 0 1px rgba(var(--dg-accent-rgb),0.3); transition:transform .1s ease, filter .15s ease; }
       .dg-fab-money:hover { filter:brightness(1.07); }
       .dg-fab-money:active { transform:scale(0.93); }
       .dg-mov-tipo { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px; }
@@ -9228,7 +9232,12 @@ function Style() {
         color: #16161A !important;
         font-weight: 500;
       }
-      .dg-modal .dg-form input::placeholder { color: #6B6B74 !important; }
+      .dg-modal .dg-form textarea {
+        width:100%; box-sizing:border-box; background: #FFFFFF !important; border: 1.5px solid #8A8A94 !important;
+        color: #16161A !important; font-weight:500; border-radius:10px; padding:10px 12px;
+        font-family:'Inter',sans-serif; font-size:14px; outline:none; resize:vertical;
+      }
+      .dg-modal .dg-form input::placeholder, .dg-modal .dg-form textarea::placeholder { color: #6B6B74 !important; }
       .dg-modal .dg-form input:focus,
       .dg-modal .dg-form select:focus {
         border-color: var(--dg-accent) !important;
