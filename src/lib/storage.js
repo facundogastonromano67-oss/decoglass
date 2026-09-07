@@ -162,6 +162,21 @@ export const documentosStore = {
     return data.publicUrl;
   },
 
+  // Sube la foto/PDF de una factura de COMPRA, organizada por mes (según la
+  // fecha de la factura) dentro del bucket "facturas": compras/YYYY-MM/...
+  async subirFacturaCompra(archivo, mesISO) {
+    const mes = /^\d{4}-\d{2}/.test(String(mesISO || "")) ? String(mesISO).slice(0, 7) : new Date().toISOString().slice(0, 7);
+    const ext = ((archivo.name || "").split(".").pop() || "").toLowerCase() || (String(archivo.type || "").includes("pdf") ? "pdf" : "jpg");
+    const ruta = `compras/${mes}/${Date.now()}-${uid()}.${ext}`;
+    const { error } = await supabase.storage.from("facturas").upload(ruta, archivo, {
+      contentType: archivo.type || "application/octet-stream",
+      upsert: true,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from("facturas").getPublicUrl(ruta);
+    return data.publicUrl;
+  },
+
   // Borra el archivo de factura ya subido, por si se cargó por error.
   async borrarFactura(url) {
     if (!url) return;

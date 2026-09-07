@@ -1381,6 +1381,7 @@ function App() {
     const base = {
       id: uid(), concepto: mov.concepto, monto: mov.monto, fecha: mov.fecha, estado: "pagado",
       cuentaBanco: mov.cuenta, detalle: mov.detalle, sectorId: "", origen: "movimiento-rapido",
+      facturaUrl: mov.facturaUrl || "",
     };
     if (mov.tipo === "ingreso") {
       persistIncomes([{ ...base, canal: mov.motivo, cliente: "", metodo: mov.cuenta, cuenta: mov.esVentaFacturada ? "ingresos_bancarios" : "caja_efectivo" }, ...incomes]);
@@ -8157,26 +8158,113 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
 
 const TIPOS_PRODUCTO_LIST = Object.keys(TIPO_PRODUCTO_TABLE);
 
+// Carga Tesseract.js (lector de texto) desde CDN, una sola vez y solo cuando
+// hace falta. Corre 100% en el navegador — sin servidores ni costo.
+let __tesseractPromise = null;
+function cargarTesseract() {
+  if (typeof window !== "undefined" && window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (__tesseractPromise) return __tesseractPromise;
+  __tesseractPromise = new Promise((resolve, reject) => {
+    const sc = document.createElement("script");
+    sc.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+    sc.onload = () => resolve(window.Tesseract);
+    sc.onerror = () => { __tesseractPromise = null; reject(new Error("No se pudo cargar el lector.")); };
+    document.head.appendChild(sc);
+  });
+  return __tesseractPromise;
+}
+async function leerTextoImagen(imagen, onProgreso) {
+  const T = await cargarTesseract();
+  const { data } = await T.recognize(imagen, "spa", {
+    logger: (m) => { if (m.status === "recognizing text" && onProgreso) onProgreso(Math.round((m.progress || 0) * 100)); },
+  });
+  return (data && data.text) || "";
+}
+
+// Reglas para adivinar la categoría de un egreso a partir de su texto (lo que
+// se escribe + lo que lee de la factura). Devuelve una clave de PURCHASE_TYPES
+// o null si no encuentra nada claro.
+const CATEGORIZADOR_EGRESO = [
+  { tipo: "materiales", palabras: ["vidrio", "espejo", "float", "cristal", "aluminio", "silicona", "sika", "adhesivo", "cinta led", "tira led", " led", "perfil", "fuente", "transformador", "driver", "acrilico", "mdf", "melamina", "herraje", "tornillo", "burlete", "esmerilado", "biselado", "sensor", "dimmer"] },
+  { tipo: "combustible_logistica", palabras: ["nafta", "gasoil", "gas oil", "combustible", "ypf", "shell", "axion", "puma energy", "estacion de servicio", "peaje", "autopista", "flete", "via cargo", "correo argentino", "andreani", "oca ", "encomienda", "cochera", "estacionamiento", "cadeteria", "moto mensajeria"] },
+  { tipo: "impuestos", palabras: ["afip", "arca", "monotributo", "ingresos brutos", "iibb", "rentas", "arba", "agip", "impuesto", "retencion", "percepcion", "sellos", "tasa municipal", "abl"] },
+  { tipo: "publicidad", palabras: ["meta platforms", "facebook", "instagram", "google ads", "adwords", "publicidad", "marketing", "canva", "impresion", "imprenta", "folleto", "cartel", "vinilo", "lona"] },
+  { tipo: "sueldos", palabras: ["sueldo", "jornal", "quincena", "honorarios", "aguinaldo", " sac ", "adelanto de sueldo"] },
+  { tipo: "administracion", palabras: ["contador", "estudio contable", "papeleria", "libreria", "resma", "tinta", "cartucho", "toner", "articulos de oficina"] },
+  { tipo: "operativos", palabras: ["edenor", "edesur", "edea", "edelap", "metrogas", "camuzzi", "gas natural", "aysa", "absa", "agua corriente", "internet", "fibertel", "telecentro", "movistar", "personal", "claro", "alquiler", "expensas", "limpieza", "art ", "aseguradora", "seguro", "matafuego"] },
+  { tipo: "contenedor", palabras: ["contenedor", "container", "importacion", "aduana", "despachante", "flete internacional", "terminal portuaria"] },
+];
+function categorizarEgreso(texto) {
+  const t = String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let mejor = null, mejorScore = 0;
+  for (const cat of CATEGORIZADOR_EGRESO) {
+    const score = cat.palabras.filter((p) => t.includes(p)).length;
+    if (score > mejorScore) { mejorScore = score; mejor = cat.tipo; }
+  }
+  return mejorScore > 0 ? mejor : null;
+}
+
 function MovimientoRapidoModal({ onClose, onGuardar }) {
   const [tipo, setTipo] = useState("egreso");
   const [monto, setMonto] = useState("");
   const [cuenta, setCuenta] = useState(Object.keys(PAYMENT_METHODS)[0]);
   const [motivo, setMotivo] = useState(Object.keys(PURCHASE_TYPES)[0]);
+  const [motivoTocado, setMotivoTocado] = useState(false);
   const [concepto, setConcepto] = useState("");
   const [detalle, setDetalle] = useState("");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [esVentaFacturada, setEsVentaFacturada] = useState(false);
   const [error, setError] = useState("");
+  const [facturaUrl, setFacturaUrl] = useState("");
+  const [facturaArchivo, setFacturaArchivo] = useState(null);
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [errorFoto, setErrorFoto] = useState("");
+  const [leyendoOcr, setLeyendoOcr] = useState(false);
+  const [progresoOcr, setProgresoOcr] = useState(0);
+  const [textoOcr, setTextoOcr] = useState("");
   const esIngreso = tipo === "ingreso";
   const motivos = esIngreso ? INCOME_CHANNELS : PURCHASE_TYPES;
 
-  useEffect(() => { setMotivo(Object.keys(tipo === "ingreso" ? INCOME_CHANNELS : PURCHASE_TYPES)[0]); }, [tipo]);
+  useEffect(() => {
+    setMotivo(Object.keys(tipo === "ingreso" ? INCOME_CHANNELS : PURCHASE_TYPES)[0]);
+    setMotivoTocado(false);
+  }, [tipo]);
+
+  const catAuto = !esIngreso ? categorizarEgreso(`${concepto} ${detalle} ${textoOcr}`) : null;
+  useEffect(() => {
+    if (!esIngreso && !motivoTocado && catAuto) setMotivo(catAuto);
+  }, [catAuto, esIngreso, motivoTocado]);
+
+  async function leerFactura(imagen) {
+    const src = imagen || facturaArchivo || facturaUrl;
+    if (!src) return;
+    setLeyendoOcr(true); setProgresoOcr(0);
+    try { setTextoOcr(await leerTextoImagen(src, setProgresoOcr)); }
+    catch (e) { setTextoOcr(""); }
+    finally { setLeyendoOcr(false); }
+  }
+  async function handleFoto(e) {
+    const archivo = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!archivo) return;
+    setErrorFoto(""); setSubiendoFoto(true); setFacturaArchivo(archivo); setTextoOcr("");
+    try {
+      const url = await documentosStore.subirFacturaCompra(archivo, fecha);
+      setFacturaUrl(url);
+      leerFactura(archivo);
+    } catch (err) {
+      setErrorFoto("No se pudo subir la foto. Probá de nuevo.");
+    } finally {
+      setSubiendoFoto(false);
+    }
+  }
+  function quitarFoto() { setFacturaUrl(""); setFacturaArchivo(null); setTextoOcr(""); }
 
   function guardar() {
     const m = Number(monto);
     if (!m || m <= 0) { setError("Poné un monto mayor a 0."); return; }
     if (!concepto.trim()) { setError("Poné una descripción corta del movimiento."); return; }
-    onGuardar({ tipo, monto: m, cuenta, motivo, concepto: concepto.trim(), detalle: detalle.trim(), fecha, esVentaFacturada });
+    onGuardar({ tipo, monto: m, cuenta, motivo, concepto: concepto.trim(), detalle: detalle.trim(), fecha, esVentaFacturada, facturaUrl });
     onClose();
   }
 
@@ -8200,10 +8288,42 @@ function MovimientoRapidoModal({ onClose, onGuardar }) {
           <select value={cuenta} onChange={(e) => setCuenta(e.target.value)}>
             {Object.entries(PAYMENT_METHODS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
           </select>
+          {!esIngreso && (
+            <div className="dg-mov-factura">
+              <label>Foto de la factura (opcional)</label>
+              {facturaUrl ? (
+                <div className="dg-mov-factura-ok">
+                  <a href={facturaUrl} target="_blank" rel="noopener noreferrer">Ver la factura subida ✓</a>
+                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={quitarFoto}>Quitar</button>
+                </div>
+              ) : (
+                <div className="dg-mov-factura-btns">
+                  <label className="dg-btn-ghost dg-mini-btn">
+                    {subiendoFoto ? <Loader2 size={13} className="dg-spin" /> : <Camera size={13} />} Sacar foto
+                    <input type="file" accept="image/*" capture="environment" onChange={handleFoto} disabled={subiendoFoto} style={{ display: "none" }} />
+                  </label>
+                  <label className="dg-btn-ghost dg-mini-btn">
+                    {subiendoFoto ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />} Subir archivo
+                    <input type="file" accept="image/*,application/pdf" onChange={handleFoto} disabled={subiendoFoto} style={{ display: "none" }} />
+                  </label>
+                </div>
+              )}
+              {errorFoto && <div className="dg-error" style={{ marginTop: 4 }}>{errorFoto}</div>}
+              {leyendoOcr && <p className="dg-hint" style={{ marginTop: 4 }}>Leyendo la factura… {progresoOcr}% (la primera vez descarga el lector, tarda un poco).</p>}
+              {!leyendoOcr && facturaArchivo && (
+                <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 4 }} onClick={() => leerFactura()}>
+                  <Sparkles size={13} /> {textoOcr ? "Volver a leer la factura" : "Leer la factura"}
+                </button>
+              )}
+            </div>
+          )}
           <label>Motivo</label>
-          <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+          <select value={motivo} onChange={(e) => { setMotivo(e.target.value); setMotivoTocado(true); }}>
             {Object.entries(motivos).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
           </select>
+          {!esIngreso && !motivoTocado && catAuto && catAuto === motivo && (
+            <p className="dg-hint" style={{ marginTop: 2 }}>✨ Categoría elegida sola por el texto{textoOcr ? " de la factura" : ""}. Cambiala si no va.</p>
+          )}
           <label>Descripción corta</label>
           <input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={esIngreso ? "Ej: Seña de un espejo a medida" : "Ej: Pago de flete a Vía Cargo"} />
           <label>Detalle (opcional)</label>
@@ -9200,6 +9320,13 @@ function Style() {
         border:1px solid rgba(var(--dg-line-rgb),0.14); background:var(--dg-surface); color:var(--dg-text-dim); font-size:12px; font-weight:600; font-family:'Inter',sans-serif; }
       .dg-mov-tipo .dg-mov-tipo-on.dg-mov-egreso { border-color:var(--dg-danger); background:color-mix(in srgb, var(--dg-danger) 12%, var(--dg-surface)); color:var(--dg-danger); }
       .dg-mov-tipo .dg-mov-tipo-on.dg-mov-ingreso { border-color:var(--dg-success); background:color-mix(in srgb, var(--dg-success) 12%, var(--dg-surface)); color:var(--dg-success); }
+      .dg-mov-factura { border:1px solid rgba(var(--dg-line-rgb),0.14); border-radius:10px; padding:10px 12px; margin-top:6px; }
+      .dg-mov-factura > label { margin-top:0 !important; }
+      .dg-mov-factura-btns { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+      .dg-mov-factura-btns label { cursor:pointer; }
+      .dg-mov-factura-ok { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:6px; font-size:12.5px; }
+      .dg-mov-factura-ok a { color:var(--dg-success); font-weight:600; }
+      .dg-modal .dg-mov-factura-ok a { color:#7FCE73 !important; }
       .dg-mobile-back-fab { display:none; }
       @media (max-width:680px) {
         .dg-mobile-back-fab {
