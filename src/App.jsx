@@ -8348,17 +8348,22 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
     try {
       const base64 = await blobABase64(blob);
       const ctrl = new AbortController();
-      const tmo = setTimeout(() => ctrl.abort(), 20000);
-      const r = await fetch(driveUrl.trim(), {
+      const tmo = setTimeout(() => ctrl.abort(), 25000);
+      // Pasa por una funci\u00f3n del servidor (mismo dominio): el navegador no
+      // puede hablar directo con Apps Script por CORS, pero el servidor s\u00ed.
+      const r = await fetch("/api/subir-factura-drive", {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ base64, fecha, mime: blob.type || "image/jpeg", nombre: `factura-${(concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg` }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scriptUrl: driveUrl.trim(), base64, fecha, mime: blob.type || "image/jpeg",
+          nombre: `factura-${(concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg`,
+        }),
         signal: ctrl.signal,
       }).finally(() => clearTimeout(tmo));
       let datos = null;
       try { datos = await r.json(); } catch (e2) { datos = null; }
-      if (datos && datos.ok) { setFacturaDriveUrl(datos.url || ""); setDriveInfo(`ok:${datos.carpeta || ""}`); }
-      else setDriveInfo(`error:${(datos && datos.error) || ("respuesta \u2260 200 (" + r.status + ")")}`);
+      if (r.ok && datos && datos.ok) { setFacturaDriveUrl(datos.url || ""); setDriveInfo(`ok:${datos.carpeta || ""}`); }
+      else setDriveInfo(`error:${(datos && datos.error) || ("HTTP " + r.status)}`);
     } catch (e) {
       setDriveInfo(`error:${e && e.message ? e.message : "no se pudo conectar"}`);
     }
