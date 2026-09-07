@@ -8406,8 +8406,8 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
         </div>
         <div className="dg-form">
           <div className="dg-mov-tipo">
-            <button type="button" className={!esIngreso ? "dg-mov-tipo-on dg-mov-egreso" : ""} onClick={() => setTipo("egreso")}><TrendingDown size={15} /> Egreso · sale plata</button>
-            <button type="button" className={esIngreso ? "dg-mov-tipo-on dg-mov-ingreso" : ""} onClick={() => setTipo("ingreso")}><TrendingUp size={15} /> Ingreso · entra plata</button>
+            <button type="button" className={!esIngreso ? "dg-mov-tipo-on dg-mov-egreso" : ""} onClick={() => setTipo("egreso")}><TrendingDown size={15} /> Egreso</button>
+            <button type="button" className={esIngreso ? "dg-mov-tipo-on dg-mov-ingreso" : ""} onClick={() => setTipo("ingreso")}><TrendingUp size={15} /> Ingreso</button>
           </div>
           <div className="dg-form-row">
             <div style={{ flex: 1 }}><label>Monto</label><input type="number" inputMode="decimal" autoFocus value={monto} onChange={(e) => { setMonto(e.target.value); setMontoTocado(true); }} placeholder="0" /></div>
@@ -8483,7 +8483,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
         <div className="dg-form-actions">
           <button className="dg-btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="dg-btn-primary" onClick={guardar} disabled={subiendoFoto || driveInfo === "subiendo"}>
-            {(subiendoFoto || driveInfo === "subiendo") ? <Loader2 size={14} className="dg-spin" /> : <Check size={14} />} {(subiendoFoto || driveInfo === "subiendo") ? "Subiendo factura…" : "Guardar movimiento"}
+            {(subiendoFoto || driveInfo === "subiendo") ? <Loader2 size={14} className="dg-spin" /> : <Check size={14} />} {(subiendoFoto || driveInfo === "subiendo") ? "Subiendo…" : "Guardar"}
           </button>
         </div>
       </div>
@@ -9289,7 +9289,7 @@ function Style() {
 
       .dg-overlay { position:fixed; inset:0; background:#0A0A0B; display:flex; flex-direction:column; align-items:center; overflow-y:auto; padding:calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); z-index:50; }
       .dg-overlay::before, .dg-overlay::after { content:""; display:block; flex:0 0 auto; margin:auto 0; }
-      .dg-modal { font-family:'Inter', sans-serif; color:var(--dg-text); width:100%; max-width:400px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.14); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
+      .dg-modal { font-family:'Inter', sans-serif; color:var(--dg-text); width:100%; max-width:400px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.14); border-radius:18px; padding:20px; max-height:88vh; overflow-y:auto; overflow-x:hidden; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.8); animation: dg-modal-in .18s ease-out; }
       @keyframes dg-modal-in { from { opacity:0; transform: translateY(8px) scale(0.99); } to { opacity:1; transform:none; } }
       .dg-modal-lg { max-width:540px; }
       .dg-modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
@@ -9325,8 +9325,11 @@ function Style() {
       select option { background:var(--dg-surface); color:var(--dg-text); }
       .dg-form input, .dg-form select { width:100%; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:10px; padding:10px 12px; color:var(--dg-text); font-family:'Inter',sans-serif; font-size:14px; outline:none; box-sizing:border-box; }
       .dg-form input:focus, .dg-form select:focus { border-color:var(--dg-accent); }
-      .dg-form-row { display:flex; gap:10px; }
+      .dg-form { min-width:0; }
+      .dg-form input, .dg-form select, .dg-form textarea { min-width:0; max-width:100%; }
+      .dg-form-row { display:flex; gap:10px; min-width:0; }
       .dg-form-row > div { min-width:0; }
+      .dg-form-actions { flex-wrap:wrap; }
       .dg-form textarea { width:100%; box-sizing:border-box; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1);
         border-radius:10px; padding:10px 12px; color:var(--dg-text); font-family:'Inter',sans-serif; font-size:14px; outline:none; resize:vertical; }
       .dg-form textarea:focus { border-color:var(--dg-accent); }
@@ -9455,16 +9458,16 @@ function Style() {
       .dg-operario-form { display:flex; gap:6px; flex-wrap:wrap; }
       .dg-operario-form input { flex:1 1 130px; min-width:0; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:8px 10px; color:var(--dg-text); font-size:12px; outline:none; }
       .dg-operario-form input:focus { border-color:var(--dg-accent); }
-      .dg-fab-money { position:fixed; z-index:60;
+      .dg-fab-money { position:fixed; z-index:45;
         right:calc(18px + env(safe-area-inset-right, 0px)); bottom:calc(18px + env(safe-area-inset-bottom, 0px));
         width:58px; height:58px; border-radius:50%; display:flex; align-items:center; justify-content:center;
         background:var(--dg-accent); color:#fff; border:none; cursor:pointer;
         box-shadow:0 12px 30px -6px rgba(var(--dg-accent-rgb),0.65), 0 0 0 1px rgba(var(--dg-accent-rgb),0.3); transition:transform .1s ease, filter .15s ease; }
       .dg-fab-money:hover { filter:brightness(1.07); }
       .dg-fab-money:active { transform:scale(0.93); }
-      .dg-mov-tipo { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px; }
-      .dg-mov-tipo button { display:flex; align-items:center; justify-content:center; gap:6px; padding:11px 8px; border-radius:10px; cursor:pointer;
-        border:1px solid rgba(var(--dg-line-rgb),0.14); background:var(--dg-surface); color:var(--dg-text-dim); font-size:12px; font-weight:600; font-family:'Inter',sans-serif; }
+      .dg-mov-tipo { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px; min-width:0; }
+      .dg-mov-tipo button { min-width:0; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px 8px; border-radius:10px; cursor:pointer;
+        border:1px solid rgba(var(--dg-line-rgb),0.14); background:var(--dg-surface); color:var(--dg-text-dim); font-size:12.5px; font-weight:600; font-family:'Inter',sans-serif; white-space:nowrap; }
       .dg-mov-tipo .dg-mov-tipo-on.dg-mov-egreso { border-color:var(--dg-danger); background:color-mix(in srgb, var(--dg-danger) 12%, var(--dg-surface)); color:var(--dg-danger); }
       .dg-mov-tipo .dg-mov-tipo-on.dg-mov-ingreso { border-color:var(--dg-success); background:color-mix(in srgb, var(--dg-success) 12%, var(--dg-surface)); color:var(--dg-success); }
       .dg-mov-factura { border:1px solid rgba(var(--dg-line-rgb),0.14); border-radius:10px; padding:10px 12px; margin-top:6px; }
