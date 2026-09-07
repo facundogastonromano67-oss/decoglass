@@ -1571,6 +1571,7 @@ function App() {
             admins={admins} onChangeAdmins={persistAdmins}
             auditoria={auditoria}
             kommoSubdominio={integraciones?.kommoSubdominio}
+            driveFacturasUrl={integraciones?.driveFacturasUrl || ""}
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
             facturas={facturas} onChangeFacturas={persistFacturas}
@@ -3142,7 +3143,7 @@ function GastosFijosPanel({ plantillas, onChangePlantillas, proveedores, purchas
   );
 }
 
-function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangePurchases, proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas, empleadosSueldo, liquidaciones, pedidos }) {
+function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangePurchases, proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas, empleadosSueldo, liquidaciones, pedidos, driveFacturasUrl }) {
   const [tab, setTab] = useState("resumen");
   const mesActual = new Date().toISOString().slice(0, 7);
 
@@ -3205,8 +3206,8 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
         </div>
       )}
 
-      {tab === "ingresos" && <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={onChangeIncomes} proveedores={proveedores} onChangeProveedores={onChangeProveedores} />}
-      {tab === "compras" && <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={onChangePurchases} proveedores={proveedores} onChangeProveedores={onChangeProveedores} />}
+      {tab === "ingresos" && <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={onChangeIncomes} proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl} />}
+      {tab === "compras" && <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={onChangePurchases} proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl} />}
       {tab === "proveedores" && <ProveedoresPanel proveedores={proveedores} purchases={purchases} onChange={onChangeProveedores} />}
       {tab === "fijos" && <GastosFijosPanel plantillas={gastosFijosPlantillas} onChangePlantillas={onChangeGastosFijosPlantillas} proveedores={proveedores} purchases={purchases} onChangePurchases={onChangePurchases} />}
     </div>
@@ -3294,7 +3295,78 @@ function ProveedorPicker({ proveedores, value, onChange, onCrearRapido }) {
   );
 }
 
-function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProveedores }) {
+// Foto de factura de compra: subir/sacar foto -> comprime -> guarda en
+// Supabase por mes -> lee el texto -> (opcional) manda a Drive. Reutilizable.
+function useFacturaFoto({ fecha, concepto, driveUrl }) {
+  const ref = useRef({ fecha, concepto, driveUrl });
+  ref.current = { fecha, concepto, driveUrl };
+  const [url, setUrl] = useState("");
+  const [archivo, setArchivo] = useState(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+  const [leyendo, setLeyendo] = useState(false);
+  const [progreso, setProgreso] = useState(0);
+  const [texto, setTexto] = useState("");
+  const [driveFileUrl, setDriveFileUrl] = useState("");
+  const [driveInfo, setDriveInfo] = useState("");
+
+  async function subirADrive(blob) {
+    const d = ref.current;
+    if (!d.driveUrl || !String(d.driveUrl).trim()) { setDriveInfo("noconfig"); return; }
+    setDriveInfo("subiendo");
+    try {
+      const base64 = await blobABase64(blob);
+      const ctrl = new AbortController();
+      const tmo = setTimeout(() => ctrl.abort(), 25000);
+      const r = await fetch("/api/subir-factura-drive", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scriptUrl: String(d.driveUrl).trim(), base64, fecha: d.fecha, mime: blob.type || "image/jpeg",
+          nombre: `factura-${(d.concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg`,
+        }),
+        signal: ctrl.signal,
+      }).finally(() => clearTimeout(tmo));
+      let datos = null; try { datos = await r.json(); } catch (e) { datos = null; }
+      if (r.ok && datos && datos.ok) { setDriveFileUrl(datos.url || ""); setDriveInfo(`ok:${datos.carpeta || ""}`); }
+      else setDriveInfo(`error:${(datos && datos.error) || ("HTTP " + r.status)}`);
+    } catch (e) { setDriveInfo(`error:${e && e.message ? e.message : "no se pudo conectar"}`); }
+  }
+  async function leer(imagen) {
+    const src = imagen || archivo || url;
+    if (!src) return null;
+    setLeyendo(true); setProgreso(0);
+    try {
+      const txt = await leerTextoImagen(src, setProgreso);
+      setTexto(txt);
+      return { ...parseFacturaTexto(txt), categoria: categorizarEgreso(txt) };
+    } catch (e) { setTexto(""); return null; }
+    finally { setLeyendo(false); }
+  }
+  async function tomar(e, onDatos) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setError(""); setSubiendo(true); setTexto(""); setDriveInfo(""); setDriveFileUrl("");
+    try {
+      const comp = await comprimirImagen(f);
+      setArchivo(comp);
+      const u = await documentosStore.subirFacturaCompra(comp, ref.current.fecha);
+      setUrl(u);
+      leer(comp).then((p) => { if (p && onDatos) onDatos(p); });
+      await subirADrive(comp);
+    } catch (err) {
+      console.error("subir factura:", err);
+      setError("No se pudo subir la foto: " + (err && err.message ? err.message : "error desconocido"));
+    } finally {
+      setSubiendo(false);
+    }
+  }
+  function quitar() { setUrl(""); setArchivo(null); setTexto(""); setDriveFileUrl(""); setDriveInfo(""); setError(""); }
+
+  return { url, archivo, subiendo, error, leyendo, progreso, texto, driveInfo, driveFileUrl, tomar, leer, quitar };
+}
+
+function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProveedores, driveFacturasUrl }) {
   const isIncome = kind === "income";
   const TYPES = isIncome ? INCOME_CHANNELS : PURCHASE_TYPES;
   const typeField = isIncome ? "canal" : "tipo";
@@ -3313,6 +3385,20 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
   const [conIva, setConIva] = useState(false);
   const [gastoFijo, setGastoFijo] = useState(false);
   const [filtro, setFiltro] = useState("todos");
+  const [montoTocado, setMontoTocado] = useState(false);
+  const [fechaTocada, setFechaTocada] = useState(false);
+  const [tipoTocado, setTipoTocado] = useState(false);
+  const [autoResumen, setAutoResumen] = useState("");
+  const foto = useFacturaFoto({ fecha, concepto, driveUrl: driveFacturasUrl });
+
+  function aplicarDatosFactura(p) {
+    const puestos = [];
+    if (p.monto && !montoTocado && !monto) { setMonto(String(p.monto)); puestos.push(`monto ${money(p.monto)}`); }
+    if (p.fecha && !fechaTocada) { setFecha(p.fecha); puestos.push("fecha"); }
+    if (p.categoria && !tipoTocado) { setTipo(p.categoria); setMasDetalles(true); puestos.push(`tipo ${TYPES[p.categoria] || p.categoria}`); }
+    if (p.concepto && !concepto.trim()) { setConcepto(p.concepto); puestos.push("concepto"); }
+    setAutoResumen(puestos.length ? `De la factura: ${puestos.join(" · ")}. Revisá que esté bien.` : "");
+  }
 
   const totalPendiente = entries.filter((e) => e.estado === "pendiente").reduce((a, e) => a + Number(e.monto || 0), 0);
   const totalConfirmado = entries.filter((e) => e.estado === "pagado").reduce((a, e) => a + Number(e.monto || 0), 0);
@@ -3335,10 +3421,14 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
     if (!concepto.trim() || !monto) return;
     const next = [...entries, {
       id: uid(), concepto: concepto.trim(), monto: Number(monto), [typeField]: tipo,
-      [partyField]: isIncome ? party.trim() : (party || ""), ...(isIncome ? { metodo, cuenta } : { conIva, gastoFijo }), sectorId, fecha, estado: "pendiente",
+      [partyField]: isIncome ? party.trim() : (party || ""), ...(isIncome ? { metodo, cuenta } : { conIva, gastoFijo }),
+      ...(isIncome ? {} : { facturaUrl: foto.url || "", facturaDriveUrl: foto.driveFileUrl || "" }),
+      sectorId, fecha, estado: "pendiente",
     }];
     onChange(next);
     setConcepto(""); setMonto(""); setParty(""); setConIva(false); setGastoFijo(false);
+    setMontoTocado(false); setFechaTocada(false); setTipoTocado(false); setAutoResumen("");
+    foto.quitar();
   }
   function toggleEstado(id) { onChange(entries.map((e) => (e.id === id ? { ...e, estado: e.estado === "pendiente" ? "pagado" : "pendiente" } : e))); }
   function removeEntry(id) { onChange(entries.filter((e) => e.id !== id)); }
@@ -3388,9 +3478,43 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
       <EnterFlow className="dg-form dg-pago-form" onSubmit={addEntry} autoFocus={false}>
         <div className="dg-form-row">
           <div style={{ flex: 2 }}><label>Concepto</label><input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={isIncome ? "Ej: Venta 4 espejos LED redondos" : "Ej: Vidrio importado - contenedor"} /></div>
-          <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></div>
-          <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
+          <div style={{ flex: 1 }}><label>Monto</label><input type="number" value={monto} onChange={(e) => { setMonto(e.target.value); setMontoTocado(true); }} placeholder="0" /></div>
+          <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={fecha} onChange={(e) => { setFecha(e.target.value); setFechaTocada(true); }} /></div>
         </div>
+
+        {!isIncome && (
+          <div className="dg-mov-factura" style={{ marginTop: 8 }}>
+            <label>Foto de la factura (opcional)</label>
+            {foto.url ? (
+              <>
+                <div className="dg-mov-factura-ok">
+                  <a href={foto.url} target="_blank" rel="noopener noreferrer"><FileText size={13} /> Ver la factura</a>
+                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={foto.quitar}>Quitar</button>
+                </div>
+                {foto.driveInfo === "subiendo" && <p className="dg-hint" style={{ marginTop: 4 }}>Subiendo a tu Drive…</p>}
+                {foto.driveInfo.startsWith("ok") && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-success)" }}>✓ También en tu Drive{foto.driveInfo.slice(3) ? ` (carpeta ${foto.driveInfo.slice(3)})` : ""}.</p>}
+                {foto.driveInfo === "noconfig" && <p className="dg-hint" style={{ marginTop: 4 }}>Para mandarla también a tu Drive, configurá el script en Ajustes → Integraciones.</p>}
+                {foto.driveInfo.startsWith("error") && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-warning)" }}>No se pudo subir a Drive ({foto.driveInfo.slice(6) || "error"}).</p>}
+              </>
+            ) : (
+              <div className="dg-mov-factura-btns">
+                <label className="dg-btn-ghost dg-mini-btn">
+                  {foto.subiendo ? <Loader2 size={13} className="dg-spin" /> : <Camera size={13} />} Sacar foto
+                  <input type="file" accept="image/*" capture="environment" onChange={(e) => foto.tomar(e, aplicarDatosFactura)} disabled={foto.subiendo} style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", padding: 0, margin: 0, border: 0 }} />
+                </label>
+                <label className="dg-btn-ghost dg-mini-btn">
+                  {foto.subiendo ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />} Subir archivo
+                  <input type="file" accept="image/*,application/pdf" onChange={(e) => foto.tomar(e, aplicarDatosFactura)} disabled={foto.subiendo} style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", padding: 0, margin: 0, border: 0 }} />
+                </label>
+              </div>
+            )}
+            {foto.subiendo && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-accent)" }}>Subiendo la foto…</p>}
+            {foto.error && <div className="dg-error" style={{ marginTop: 4, fontWeight: 600 }}>{foto.error}</div>}
+            {foto.leyendo && <p className="dg-hint" style={{ marginTop: 4 }}>Leyendo la factura… {foto.progreso}% (la primera vez tarda un poco).</p>}
+            {!foto.leyendo && foto.archivo && <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 4 }} onClick={() => foto.leer().then((p) => p && aplicarDatosFactura(p))}><Sparkles size={13} /> {foto.texto ? "Volver a leer" : "Leer la factura"}</button>}
+            {autoResumen && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-success)" }}>✨ {autoResumen}</p>}
+          </div>
+        )}
 
         <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 4 }} onClick={() => setMasDetalles((v) => !v)}>
           {masDetalles ? <ChevronRight size={13} style={{ transform: "rotate(90deg)" }} /> : <ChevronRight size={13} />} {masDetalles ? "Ocultar detalles" : "Más detalles (opcional)"}
@@ -3400,7 +3524,7 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
           <>
             <div className="dg-form-row">
               <div style={{ flex: 1 }}><label>{isIncome ? "Canal" : "Tipo"}</label>
-                <select value={tipo} onChange={(e) => setTipo(e.target.value)}>{Object.entries(TYPES).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
+                <select value={tipo} onChange={(e) => { setTipo(e.target.value); setTipoTocado(true); }}>{Object.entries(TYPES).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}</select>
               </div>
               <div style={{ flex: 1 }}><label>{partyLabel}</label>
                 {isIncome
@@ -8177,16 +8301,21 @@ function comprimirImagen(file, maxLado = 1600, calidad = 0.72) {
     if (!/^image\//.test(file.type || "")) { resolve(file); return; }
     const img = new Image();
     const url = URL.createObjectURL(file);
+    let listo = false;
+    const terminar = (out) => { if (listo) return; listo = true; try { URL.revokeObjectURL(url); } catch (e) {} resolve(out); };
+    const tmo = setTimeout(() => terminar(file), 10000);
     img.onload = () => {
-      URL.revokeObjectURL(url);
-      let w = img.naturalWidth, h = img.naturalHeight;
-      if (Math.max(w, h) > maxLado) { const r = maxLado / Math.max(w, h); w = Math.round(w * r); h = Math.round(h * r); }
-      const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
-      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-      canvas.toBlob((blob) => resolve(blob && blob.size < file.size ? blob : file), "image/jpeg", calidad);
+      clearTimeout(tmo);
+      try {
+        let w = img.naturalWidth, h = img.naturalHeight;
+        if (Math.max(w, h) > maxLado) { const r = maxLado / Math.max(w, h); w = Math.round(w * r); h = Math.round(h * r); }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => terminar(blob && blob.size < file.size ? blob : file), "image/jpeg", calidad);
+      } catch (e) { terminar(file); }
     };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.onerror = () => { clearTimeout(tmo); terminar(file); };
     img.src = url;
   });
 }
@@ -8444,11 +8573,11 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
                 <div className="dg-mov-factura-btns">
                   <label className="dg-btn-ghost dg-mini-btn">
                     {subiendoFoto ? <Loader2 size={13} className="dg-spin" /> : <Camera size={13} />} Sacar foto
-                    <input type="file" accept="image/*" capture="environment" onChange={handleFoto} disabled={subiendoFoto} style={{ display: "none" }} />
+                    <input type="file" accept="image/*" capture="environment" onChange={handleFoto} disabled={subiendoFoto} style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", padding: 0, margin: 0, border: 0 }} />
                   </label>
                   <label className="dg-btn-ghost dg-mini-btn">
                     {subiendoFoto ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />} Subir archivo
-                    <input type="file" accept="image/*,application/pdf" onChange={handleFoto} disabled={subiendoFoto} style={{ display: "none" }} />
+                    <input type="file" accept="image/*,application/pdf" onChange={handleFoto} disabled={subiendoFoto} style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", padding: 0, margin: 0, border: 0 }} />
                   </label>
                 </div>
               )}
@@ -8945,7 +9074,7 @@ function SectorPage({
   facturas, onChangeFacturas, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
-  admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio,
+  admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
 }) {
@@ -9073,7 +9202,7 @@ function SectorPage({
       {subpage === "finanzas" && (
         isAdmin ? <FinanzasPanel
             incomes={incomes} purchases={purchases} sectors={sectors} onChangeIncomes={onChangeIncomes} onChangePurchases={onChangePurchases}
-            proveedores={proveedores} onChangeProveedores={onChangeProveedores}
+            proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl}
             gastosFijosPlantillas={gastosFijosPlantillas} onChangeGastosFijosPlantillas={onChangeGastosFijosPlantillas}
             empleadosSueldo={empleadosSueldo} liquidaciones={liquidaciones} pedidos={pedidos}
           />
@@ -9327,6 +9456,8 @@ function Style() {
       .dg-form input:focus, .dg-form select:focus { border-color:var(--dg-accent); }
       .dg-form { min-width:0; }
       .dg-form input, .dg-form select, .dg-form textarea { min-width:0; max-width:100%; }
+      .dg-form input[type="date"], .dg-form input[type="time"], .dg-form input[type="number"] { -webkit-appearance:none; appearance:none; }
+      .dg-modal .dg-form input[type="date"] { -webkit-appearance:none !important; appearance:none !important; }
       .dg-form-row { display:flex; gap:10px; min-width:0; }
       .dg-form-row > div { min-width:0; }
       .dg-form-actions { flex-wrap:wrap; }
