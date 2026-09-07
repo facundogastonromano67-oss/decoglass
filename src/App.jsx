@@ -844,7 +844,7 @@ function App() {
   const [liquidaciones, setLiquidaciones] = useState(null);
   const [adminKeyExists, setAdminKeyExists] = useState(false);
   const [admins, setAdmins] = useState([]);
-  const [integraciones, setIntegraciones] = useState({ kommoSubdominio: "" });
+  const [integraciones, setIntegraciones] = useState({ kommoSubdominio: "", driveFacturasUrl: "" });
   const [auditoria, setAuditoria] = useState([]);
   const [saveState, setSaveState] = useState({ estado: "idle" });
   const [syncState, setSyncState] = useState("connecting");
@@ -1258,8 +1258,8 @@ function App() {
     } catch (e) { setAdminKeyExists(false); }
     try {
       const ig = await storage.get("integraciones", true);
-      setIntegraciones(ig ? JSON.parse(ig.value) : { kommoSubdominio: "" });
-    } catch (e) { setIntegraciones({ kommoSubdominio: "" }); }
+      setIntegraciones(ig ? { kommoSubdominio: "", driveFacturasUrl: "", ...JSON.parse(ig.value) } : { kommoSubdominio: "", driveFacturasUrl: "" });
+    } catch (e) { setIntegraciones({ kommoSubdominio: "", driveFacturasUrl: "" }); }
     setLoading(false);
   }
 
@@ -1381,7 +1381,7 @@ function App() {
     const base = {
       id: uid(), concepto: mov.concepto, monto: mov.monto, fecha: mov.fecha, estado: "pagado",
       cuentaBanco: mov.cuenta, detalle: mov.detalle, sectorId: "", origen: "movimiento-rapido",
-      facturaUrl: mov.facturaUrl || "",
+      facturaUrl: mov.facturaUrl || "", facturaDriveUrl: mov.facturaDriveUrl || "",
     };
     if (mov.tipo === "ingreso") {
       persistIncomes([{ ...base, canal: mov.motivo, cliente: "", metodo: mov.cuenta, cuenta: mov.esVentaFacturada ? "ingresos_bancarios" : "caja_efectivo" }, ...incomes]);
@@ -1592,7 +1592,7 @@ function App() {
           </button>
         )}
         {movMoneyOpen && isAdmin && (
-          <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} />
+          <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} driveUrl={integraciones?.driveFacturasUrl || ""} />
         )}
       </div>
 
@@ -2058,6 +2058,13 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vende
               </p>
               <Field label="Subdominio de Kommo">
                 <input value={integraciones?.kommoSubdominio || ""} onChange={(e) => onChangeIntegraciones({ ...integraciones, kommoSubdominio: e.target.value })} placeholder="Ej: midecoglass" />
+              </Field>
+              <p className="dg-pago-meta" style={{ margin: "14px 0 8px" }}>
+                Pegá acá la URL del script de Google Apps Script (termina en /exec). Con eso, las fotos de facturas de compra
+                que cargues desde el botón de movimientos se guardan también en tu carpeta de Drive, en la subcarpeta del mes.
+              </p>
+              <Field label="URL del script de Drive (facturas de compra)">
+                <input value={integraciones?.driveFacturasUrl || ""} onChange={(e) => onChangeIntegraciones({ ...integraciones, driveFacturasUrl: e.target.value })} placeholder="https://script.google.com/macros/s/.../exec" />
               </Field>
             </div>
           </>
@@ -8173,6 +8180,33 @@ function cargarTesseract() {
   });
   return __tesseractPromise;
 }
+function comprimirImagen(file, maxLado = 1600, calidad = 0.72) {
+  return new Promise((resolve) => {
+    if (!/^image\//.test(file.type || "")) { resolve(file); return; }
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w, h) > maxLado) { const r = maxLado / Math.max(w, h); w = Math.round(w * r); h = Math.round(h * r); }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => resolve(blob && blob.size < file.size ? blob : file), "image/jpeg", calidad);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+function blobABase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
 async function leerTextoImagen(imagen, onProgreso) {
   const T = await cargarTesseract();
   const { data } = await T.recognize(imagen, "spa", {
@@ -8204,7 +8238,7 @@ function categorizarEgreso(texto) {
   return mejorScore > 0 ? mejor : null;
 }
 
-function MovimientoRapidoModal({ onClose, onGuardar }) {
+function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   const [tipo, setTipo] = useState("egreso");
   const [monto, setMonto] = useState("");
   const [cuenta, setCuenta] = useState(Object.keys(PAYMENT_METHODS)[0]);
@@ -8222,6 +8256,8 @@ function MovimientoRapidoModal({ onClose, onGuardar }) {
   const [leyendoOcr, setLeyendoOcr] = useState(false);
   const [progresoOcr, setProgresoOcr] = useState(0);
   const [textoOcr, setTextoOcr] = useState("");
+  const [facturaDriveUrl, setFacturaDriveUrl] = useState("");
+  const [driveInfo, setDriveInfo] = useState(""); // "" | "subiendo" | "ok:MES" | "error"
   const esIngreso = tipo === "ingreso";
   const motivos = esIngreso ? INCOME_CHANNELS : PURCHASE_TYPES;
 
@@ -8243,28 +8279,48 @@ function MovimientoRapidoModal({ onClose, onGuardar }) {
     catch (e) { setTextoOcr(""); }
     finally { setLeyendoOcr(false); }
   }
+  async function subirADrive(blob) {
+    if (!driveUrl || !driveUrl.trim()) return;
+    setDriveInfo("subiendo");
+    try {
+      const base64 = await blobABase64(blob);
+      const r = await fetch(driveUrl.trim(), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ base64, fecha, mime: blob.type || "image/jpeg", nombre: `factura-${(concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg` }),
+      });
+      const datos = await r.json();
+      if (datos && datos.ok) { setFacturaDriveUrl(datos.url || ""); setDriveInfo(`ok:${datos.carpeta || ""}`); }
+      else setDriveInfo("error");
+    } catch (e) {
+      setDriveInfo("error");
+    }
+  }
   async function handleFoto(e) {
     const archivo = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!archivo) return;
-    setErrorFoto(""); setSubiendoFoto(true); setFacturaArchivo(archivo); setTextoOcr("");
+    setErrorFoto(""); setSubiendoFoto(true); setTextoOcr(""); setDriveInfo(""); setFacturaDriveUrl("");
     try {
-      const url = await documentosStore.subirFacturaCompra(archivo, fecha);
+      const comprimido = await comprimirImagen(archivo);
+      setFacturaArchivo(comprimido);
+      const url = await documentosStore.subirFacturaCompra(comprimido, fecha);
       setFacturaUrl(url);
-      leerFactura(archivo);
+      leerFactura(comprimido);
+      subirADrive(comprimido);
     } catch (err) {
       setErrorFoto("No se pudo subir la foto. Probá de nuevo.");
     } finally {
       setSubiendoFoto(false);
     }
   }
-  function quitarFoto() { setFacturaUrl(""); setFacturaArchivo(null); setTextoOcr(""); }
+  function quitarFoto() { setFacturaUrl(""); setFacturaArchivo(null); setTextoOcr(""); setFacturaDriveUrl(""); setDriveInfo(""); }
 
   function guardar() {
     const m = Number(monto);
     if (!m || m <= 0) { setError("Poné un monto mayor a 0."); return; }
     if (!concepto.trim()) { setError("Poné una descripción corta del movimiento."); return; }
-    onGuardar({ tipo, monto: m, cuenta, motivo, concepto: concepto.trim(), detalle: detalle.trim(), fecha, esVentaFacturada, facturaUrl });
+    onGuardar({ tipo, monto: m, cuenta, motivo, concepto: concepto.trim(), detalle: detalle.trim(), fecha, esVentaFacturada, facturaUrl, facturaDriveUrl });
     onClose();
   }
 
@@ -8292,10 +8348,17 @@ function MovimientoRapidoModal({ onClose, onGuardar }) {
             <div className="dg-mov-factura">
               <label>Foto de la factura (opcional)</label>
               {facturaUrl ? (
-                <div className="dg-mov-factura-ok">
-                  <a href={facturaUrl} target="_blank" rel="noopener noreferrer">Ver la factura subida ✓</a>
-                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={quitarFoto}>Quitar</button>
-                </div>
+                <>
+                  <div className="dg-mov-factura-ok">
+                    <a href={facturaUrl} target="_blank" rel="noopener noreferrer">Ver la factura subida ✓</a>
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={quitarFoto}>Quitar</button>
+                  </div>
+                  {driveInfo === "subiendo" && <p className="dg-hint" style={{ marginTop: 4 }}>Subiendo también a tu Drive…</p>}
+                  {driveInfo.startsWith("ok") && (
+                    <p className="dg-hint" style={{ marginTop: 4 }}>✓ También guardada en tu Drive{driveInfo.slice(3) ? ` (carpeta ${driveInfo.slice(3)})` : ""}.</p>
+                  )}
+                  {driveInfo === "error" && <p className="dg-hint" style={{ marginTop: 4 }}>No se pudo subir a Drive (queda igual en la app).</p>}
+                </>
               ) : (
                 <div className="dg-mov-factura-btns">
                   <label className="dg-btn-ghost dg-mini-btn">
