@@ -8224,12 +8224,19 @@ function parseFacturaTexto(texto) {
   const res = { monto: null, fecha: null, concepto: null };
 
   const candidatos = [];
+  const agregarMonto = (raw, prio) => {
+    if (String(raw).replace(/\D/g, "").length > 11) return; // descarta códigos / N° de serie largos
+    const n = parseNumeroArg(raw);
+    if (!n || n < 100 || n > 999999999) return;
+    const conDecimal = /[.,]\d{2}\s*$/.test(String(raw).trim());
+    candidatos.push({ n, prio: prio + (conDecimal ? 0.6 : 0) });
+  };
   t.split(/\n+/).forEach((l) => {
     if (/\b(total|importe|a pagar|neto a pagar)\b/i.test(l)) {
-      (l.match(/[\d][\d.,]{2,}/g) || []).forEach((x) => { const n = parseNumeroArg(x); if (n && n >= 100) candidatos.push({ n, prio: 2 }); });
+      (l.match(/[\d][\d.,]{2,}/g) || []).forEach((x) => agregarMonto(x, 2));
     }
   });
-  (t.match(/\$\s*([\d][\d.,]{2,})/g) || []).forEach((x) => { const n = parseNumeroArg(x); if (n && n >= 100) candidatos.push({ n, prio: 1 }); });
+  (t.match(/\$\s*([\d][\d.,]{2,})/g) || []).forEach((x) => agregarMonto(x, 1));
   if (candidatos.length) {
     candidatos.sort((a, b) => (b.prio - a.prio) || (b.n - a.n));
     res.monto = Math.round(candidatos[0].n);
@@ -8340,11 +8347,14 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
     setDriveInfo("subiendo");
     try {
       const base64 = await blobABase64(blob);
+      const ctrl = new AbortController();
+      const tmo = setTimeout(() => ctrl.abort(), 20000);
       const r = await fetch(driveUrl.trim(), {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ base64, fecha, mime: blob.type || "image/jpeg", nombre: `factura-${(concepto || "compra").slice(0, 30).replace(/[^\w-]+/g, "_")}-${Date.now()}.jpg` }),
-      });
+        signal: ctrl.signal,
+      }).finally(() => clearTimeout(tmo));
       let datos = null;
       try { datos = await r.json(); } catch (e2) { datos = null; }
       if (datos && datos.ok) { setFacturaDriveUrl(datos.url || ""); setDriveInfo(`ok:${datos.carpeta || ""}`); }
@@ -8363,8 +8373,8 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
       setFacturaArchivo(comprimido);
       const url = await documentosStore.subirFacturaCompra(comprimido, fecha);
       setFacturaUrl(url);
-      leerFactura(comprimido);
-      subirADrive(comprimido);
+      leerFactura(comprimido); // el OCR sigue en segundo plano, no bloquea
+      await subirADrive(comprimido); // Drive sí se espera, así queda guardado el link
     } catch (err) {
       setErrorFoto("No se pudo subir la foto. Probá de nuevo.");
     } finally {
@@ -8374,6 +8384,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   function quitarFoto() { setFacturaUrl(""); setFacturaArchivo(null); setTextoOcr(""); setFacturaDriveUrl(""); setDriveInfo(""); setAutoResumen(""); }
 
   function guardar() {
+    if (subiendoFoto || driveInfo === "subiendo") { setError("Esperá a que termine de subir la factura."); return; }
     const m = Number(monto);
     if (!m || m <= 0) { setError("Poné un monto mayor a 0."); return; }
     if (!concepto.trim()) { setError("Poné una descripción corta del movimiento."); return; }
@@ -8466,7 +8477,9 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
         </div>
         <div className="dg-form-actions">
           <button className="dg-btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="dg-btn-primary" onClick={guardar}><Check size={14} /> Guardar movimiento</button>
+          <button className="dg-btn-primary" onClick={guardar} disabled={subiendoFoto || driveInfo === "subiendo"}>
+            {(subiendoFoto || driveInfo === "subiendo") ? <Loader2 size={14} className="dg-spin" /> : <Check size={14} />} {(subiendoFoto || driveInfo === "subiendo") ? "Subiendo factura…" : "Guardar movimiento"}
+          </button>
         </div>
       </div>
     </div>
