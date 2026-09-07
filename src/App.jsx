@@ -8165,21 +8165,8 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
 
 const TIPOS_PRODUCTO_LIST = Object.keys(TIPO_PRODUCTO_TABLE);
 
-// Carga Tesseract.js (lector de texto) desde CDN, una sola vez y solo cuando
-// hace falta. Corre 100% en el navegador — sin servidores ni costo.
-let __tesseractPromise = null;
-function cargarTesseract() {
-  if (typeof window !== "undefined" && window.Tesseract) return Promise.resolve(window.Tesseract);
-  if (__tesseractPromise) return __tesseractPromise;
-  __tesseractPromise = new Promise((resolve, reject) => {
-    const sc = document.createElement("script");
-    sc.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
-    sc.onload = () => resolve(window.Tesseract);
-    sc.onerror = () => { __tesseractPromise = null; reject(new Error("No se pudo cargar el lector.")); };
-    document.head.appendChild(sc);
-  });
-  return __tesseractPromise;
-}
+// El lector de texto (Tesseract.js) es el mismo paquete que ya usa la app
+// para leer el número de guía de Vía Cargo. Corre 100% en el navegador.
 function comprimirImagen(file, maxLado = 1600, calidad = 0.72) {
   return new Promise((resolve) => {
     if (!/^image\//.test(file.type || "")) { resolve(file); return; }
@@ -8208,11 +8195,60 @@ function blobABase64(blob) {
 }
 
 async function leerTextoImagen(imagen, onProgreso) {
-  const T = await cargarTesseract();
-  const { data } = await T.recognize(imagen, "spa", {
+  const Tesseract = (await import("tesseract.js")).default;
+  const { data } = await Tesseract.recognize(imagen, "spa", {
     logger: (m) => { if (m.status === "recognizing text" && onProgreso) onProgreso(Math.round((m.progress || 0) * 100)); },
   });
   return (data && data.text) || "";
+}
+
+// Saca de una factura (texto leído) el monto total, la fecha y una
+// descripción, para autocompletar el movimiento — igual que la guía de Vía
+// Cargo. Lo que no encuentra queda vacío.
+function parseNumeroArg(str) {
+  let x = String(str).replace(/[^\d.,]/g, "");
+  if (!x) return null;
+  if (x.includes(",")) x = x.replace(/\./g, "").replace(",", ".");
+  else if ((x.match(/\./g) || []).length > 1) x = x.replace(/\./g, "");
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+function parseFacturaTexto(texto) {
+  const t = String(texto || "");
+  const low = t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const res = { monto: null, fecha: null, concepto: null };
+
+  const candidatos = [];
+  t.split(/\n+/).forEach((l) => {
+    if (/\b(total|importe|a pagar|neto a pagar)\b/i.test(l)) {
+      (l.match(/[\d][\d.,]{2,}/g) || []).forEach((x) => { const n = parseNumeroArg(x); if (n && n >= 100) candidatos.push({ n, prio: 2 }); });
+    }
+  });
+  (t.match(/\$\s*([\d][\d.,]{2,})/g) || []).forEach((x) => { const n = parseNumeroArg(x); if (n && n >= 100) candidatos.push({ n, prio: 1 }); });
+  if (candidatos.length) {
+    candidatos.sort((a, b) => (b.prio - a.prio) || (b.n - a.n));
+    res.monto = Math.round(candidatos[0].n);
+  }
+
+  const fm = t.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/);
+  if (fm) {
+    let d = fm[1].padStart(2, "0"), mo = fm[2].padStart(2, "0"), y = fm[3];
+    if (y.length === 2) y = "20" + y;
+    if (+d >= 1 && +d <= 31 && +mo >= 1 && +mo <= 12 && +y >= 2020 && +y <= 2100) res.fecha = `${y}-${mo}-${d}`;
+  }
+
+  const marcas = [
+    ["Nafta Shell", ["shell"]], ["Nafta YPF", ["ypf"]], ["Nafta Axion", ["axion"]], ["Nafta Puma", ["puma energy"]],
+    ["Envío Andreani", ["andreani"]], ["Envío Vía Cargo", ["via cargo", "viacargo"]], ["Envío OCA", [" oca "]], ["Correo Argentino", ["correo argentino"]],
+    ["Compra en Easy", ["easy "]], ["Compra en Sodimac", ["sodimac"]], ["Corralón / pinturería", ["corralon", "pinturer"]],
+    ["Luz - Edenor", ["edenor"]], ["Luz - Edesur", ["edesur"]], ["Gas - Metrogas", ["metrogas"]], ["Gas - Camuzzi", ["camuzzi"]],
+    ["Movistar", ["movistar"]], ["Claro", ["claro "]], ["Telecom / Personal", ["telecom", "personal flow"]],
+    ["AFIP / ARCA", ["afip", "arca "]], ["Mercado Libre", ["mercado libre", "mercadolibre"]],
+  ];
+  for (const [nombre, kws] of marcas) {
+    if (kws.some((k) => low.includes(k))) { res.concepto = nombre; break; }
+  }
+  return res;
 }
 
 // Reglas para adivinar la categoría de un egreso a partir de su texto (lo que
@@ -8258,6 +8294,10 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   const [textoOcr, setTextoOcr] = useState("");
   const [facturaDriveUrl, setFacturaDriveUrl] = useState("");
   const [driveInfo, setDriveInfo] = useState(""); // "" | "subiendo" | "ok:MES" | "error"
+  const [montoTocado, setMontoTocado] = useState(false);
+  const [fechaTocada, setFechaTocada] = useState(false);
+  const [conceptoTocado, setConceptoTocado] = useState(false);
+  const [autoResumen, setAutoResumen] = useState("");
   const esIngreso = tipo === "ingreso";
   const motivos = esIngreso ? INCOME_CHANNELS : PURCHASE_TYPES;
 
@@ -8275,9 +8315,20 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
     const src = imagen || facturaArchivo || facturaUrl;
     if (!src) return;
     setLeyendoOcr(true); setProgresoOcr(0);
-    try { setTextoOcr(await leerTextoImagen(src, setProgresoOcr)); }
-    catch (e) { setTextoOcr(""); }
-    finally { setLeyendoOcr(false); }
+    try {
+      const texto = await leerTextoImagen(src, setProgresoOcr);
+      setTextoOcr(texto);
+      const p = parseFacturaTexto(texto);
+      const puestos = [];
+      if (p.monto && !montoTocado) { setMonto(String(p.monto)); puestos.push(`monto ${money(p.monto)}`); }
+      if (p.fecha && !fechaTocada) { setFecha(p.fecha); puestos.push(`fecha ${p.fecha.split("-").reverse().join("/")}`); }
+      if (p.concepto && !conceptoTocado && !concepto.trim()) { setConcepto(p.concepto); puestos.push("descripción"); }
+      setAutoResumen(puestos.length ? `De la factura: ${puestos.join(" · ")}. Revisá que esté bien.` : "");
+    } catch (e) {
+      setTextoOcr("");
+    } finally {
+      setLeyendoOcr(false);
+    }
   }
   async function subirADrive(blob) {
     if (!driveUrl || !driveUrl.trim()) return;
@@ -8314,7 +8365,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
       setSubiendoFoto(false);
     }
   }
-  function quitarFoto() { setFacturaUrl(""); setFacturaArchivo(null); setTextoOcr(""); setFacturaDriveUrl(""); setDriveInfo(""); }
+  function quitarFoto() { setFacturaUrl(""); setFacturaArchivo(null); setTextoOcr(""); setFacturaDriveUrl(""); setDriveInfo(""); setAutoResumen(""); }
 
   function guardar() {
     const m = Number(monto);
@@ -8337,8 +8388,8 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
             <button type="button" className={esIngreso ? "dg-mov-tipo-on dg-mov-ingreso" : ""} onClick={() => setTipo("ingreso")}><TrendingUp size={15} /> Ingreso · entra plata</button>
           </div>
           <div className="dg-form-row">
-            <div style={{ flex: 1 }}><label>Monto</label><input type="number" inputMode="decimal" autoFocus value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></div>
-            <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
+            <div style={{ flex: 1 }}><label>Monto</label><input type="number" inputMode="decimal" autoFocus value={monto} onChange={(e) => { setMonto(e.target.value); setMontoTocado(true); }} placeholder="0" /></div>
+            <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={fecha} onChange={(e) => { setFecha(e.target.value); setFechaTocada(true); }} /></div>
           </div>
           <label>{esIngreso ? "¿A qué cuenta entró la plata?" : "¿De qué cuenta salió la plata?"}</label>
           <select value={cuenta} onChange={(e) => setCuenta(e.target.value)}>
@@ -8378,6 +8429,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
                   <Sparkles size={13} /> {textoOcr ? "Volver a leer la factura" : "Leer la factura"}
                 </button>
               )}
+              {autoResumen && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-success)" }}>✨ {autoResumen}</p>}
             </div>
           )}
           <label>Motivo</label>
@@ -8388,7 +8440,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
             <p className="dg-hint" style={{ marginTop: 2 }}>✨ Categoría elegida sola por el texto{textoOcr ? " de la factura" : ""}. Cambiala si no va.</p>
           )}
           <label>Descripción corta</label>
-          <input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={esIngreso ? "Ej: Seña de un espejo a medida" : "Ej: Pago de flete a Vía Cargo"} />
+          <input value={concepto} onChange={(e) => { setConcepto(e.target.value); setConceptoTocado(true); }} placeholder={esIngreso ? "Ej: Seña de un espejo a medida" : "Ej: Pago de flete a Vía Cargo"} />
           <label>Detalle (opcional)</label>
           <textarea rows={2} value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Cualquier aclaración extra" />
           {esIngreso && (
