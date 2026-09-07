@@ -4527,8 +4527,10 @@ function validarPedido(p) {
   if (falta(p.cliente)) errores.cliente = "Falta el nombre del cliente";
   if (falta(p.celular)) errores.celular = "Falta el celular de contacto";
   if (falta(p.vendedor)) errores.vendedor = "Falta indicar quién vendió";
-  if (falta(p.ancho) || Number(p.ancho) <= 0) errores.ancho = "Falta el ancho";
-  if (falta(p.alto) || Number(p.alto) <= 0) errores.alto = "Falta el alto";
+  if (falta(p.stockEspejoId)) {
+    if (falta(p.ancho) || Number(p.ancho) <= 0) errores.ancho = "Falta el ancho";
+    if (falta(p.alto) || Number(p.alto) <= 0) errores.alto = "Falta el alto";
+  }
   if (falta(p.cant) || Number(p.cant) <= 0) errores.cant = "Falta la cantidad";
   if (falta(p.monto) || Number(p.monto) <= 0) errores.monto = "Falta el monto de la venta";
   if (falta(p.anticipo)) errores.anticipo = "Poné el anticipo (0 si no dejó nada)";
@@ -5487,7 +5489,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <AlertTriangle size={14} /> Pedido urgente — va primero en la cola de fábrica
         </label>
         <div className="dg-section-card">
-          <div className="dg-section-header"><Calculator size={14} /> Medida y producto</div>
+          <div className="dg-section-header"><Calculator size={14} /> Medida y producto{draft.stockEspejoId ? <span className="dg-seccion-nota">del stock</span> : null}</div>
           <div className="dg-field-grid">
             <Field label="Ancho (cm)" error={err("ancho")}><input type="number" disabled={!canEditFull} value={draft.ancho} onChange={(e) => set("ancho", e.target.value)} /></Field>
             <Field label="Alto (cm)" error={err("alto")}><input type="number" disabled={!canEditFull} value={draft.alto} onChange={(e) => set("alto", e.target.value)} /></Field>
@@ -5502,7 +5504,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         </div>
 
         <div className="dg-section-card">
-          <div className="dg-section-header"><Sparkles size={14} /> Funciones</div>
+          <div className="dg-section-header"><Sparkles size={14} /> Funciones{draft.stockEspejoId ? <span className="dg-seccion-nota">del stock</span> : null}</div>
           <div className="dg-field-grid">
             <Field label="Touch"><select disabled={!canEditFull} value={draft.touch} onChange={(e) => set("touch", e.target.value)}>{TOUCH_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Desempañante"><select disabled={!canEditFull} value={draft.desemp} onChange={(e) => set("desemp", e.target.value)}>{DESEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
@@ -5525,7 +5527,25 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <div className="dg-section-header"><Package size={14} /> ¿Es un espejo que ya está en stock?</div>
             <div className="dg-field-grid">
               <Field label="Espejo de stock (opcional)">
-                <select disabled={!canEditFull} value={draft.stockEspejoId || ""} onChange={(e) => set("stockEspejoId", e.target.value)}>
+                <select disabled={!canEditFull} value={draft.stockEspejoId || ""} onChange={(e) => {
+                  const id = e.target.value;
+                  const s = id ? stockEspejos.find((x) => x.id === id) : null;
+                  setDraft((d) => ({
+                    ...d,
+                    stockEspejoId: id,
+                    ...(s ? {
+                      ancho: s.ancho || d.ancho, alto: s.alto || d.alto,
+                      forma: s.forma || d.forma, tipo: s.tipo || d.tipo, tono: s.tono || d.tono,
+                      grabado: s.grabado || d.grabado, pulido: s.pulido || d.pulido,
+                      touch: s.touch || d.touch, desemp: s.desemp || d.desemp,
+                      desempTipo: s.desempTipo || d.desempTipo, desempCantidad: s.desempCantidad || d.desempCantidad,
+                      horaTemp: s.horaTemp || d.horaTemp, bluetooth: s.bluetooth || d.bluetooth,
+                    } : {}),
+                    ...(esNuevo ? (id
+                      ? { estado: "Espejo listo", produccionListaFecha: new Date().toISOString() }
+                      : { estado: d.estado === "Espejo listo" ? "Sin pasar a fábrica" : d.estado, produccionListaFecha: "" }) : {}),
+                  }));
+                }}>
                   <option value="">No — se fabrica a medida</option>
                   {stockEspejos.map((s) => (
                     <option key={s.id} value={s.id} disabled={Number(s.cantidad) <= 0}>
@@ -5536,7 +5556,10 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
               </Field>
             </div>
             {draft.stockEspejoId && (
-              <p className="dg-hint" style={{ marginTop: 6 }}>Al guardar, se descuenta {Number(draft.cant) || 1} unidad(es) de este modelo del stock de espejos.</p>
+              <p className="dg-hint" style={{ marginTop: 6 }}>
+                Los datos de medida y funciones se tomaron del stock. Este pedido <strong>no pasa por fábrica</strong> — queda listo para entregar.
+                Al guardar se descuenta{Number(draft.cant) > 1 ? `n ${draft.cant} unidades` : " 1 unidad"} de este modelo.
+              </p>
             )}
           </div>
         )}
@@ -6357,20 +6380,63 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
   );
 }
 
+function emptyStockEspejo() {
+  return {
+    id: uid(), modelo: "", descripcion: "", cantidad: 0,
+    ancho: "", alto: "", forma: "Rectangular", tipo: "Simple", tono: "3 tonos", grabado: "", pulido: "No",
+    touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No",
+  };
+}
+function resumenFichaEspejo(s) {
+  return [
+    s.ancho && s.alto ? `${s.ancho}×${s.alto} cm` : null,
+    s.forma && s.forma !== "Rectangular" ? s.forma : null,
+    s.tono && !["Sin led", "3 tonos"].includes(s.tono) ? `luz ${s.tono}` : null,
+    s.touch && s.touch !== "No" ? "touch" : null,
+    s.desemp === "Desempañante" ? "desempañante" : null,
+    s.horaTemp === "Hora y Temperatura" ? "hora/temp" : null,
+  ].filter(Boolean).join(" · ");
+}
+function FichaEspejoFields({ v, set }) {
+  return (
+    <>
+      <div className="dg-field-grid">
+        <Field label="Ancho (cm)"><input type="number" value={v.ancho || ""} onChange={(e) => set("ancho", e.target.value)} /></Field>
+        <Field label="Alto (cm)"><input type="number" value={v.alto || ""} onChange={(e) => set("alto", e.target.value)} /></Field>
+        <Field label="Forma"><select value={v.forma || "Rectangular"} onChange={(e) => set("forma", e.target.value)}>{FORMA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+        <Field label="Tipo"><select value={v.tipo || "Simple"} onChange={(e) => set("tipo", e.target.value)}>{TIPO_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+      </div>
+      <div className="dg-field-grid" style={{ marginTop: 12 }}>
+        <Field label="Tono de luz"><select value={v.tono || "3 tonos"} onChange={(e) => set("tono", e.target.value)}>{TONO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+        <Field label="Grabado / esmerilado"><input value={v.grabado || ""} onChange={(e) => set("grabado", e.target.value)} placeholder="Ej: 15+30" /></Field>
+        <Field label="Pulido"><select value={v.pulido || "No"} onChange={(e) => set("pulido", e.target.value)}>{PULIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+      </div>
+      <div className="dg-field-grid" style={{ marginTop: 12 }}>
+        <Field label="Touch"><select value={v.touch || "No"} onChange={(e) => set("touch", e.target.value)}>{TOUCH_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+        <Field label="Desempañante"><select value={v.desemp || "No"} onChange={(e) => set("desemp", e.target.value)}>{DESEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+        <Field label="Hora / Temp"><select value={v.horaTemp || "No"} onChange={(e) => set("horaTemp", e.target.value)}>{HORATEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+        <Field label="Bluetooth"><select value={v.bluetooth || "No"} onChange={(e) => set("bluetooth", e.target.value)}>{BLUETOOTH_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+      </div>
+    </>
+  );
+}
+
 function StockEspejosPanel({ stock, onChange, canEdit }) {
-  const [modelo, setModelo] = useState("");
-  const [descripcion, setDescripcion] = useState("");
-  const [espesor, setEspesor] = useState("");
-  const [funciones, setFunciones] = useState("");
-  const [cantidad, setCantidad] = useState("");
+  const [nuevo, setNuevo] = useState(emptyStockEspejo);
+  const [editando, setEditando] = useState(null);
+  const setNuevoF = (k, val) => setNuevo((n) => ({ ...n, [k]: val }));
 
   function addItem() {
-    if (!descripcion.trim()) return;
-    onChange([{ id: uid(), modelo: modelo.trim(), descripcion: descripcion.trim(), espesor: espesor.trim(), funciones: funciones.trim(), cantidad: Number(cantidad) || 0 }, ...stock]);
-    setModelo(""); setDescripcion(""); setEspesor(""); setFunciones(""); setCantidad("");
+    if (!nuevo.descripcion.trim()) return;
+    onChange([{ ...nuevo, id: uid(), modelo: nuevo.modelo.trim(), descripcion: nuevo.descripcion.trim(), cantidad: Number(nuevo.cantidad) || 0 }, ...stock]);
+    setNuevo(emptyStockEspejo());
   }
   function updateCantidad(id, val) { onChange(stock.map((s) => (s.id === id ? { ...s, cantidad: Number(val) || 0 } : s))); }
   function removeItem(id) { onChange(stock.filter((s) => s.id !== id)); }
+  function guardarEdit() {
+    onChange(stock.map((s) => (s.id === editando.id ? { ...editando, cantidad: Number(editando.cantidad) || 0 } : s)));
+    setEditando(null);
+  }
 
   return (
     <div className="dg-page">
@@ -6378,15 +6444,13 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
         <div className="dg-section-card">
           <div className="dg-section-header"><Package size={14} /> Agregar modelo al stock</div>
           <EnterFlow onSubmit={addItem} autoFocus={false}>
-          <div className="dg-field-grid">
-            <Field label="Modelo / código"><input value={modelo} onChange={(e) => setModelo(e.target.value)} /></Field>
-            <Field label="Descripción"><input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Ej: 70Ø - Esmerilado" /></Field>
-            <Field label="Espesor"><input value={espesor} onChange={(e) => setEspesor(e.target.value)} placeholder="4mm" /></Field>
-          </div>
-          <div className="dg-field-grid" style={{ marginTop: 12 }}>
-            <Field label="Funciones"><input value={funciones} onChange={(e) => setFunciones(e.target.value)} placeholder="Touch 3 tonos + Desempañante" /></Field>
-            <Field label="Cantidad"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
-          </div>
+            <div className="dg-field-grid">
+              <Field label="Modelo / código"><input value={nuevo.modelo} onChange={(e) => setNuevoF("modelo", e.target.value)} /></Field>
+              <Field label="Descripción"><input value={nuevo.descripcion} onChange={(e) => setNuevoF("descripcion", e.target.value)} placeholder="Ej: 70Ø - Esmerilado" /></Field>
+              <Field label="Cantidad"><input type="number" value={nuevo.cantidad} onChange={(e) => setNuevoF("cantidad", e.target.value)} /></Field>
+            </div>
+            <div className="dg-stock-ficha-titulo">Ficha del producto — se usa para autocompletar el pedido</div>
+            <FichaEspejoFields v={nuevo} set={setNuevoF} />
           </EnterFlow>
           <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button></div>
         </div>
@@ -6397,13 +6461,38 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
           <div className="dg-task" key={s.id}>
             <div className="dg-pago-info">
               <span>{s.modelo ? `#${s.modelo} — ` : ""}{s.descripcion}</span>
-              <span className="dg-pago-meta">{s.espesor || "—"} · {s.funciones || "sin funciones"}</span>
+              <span className="dg-pago-meta">{resumenFichaEspejo(s) || s.funciones || s.espesor || "Sin ficha cargada — tocá el lápiz para completarla"}</span>
             </div>
+            {canEdit && <button className="dg-icon-btn" onClick={() => setEditando({ ...emptyStockEspejo(), ...s })} title="Editar ficha"><Pencil size={14} /></button>}
             <input type="number" className="dg-stock-cantidad" disabled={!canEdit} value={s.cantidad} onChange={(e) => updateCantidad(s.id, e.target.value)} />
             {canEdit && <button className="dg-icon-btn dg-task-del" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
           </div>
         ))}
       </div>
+
+      {editando && (
+        <div className="dg-overlay" onClick={() => setEditando(null)}>
+          <div className="dg-modal dg-modal-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head">
+              <div className="dg-modal-title">Editar modelo de stock</div>
+              <button className="dg-icon-btn" onClick={() => setEditando(null)}><X size={18} /></button>
+            </div>
+            <div className="dg-form">
+              <div className="dg-field-grid">
+                <Field label="Modelo / código"><input value={editando.modelo || ""} onChange={(e) => setEditando({ ...editando, modelo: e.target.value })} /></Field>
+                <Field label="Descripción"><input value={editando.descripcion || ""} onChange={(e) => setEditando({ ...editando, descripcion: e.target.value })} /></Field>
+                <Field label="Cantidad"><input type="number" value={editando.cantidad} onChange={(e) => setEditando({ ...editando, cantidad: e.target.value })} /></Field>
+              </div>
+              <div className="dg-stock-ficha-titulo">Ficha del producto</div>
+              <FichaEspejoFields v={editando} set={(k, val) => setEditando((d) => ({ ...d, [k]: val }))} />
+            </div>
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              <button className="dg-btn-primary" onClick={guardarEdit}><Save size={14} /> Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -9006,6 +9095,8 @@ function Style() {
       .dg-marketing-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
       .dg-marketing-thumb-del { position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.6); border:none; border-radius:6px; color:#fff; padding:5px; cursor:pointer; }
       .dg-marketing-mini-thumb { width:44px; height:44px; border-radius:8px; object-fit:cover; flex-shrink:0; }
+      .dg-stock-ficha-titulo { font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--dg-text-faint); margin:16px 0 8px; }
+      .dg-seccion-nota { margin-left:8px; font-family:'JetBrains Mono', monospace; font-size:9px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),0.12); border-radius:5px; padding:2px 6px; vertical-align:middle; }
 
       .dg-calendario-topbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
       .dg-calendario-mes { display:flex; align-items:center; gap:8px; }
