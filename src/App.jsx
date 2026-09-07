@@ -8510,7 +8510,8 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
       leerFactura(comprimido); // el OCR sigue en segundo plano, no bloquea
       await subirADrive(comprimido); // Drive sí se espera, así queda guardado el link
     } catch (err) {
-      setErrorFoto("No se pudo subir la foto. Probá de nuevo.");
+      console.error("subir factura (modal):", err);
+      setErrorFoto("No se pudo subir la foto: " + (err && err.message ? err.message : "error desconocido"));
     } finally {
       setSubiendoFoto(false);
     }
@@ -8527,7 +8528,7 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   }
 
   return (
-    <div className="dg-overlay" onClick={onClose}>
+    <div className="dg-overlay">
       <div className="dg-modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
         <div className="dg-modal-head">
           <div className="dg-modal-title">Cargar movimiento de dinero</div>
@@ -8581,7 +8582,8 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
                   </label>
                 </div>
               )}
-              {errorFoto && <div className="dg-error" style={{ marginTop: 4 }}>{errorFoto}</div>}
+              {subiendoFoto && <p className="dg-hint" style={{ marginTop: 4, color: "var(--dg-accent)" }}>Subiendo la foto…</p>}
+              {errorFoto && <div className="dg-error" style={{ marginTop: 4, fontWeight: 600 }}>{errorFoto}</div>}
               {leyendoOcr && <p className="dg-hint" style={{ marginTop: 4 }}>Leyendo la factura… {progresoOcr}% (la primera vez descarga el lector, tarda un poco).</p>}
               {!leyendoOcr && facturaArchivo && (
                 <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 4 }} onClick={() => leerFactura()}>
