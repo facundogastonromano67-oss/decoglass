@@ -871,6 +871,7 @@ function App() {
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [panelNotifOpen, setPanelNotifOpen] = useState(false);
   const [buscadorOpen, setBuscadorOpen] = useState(false);
+  const [movMoneyOpen, setMovMoneyOpen] = useState(false);
   const [vistaPanel, setVistaPanel] = useState(false);
   const [vistaPendientes, setVistaPendientes] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
@@ -1376,6 +1377,20 @@ function App() {
   }
   function createPurchaseEntry(entry) { persistPurchases([entry, ...purchases]); }
 
+  function guardarMovimientoRapido(mov) {
+    const base = {
+      id: uid(), concepto: mov.concepto, monto: mov.monto, fecha: mov.fecha, estado: "pagado",
+      cuentaBanco: mov.cuenta, detalle: mov.detalle, sectorId: "", origen: "movimiento-rapido",
+    };
+    if (mov.tipo === "ingreso") {
+      persistIncomes([{ ...base, canal: mov.motivo, cliente: "", metodo: mov.cuenta, cuenta: mov.esVentaFacturada ? "ingresos_bancarios" : "caja_efectivo" }, ...incomes]);
+    } else {
+      persistPurchases([{ ...base, tipo: mov.motivo, proveedorId: "", conIva: false, gastoFijo: false }, ...purchases]);
+    }
+    const catLabel = (mov.tipo === "ingreso" ? INCOME_CHANNELS : PURCHASE_TYPES)[mov.motivo] || mov.motivo;
+    registrarActividad(mov.tipo === "ingreso" ? "Cargó un ingreso" : "Cargó un egreso", `${money(mov.monto)} — ${mov.concepto} — ${catLabel} — ${PAYMENT_METHODS[mov.cuenta] || mov.cuenta}`);
+  }
+
   function updateSector(id, patch) { persistSectors(sectors.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
 
   const counts = sectors ? sectors.reduce((acc, s) => { const { key } = getStatus(s.tasks); acc[key] = (acc[key] || 0) + 1; return acc; }, {}) : {};
@@ -1570,6 +1585,15 @@ function App() {
           />
         )}
       </div>
+
+      {isAdmin && session && (
+        <button className="dg-fab-money" onClick={() => setMovMoneyOpen(true)} title="Cargar movimiento de dinero" aria-label="Cargar movimiento de dinero">
+          <CircleDollarSign size={22} />
+        </button>
+      )}
+      {movMoneyOpen && isAdmin && (
+        <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} />
+      )}
 
       {panelNotifOpen && session && <PanelNotificaciones session={session} onClose={() => setPanelNotifOpen(false)} />}
 
@@ -7332,26 +7356,111 @@ function wrapCanvasText(ctx, texto, x, y, maxWidth, lineHeight, maxLineas) {
   }
   if (linea) ctx.fillText(linea, x, cy);
 }
-function generarTarjetaLocal(texto) {
+// Fondo generativo tipo "faceta de vidrio cortado": un degradé de marca más
+// líneas y manchas semitransparentes al azar. Nunca sale igual dos veces.
+function dibujarFondoProcedural(ctx, w, h) {
+  const paletas = [["#141315", "#26221E"], ["#1A1210", "#2B1A12"], ["#141315", "#241812"]];
+  const [c1, c2] = paletas[Math.floor(Math.random() * paletas.length)];
+  const ang = Math.random() * Math.PI * 2;
+  const grad = ctx.createLinearGradient(
+    w / 2 + Math.cos(ang) * w, h / 2 + Math.sin(ang) * h,
+    w / 2 - Math.cos(ang) * w, h / 2 - Math.sin(ang) * h
+  );
+  grad.addColorStop(0, c1); grad.addColorStop(1, c2);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  ctx.save();
+  ctx.globalAlpha = 0.09; ctx.strokeStyle = "#F2622F";
+  for (let i = 0; i < 5; i++) {
+    ctx.lineWidth = 1 + Math.random() * 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.random() * w, Math.random() * h);
+    ctx.lineTo(Math.random() * w, Math.random() * h);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.05; ctx.fillStyle = "#EDEBE7";
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.arc(Math.random() * w, Math.random() * h, 60 + Math.random() * 160, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+function cargarImagen(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+// Dibuja la imagen "a cubrir" el lienzo (como background-size:cover), recortando lo que sobre.
+function dibujarCover(ctx, img, w, h) {
+  const ir = img.width / img.height, r = w / h;
+  let sw, sh, sx, sy;
+  if (ir > r) { sh = img.height; sw = sh * r; sx = (img.width - sw) / 2; sy = 0; }
+  else { sw = img.width; sh = sw / r; sx = 0; sy = (img.height - sh) / 2; }
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+// El motor interno de imagen: si hay una foto real (de la Biblioteca) la usa
+// de fondo; si no, genera un fondo procedural tipo vidrio cortado. Encima
+// arma una de tres composiciones al azar, con el texto de la idea. Nada de
+// esto sale a internet ni tiene costo — todo se dibuja en el navegador.
+async function generarImagenLocal(texto, fotoUrl) {
+  const W = 1080, H = 1080;
   const canvas = document.createElement("canvas");
-  canvas.width = 1080; canvas.height = 1080;
+  canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
-  const grad = ctx.createLinearGradient(0, 0, 1080, 1080);
-  grad.addColorStop(0, "#141315");
-  grad.addColorStop(1, "#26221E");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 1080, 1080);
-  ctx.fillStyle = "#F2622F";
-  ctx.fillRect(0, 0, 1080, 14);
-  ctx.font = "700 36px Arial, sans-serif";
-  ctx.fillStyle = "#F2622F";
-  ctx.fillText("DECOGLASS", 64, 110);
-  ctx.font = "600 54px Arial, sans-serif";
-  ctx.fillStyle = "#F5F3F0";
-  wrapCanvasText(ctx, texto || "Espejos a medida", 64, 320, 950, 68, 6);
-  ctx.font = "500 26px Arial, sans-serif";
-  ctx.fillStyle = "#A29E96";
-  ctx.fillText("Espejos a medida · decoglass.com.ar", 64, 1000);
+  let tieneFoto = false;
+  if (fotoUrl) {
+    try { dibujarCover(ctx, await cargarImagen(fotoUrl), W, H); tieneFoto = true; }
+    catch (e) { /* si falla (ej. CORS) seguimos con el fondo procedural */ }
+  }
+  if (!tieneFoto) dibujarFondoProcedural(ctx, W, H);
+
+  const layout = tieneFoto ? "franja" : ["franja", "centro", "diagonal"][Math.floor(Math.random() * 3)];
+  if (layout === "franja") {
+    const grad = ctx.createLinearGradient(0, H * 0.45, 0, H);
+    grad.addColorStop(0, "rgba(10,9,8,0)"); grad.addColorStop(1, "rgba(10,9,8,0.92)");
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#F2622F"; ctx.fillRect(0, 0, W, 10);
+    ctx.font = "700 30px Arial, sans-serif"; ctx.fillStyle = "#F2622F";
+    ctx.fillText("DECOGLASS", 60, 90);
+    ctx.font = "600 50px Arial, sans-serif"; ctx.fillStyle = "#F5F3F0";
+    wrapCanvasText(ctx, texto || "Espejos a medida", 60, H - 260, 950, 62, 5);
+  } else if (layout === "centro") {
+    const pad = 70, cardY = 300, cardH = 500;
+    ctx.fillStyle = "rgba(20,19,21,0.72)";
+    roundRect(ctx, pad, cardY, W - pad * 2, cardH, 22); ctx.fill();
+    ctx.strokeStyle = "rgba(242,98,47,0.5)"; ctx.lineWidth = 2;
+    roundRect(ctx, pad, cardY, W - pad * 2, cardH, 22); ctx.stroke();
+    ctx.font = "700 28px Arial, sans-serif"; ctx.fillStyle = "#F2622F";
+    ctx.fillText("DECOGLASS", pad + 36, cardY + 66);
+    ctx.font = "600 46px Arial, sans-serif"; ctx.fillStyle = "#F5F3F0";
+    wrapCanvasText(ctx, texto || "Espejos a medida", pad + 36, cardY + 150, W - pad * 2 - 72, 58, 6);
+  } else {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(0, H); ctx.lineTo(W * 0.62, H); ctx.lineTo(W * 0.38, 0); ctx.lineTo(0, 0);
+    ctx.closePath(); ctx.clip();
+    ctx.fillStyle = "rgba(10,9,8,0.86)"; ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+    ctx.font = "700 30px Arial, sans-serif"; ctx.fillStyle = "#F2622F";
+    ctx.fillText("DECOGLASS", 60, 100);
+    ctx.font = "600 48px Arial, sans-serif"; ctx.fillStyle = "#F5F3F0";
+    wrapCanvasText(ctx, texto || "Espejos a medida", 60, 260, 480, 58, 7);
+  }
+  ctx.font = "500 24px Arial, sans-serif"; ctx.fillStyle = "rgba(237,235,231,0.7)";
+  ctx.fillText("Espejos a medida · decoglass.com.ar", 60, H - 50);
   return canvas.toDataURL("image/png");
 }
 
@@ -7386,6 +7495,15 @@ function elegirDiasDelMes(anio, mes, porSemana) {
   });
   return [...new Set(elegidos)].sort();
 }
+// Celdas para la vista grilla: null = relleno antes del día 1 o después del
+// último, para que cada semana ocupe siempre 7 columnas exactas (Lun a Dom).
+function celdasGrilla(anio, mes) {
+  const dias = diasDelMes(anio, mes);
+  const primerDow = (new Date(dias[0] + "T00:00:00").getDay() + 6) % 7;
+  const celdas = [...Array(primerDow).fill(null), ...dias];
+  while (celdas.length % 7 !== 0) celdas.push(null);
+  return celdas;
+}
 
 function emptyContenido() {
   return { id: uid(), fecha: new Date().toISOString().slice(0, 10), tipo: "Post", estado: "Idea", texto: "", imagenUrl: "", promptImagen: "" };
@@ -7398,7 +7516,9 @@ function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
   const [errorImagen, setErrorImagen] = useState("");
 
   const hoy = new Date();
+  const hoyISO = hoy.toISOString().slice(0, 10);
   const [vistaMes, setVistaMes] = useState({ anio: hoy.getFullYear(), mes: hoy.getMonth() + 1 });
+  const [vistaTipo, setVistaTipo] = useState("agenda"); // "agenda" | "grilla"
   const [generarAbierto, setGenerarAbierto] = useState(false);
   const [porSemana, setPorSemana] = useState(4);
   const [notasGenerar, setNotasGenerar] = useState("");
@@ -7455,12 +7575,18 @@ function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
     if (!editando) return;
     setErrorImagen(""); setGenerandoTarjeta(true);
     try {
-      const dataUrl = generarTarjetaLocal(editando.texto);
+      // si la idea ya tiene una foto real asignada la usa de base; si no,
+      // toma una al azar de la Biblioteca; si no hay ninguna, el motor
+      // genera un fondo propio (no hace falta ninguna foto).
+      const fotoBase = (editando.imagenUrl && !editando.imagenUrl.startsWith("data:"))
+        ? editando.imagenUrl
+        : ((biblioteca || []).length ? biblioteca[Math.floor(Math.random() * biblioteca.length)].url : null);
+      const dataUrl = await generarImagenLocal(editando.texto, fotoBase);
       const base64 = dataUrl.split(",")[1];
       const url = await documentosStore.subirImagenGenerada(base64);
       setEditando((d) => ({ ...d, imagenUrl: url }));
     } catch (e) {
-      setErrorImagen("No se pudo armar la tarjeta. Probá de nuevo.");
+      setErrorImagen("No se pudo armar la imagen. Probá de nuevo.");
     } finally {
       setGenerandoTarjeta(false);
     }
@@ -7501,38 +7627,74 @@ function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
           <strong>{MESES_NOM[vistaMes.mes - 1]} {vistaMes.anio}</strong>
           <button type="button" className="dg-icon-btn" onClick={() => cambiarMes(1)} aria-label="Mes siguiente"><ChevronRight size={16} /></button>
         </div>
+        <div className="dg-calendario-vista-toggle">
+          <button type="button" className={vistaTipo === "grilla" ? "dg-pf-on" : ""} onClick={() => setVistaTipo("grilla")}><CalendarDays size={13} /> Grilla</button>
+          <button type="button" className={vistaTipo === "agenda" ? "dg-pf-on" : ""} onClick={() => setVistaTipo("agenda")}><ClipboardList size={13} /> Agenda</button>
+        </div>
         <div className="dg-form-actions" style={{ marginLeft: "auto", marginTop: 0 }}>
           <button className="dg-btn-ghost" onClick={() => setGenerarAbierto(true)}><Sparkles size={14} /> Generar ideas del mes</button>
           <button className="dg-btn-primary" onClick={() => setEditando({ ...emptyContenido(), fecha: `${vistaMes.anio}-${String(vistaMes.mes).padStart(2, "0")}-01` })}><Plus size={14} /> Nueva idea</button>
         </div>
       </div>
 
-      <div className="dg-calendario-semanas">
-        {semanas.map((semana, i) => (
-          <div className="dg-calendario-semana" key={i}>
-            <div className="dg-calendario-semana-titulo">Semana del {Number(semana[0].slice(8))} al {Number(semana[semana.length - 1].slice(8))}</div>
-            {semana.map((fecha) => {
+      {vistaTipo === "grilla" ? (
+        <div className="dg-calendario-grilla">
+          <div className="dg-calendario-grilla-cab">
+            {CALENDARIO_DIAS_NOM.map((d) => (<span key={d}>{d}</span>))}
+          </div>
+          <div className="dg-calendario-grilla-cuerpo">
+            {celdasGrilla(vistaMes.anio, vistaMes.mes).map((fecha, i) => {
+              if (!fecha) return <div className="dg-calendario-celda dg-calendario-celda-vacia" key={`v${i}`} />;
               const items = porFecha.get(fecha) || [];
-              const dow = (new Date(fecha + "T00:00:00").getDay() + 6) % 7;
               return (
-                <div className="dg-calendario-dia" key={fecha}>
-                  <div className="dg-calendario-dia-fecha"><span>{CALENDARIO_DIAS_NOM[dow]}</span><strong>{Number(fecha.slice(8))}</strong></div>
-                  <div className="dg-calendario-dia-items">
-                    {items.length === 0 && <span className="dg-calendario-vacio">sin contenido</span>}
-                    {items.map((c) => (
-                      <button type="button" className={`dg-calendario-item dg-calendario-item-${c.estado === "Publicado" ? "pub" : c.estado === "Listo" ? "listo" : "idea"}`} key={c.id} onClick={() => setEditando(c)}>
-                        {c.imagenUrl && <img src={c.imagenUrl} alt="" />}
-                        <span className="dg-calendario-item-tipo">{c.tipo}</span>
-                        <span className="dg-calendario-item-txt">{c.texto ? c.texto.slice(0, 70) : "Sin texto todavía"}{c.texto?.length > 70 ? "…" : ""}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  key={fecha}
+                  className={`dg-calendario-celda ${items.length ? "dg-calendario-celda-con" : ""} ${fecha === hoyISO ? "dg-calendario-celda-hoy" : ""}`}
+                  onClick={() => setEditando(items[0] || { ...emptyContenido(), fecha })}
+                >
+                  <span className="dg-calendario-celda-num">{Number(fecha.slice(8))}</span>
+                  {items.length > 0 && (
+                    <span className="dg-calendario-celda-dots">
+                      {items.slice(0, 3).map((it) => (
+                        <i key={it.id} className={`dg-calendario-dot dg-calendario-dot-${it.estado === "Publicado" ? "pub" : it.estado === "Listo" ? "listo" : "idea"}`} />
+                      ))}
+                      {items.length > 3 && <span className="dg-calendario-celda-mas">+{items.length - 3}</span>}
+                    </span>
+                  )}
+                </button>
               );
             })}
           </div>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <div className="dg-calendario-semanas">
+          {semanas.map((semana, i) => (
+            <div className="dg-calendario-semana" key={i}>
+              <div className="dg-calendario-semana-titulo">Semana del {Number(semana[0].slice(8))} al {Number(semana[semana.length - 1].slice(8))}</div>
+              {semana.map((fecha) => {
+                const items = porFecha.get(fecha) || [];
+                const dow = (new Date(fecha + "T00:00:00").getDay() + 6) % 7;
+                return (
+                  <div className="dg-calendario-dia" key={fecha}>
+                    <div className="dg-calendario-dia-fecha"><span>{CALENDARIO_DIAS_NOM[dow]}</span><strong>{Number(fecha.slice(8))}</strong></div>
+                    <div className="dg-calendario-dia-items">
+                      {items.length === 0 && <span className="dg-calendario-vacio">sin contenido</span>}
+                      {items.map((c) => (
+                        <button type="button" className={`dg-calendario-item dg-calendario-item-${c.estado === "Publicado" ? "pub" : c.estado === "Listo" ? "listo" : "idea"}`} key={c.id} onClick={() => setEditando(c)}>
+                          {c.imagenUrl && <img src={c.imagenUrl} alt="" />}
+                          <span className="dg-calendario-item-tipo">{c.tipo}</span>
+                          <span className="dg-calendario-item-txt">{c.texto ? c.texto.slice(0, 70) : "Sin texto todavía"}{c.texto?.length > 70 ? "…" : ""}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
 
       {generarAbierto && (
         <div className="dg-overlay" onClick={() => !generandoMes && setGenerarAbierto(false)}>
@@ -7630,7 +7792,7 @@ function CalendarioContenidoPanel({ contenido, onChange, biblioteca }) {
               <input value={editando.promptImagen} onChange={(e) => setEditando({ ...editando, promptImagen: e.target.value })} placeholder="Ej: espejo redondo con luz cálida en un baño moderno minimalista" />
               <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 6, flexWrap: "wrap" }}>
                 <button type="button" className="dg-btn-ghost dg-mini-btn" disabled={generandoTarjeta} onClick={generarTarjeta}>
-                  {generandoTarjeta ? <Loader2 size={13} className="dg-spin" /> : <Sparkles size={13} />} {generandoTarjeta ? "Armando..." : "Generar tarjeta (sin costo)"}
+                  {generandoTarjeta ? <Loader2 size={13} className="dg-spin" /> : <Sparkles size={13} />} {generandoTarjeta ? "Armando..." : "Generar imagen (motor interno, sin costo)"}
                 </button>
                 <button type="button" className="dg-btn-ghost dg-mini-btn" disabled={generandoImagen || !editando.promptImagen?.trim()} onClick={generarImagen}>
                   {generandoImagen ? <Loader2 size={13} className="dg-spin" /> : <Sparkles size={13} />} {generandoImagen ? "Generando..." : "Generar imagen con OpenAI (tiene costo)"}
@@ -7906,6 +8068,73 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
 
 const TIPOS_PRODUCTO_LIST = Object.keys(TIPO_PRODUCTO_TABLE);
 
+function MovimientoRapidoModal({ onClose, onGuardar }) {
+  const [tipo, setTipo] = useState("egreso");
+  const [monto, setMonto] = useState("");
+  const [cuenta, setCuenta] = useState(Object.keys(PAYMENT_METHODS)[0]);
+  const [motivo, setMotivo] = useState(Object.keys(PURCHASE_TYPES)[0]);
+  const [concepto, setConcepto] = useState("");
+  const [detalle, setDetalle] = useState("");
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [esVentaFacturada, setEsVentaFacturada] = useState(false);
+  const [error, setError] = useState("");
+  const esIngreso = tipo === "ingreso";
+  const motivos = esIngreso ? INCOME_CHANNELS : PURCHASE_TYPES;
+
+  useEffect(() => { setMotivo(Object.keys(tipo === "ingreso" ? INCOME_CHANNELS : PURCHASE_TYPES)[0]); }, [tipo]);
+
+  function guardar() {
+    const m = Number(monto);
+    if (!m || m <= 0) { setError("Poné un monto mayor a 0."); return; }
+    if (!concepto.trim()) { setError("Poné una descripción corta del movimiento."); return; }
+    onGuardar({ tipo, monto: m, cuenta, motivo, concepto: concepto.trim(), detalle: detalle.trim(), fecha, esVentaFacturada });
+    onClose();
+  }
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title">Cargar movimiento de dinero</div>
+          <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="dg-form">
+          <div className="dg-mov-tipo">
+            <button type="button" className={!esIngreso ? "dg-mov-tipo-on dg-mov-egreso" : ""} onClick={() => setTipo("egreso")}><TrendingDown size={15} /> Egreso · sale plata</button>
+            <button type="button" className={esIngreso ? "dg-mov-tipo-on dg-mov-ingreso" : ""} onClick={() => setTipo("ingreso")}><TrendingUp size={15} /> Ingreso · entra plata</button>
+          </div>
+          <div className="dg-form-row">
+            <div style={{ flex: 1 }}><label>Monto</label><input type="number" inputMode="decimal" autoFocus value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0" /></div>
+            <div style={{ flex: 1 }}><label>Fecha</label><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
+          </div>
+          <label>{esIngreso ? "¿A qué cuenta entró la plata?" : "¿De qué cuenta salió la plata?"}</label>
+          <select value={cuenta} onChange={(e) => setCuenta(e.target.value)}>
+            {Object.entries(PAYMENT_METHODS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+          </select>
+          <label>Motivo</label>
+          <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+            {Object.entries(motivos).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+          </select>
+          <label>Descripción corta</label>
+          <input value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder={esIngreso ? "Ej: Seña de un espejo a medida" : "Ej: Pago de flete a Vía Cargo"} />
+          <label>Detalle (opcional)</label>
+          <textarea rows={2} value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Cualquier aclaración extra" />
+          {esIngreso && (
+            <label className="dg-check-inline" style={{ marginTop: 4 }}>
+              <input type="checkbox" checked={esVentaFacturada} onChange={(e) => setEsVentaFacturada(e.target.checked)} /> Es una venta con factura (suma al IVA)
+            </label>
+          )}
+          {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
+        </div>
+        <div className="dg-form-actions">
+          <button className="dg-btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="dg-btn-primary" onClick={guardar}><Check size={14} /> Guardar movimiento</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) {
   const [tipoProducto, setTipoProducto] = useState(TIPOS_PRODUCTO_LIST[0]);
   const [ancho, setAncho] = useState(60);
@@ -7919,6 +8148,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
   const [cantidad, setCantidad] = useState(1);
   const [cliente, setCliente] = useState("");
+  const [celular, setCelular] = useState("");
   const [showConfig, setShowConfig] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -7931,7 +8161,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
   function saveQuote() {
-    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
+    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", celular: celular || "", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
     onQuotesChange([q, ...quotes]);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
@@ -7982,6 +8212,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
               <Field label="Cantidad idéntica"><input type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
               <Field label="Envío interior"><select value={envioInterior} onChange={(e) => setEnvioInterior(e.target.value)}><option>No</option><option>Sí</option></select></Field>
               <Field label="Nombre del cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Opcional" /></Field>
+              <Field label="Celular (para enviar por WhatsApp)"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 5491122334455" /></Field>
             </div>
           </div>
 
@@ -8024,8 +8255,11 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
             <pre className="dg-mensaje-text">{mensaje}</pre>
             <div className="dg-quote-actions">
               <button className="dg-btn-ghost" onClick={copyMessage}>{copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copiado" : "Copiar mensaje"}</button>
+              {waLink(celular)
+                ? <a className="dg-btn-primary" href={`${waLink(celular)}?text=${encodeURIComponent(mensaje)}`} target="_blank" rel="noopener noreferrer"><MessageCircle size={14} /> Enviar por WhatsApp</a>
+                : <span className="dg-pago-meta" style={{ alignSelf: "center" }}>Cargá el celular para enviar por WhatsApp</span>}
               <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Vista de impresión (PDF)</button>
-              <button className="dg-btn-primary" onClick={saveQuote}>{saved ? <Check size={14} /> : <Save size={14} />} {saved ? "Guardado" : "Guardar cotización"}</button>
+              <button className="dg-btn-ghost" onClick={saveQuote}>{saved ? <Check size={14} /> : <Save size={14} />} {saved ? "Guardado" : "Guardar cotización"}</button>
             </div>
           </div>
         </div>
@@ -8776,7 +9010,31 @@ function Style() {
       .dg-calendario-topbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
       .dg-calendario-mes { display:flex; align-items:center; gap:8px; }
       .dg-calendario-mes strong { font-family:'Space Grotesk', sans-serif; font-size:15px; min-width:150px; text-align:center; text-transform:capitalize; }
+      .dg-calendario-vista-toggle { display:flex; gap:4px; padding:3px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:100px; }
+      .dg-calendario-vista-toggle button { display:flex; align-items:center; gap:5px; padding:6px 12px; border-radius:100px; border:none; background:transparent; color:var(--dg-text-dim); font-size:11.5px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif; }
+      .dg-calendario-vista-toggle button.dg-pf-on { background:rgba(var(--dg-accent-rgb),0.13); color:var(--dg-accent); }
       .dg-calendario-semanas { display:flex; flex-direction:column; gap:14px; }
+      .dg-calendario-grilla { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:12px; padding:12px 14px; }
+      .dg-calendario-grilla-cab { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin-bottom:6px; }
+      .dg-calendario-grilla-cab span { text-align:center; font-family:'JetBrains Mono', monospace; font-size:9.5px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; color:var(--dg-text-faint); padding-bottom:6px; }
+      .dg-calendario-grilla-cuerpo { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+      .dg-calendario-celda { aspect-ratio:1; min-height:56px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px;
+        border-radius:9px; border:1px solid rgba(var(--dg-line-rgb),0.08); background:var(--dg-surface-2); cursor:pointer; font-family:'Inter',sans-serif; color:var(--dg-text-dim); }
+      .dg-calendario-celda:hover { border-color:rgba(var(--dg-accent-rgb),0.35); }
+      .dg-calendario-celda-vacia { background:transparent; border:none; cursor:default; }
+      .dg-calendario-celda-num { font-family:'Space Grotesk', sans-serif; font-size:14px; font-weight:600; color:var(--dg-text); }
+      .dg-calendario-celda-con { background:rgba(var(--dg-accent-rgb),0.06); border-color:rgba(var(--dg-accent-rgb),0.22); }
+      .dg-calendario-celda-hoy { box-shadow:inset 0 0 0 1.5px var(--dg-accent); }
+      .dg-calendario-celda-dots { display:flex; align-items:center; gap:3px; }
+      .dg-calendario-dot { width:6px; height:6px; border-radius:50%; background:var(--dg-text-faint); }
+      .dg-calendario-dot-idea { background:var(--dg-text-faint); }
+      .dg-calendario-dot-listo { background:var(--dg-warning); }
+      .dg-calendario-dot-pub { background:var(--dg-success); }
+      .dg-calendario-celda-mas { font-family:'JetBrains Mono', monospace; font-size:8.5px; color:var(--dg-text-faint); }
+      @media (max-width:560px) {
+        .dg-calendario-celda { min-height:42px; }
+        .dg-calendario-celda-num { font-size:12px; }
+      }
       .dg-calendario-semana { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:12px; padding:12px 14px; }
       .dg-calendario-semana-titulo { font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--dg-text-faint); margin-bottom:9px; }
       .dg-calendario-dia { display:grid; grid-template-columns:46px 1fr; gap:10px; padding:7px 0; border-top:1px solid rgba(var(--dg-line-rgb),0.07); }
@@ -8835,6 +9093,18 @@ function Style() {
       .dg-operario-form { display:flex; gap:6px; flex-wrap:wrap; }
       .dg-operario-form input { flex:1 1 130px; min-width:0; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:8px 10px; color:var(--dg-text); font-size:12px; outline:none; }
       .dg-operario-form input:focus { border-color:var(--dg-accent); }
+      .dg-fab-money { position:fixed; z-index:40;
+        right:calc(18px + env(safe-area-inset-right, 0px)); bottom:calc(18px + env(safe-area-inset-bottom, 0px));
+        width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:var(--dg-accent); color:var(--dg-on-accent); border:none; cursor:pointer;
+        box-shadow:0 10px 28px -8px rgba(var(--dg-accent-rgb),0.55); transition:transform .1s ease, filter .15s ease; }
+      .dg-fab-money:hover { filter:brightness(1.07); }
+      .dg-fab-money:active { transform:scale(0.93); }
+      .dg-mov-tipo { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px; }
+      .dg-mov-tipo button { display:flex; align-items:center; justify-content:center; gap:6px; padding:11px 8px; border-radius:10px; cursor:pointer;
+        border:1px solid rgba(var(--dg-line-rgb),0.14); background:var(--dg-surface); color:var(--dg-text-dim); font-size:12px; font-weight:600; font-family:'Inter',sans-serif; }
+      .dg-mov-tipo .dg-mov-tipo-on.dg-mov-egreso { border-color:var(--dg-danger); background:color-mix(in srgb, var(--dg-danger) 12%, var(--dg-surface)); color:var(--dg-danger); }
+      .dg-mov-tipo .dg-mov-tipo-on.dg-mov-ingreso { border-color:var(--dg-success); background:color-mix(in srgb, var(--dg-success) 12%, var(--dg-surface)); color:var(--dg-success); }
       .dg-mobile-back-fab { display:none; }
       @media (max-width:680px) {
         .dg-mobile-back-fab {
