@@ -3732,6 +3732,95 @@ function pedidoProcesoTaller(pedido) {
   return "simples";
 }
 
+function descripcionPedidoFabrica(p) {
+  const proc = pedidoProcesoTaller(p);          // esmerilados | biselados | simples
+  const lista = pedidoListaFabrica(p);
+  if (proc === "esmerilados") {
+    if (lista === "en_grabado") return "esmerilado — en grabado (afuera)";
+    if (lista === "mandar_grabar") return "esmerilado — cortado, falta mandarlo a grabar";
+    if (lista === "armar") return "esmerilado — volvió del grabado, para armar";
+    return "esmerilado — para cortar y mandar a grabar";
+  }
+  if (proc === "biselados") {
+    if (lista === "bisel_sin_pedir") return "biselado — falta encargar el bisel";
+    if (lista === "bisel_pedidos") return "biselado — pedido, esperando que vuelva";
+    return "biselado — para armar";
+  }
+  return "simple — cortar, armar y entregar";
+}
+function motivoDemoraFabrica(p) {
+  if (trabajoAfueraVencido(p)) {
+    const campo = campoPrometidaAfuera(p);
+    return `pasado de la fecha prometida (${(p && p[campo]) || "?"})`;
+  }
+  const d = diasEnEtapa(p);
+  return `frenado hace ${d == null ? "varios" : d}d en "${estadoProduccionLabel(p)}"`;
+}
+
+function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const urgIds = urgentes.map((p) => p.id);
+  const urgKey = urgIds.slice().sort().join(",");
+  function calcMostrar() {
+    try {
+      const f = localStorage.getItem("dg_fab_avisos_fecha");
+      const a = JSON.parse(localStorage.getItem("dg_fab_avisos_urg") || "[]");
+      if (f !== hoy) return true;
+      return urgIds.some((id) => !a.includes(id));
+    } catch (e) { return true; }
+  }
+  const [mostrar, setMostrar] = useState(calcMostrar);
+  useEffect(() => { if (calcMostrar()) setMostrar(true); }, [urgKey, hoy]);
+
+  const hayAlgo = urgentes.length + nuevos.length + demoras.length > 0;
+  if (!mostrar || !hayAlgo) return null;
+
+  function entendido() {
+    try {
+      localStorage.setItem("dg_fab_avisos_fecha", hoy);
+      localStorage.setItem("dg_fab_avisos_urg", JSON.stringify(urgIds));
+    } catch (e) {}
+    setMostrar(false);
+  }
+  const linea = (p, extra) => (
+    <li key={p.id}><strong>#{p.orden}</strong> {p.cliente || "sin nombre"} — {descripcionPedidoFabrica(p)}{extra ? <> · <em>{extra}</em></> : null}</li>
+  );
+
+  return (
+    <div className="dg-avisos-flot-overlay" role="dialog" aria-modal="true">
+      <div className="dg-avisos-flot">
+        <div className="dg-avisos-flot-head">
+          <Megaphone size={18} />
+          <strong>Avisos de fábrica</strong>
+        </div>
+        <div className="dg-avisos-flot-body">
+          {urgentes.length > 0 && (
+            <section className="dg-aviso-blq dg-aviso-blq-urgente">
+              <h4><AlertTriangle size={13} /> {urgentes.length === 1 ? "1 pedido con prioridad — hacelo primero" : `${urgentes.length} pedidos con prioridad — hacelos primero`}</h4>
+              <ul>{urgentes.slice(0, 15).map((p) => linea(p, p.tipoPedido === "reclamo" ? "RECLAMO / CAMBIO" : "marcado urgente"))}</ul>
+            </section>
+          )}
+          {demoras.length > 0 && (
+            <section className="dg-aviso-blq dg-aviso-blq-demora">
+              <h4><AlertTriangle size={13} /> {demoras.length === 1 ? "1 pedido atrasándose" : `${demoras.length} pedidos atrasándose`}</h4>
+              <ul>{demoras.slice(0, 15).map((p) => linea(p, motivoDemoraFabrica(p)))}</ul>
+            </section>
+          )}
+          {nuevos.length > 0 && (
+            <section className="dg-aviso-blq">
+              <h4><PackagePlus size={13} /> {nuevos.length === 1 ? "1 pedido nuevo de Ventas" : `${nuevos.length} pedidos nuevos de Ventas`}</h4>
+              <ul>{nuevos.slice(0, 15).map((p) => linea(p))}</ul>
+            </section>
+          )}
+        </div>
+        <button type="button" className="dg-btn-primary dg-avisos-flot-ok" onClick={entendido}>
+          <Check size={15} /> Entendido, lo vi
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function pedidoListaFabrica(pedido) {
   if (pedido?.estado === "Mandar a grabar") return "mandar_grabar";
   if (pedido?.estado === "En grabado") return "en_grabado";
@@ -3769,6 +3858,40 @@ function nivelDemoraEtapa(pedido) {
 }
 function estaDemoradoAuto(pedido) {
   return !pedidoEstaListo(pedido) && nivelDemoraEtapa(pedido) !== "ok";
+}
+
+// --- Objetivo de fábrica: la fecha que se le muestra al taller es la entrega
+//     al cliente menos un colchón, así terminan con margen para coordinar.
+const COLCHON_FABRICA_DIAS = 3;
+function fechaObjetivoFabrica(pedido) {
+  const listo = pedido?.listo;
+  if (!listo || !/^\d{4}-\d{2}-\d{2}$/.test(String(listo))) return "";
+  const d = new Date(listo + "T12:00:00");
+  if (isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() - COLCHON_FABRICA_DIAS);
+  return d.toISOString().slice(0, 10);
+}
+function diasHastaObjetivoFabrica(pedido) {
+  const obj = fechaObjetivoFabrica(pedido);
+  if (!obj) return null;
+  const hoy = new Date(); hoy.setHours(12, 0, 0, 0);
+  return Math.round((new Date(obj + "T12:00:00") - hoy) / 86400000);
+}
+function nivelObjetivoFabrica(pedido) {
+  const n = diasHastaObjetivoFabrica(pedido);
+  if (n === null) return "sinfecha";
+  if (n < 0) return "critico";
+  if (n <= 1) return "alerta";
+  if (n <= 3) return "pronto";
+  return "ok";
+}
+function RelojObjetivoFabrica({ pedido }) {
+  const obj = fechaObjetivoFabrica(pedido);
+  if (!obj) return <span className="dg-fab-objetivo dg-fab-objetivo-sinfecha"><CalendarDays size={11} /> sin fecha — cargala</span>;
+  const n = diasHastaObjetivoFabrica(pedido);
+  const nivel = nivelObjetivoFabrica(pedido);
+  const cuando = n < 0 ? `atrasado ${Math.abs(n)}d` : n === 0 ? "para HOY" : n === 1 ? "para mañana" : `faltan ${n}d`;
+  return <span className={`dg-fab-objetivo dg-fab-objetivo-${nivel}`}><CalendarDays size={11} /> terminar {fechaEntregaCorta(obj)} · {cuando}</span>;
 }
 
 // --- Trabajo afuera del taller: grabado / biseladora, con fecha prometida de regreso ---
@@ -7061,7 +7184,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               {!terminado && !perUnidad && diasEnEtapa(p) != null && (
                 <span className={`dg-fab-reloj dg-fab-reloj-${nivelDemoraEtapa(p)}`}> · {diasEnEtapa(p) === 0 ? "hoy" : `hace ${diasEnEtapa(p)}d`} acá</span>
               )}
-              {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}
+              <RelojObjetivoFabrica pedido={p} />
               {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
               {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
             </span>
@@ -7195,7 +7318,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 {!terminado && diasEnEtapa(p) != null && (
                   <span className={`dg-fab-reloj dg-fab-reloj-${nivelDemoraEtapa(p)}`}> · hace {diasEnEtapa(p)}d acá</span>
                 )}
-                {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}
+                <RelojObjetivoFabrica pedido={p} />
                 {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
               </span>
               {canEdit && (
@@ -7222,6 +7345,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
   return (
     <div className="dg-page">
+      <AvisosFlotantesFabrica
+        urgentes={activos.filter(esUrgente)}
+        nuevos={activos.filter(esperaAcuseFabrica)}
+        demoras={[...new Map(activos.filter((p) => estaDemoradoAuto(p) || trabajoAfueraVencido(p)).map((p) => [p.id, p])).values()]}
+      />
       {filtroEstado !== "historial" ? (
         <>
           <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
@@ -7310,6 +7438,27 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <strong>{`Revisá ${todos.length} pedido${todos.length === 1 ? "" : "s"} que se está${todos.length === 1 ? "" : "n"} atrasando`}</strong>
               <span>{lineas.join(" · ")}. Miralos con los filtros “Demorados” y “Afuera del taller”.</span>
               <span className="dg-fab-alerta-ordenes">{todos.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{todos.length > 8 ? "  ·  …" : ""}</span>
+            </div>
+          </div>
+        );
+      })()}
+      {filtroEstado !== "historial" && (() => {
+        const conObj = activos.filter((p) => fechaObjetivoFabrica(p));
+        const atrasados = conObj.filter((p) => diasHastaObjetivoFabrica(p) < 0);
+        const estaSemana = conObj.filter((p) => { const n = diasHastaObjetivoFabrica(p); return n >= 0 && n <= 6; });
+        const sinFecha = activos.filter((p) => !fechaObjetivoFabrica(p));
+        if (atrasados.length === 0 && estaSemana.length === 0) return null;
+        const partes = [];
+        if (atrasados.length) partes.push(`${atrasados.length} ya pasado${atrasados.length === 1 ? "" : "s"} del objetivo`);
+        if (estaSemana.length) partes.push(`${estaSemana.length} para terminar en 7 días`);
+        if (sinFecha.length) partes.push(`${sinFecha.length} sin fecha de entrega cargada`);
+        return (
+          <div className="dg-fab-alerta-demora dg-fab-alerta-objetivo">
+            <CalendarDays size={18} />
+            <div>
+              <strong>Objetivo de fábrica — {COLCHON_FABRICA_DIAS} días antes de la entrega al cliente</strong>
+              <span>{partes.join(" · ")}. En cada tarjeta ves la fecha objetivo; esa es la que hay que cumplir.</span>
+              <span className="dg-fab-alerta-ordenes">{[...atrasados, ...estaSemana].slice(0, 10).map((p) => `#${p.orden}`).join("  ·  ")}</span>
             </div>
           </div>
         );
@@ -9825,6 +9974,31 @@ function Style() {
       .dg-fab-reloj-ok { color:var(--dg-text-faint); }
       .dg-fab-reloj-alerta { color:var(--dg-warning); }
       .dg-fab-reloj-critico { color:var(--dg-danger); }
+      .dg-avisos-flot-overlay { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,0.5); }
+      .dg-avisos-flot { width:100%; max-width:440px; max-height:86vh; overflow-y:auto; background:var(--dg-surface); border:1px solid var(--dg-accent); border-radius:16px; padding:18px; box-shadow:0 24px 60px -12px rgba(0,0,0,0.6); }
+      .dg-avisos-flot-head { display:flex; align-items:center; gap:9px; margin-bottom:12px; }
+      .dg-avisos-flot-head svg { color:var(--dg-accent); flex:none; }
+      .dg-avisos-flot-head strong { font-family:'Space Grotesk', sans-serif; font-size:16px; color:var(--dg-text); }
+      .dg-avisos-flot-body { display:flex; flex-direction:column; gap:13px; }
+      .dg-aviso-blq h4 { display:flex; align-items:center; gap:6px; margin:0 0 5px; font-size:12.5px; font-family:'Space Grotesk', sans-serif; color:var(--dg-text); }
+      .dg-aviso-blq ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:5px; }
+      .dg-aviso-blq li { font-size:12px; color:var(--dg-text-dim); line-height:1.4; padding-left:9px; border-left:2px solid rgba(var(--dg-line-rgb),0.25); }
+      .dg-aviso-blq li strong { color:var(--dg-text); }
+      .dg-aviso-blq li em { font-style:normal; opacity:0.85; }
+      .dg-aviso-blq-urgente h4 { color:var(--dg-danger); }
+      .dg-aviso-blq-urgente li { border-left-color:var(--dg-danger); }
+      .dg-aviso-blq-demora h4 { color:var(--dg-warning); }
+      .dg-aviso-blq-demora li { border-left-color:var(--dg-warning); }
+      .dg-avisos-flot-ok { width:100%; justify-content:center; margin-top:15px; }
+      .dg-fab-alerta-objetivo { border-color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 12%, var(--dg-surface)); }
+      .dg-fab-alerta-objetivo > svg { color:var(--dg-accent); }
+      .dg-fab-alerta-objetivo .dg-fab-alerta-ordenes { color:var(--dg-accent) !important; }
+      .dg-fab-objetivo { display:inline-flex; align-items:center; gap:4px; margin-left:6px; padding:2px 8px; border-radius:6px; font-family:'JetBrains Mono', monospace; font-size:11.5px; font-weight:700; vertical-align:middle; border:1px solid transparent; }
+      .dg-fab-objetivo-ok { color:var(--dg-text); border-color:rgba(var(--dg-line-rgb),0.25); }
+      .dg-fab-objetivo-pronto { color:var(--dg-warning); border-color:var(--dg-warning); }
+      .dg-fab-objetivo-alerta { color:#fff; background:var(--dg-warning); }
+      .dg-fab-objetivo-critico { color:#fff; background:var(--dg-danger); }
+      .dg-fab-objetivo-sinfecha { color:var(--dg-text-faint); border-color:rgba(var(--dg-line-rgb),0.25); font-weight:600; }
       .dg-fab-prometido { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px; padding:8px 11px; border:1px solid rgba(var(--dg-line-rgb),0.14); border-radius:9px; font-size:11.5px; color:var(--dg-text-dim); }
       .dg-fab-prometido > span { font-weight:600; }
       .dg-fab-prometido input { min-height:33px; padding:5px 8px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:7px; color:var(--dg-text); font-size:12px; font-family:'Inter',sans-serif; }
