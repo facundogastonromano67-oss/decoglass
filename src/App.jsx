@@ -877,6 +877,8 @@ function App() {
   const [vistaConsultas, setVistaConsultas] = useState(false);
   const [chatHilos, setChatHilos] = useState([]);
   const [chatCargando, setChatCargando] = useState(true);
+  const [chatEquipoOpen, setChatEquipoOpen] = useState(false);
+  const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
   const syncRefreshingRef = useRef(false);
@@ -1136,6 +1138,27 @@ function App() {
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session]);
   const chatSinLeer = chatHilos.filter((h) => clasificarHilo(h) === "sin_leer").length;
+
+  // --- Chat interno del equipo: contador de no leídos ---
+  useEffect(() => {
+    if (loading || !session) return undefined;
+    let active = true;
+    const yo = idDispositivo();
+    const recalcular = async () => {
+      try {
+        const msgs = await chatStore.internoListar();
+        if (!active) return;
+        let visto = "";
+        try { visto = localStorage.getItem("dg_chat_interno_visto") || ""; } catch (e) {}
+        const n = msgs.filter((m) => m.autor_id !== yo && String(m.created_at) > visto).length;
+        setChatEquipoSinLeer(n);
+      } catch (e) {}
+    };
+    recalcular();
+    const stop = chatStore.internoSubscribe(() => recalcular());
+    const iv = window.setInterval(recalcular, 20000);
+    return () => { active = false; stop(); window.clearInterval(iv); };
+  }, [loading, session, chatEquipoOpen]);
 
   async function load() {
     let loadedSectors = DEFAULT_SECTORS;
@@ -1651,6 +1674,16 @@ function App() {
         )}
         {movMoneyOpen && isAdmin && (
           <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} driveUrl={integraciones?.driveFacturasUrl || ""} />
+        )}
+
+        {session && (
+          <button className="dg-fab-chat" onClick={() => setChatEquipoOpen(true)} title="Chat del equipo" aria-label="Chat del equipo">
+            <MessageSquare size={22} />
+            {chatEquipoSinLeer > 0 && <span className="dg-fab-chat-badge">{chatEquipoSinLeer > 9 ? "9+" : chatEquipoSinLeer}</span>}
+          </button>
+        )}
+        {chatEquipoOpen && session && (
+          <ChatEquipoPanel session={session} onClose={() => { setChatEquipoOpen(false); setChatEquipoSinLeer(0); }} />
         )}
       </div>
 
@@ -9886,6 +9919,20 @@ function Style() {
         box-shadow:0 12px 30px -6px rgba(var(--dg-accent-rgb),0.65), 0 0 0 1px rgba(var(--dg-accent-rgb),0.3); transition:transform .1s ease, filter .15s ease; }
       .dg-fab-money:hover { filter:brightness(1.07); }
       .dg-fab-money:active { transform:scale(0.93); }
+      .dg-fab-chat { position:fixed; z-index:45;
+        left:calc(18px + env(safe-area-inset-left, 0px)); bottom:calc(18px + env(safe-area-inset-bottom, 0px));
+        width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:var(--dg-surface-2); color:var(--dg-text); border:1px solid rgba(var(--dg-line-rgb),0.2); cursor:pointer;
+        box-shadow:0 12px 30px -8px rgba(0,0,0,0.5); transition:transform .1s ease, filter .15s ease; }
+      .dg-fab-chat:hover { filter:brightness(1.08); }
+      .dg-fab-chat:active { transform:scale(0.93); }
+      .dg-fab-chat-badge { position:absolute; top:-3px; right:-3px; min-width:19px; height:19px; padding:0 4px; border-radius:10px;
+        background:var(--dg-danger); color:#fff; font-size:10.5px; font-weight:800; display:flex; align-items:center; justify-content:center; border:2px solid var(--dg-bg); }
+      .dg-chat-equipo { display:flex; flex-direction:column; max-width:440px; padding:0; overflow:hidden; }
+      .dg-chat-equipo .dg-modal-head { padding:13px 16px; margin:0; border-bottom:1px solid rgba(var(--dg-line-rgb),0.12); }
+      .dg-chat-equipo .dg-modal-title { display:flex; align-items:center; gap:7px; }
+      .dg-chat-equipo .dg-chat-scroll-lg { margin:0; border-radius:0; background:transparent; padding:14px 16px; }
+      .dg-chat-equipo .dg-chat-input { padding:11px 12px; }
       .dg-mov-tipo { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px; min-width:0; }
       .dg-mov-tipo button { min-width:0; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px 8px; border-radius:10px; cursor:pointer;
         border:1px solid rgba(var(--dg-line-rgb),0.14); background:var(--dg-surface); color:var(--dg-text-dim); font-size:12.5px; font-weight:600; font-family:'Inter',sans-serif; white-space:nowrap; }
@@ -11818,6 +11865,74 @@ function PanelConsultasClientes({ session, hilos, cargando, onAbrir }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function idDispositivo() {
+  try {
+    let v = localStorage.getItem("dg_yo_id");
+    if (!v) { v = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("dg_yo_id", v); }
+    return v;
+  } catch (e) { return "anon"; }
+}
+
+// --- Chat interno del equipo (canal general) ---
+function ChatEquipoPanel({ session, onClose }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [enviando, setEnviando] = useState(false);
+  const [cargando, setCargando] = useState(true);
+  const scrollRef = useRef(null);
+  const yo = idDispositivo();
+
+  useEffect(() => {
+    let vivo = true;
+    const cargar = () => chatStore.internoListar().then((m) => { if (vivo) { setMensajes(m); setCargando(false); } }).catch(() => setCargando(false));
+    cargar();
+    const stop = chatStore.internoSubscribe(() => cargar());
+    const iv = window.setInterval(cargar, 15000);
+    return () => { vivo = false; stop(); window.clearInterval(iv); };
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (mensajes.length) {
+      try { localStorage.setItem("dg_chat_interno_visto", mensajes[mensajes.length - 1].created_at); } catch (e) {}
+    }
+  }, [mensajes]);
+
+  async function enviar(t) {
+    setEnviando(true);
+    try {
+      await chatStore.internoEnviar(t, { id: yo, nombre: session?.nombre || "Alguien" });
+      setMensajes(await chatStore.internoListar());
+    } catch (e) { return false; }
+    finally { setEnviando(false); }
+  }
+
+  return (
+    <div className="dg-overlay">
+      <div className="dg-modal dg-chat-equipo" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title"><MessageSquare size={15} /> Chat del equipo</div>
+          <button className="dg-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
+        </div>
+        <div className="dg-chat-scroll dg-chat-scroll-lg" ref={scrollRef}>
+          {cargando && <p className="dg-chat-vacio">Cargando…</p>}
+          {!cargando && mensajes.length === 0 && <p className="dg-chat-vacio">Todavía no hay mensajes. Escribí el primero.</p>}
+          {mensajes.map((m) => {
+            const mio = m.autor_id === yo;
+            return (
+              <div key={m.id} className={`dg-chat-burbuja ${mio ? "dg-chat-mia" : ""}`}>
+                {!mio && <span className="dg-chat-autor">{m.autor_nombre || "Alguien"}</span>}
+                <span className="dg-chat-texto">{m.cuerpo}</span>
+                <span className="dg-chat-hora">{horaChat(m.created_at)}</span>
+              </div>
+            );
+          })}
+        </div>
+        <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder="Mensaje para todo el equipo..." />
+      </div>
     </div>
   );
 }

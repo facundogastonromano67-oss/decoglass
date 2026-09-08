@@ -388,6 +388,32 @@ export const chatStore = {
       .subscribe();
     return () => { try { supabase.removeChannel(channel); } catch (e) {} };
   },
+
+  // ---- Chat interno del equipo (canal general, solo usuarios logueados) ----
+  async internoListar(limite = 200) {
+    const { data, error } = await supabase
+      .from("chat_interno").select("*")
+      .order("created_at", { ascending: true }).limit(limite);
+    if (error) throw error;
+    return data || [];
+  },
+  async internoEnviar(cuerpo, autor) {
+    const texto = String(cuerpo || "").trim();
+    if (!texto) return;
+    const { error } = await supabase.from("chat_interno").insert({
+      autor_id: autor?.id || null,
+      autor_nombre: autor?.nombre || "Alguien",
+      cuerpo: texto,
+    });
+    if (error) throw error;
+  },
+  internoSubscribe(onChange) {
+    const channel = supabase
+      .channel("chat-interno-" + Math.random().toString(36).slice(2, 8))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_interno" }, onChange)
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch (e) {} };
+  },
 };
 
 export const storage = {
