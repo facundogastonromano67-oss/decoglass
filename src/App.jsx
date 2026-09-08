@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore } from "./lib/storage";
+import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore } from "./lib/storage";
 import { supabase } from "./lib/supabaseClient";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
@@ -7,7 +7,7 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -874,6 +874,9 @@ function App() {
   const [movMoneyOpen, setMovMoneyOpen] = useState(false);
   const [vistaPanel, setVistaPanel] = useState(false);
   const [vistaPendientes, setVistaPendientes] = useState(false);
+  const [vistaConsultas, setVistaConsultas] = useState(false);
+  const [chatHilos, setChatHilos] = useState([]);
+  const [chatCargando, setChatCargando] = useState(true);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
   const syncRefreshingRef = useRef(false);
@@ -1089,6 +1092,46 @@ function App() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loading]);
+
+  // --- Chat con clientes: bandeja en vivo + aviso del navegador ---
+  const chatUltimoIdRef = useRef(0);
+  const chatPrimeraCargaRef = useRef(true);
+  useEffect(() => {
+    if (loading || !session) return undefined;
+    let active = true;
+    const cargar = async () => {
+      try {
+        const hilos = await chatStore.listHilos();
+        if (!active) return;
+        setChatHilos(hilos);
+        setChatCargando(false);
+        const maxAt = hilos.reduce((mx, h) => {
+          const t = h.ultimo_autor_tipo === "cliente" && h.ultimo_mensaje_at ? new Date(h.ultimo_mensaje_at).getTime() : 0;
+          return t > mx ? t : mx;
+        }, 0);
+        if (chatPrimeraCargaRef.current) {
+          chatPrimeraCargaRef.current = false;
+          chatUltimoIdRef.current = maxAt;
+        } else if (maxAt > chatUltimoIdRef.current) {
+          chatUltimoIdRef.current = maxAt;
+          const nuevo = hilos.find((h) => h.ultimo_autor_tipo === "cliente" && new Date(h.ultimo_mensaje_at).getTime() === maxAt);
+          try {
+            if (typeof Notification !== "undefined" && Notification.permission === "granted" && nuevo) {
+              const n = new Notification(`Consulta de ${nuevo.cliente_nombre || "un cliente"}`, {
+                body: nuevo.ultimo_mensaje || "", tag: "chat-" + nuevo.id,
+              });
+              n.onclick = () => { window.focus(); setVistaConsultas(true); setActiveSectorId(null); setVistaPanel(false); setVistaPendientes(false); n.close(); };
+            }
+          } catch (e) {}
+        }
+      } catch (e) { if (active) setChatCargando(false); }
+    };
+    cargar();
+    const stop = chatStore.subscribeRealtime(() => { if (active) cargar(); });
+    const iv = window.setInterval(cargar, 15000);
+    return () => { active = false; stop(); window.clearInterval(iv); };
+  }, [loading, session]);
+  const chatSinLeer = chatHilos.filter((h) => clasificarHilo(h) === "sin_leer").length;
 
   async function load() {
     let loadedSectors = DEFAULT_SECTORS;
@@ -1418,7 +1461,7 @@ function App() {
         key={sector.id}
         className={`dg-room-tile dg-room-tile-${sector.tipo}`}
         style={{ "--glow": glow }}
-        onClick={() => { setActiveSectorId(sector.id); setVistaPanel(false); setVistaPendientes(false); }}
+        onClick={() => { setActiveSectorId(sector.id); setVistaPanel(false); setVistaPendientes(false); setVistaConsultas(false); }}
         aria-label={`Abrir sector ${sector.name}`}
       >
         <RoomScene sector={sector} />
@@ -1484,22 +1527,32 @@ function App() {
         </header>
 
         <nav className="dg-nav dg-nav-breadcrumb">
-          <button className={`dg-nav-btn ${!activeSectorId && !vistaPanel && !vistaPendientes ? "dg-nav-on" : ""}`} onClick={() => { setActiveSectorId(null); setVistaPanel(false); setVistaPendientes(false); }} aria-current={!activeSectorId && !vistaPanel && !vistaPendientes ? "page" : undefined}><Building2 size={14} /> Edificio</button>
+          <button className={`dg-nav-btn ${!activeSectorId && !vistaPanel && !vistaPendientes && !vistaConsultas ? "dg-nav-on" : ""}`} onClick={() => { setActiveSectorId(null); setVistaPanel(false); setVistaPendientes(false); setVistaConsultas(false); }} aria-current={!activeSectorId && !vistaPanel && !vistaPendientes && !vistaConsultas ? "page" : undefined}><Building2 size={14} /> Edificio</button>
           {session && (
-            <button className={`dg-nav-btn ${vistaPendientes ? "dg-nav-on" : ""}`} onClick={() => { setVistaPendientes(true); setActiveSectorId(null); setVistaPanel(false); }} aria-current={vistaPendientes ? "page" : undefined}><ClipboardList size={14} /> Pendientes</button>
+            <button className={`dg-nav-btn ${vistaPendientes ? "dg-nav-on" : ""}`} onClick={() => { setVistaPendientes(true); setActiveSectorId(null); setVistaPanel(false); setVistaConsultas(false); }} aria-current={vistaPendientes ? "page" : undefined}><ClipboardList size={14} /> Pendientes</button>
+          )}
+          {session && (
+            <button className={`dg-nav-btn ${vistaConsultas ? "dg-nav-on" : ""}`} onClick={() => { setVistaConsultas(true); setActiveSectorId(null); setVistaPanel(false); setVistaPendientes(false); }} aria-current={vistaConsultas ? "page" : undefined}>
+              <MessageSquare size={14} /> Consultas
+              {chatSinLeer > 0 && <span className="dg-nav-badge">{chatSinLeer}</span>}
+            </button>
           )}
           {isAdmin && (
-            <button className={`dg-nav-btn ${vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setVistaPanel(true); setActiveSectorId(null); setVistaPendientes(false); }} aria-current={vistaPanel ? "page" : undefined}><BarChart3 size={14} /> Panel de control</button>
+            <button className={`dg-nav-btn ${vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setVistaPanel(true); setActiveSectorId(null); setVistaPendientes(false); setVistaConsultas(false); }} aria-current={vistaPanel ? "page" : undefined}><BarChart3 size={14} /> Panel de control</button>
           )}
-          {activeSector && !vistaPanel && !vistaPendientes && (
+          {activeSector && !vistaPanel && !vistaPendientes && !vistaConsultas && (
             <span className="dg-nav-btn dg-nav-on dg-nav-crumb"><ChevronRight size={13} /> {activeSector.name}</span>
           )}
         </nav>
 
+        {vistaConsultas && session && (
+          <PanelConsultasClientes session={session} hilos={chatHilos} cargando={chatCargando} onAbrir={() => {}} />
+        )}
+
         {vistaPendientes && session && (
           <TableroPendientes
             pedidos={pedidos} reclamos={reclamos} stockMateriales={stockMateriales} session={session}
-            onIrASector={(sid) => { setActiveSectorId(sid); setVistaPendientes(false); setVistaPanel(false); }}
+            onIrASector={(sid) => { setActiveSectorId(sid); setVistaPendientes(false); setVistaPanel(false); setVistaConsultas(false); }}
           />
         )}
 
@@ -1507,7 +1560,7 @@ function App() {
           <PanelControlAdmin pedidos={pedidos} incomes={incomes} reclamos={reclamos} stockMateriales={stockMateriales} sectors={sectors} quoteConfig={quoteConfig} />
         )}
 
-        {!activeSector && !vistaPanel && !vistaPendientes && (
+        {!activeSector && !vistaPanel && !vistaPendientes && !vistaConsultas && (
           <>
             <section className="dg-overview-head">
               <div className="dg-overview-copy">
@@ -1603,7 +1656,7 @@ function App() {
         <BuscadorGlobal
           pedidos={pedidos} reclamos={reclamos}
           onClose={() => setBuscadorOpen(false)}
-          onIr={(sid) => { setActiveSectorId(sid); setBuscadorOpen(false); setVistaPendientes(false); setVistaPanel(false); }}
+          onIr={(sid) => { setActiveSectorId(sid); setBuscadorOpen(false); setVistaPendientes(false); setVistaPanel(false); setVistaConsultas(false); }}
         />
       )}
 
@@ -9530,6 +9583,38 @@ function Style() {
       .dg-nav-breadcrumb { justify-content:flex-start; }
       .dg-nav-breadcrumb .dg-nav-btn { flex:none; }
       .dg-nav-crumb { cursor:default; }
+      .dg-nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:17px; height:17px; padding:0 4px; border-radius:9px; background:var(--dg-danger); color:#fff; font-size:10px; font-weight:800; line-height:1; }
+
+      /* ---- Chat con clientes ---- */
+      .dg-chat-abrir { width:100%; justify-content:center; margin-top:14px; position:relative; }
+      .dg-chat-punto { width:8px; height:8px; border-radius:50%; background:var(--dg-danger); display:inline-block; margin-left:2px; }
+      .dg-chat-panel { margin-top:14px; border:1px solid rgba(var(--dg-line-rgb),0.16); border-radius:14px; overflow:hidden; background:var(--dg-surface); display:flex; flex-direction:column; }
+      .dg-chat-panel-head { display:flex; align-items:center; justify-content:space-between; padding:9px 12px; background:rgba(var(--dg-line-rgb),0.05); font-size:12.5px; font-weight:700; color:var(--dg-text); }
+      .dg-chat-panel-head span { display:flex; align-items:center; gap:6px; }
+      .dg-chat-scroll { display:flex; flex-direction:column; gap:8px; padding:12px; max-height:300px; overflow-y:auto; }
+      .dg-chat-scroll-lg { max-height:min(58vh, 520px); background:rgba(var(--dg-line-rgb),0.025); border-radius:12px; }
+      .dg-chat-vacio { font-size:12px; color:var(--dg-text-faint); text-align:center; margin:14px 0; }
+      .dg-chat-burbuja { max-width:80%; align-self:flex-start; display:flex; flex-direction:column; gap:2px; padding:8px 11px; border-radius:13px; border-bottom-left-radius:4px;
+        background:rgba(var(--dg-line-rgb),0.09); font-size:13px; color:var(--dg-text); line-height:1.4; }
+      .dg-chat-mia { align-self:flex-end; background:var(--dg-accent); color:#fff; border-radius:13px; border-bottom-right-radius:4px; }
+      .dg-chat-autor { font-size:10.5px; font-weight:700; opacity:0.7; }
+      .dg-chat-texto { white-space:pre-wrap; word-break:break-word; }
+      .dg-chat-hora { font-size:9.5px; opacity:0.6; align-self:flex-end; }
+      .dg-chat-cerrado { font-size:11.5px; color:var(--dg-text-faint); padding:11px 12px; margin:0; border-top:1px solid rgba(var(--dg-line-rgb),0.12); }
+      .dg-chat-input { display:flex; gap:7px; padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); align-items:flex-end; }
+      .dg-chat-input textarea { flex:1; min-height:38px; max-height:120px; resize:none; border:1px solid rgba(var(--dg-line-rgb),0.18); border-radius:10px; padding:9px 11px;
+        background:var(--dg-surface-2); color:var(--dg-text); font-family:'Inter',sans-serif; font-size:14px; line-height:1.35; }
+      .dg-chat-input button { flex:none; width:38px; height:38px; display:flex; align-items:center; justify-content:center; border:none; border-radius:10px; background:var(--dg-accent); color:#fff; cursor:pointer; }
+      .dg-chat-input button:disabled { opacity:0.45; cursor:default; }
+      .dg-chat-hilo-page .dg-chat-hilo-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:12px 0 8px; }
+      .dg-chat-hilo-head strong { font-family:'Space Grotesk',sans-serif; font-size:15px; }
+      .dg-chat-lista { display:flex; flex-direction:column; }
+      .dg-chat-fila { text-align:left; background:transparent; border:none; border-bottom:1px solid rgba(var(--dg-line-rgb),0.07); padding:11px 2px; cursor:pointer; display:flex; flex-direction:column; gap:3px; }
+      .dg-chat-fila:last-child { border-bottom:none; }
+      .dg-chat-fila-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+      .dg-chat-fila-top strong { font-size:13px; color:var(--dg-text); }
+      .dg-chat-fila-nueva .dg-chat-fila-top strong { color:var(--dg-danger); }
+      .dg-chat-fila-ult { font-size:12px; color:var(--dg-text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
       .dg-back-btn { display:inline-flex; align-items:center; gap:6px; background:transparent; border:1px solid rgba(var(--dg-line-rgb),0.1); color:var(--dg-text-dim); border-radius:9px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer; margin-bottom:14px; }
       .dg-back-btn:hover { color:var(--dg-text); border-color:rgba(var(--dg-line-rgb),0.2); }
@@ -11488,6 +11573,251 @@ function abrirGarantia(pedidosOEspejo) {
   if (ventana) { ventana.document.write(html); ventana.document.close(); }
 }
 
+// ==== Chat con clientes ======================================================
+function horaChat(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const hoy = new Date();
+  const mismoDia = d.toDateString() === hoy.toDateString();
+  const ayer = new Date(hoy); ayer.setDate(ayer.getDate() - 1);
+  const hhmm = d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+  if (mismoDia) return hhmm;
+  if (d.toDateString() === ayer.toDateString()) return `ayer ${hhmm}`;
+  return `${d.getDate()}/${d.getMonth() + 1} ${hhmm}`;
+}
+function chatClienteCerrado(pedido) {
+  if (!pedido) return false;
+  if (pedido.estado === "Entregado" && pedido.entregadoFecha) {
+    const t = new Date(pedido.entregadoFecha).getTime();
+    if (!isNaN(t) && Date.now() - t > 7 * 86400000) return true;
+  }
+  return false;
+}
+function clasificarHilo(h) {
+  if (h.ultimo_autor_tipo === "cliente") {
+    const leido = h.staff_leido_at && h.ultimo_mensaje_at && new Date(h.staff_leido_at) >= new Date(h.ultimo_mensaje_at);
+    return leido ? "sin_responder" : "sin_leer";
+  }
+  return "respondido";
+}
+
+function ListaBurbujasChat({ mensajes, ladoDerecha }) {
+  // ladoDerecha: "staff" (vista interna) | "cliente" (vista del cliente)
+  return (
+    <>
+      {mensajes.length === 0 && <p className="dg-chat-vacio">Todavía no hay mensajes en esta conversación.</p>}
+      {mensajes.map((m) => {
+        const mio = m.autor_tipo === ladoDerecha;
+        return (
+          <div key={m.id} className={`dg-chat-burbuja ${mio ? "dg-chat-mia" : ""} ${m.autor_tipo === "staff" ? "dg-chat-staff" : "dg-chat-cli"}`}>
+            {!mio && <span className="dg-chat-autor">{m.autor_nombre || (m.autor_tipo === "staff" ? "Decoglass" : "Cliente")}</span>}
+            <span className="dg-chat-texto">{m.cuerpo}</span>
+            <span className="dg-chat-hora">{horaChat(m.created_at)}</span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function CajaEnviarChat({ onEnviar, enviando, placeholder }) {
+  const [texto, setTexto] = useState("");
+  async function mandar() {
+    const t = texto.trim();
+    if (!t || enviando) return;
+    const ok = await onEnviar(t);
+    if (ok !== false) setTexto("");
+  }
+  return (
+    <div className="dg-chat-input">
+      <textarea rows={1} value={texto} placeholder={placeholder || "Escribí un mensaje..."}
+        onChange={(e) => setTexto(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); mandar(); } }} />
+      <button type="button" onClick={mandar} disabled={enviando || !texto.trim()} aria-label="Enviar">
+        {enviando ? <Loader2 size={15} className="dg-spin" /> : <Send size={15} />}
+      </button>
+    </div>
+  );
+}
+
+// --- Cliente: panel de chat dentro de la página pública de seguimiento ---
+function ChatClientePublico({ hiloId, meta, cerrado }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [abierto, setAbierto] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (!hiloId) return;
+    let vivo = true;
+    const cargar = () => chatStore.getMensajes(hiloId).then((m) => { if (vivo) setMensajes(m); }).catch(() => {});
+    cargar();
+    const stop = chatStore.subscribeRealtime((p) => {
+      const id = p?.new?.hilo_id || p?.new?.id || p?.old?.hilo_id;
+      if (id === hiloId) cargar();
+    });
+    const iv = window.setInterval(cargar, 15000);
+    return () => { vivo = false; stop(); window.clearInterval(iv); };
+  }, [hiloId]);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [mensajes, abierto]);
+
+  async function enviar(t) {
+    setEnviando(true);
+    try {
+      await chatStore.enviarComoCliente(hiloId, t, meta);
+      setMensajes(await chatStore.getMensajes(hiloId));
+    } catch (e) { return false; }
+    finally { setEnviando(false); }
+  }
+
+  if (!abierto) {
+    return (
+      <button type="button" className="dg-btn-ghost dg-chat-abrir" onClick={() => setAbierto(true)}>
+        <MessageSquare size={15} /> {mensajes.length ? "Ver la conversación" : "¿Tenés una consulta? Escribinos acá"}
+        {mensajes.some((m) => m.autor_tipo === "staff") && <span className="dg-chat-punto" />}
+      </button>
+    );
+  }
+
+  return (
+    <div className="dg-chat-panel">
+      <div className="dg-chat-panel-head">
+        <span><MessageSquare size={14} /> Consultas sobre tu pedido</span>
+        <button type="button" className="dg-icon-btn" onClick={() => setAbierto(false)} aria-label="Cerrar"><X size={16} /></button>
+      </div>
+      <div className="dg-chat-scroll" ref={scrollRef}>
+        <ListaBurbujasChat mensajes={mensajes} ladoDerecha="cliente" />
+      </div>
+      {cerrado
+        ? <p className="dg-chat-cerrado">Esta conversación se cerró. Si necesitás algo más, escribinos por WhatsApp.</p>
+        : <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder="Escribí tu consulta..." />}
+    </div>
+  );
+}
+
+// --- Interno: vista de un hilo con respuesta ---
+function HiloChatVista({ hiloId, session, onVolver }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [hilo, setHilo] = useState(null);
+  const [enviando, setEnviando] = useState(false);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    let vivo = true;
+    const cargar = async () => {
+      try {
+        const [m, h] = await Promise.all([chatStore.getMensajes(hiloId), chatStore.getHilo(hiloId)]);
+        if (!vivo) return;
+        setMensajes(m); setHilo(h);
+      } catch (e) {}
+    };
+    cargar();
+    chatStore.marcarLeidoStaff(hiloId).catch(() => {});
+    const stop = chatStore.subscribeRealtime((p) => {
+      const id = p?.new?.hilo_id || p?.new?.id || p?.old?.hilo_id;
+      if (id === hiloId) cargar();
+    });
+    const iv = window.setInterval(cargar, 15000);
+    return () => { vivo = false; stop(); window.clearInterval(iv); };
+  }, [hiloId]);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [mensajes]);
+
+  async function enviar(t) {
+    setEnviando(true);
+    try {
+      await chatStore.enviarComoStaff(hiloId, t, session?.nombre || "Decoglass");
+      setMensajes(await chatStore.getMensajes(hiloId));
+    } catch (e) { return false; }
+    finally { setEnviando(false); }
+  }
+
+  const nombre = hilo?.cliente_nombre || "Cliente";
+  const orden = hilo?.orden || (hilo?.pedido_id ? `#${hilo.pedido_id.slice(0, 6)}` : "");
+  const linkSeg = hilo?.grupo_id
+    ? `${window.location.origin}/seguimiento/grupo/${hilo.grupo_id}`
+    : hilo?.pedido_id ? `${window.location.origin}/seguimiento/${hilo.pedido_id}` : null;
+
+  return (
+    <div className="dg-page dg-chat-hilo-page">
+      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onVolver}><ArrowLeft size={13} /> Volver a las consultas</button>
+      <div className="dg-chat-hilo-head">
+        <div>
+          <strong>{nombre}</strong>
+          <span className="dg-pago-meta"> Pedido {orden}</span>
+        </div>
+        {linkSeg && <a className="dg-btn-ghost dg-mini-btn" href={linkSeg} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /> Ver seguimiento</a>}
+      </div>
+      <div className="dg-chat-scroll dg-chat-scroll-lg" ref={scrollRef}>
+        <ListaBurbujasChat mensajes={mensajes} ladoDerecha="staff" />
+      </div>
+      <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder={`Responder a ${nombre}...`} />
+    </div>
+  );
+}
+
+// --- Interno: bandeja de consultas de clientes ---
+function PanelConsultasClientes({ session, hilos, cargando, onAbrir }) {
+  const [abierto, setAbierto] = useState(null);
+  useEffect(() => { setAbierto(null); }, [/* al montar */]);
+
+  if (abierto) {
+    return <HiloChatVista hiloId={abierto} session={session} onVolver={() => { setAbierto(null); if (onAbrir) onAbrir(); }} />;
+  }
+
+  const grupos = [
+    { key: "sin_leer", label: "Sin leer", color: "var(--dg-danger)" },
+    { key: "sin_responder", label: "Sin responder", color: "var(--dg-warning)" },
+    { key: "respondido", label: "Respondidas", color: "var(--dg-text-faint)" },
+  ];
+  const clasificados = { sin_leer: [], sin_responder: [], respondido: [] };
+  (hilos || []).forEach((h) => { clasificados[clasificarHilo(h)].push(h); });
+  Object.values(clasificados).forEach((arr) => arr.sort((a, b) => String(b.ultimo_mensaje_at || "").localeCompare(String(a.ultimo_mensaje_at || ""))));
+  const total = (hilos || []).length;
+
+  return (
+    <div className="dg-page">
+      <div className="dg-overview-head" style={{ marginBottom: 14 }}>
+        <div className="dg-overview-copy">
+          <span className="dg-eyebrow">Atención al cliente</span>
+          <h1>Consultas de clientes</h1>
+          <p>Mensajes que llegan desde el link de seguimiento. Se ordenan por lo que necesita respuesta primero.</p>
+        </div>
+      </div>
+
+      {cargando && total === 0 && <div className="dg-loading"><Loader2 className="dg-spin" size={22} /><span>Cargando…</span></div>}
+      {!cargando && total === 0 && <div className="dg-empty">Todavía no hay consultas de clientes.</div>}
+
+      {grupos.map((g) => clasificados[g.key].length > 0 && (
+        <div className="dg-section-card" key={g.key}>
+          <div className="dg-section-header" style={{ color: g.color }}>
+            <MessageSquare size={14} /> {g.label} ({clasificados[g.key].length})
+          </div>
+          <div className="dg-chat-lista">
+            {clasificados[g.key].map((h) => (
+              <button type="button" className={`dg-chat-fila ${g.key === "sin_leer" ? "dg-chat-fila-nueva" : ""}`} key={h.id} onClick={() => setAbierto(h.id)}>
+                <div className="dg-chat-fila-top">
+                  <strong>{h.cliente_nombre || "Cliente"}</strong>
+                  <span className="dg-pago-meta">{h.orden || ""} · {horaChat(h.ultimo_mensaje_at)}</span>
+                </div>
+                <span className="dg-chat-fila-ult">
+                  {h.ultimo_autor_tipo === "staff" ? "Vos: " : ""}{h.ultimo_mensaje || "(sin texto)"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
   const [tema] = useState(() => {
@@ -11612,6 +11942,12 @@ function SeguimientoPublico({ pedidoId }) {
             )}
             <button className="dg-btn-ghost" onClick={() => abrirGarantia(pedido)}><ShieldCheck size={14} /> Descargar garantía</button>
           </div>
+
+          <ChatClientePublico
+            hiloId={pedido.id}
+            meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", entregadoAt: pedido.entregadoFecha || null }}
+            cerrado={chatClienteCerrado(pedido)}
+          />
 
           <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
             <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
@@ -11755,6 +12091,14 @@ function SeguimientoGrupoPublico({ grupoId }) {
               <button className="dg-btn-ghost" onClick={() => abrirGarantia(activos)}><ShieldCheck size={14} /> Descargar garantía</button>
             </div>
           </div>
+        )}
+
+        {!todosCancelados && (
+          <ChatClientePublico
+            hiloId={`grupo:${grupoId}`}
+            meta={{ pedidoId: primero.id, grupoId, orden: `#${primero.orden}`, clienteNombre: primero.cliente || "", entregadoAt: primero.entregadoFecha || null }}
+            cerrado={chatClienteCerrado(primero)}
+          />
         )}
 
         <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">

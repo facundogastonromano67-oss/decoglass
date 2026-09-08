@@ -287,6 +287,100 @@ export const pushStore = {
   },
 };
 
+// Chat con clientes: el hilo se identifica con el mismo id que va en el link de
+// seguimiento (id del pedido, o "grupo:"+grupoId), así el cliente no necesita
+// login. El staff logueado ve y responde todos los hilos.
+export const chatStore = {
+  hiloId(pedido) {
+    if (!pedido) return null;
+    return pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id;
+  },
+
+  async getHilo(id) {
+    if (!id) return null;
+    const { data, error } = await supabase.from("chat_hilos").select("*").eq("id", id).maybeSingle();
+    if (error) throw error;
+    return data || null;
+  },
+
+  async listHilos() {
+    const { data, error } = await supabase
+      .from("chat_hilos").select("*")
+      .order("ultimo_mensaje_at", { ascending: false, nullsFirst: false })
+      .limit(500);
+    if (error) throw error;
+    return data || [];
+  },
+
+  async getMensajes(hiloId) {
+    if (!hiloId) return [];
+    const { data, error } = await supabase
+      .from("chat_mensajes").select("*")
+      .eq("hilo_id", hiloId)
+      .order("created_at", { ascending: true })
+      .limit(500);
+    if (error) throw error;
+    return data || [];
+  },
+
+  // Cliente (sin login): asegura el hilo y agrega un mensaje suyo.
+  async enviarComoCliente(hiloId, cuerpo, meta) {
+    const texto = String(cuerpo || "").trim();
+    if (!hiloId || !texto) return;
+    const ahora = new Date().toISOString();
+    await supabase.from("chat_hilos").upsert({
+      id: hiloId,
+      pedido_id: meta?.pedidoId || null,
+      grupo_id: meta?.grupoId || null,
+      orden: meta?.orden || null,
+      cliente_nombre: meta?.clienteNombre || null,
+      entregado_at: meta?.entregadoAt || null,
+      ultimo_mensaje: texto.slice(0, 200),
+      ultimo_mensaje_at: ahora,
+      ultimo_autor_tipo: "cliente",
+    }, { onConflict: "id" });
+    const { error } = await supabase.from("chat_mensajes").insert({
+      hilo_id: hiloId, autor_tipo: "cliente", autor_nombre: meta?.clienteNombre || "Cliente", cuerpo: texto,
+    });
+    if (error) throw error;
+  },
+
+  // Staff (logueado): responde y marca el hilo como leído.
+  async enviarComoStaff(hiloId, cuerpo, autorNombre) {
+    const texto = String(cuerpo || "").trim();
+    if (!hiloId || !texto) return;
+    const ahora = new Date().toISOString();
+    const { error } = await supabase.from("chat_mensajes").insert({
+      hilo_id: hiloId, autor_tipo: "staff", autor_nombre: autorNombre || "Decoglass", cuerpo: texto,
+    });
+    if (error) throw error;
+    await supabase.from("chat_hilos").update({
+      ultimo_mensaje: texto.slice(0, 200), ultimo_mensaje_at: ahora,
+      ultimo_autor_tipo: "staff", staff_leido_at: ahora,
+    }).eq("id", hiloId);
+  },
+
+  async marcarLeidoStaff(hiloId) {
+    if (!hiloId) return;
+    await supabase.from("chat_hilos").update({ staff_leido_at: new Date().toISOString() }).eq("id", hiloId);
+  },
+
+  // Sincroniza datos del pedido en el hilo (nombre, entrega, cierre).
+  async sincronizarHilo(hiloId, patch) {
+    if (!hiloId || !patch) return;
+    await supabase.from("chat_hilos").update(patch).eq("id", hiloId);
+  },
+
+  subscribeRealtime(onChange) {
+    const channel = supabase
+      .channel("chat-live-" + Math.random().toString(36).slice(2, 8))
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_mensajes" }, onChange)
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_hilos" }, onChange)
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch (e) {} };
+  },
+};
+
 export const storage = {
   async get(key) {
     const { data, error } = await supabase
