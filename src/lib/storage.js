@@ -343,6 +343,15 @@ export const chatStore = {
       hilo_id: hiloId, autor_tipo: "cliente", autor_nombre: meta?.clienteNombre || "Cliente", cuerpo: texto,
     });
     if (error) throw error;
+    // Avisar al equipo por push (mejor esfuerzo; si falla, el mensaje ya quedó).
+    try {
+      fetch("/api/enviar-push-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hiloId }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch (e) { /* noop */ }
   },
 
   // Staff (logueado): responde y marca el hilo como leído.

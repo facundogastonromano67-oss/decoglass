@@ -921,6 +921,10 @@ function App() {
       setPanelNotifOpen(true);
       window.history.replaceState({}, "", window.location.pathname);
     }
+    if (params.get("consultas") === "1") {
+      setVistaConsultas(true); setActiveSectorId(null); setVistaPanel(false); setVistaPendientes(false);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
   useEffect(() => {
     if ("serviceWorker" in navigator) {
