@@ -3733,20 +3733,31 @@ function pedidoProcesoTaller(pedido) {
 }
 
 function descripcionPedidoFabrica(p) {
+  const listaId = pedidoListaFabrica(p);
+  const listaLabel = (TALLER_LISTAS.find((l) => l.id === listaId) || {}).label || "En fábrica";
   const proc = pedidoProcesoTaller(p);          // esmerilados | biselados | simples
-  const lista = pedidoListaFabrica(p);
-  if (proc === "esmerilados") {
-    if (lista === "en_grabado") return "esmerilado — en grabado (afuera)";
-    if (lista === "mandar_grabar") return "esmerilado — cortado, falta mandarlo a grabar";
-    if (lista === "armar") return "esmerilado — volvió del grabado, para armar";
-    return "esmerilado — para cortar y mandar a grabar";
+
+  // Solo la lista "Espejos para armar" mezcla varios momentos: le agregamos
+  // el detalle según lo que ya se hizo (corte / regreso de grabado o biseladora).
+  if (listaId === "armar") {
+    const cortado = Boolean(p.produccionCortadoFecha) || pasosProduccionCompletados(p) >= 1;
+    if (proc === "esmerilados") {
+      if (p.grabadoRegresoFecha) return `${listaLabel} — esmerilado que volvió del grabado, para armar y entregar`;
+      if (cortado) return `${listaLabel} — esmerilado cortado, falta mandarlo a grabar`;
+      return `${listaLabel} — esmerilado para cortar y después mandar a grabar`;
+    }
+    if (proc === "biselados") {
+      return p.biseladoRegresoFecha
+        ? `${listaLabel} — biselado que volvió de biseladora, para armar`
+        : `${listaLabel} — biselado para armar`;
+    }
+    return cortado
+      ? `${listaLabel} — simple cortado, para armar y entregar`
+      : `${listaLabel} — simple para cortar, armar y entregar`;
   }
-  if (proc === "biselados") {
-    if (lista === "bisel_sin_pedir") return "biselado — falta encargar el bisel";
-    if (lista === "bisel_pedidos") return "biselado — pedido, esperando que vuelva";
-    return "biselado — para armar";
-  }
-  return "simple — cortar, armar y entregar";
+
+  // El resto de las listas ya dicen todo con su título.
+  return listaLabel;
 }
 function motivoDemoraFabrica(p) {
   if (trabajoAfueraVencido(p)) {
