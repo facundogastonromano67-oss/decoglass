@@ -3734,30 +3734,20 @@ function pedidoProcesoTaller(pedido) {
 
 function descripcionPedidoFabrica(p) {
   const listaId = pedidoListaFabrica(p);
-  const listaLabel = (TALLER_LISTAS.find((l) => l.id === listaId) || {}).label || "En fábrica";
-  const proc = pedidoProcesoTaller(p);          // esmerilados | biselados | simples
 
-  // Solo la lista "Espejos para armar" mezcla varios momentos: le agregamos
-  // el detalle según lo que ya se hizo (corte / regreso de grabado o biseladora).
-  if (listaId === "armar") {
-    const cortado = Boolean(p.produccionCortadoFecha) || pasosProduccionCompletados(p) >= 1;
-    if (proc === "esmerilados") {
-      if (p.grabadoRegresoFecha) return `${listaLabel} — esmerilado que volvió del grabado, para armar y entregar`;
-      if (cortado) return `${listaLabel} — esmerilado cortado, falta mandarlo a grabar`;
-      return `${listaLabel} — esmerilado para cortar y después mandar a grabar`;
-    }
-    if (proc === "biselados") {
-      return p.biseladoRegresoFecha
-        ? `${listaLabel} — biselado que volvió de biseladora, para armar`
-        : `${listaLabel} — biselado para armar`;
-    }
-    return cortado
-      ? `${listaLabel} — simple cortado, para armar y entregar`
-      : `${listaLabel} — simple para cortar, armar y entregar`;
-  }
+  // Estas listas ya se explican solas con su nombre.
+  if (listaId === "mandar_grabar") return "ya cortado, para mandar a grabar · pestaña «Para mandar a grabar»";
+  if (listaId === "en_grabado") return "en grabado, afuera del taller · pestaña «En grabado»";
+  if (listaId === "bisel_sin_pedir") return "falta encargar el biselado · pestaña «Biselados sin pedir»";
+  if (listaId === "bisel_pedidos") return "biselado pedido, esperando que vuelva · pestaña «Biselados pedidos»";
 
-  // El resto de las listas ya dicen todo con su título.
-  return listaLabel;
+  // La pestaña "Espejos para armar" tiene 4 grupos adentro (algunos son para
+  // cortar). Arrancamos por lo que hay que hacer, no por el nombre de la pestaña.
+  const g = grupoListaArmar(p);
+  if (g === "esmerilados_cortar") return "para CORTAR y después mandar a grabar (esmerilado) · pestaña «Espejos para armar»";
+  if (g === "esmerilados_armar") return "volvió del grabado, para armar y entregar (esmerilado) · pestaña «Espejos para armar»";
+  if (g === "biselados_armar") return "para armar y entregar (biselado) · pestaña «Espejos para armar»";
+  return "para CORTAR, armar y entregar (simple) · pestaña «Espejos para armar»";
 }
 function motivoDemoraFabrica(p) {
   if (trabajoAfueraVencido(p)) {
@@ -3765,7 +3755,7 @@ function motivoDemoraFabrica(p) {
     return `pasado de la fecha prometida (${(p && p[campo]) || "?"})`;
   }
   const d = diasEnEtapa(p);
-  return `frenado hace ${d == null ? "varios" : d}d en "${estadoProduccionLabel(p)}"`;
+  return `frenado hace ${d == null ? "varios" : d}d sin avanzar`;
 }
 
 function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
