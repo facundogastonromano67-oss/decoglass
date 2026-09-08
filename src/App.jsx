@@ -6556,6 +6556,7 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
   const [cantidad, setCantidad] = useState("");
   const [minimo, setMinimo] = useState("");
   const [filtroCat, setFiltroCat] = useState("todas");
+  const [editando, setEditando] = useState(null);
 
   function addItem() {
     if (!nombre.trim()) return;
@@ -6626,26 +6627,39 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
           <div className="dg-section-header"><Package size={14} /> {g.categoria}</div>
           <div className="dg-task-list" style={{ marginBottom: 0 }}>
             {g.items.map((s) => {
-              const bajo = Number(s.cantidad) <= Number(s.minimo);
+              const cant = Number(s.cantidad) || 0;
+              const bajo = cant <= Number(s.minimo);
               return (
-                <div className="dg-task" key={s.id}>
-                  <div className="dg-pago-info">
-                    <span>{s.nombre}</span>
-                    {canEdit ? (
-                      <span className="dg-pago-meta dg-stock-minimo-editable">
-                        Mínimo:
-                        <input type="number" className="dg-stock-minimo-input" value={s.minimo} onChange={(e) => update(s.id, { minimo: Number(e.target.value) || 0 })} />
-                        <input className="dg-stock-unidad-input" value={s.unidad} onChange={(e) => update(s.id, { unidad: e.target.value })} placeholder="u" />
-                      </span>
-                    ) : (
-                      <span className="dg-pago-meta">mínimo: {s.minimo} {s.unidad}</span>
-                    )}
+                <div className={`dg-mat-fila ${bajo ? "dg-mat-fila-baja" : ""}`} key={s.id}>
+                  <div className="dg-mat-info">
+                    <span className="dg-mat-nombre">{s.nombre}</span>
+                    <span className="dg-mat-min">
+                      mínimo {s.minimo} {s.unidad}
+                      {bajo && <span className="dg-badge" style={{ "--bc": "var(--dg-danger)" }}>Reponer</span>}
+                    </span>
                   </div>
-                  {bajo && <span className="dg-badge" style={{ "--bc": "var(--dg-danger)" }}>Reponer</span>}
-                  <input type="number" className="dg-stock-cantidad" style={bajo ? { color: "var(--dg-danger)", borderColor: "rgba(var(--dg-danger-rgb),0.4)" } : undefined}
-                    disabled={!canEdit} value={s.cantidad} onChange={(e) => update(s.id, { cantidad: Number(e.target.value) || 0 })} />
-                  {!canEdit && <span className="dg-stock-unidad">{s.unidad}</span>}
-                  {canEdit && puedeBorrar && <button className="dg-icon-btn dg-task-del" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
+                  {canEdit ? (
+                    <div className="dg-mat-stepper">
+                      <button type="button" className="dg-mat-btn" aria-label="Descontar uno" onClick={() => update(s.id, { cantidad: Math.max(0, cant - 1) })}>−</button>
+                      <input type="number" inputMode="numeric" className="dg-mat-cant" value={s.cantidad}
+                        onChange={(e) => update(s.id, { cantidad: e.target.value === "" ? 0 : Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+                        onFocus={(e) => e.target.select()} />
+                      <span className="dg-mat-uni">{s.unidad}</span>
+                      <button type="button" className="dg-mat-btn" aria-label="Sumar uno" onClick={() => update(s.id, { cantidad: cant + 1 })}>+</button>
+                    </div>
+                  ) : (
+                    <div className="dg-mat-stepper"><span className="dg-mat-cant-ro">{cant}</span> <span className="dg-mat-uni">{s.unidad}</span></div>
+                  )}
+                  {canEdit && (
+                    <button type="button" className={`dg-icon-btn ${editando === s.id ? "dg-icon-btn-on" : ""}`} aria-label="Editar mínimo y unidad" onClick={() => setEditando(editando === s.id ? null : s.id)}><Settings2 size={14} /></button>
+                  )}
+                  {canEdit && puedeBorrar && <button className="dg-icon-btn dg-task-del" aria-label="Borrar material" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
+                  {canEdit && editando === s.id && (
+                    <div className="dg-mat-editar">
+                      <label>Mínimo de alerta<input type="number" value={s.minimo} onChange={(e) => update(s.id, { minimo: Number(e.target.value) || 0 })} /></label>
+                      <label>Unidad<input value={s.unidad} onChange={(e) => update(s.id, { unidad: e.target.value })} placeholder="u" /></label>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -10403,6 +10417,26 @@ function Style() {
       .dg-lead-estode-select { }
       .dg-lead-estado-select { background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:5px 8px; font-size:11px; }
       .dg-stock-unidad { font-size:11px; color:var(--dg-text-dim); min-width:26px; }
+      .dg-mat-fila { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:11px 0; border-bottom:1px solid rgba(var(--dg-line-rgb),0.06); }
+      .dg-mat-fila:last-child { border-bottom:none; }
+      .dg-mat-info { display:flex; flex-direction:column; gap:2px; flex:1; min-width:130px; }
+      .dg-mat-nombre { font-size:13px; color:var(--dg-text); font-weight:500; }
+      .dg-mat-min { font-size:11px; color:var(--dg-text-dim); display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+      .dg-mat-stepper { display:flex; align-items:center; gap:6px; }
+      .dg-mat-btn { width:36px; height:36px; flex:none; display:flex; align-items:center; justify-content:center; font-size:19px; font-weight:700; line-height:1;
+        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.16); border-radius:9px; color:var(--dg-text); cursor:pointer; -webkit-tap-highlight-color:transparent; }
+      .dg-mat-btn:active { background:var(--dg-accent); border-color:var(--dg-accent); color:#fff; }
+      .dg-mat-cant { width:56px; height:36px; text-align:center; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.16);
+        border-radius:9px; color:var(--dg-accent); font-family:'JetBrains Mono', monospace; font-weight:700; font-size:15px; -webkit-appearance:none; appearance:none; margin:0; }
+      .dg-mat-cant::-webkit-outer-spin-button, .dg-mat-cant::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+      .dg-mat-cant-ro { font-family:'JetBrains Mono', monospace; font-weight:700; font-size:15px; color:var(--dg-accent); min-width:30px; text-align:center; }
+      .dg-mat-uni { font-size:11px; color:var(--dg-text-dim); }
+      .dg-mat-fila-baja .dg-mat-cant, .dg-mat-fila-baja .dg-mat-cant-ro { color:var(--dg-danger); }
+      .dg-mat-fila-baja .dg-mat-cant { border-color:rgba(var(--dg-danger-rgb),0.45); }
+      .dg-mat-editar { flex-basis:100%; display:flex; gap:12px; flex-wrap:wrap; padding:8px 0 2px; }
+      .dg-mat-editar label { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--dg-text-dim); }
+      .dg-mat-editar input { width:100px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.16); border-radius:7px; padding:6px 8px; color:var(--dg-text); font-size:13px; }
+      .dg-icon-btn-on { color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 14%, transparent); }
       .dg-stock-cantidad { width:64px; text-align:center; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:6px 4px; color:var(--dg-accent); font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; }
       .dg-stock-minimo-editable { display:flex; align-items:center; gap:5px; }
       .dg-stock-minimo-input { width:44px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:6px; padding:3px 4px; color:var(--dg-text); font-size:11.5px; text-align:center; }
