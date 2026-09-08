@@ -414,6 +414,22 @@ export const chatStore = {
       .subscribe();
     return () => { try { supabase.removeChannel(channel); } catch (e) {} };
   },
+
+  // ---- Presencia: ¿hay alguien del equipo con la app abierta? ----
+  async latidoStaff(id, nombre) {
+    if (!id) return;
+    try {
+      await supabase.from("chat_presencia").upsert({ id, nombre: nombre || "Staff", last_seen: new Date().toISOString() });
+    } catch (e) { /* noop */ }
+  },
+  async hayStaffOnline() {
+    try {
+      const { data, error } = await supabase.rpc("hay_staff_online");
+      if (error) return null;
+      const n = typeof data === "number" ? data : Number(data);
+      return Number.isFinite(n) ? n : null;
+    } catch (e) { return null; }
+  },
 };
 
 export const storage = {

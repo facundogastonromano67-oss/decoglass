@@ -1160,6 +1160,17 @@ function App() {
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session, chatEquipoOpen]);
 
+  // --- Presencia: avisar que hay alguien del equipo con la app abierta ---
+  useEffect(() => {
+    if (loading || !session) return undefined;
+    const yo = idDispositivo();
+    const latir = () => { if (document.visibilityState === "visible") chatStore.latidoStaff(yo, session?.nombre); };
+    latir();
+    const iv = window.setInterval(latir, 45000);
+    document.addEventListener("visibilitychange", latir);
+    return () => { window.clearInterval(iv); document.removeEventListener("visibilitychange", latir); };
+  }, [loading, session]);
+
   async function load() {
     let loadedSectors = DEFAULT_SECTORS;
     try {
@@ -7547,27 +7558,6 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           </div>
         );
       })()}
-      {filtroEstado !== "historial" && (() => {
-        const conObj = activos.filter((p) => fechaObjetivoFabrica(p));
-        const atrasados = conObj.filter((p) => diasHastaObjetivoFabrica(p) < 0);
-        const estaSemana = conObj.filter((p) => { const n = diasHastaObjetivoFabrica(p); return n >= 0 && n <= 6; });
-        const sinFecha = activos.filter((p) => !fechaObjetivoFabrica(p));
-        if (atrasados.length === 0 && estaSemana.length === 0) return null;
-        const partes = [];
-        if (atrasados.length) partes.push(`${atrasados.length} ya pasado${atrasados.length === 1 ? "" : "s"} del objetivo`);
-        if (estaSemana.length) partes.push(`${estaSemana.length} para terminar en 7 días`);
-        if (sinFecha.length) partes.push(`${sinFecha.length} sin fecha de entrega cargada`);
-        return (
-          <div className="dg-fab-alerta-demora dg-fab-alerta-objetivo">
-            <CalendarDays size={18} />
-            <div>
-              <strong>Objetivo de fábrica — {COLCHON_FABRICA_DIAS} días antes de la entrega al cliente</strong>
-              <span>{partes.join(" · ")}. En cada tarjeta ves la fecha objetivo; esa es la que hay que cumplir.</span>
-              <span className="dg-fab-alerta-ordenes">{[...atrasados, ...estaSemana].slice(0, 10).map((p) => `#${p.orden}`).join("  ·  ")}</span>
-            </div>
-          </div>
-        );
-      })()}
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {(lista === "armar" && filtroEstado !== "afuera" && filtroEstado !== "historial") ? (() => {
@@ -9638,6 +9628,18 @@ function Style() {
       .dg-chat-texto { white-space:pre-wrap; word-break:break-word; }
       .dg-chat-hora { font-size:9.5px; opacity:0.6; align-self:flex-end; }
       .dg-chat-cerrado { font-size:11.5px; color:var(--dg-text-faint); padding:11px 12px; margin:0; border-top:1px solid rgba(var(--dg-line-rgb),0.12); }
+      .dg-chat-online { font-size:11px; margin:0; padding:7px 12px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); color:var(--dg-text-faint); display:flex; align-items:center; gap:6px; }
+      .dg-chat-online::before { content:''; width:7px; height:7px; border-radius:50%; background:var(--dg-text-faint); flex:none; }
+      .dg-chat-online-si { color:var(--dg-success); }
+      .dg-chat-online-si::before { background:var(--dg-success); box-shadow:0 0 0 3px color-mix(in srgb, var(--dg-success) 22%, transparent); }
+      .dg-chat-verif { display:flex; flex-direction:column; gap:7px; padding:11px 12px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); }
+      .dg-chat-verif label { font-size:12px; color:var(--dg-text-dim); line-height:1.4; }
+      .dg-chat-verif-row { display:flex; gap:8px; }
+      .dg-chat-verif-row input { flex:1; letter-spacing:6px; text-align:center; font-size:18px; font-family:'JetBrains Mono', monospace; font-weight:700;
+        border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:10px; padding:9px; background:var(--dg-surface-2); color:var(--dg-text); }
+      .dg-chat-verif-row button { flex:none; padding:0 16px; border:none; border-radius:10px; background:var(--dg-accent); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+      .dg-chat-verif-err { font-size:11px; color:var(--dg-danger); }
+      .dg-seguimiento-whatsapp-2 { justify-content:center; width:100%; margin-top:12px; text-decoration:none; font-size:12.5px; }
       .dg-chat-input { display:flex; gap:7px; padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); align-items:flex-end; }
       .dg-chat-input textarea { flex:1; min-height:38px; max-height:120px; resize:none; border:1px solid rgba(var(--dg-line-rgb),0.18); border-radius:10px; padding:9px 11px;
         background:var(--dg-surface-2); color:var(--dg-text); font-family:'Inter',sans-serif; font-size:14px; line-height:1.35; }
@@ -10141,9 +10143,6 @@ function Style() {
       .dg-aviso-blq-demora h4 { color:var(--dg-warning); }
       .dg-aviso-blq-demora li { border-left-color:var(--dg-warning); }
       .dg-avisos-flot-ok { width:100%; justify-content:center; margin-top:15px; }
-      .dg-fab-alerta-objetivo { border-color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 12%, var(--dg-surface)); }
-      .dg-fab-alerta-objetivo > svg { color:var(--dg-accent); }
-      .dg-fab-alerta-objetivo .dg-fab-alerta-ordenes { color:var(--dg-accent) !important; }
       .dg-fab-objetivo { display:inline-flex; align-items:center; gap:4px; margin-left:6px; padding:2px 8px; border-radius:6px; font-family:'JetBrains Mono', monospace; font-size:11.5px; font-weight:700; vertical-align:middle; border:1px solid transparent; }
       .dg-fab-objetivo-ok { color:var(--dg-text); border-color:rgba(var(--dg-line-rgb),0.25); }
       .dg-fab-objetivo-pronto { color:var(--dg-warning); border-color:var(--dg-warning); }
@@ -11693,11 +11692,23 @@ function CajaEnviarChat({ onEnviar, enviando, placeholder }) {
 }
 
 // --- Cliente: panel de chat dentro de la página pública de seguimiento ---
+function soloDigitos(s) { return String(s || "").replace(/\D/g, ""); }
+
 function ChatClientePublico({ hiloId, meta, cerrado }) {
   const [mensajes, setMensajes] = useState([]);
   const [abierto, setAbierto] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [staffOnline, setStaffOnline] = useState(null);
   const scrollRef = useRef(null);
+
+  const telDigits = soloDigitos(meta?.celular);
+  const requiereVerif = telDigits.length >= 4;
+  const [verificado, setVerificado] = useState(() => {
+    if (!requiereVerif) return true;
+    try { return localStorage.getItem("dg_chat_ok_" + hiloId) === "1"; } catch (e) { return false; }
+  });
+  const [pin, setPin] = useState("");
+  const [errPin, setErrPin] = useState("");
 
   useEffect(() => {
     if (!hiloId) return;
@@ -11715,6 +11726,27 @@ function ChatClientePublico({ hiloId, meta, cerrado }) {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [mensajes, abierto]);
+
+  useEffect(() => {
+    if (!abierto) return undefined;
+    let vivo = true;
+    const chequear = () => chatStore.hayStaffOnline().then((n) => { if (vivo) setStaffOnline(n); }).catch(() => {});
+    chequear();
+    const iv = window.setInterval(chequear, 45000);
+    return () => { vivo = false; window.clearInterval(iv); };
+  }, [abierto]);
+
+  function verificar(e) {
+    e.preventDefault();
+    const d = soloDigitos(pin);
+    if (d.length < 4) { setErrPin("Poné los últimos 4 números de tu celular."); return; }
+    if (telDigits.slice(-4) === d.slice(-4)) {
+      setVerificado(true); setErrPin("");
+      try { localStorage.setItem("dg_chat_ok_" + hiloId, "1"); } catch (e2) {}
+    } else {
+      setErrPin("No coincide con el celular del pedido. Probá de nuevo o escribinos por WhatsApp.");
+    }
+  }
 
   async function enviar(t) {
     setEnviando(true);
@@ -11743,9 +11775,27 @@ function ChatClientePublico({ hiloId, meta, cerrado }) {
       <div className="dg-chat-scroll" ref={scrollRef}>
         <ListaBurbujasChat mensajes={mensajes} ladoDerecha="cliente" />
       </div>
-      {cerrado
-        ? <p className="dg-chat-cerrado">Esta conversación se cerró. Si necesitás algo más, escribinos por WhatsApp.</p>
-        : <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder="Escribí tu consulta..." />}
+      {!cerrado && staffOnline != null && (verificado || mensajes.length > 0) && (
+        <p className={`dg-chat-online ${staffOnline > 0 ? "dg-chat-online-si" : ""}`}>
+          {staffOnline > 0
+            ? "Hay alguien del equipo conectado — te respondemos ahora."
+            : "Ahora no hay nadie conectado. Dejanos tu mensaje igual y te respondemos apenas podamos."}
+        </p>
+      )}
+      {cerrado ? (
+        <p className="dg-chat-cerrado">Esta conversación se cerró. Si necesitás algo más, escribinos por WhatsApp.</p>
+      ) : !verificado ? (
+        <form className="dg-chat-verif" onSubmit={verificar}>
+          <label>Para escribirnos, confirmá los <strong>últimos 4 números</strong> del celular que dejaste al hacer el pedido:</label>
+          <div className="dg-chat-verif-row">
+            <input inputMode="numeric" maxLength={4} value={pin} onChange={(e) => { setPin(e.target.value.replace(/\D/g, "")); setErrPin(""); }} placeholder="0000" />
+            <button type="submit">Confirmar</button>
+          </div>
+          {errPin && <span className="dg-chat-verif-err">{errPin}</span>}
+        </form>
+      ) : (
+        <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder="Escribí tu consulta..." />
+      )}
     </div>
   );
 }
@@ -12064,12 +12114,12 @@ function SeguimientoPublico({ pedidoId }) {
 
           <ChatClientePublico
             hiloId={pedido.id}
-            meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", entregadoAt: pedido.entregadoFecha || null }}
+            meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", celular: pedido.celular || "", entregadoAt: pedido.entregadoFecha || null }}
             cerrado={chatClienteCerrado(pedido)}
           />
 
-          <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
-            <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
+          <a className="dg-btn-ghost dg-seguimiento-whatsapp-2" href={linkConsulta} target="_blank" rel="noopener noreferrer">
+            <MessageCircle size={15} /> ¿Preferís hablar por WhatsApp? Escribinos por acá
           </a>
         </div>
         <p className="dg-seguimiento-footer">Esta página se actualiza sola. Ante cualquier duda, escribinos.</p>
@@ -12215,13 +12265,13 @@ function SeguimientoGrupoPublico({ grupoId }) {
         {!todosCancelados && (
           <ChatClientePublico
             hiloId={`grupo:${grupoId}`}
-            meta={{ pedidoId: primero.id, grupoId, orden: `#${primero.orden}`, clienteNombre: primero.cliente || "", entregadoAt: primero.entregadoFecha || null }}
+            meta={{ pedidoId: primero.id, grupoId, orden: `#${primero.orden}`, clienteNombre: primero.cliente || "", celular: primero.celular || "", entregadoAt: primero.entregadoFecha || null }}
             cerrado={chatClienteCerrado(primero)}
           />
         )}
 
-        <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
-          <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
+        <a className="dg-btn-ghost dg-seguimiento-whatsapp-2" href={linkConsulta} target="_blank" rel="noopener noreferrer">
+          <MessageCircle size={15} /> ¿Preferís hablar por WhatsApp? Escribinos por acá
         </a>
         <p className="dg-seguimiento-footer">Esta página se actualiza sola. Ante cualquier duda, escribinos.</p>
       </div>
