@@ -825,7 +825,7 @@ function breakdownBy(entries, field, labels) {
 
 const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
-  "vendedores", "recursos-venta", "facturas-manuales",
+  "vendedores", "recursos-venta", "facturas-manuales", "envios-logistica",
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
   "marketing-biblioteca", "marketing-contenido",
@@ -846,6 +846,7 @@ function App() {
   const [pedidos, setPedidos] = useState(null);
   const [recursos, setRecursos] = useState(null);
   const [facturas, setFacturas] = useState(null);
+  const [enviosLogistica, setEnviosLogistica] = useState(null);
   const [reclamos, setReclamos] = useState(null);
   const [stockEspejos, setStockEspejos] = useState(null);
   const [stockMateriales, setStockMateriales] = useState(null);
@@ -977,6 +978,7 @@ function App() {
       vendedores: setVendedores,
       "recursos-venta": setRecursos,
       "facturas-manuales": setFacturas,
+      "envios-logistica": setEnviosLogistica,
       "empleados-sueldo": setEmpleadosSueldo,
       "liquidaciones-sueldo": setLiquidaciones,
       auditoria: setAuditoria,
@@ -1272,6 +1274,10 @@ function App() {
       setFacturas(f ? JSON.parse(f.value) : []);
     } catch (e) { setFacturas([]); }
     try {
+      const el = await storage.get("envios-logistica", true);
+      setEnviosLogistica(el ? JSON.parse(el.value) : []);
+    } catch (e) { setEnviosLogistica([]); }
+    try {
       let reclamosGuardados = await reclamosStore.getAll();
       if (reclamosGuardados.length === 0) {
         try {
@@ -1440,6 +1446,7 @@ function App() {
   }
   async function persistRecursos(next) { guardar("recursos-venta", next, () => setRecursos(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
+  async function persistEnviosLogistica(next) { guardar("envios-logistica", next, () => setEnviosLogistica(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
   async function persistProveedores(next) { guardar("proveedores", next, () => setProveedores(next)); }
@@ -1491,7 +1498,7 @@ function App() {
   const canSeePedidos = !!session;
   const canEditPedidoFull = isAdmin || isVentas;
 
-  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !reclamos || !stockEspejos || !stockMateriales || !empleadosSueldo || !liquidaciones) {
+  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !enviosLogistica || !reclamos || !stockEspejos || !stockMateriales || !empleadosSueldo || !liquidaciones) {
     return (<div style={wrap}><Style /><div className="dg-app dg-loading" data-theme={theme}><Loader2 className="dg-spin" size={28} /><span>Cargando DECOGLASS...</span></div></div>);
   }
 
@@ -1675,6 +1682,7 @@ function App() {
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
             facturas={facturas} onChangeFacturas={persistFacturas}
+            enviosLogistica={enviosLogistica} onChangeEnviosLogistica={persistEnviosLogistica}
             reclamos={reclamos} onChangeReclamos={persistReclamos}
             stockEspejos={stockEspejos} onChangeStockEspejos={persistStockEspejos}
             stockMateriales={stockMateriales} onChangeStockMateriales={persistStockMateriales}
@@ -4783,8 +4791,10 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
       <PasoPedido
         key="logistica"
         numero={4}
-        titulo={envioConfirmado ? "Disponible para el fletero" : "Esperando confirmación de envío"}
-        detalle={envioConfirmado ? "El pedido ya aparece en la lista de Logística para organizar la entrega." : listo ? "PostVenta debe confirmar el envío para habilitarlo en Logística." : "Se habilita después de producción y la coordinación con el cliente."}
+        titulo={pedido.metodo === "Interior" ? (envioConfirmado ? "Listo para despachar por Vía Cargo" : "Esperando confirmación de envío") : (envioConfirmado ? "Disponible para el fletero" : "Esperando confirmación de envío")}
+        detalle={pedido.metodo === "Interior"
+          ? (envioConfirmado ? "Se despacha por Vía Cargo desde PostVenta. No entra en la lista del flete propio." : listo ? "PostVenta debe confirmar el envío." : "Se habilita después de producción y la coordinación con el cliente.")
+          : (envioConfirmado ? "El pedido ya aparece en la lista de Logística para organizar la entrega." : listo ? "PostVenta debe confirmar el envío para habilitarlo en Logística." : "Se habilita después de producción y la coordinación con el cliente.")}
         estado={envioConfirmado ? "done" : listo && clienteConfirmado ? "active" : "pending"}
       />,
       <PasoPedido
@@ -6550,9 +6560,24 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
   );
 }
 
-function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
+function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra }) {
+  const listaExtra = Array.isArray(extra) ? extra : [];
+  const [form, setForm] = useState(null);
+  function nuevoForm(tipo) { setForm({ tipo, cliente: "", telefono: "", direccion: "", barrio: "", fecha: new Date().toISOString().slice(0, 10), motivo: "", notas: "" }); }
+  function guardarExtra() {
+    if (!form || (!form.cliente.trim() && !form.direccion.trim() && !form.motivo.trim())) return;
+    onChangeExtra([{ id: uid(), ...form, cliente: form.cliente.trim(), hecho: false, creado: new Date().toISOString() }, ...listaExtra]);
+    setForm(null);
+  }
+  function toggleHechoExtra(id) {
+    onChangeExtra(listaExtra.map((e) => (e.id === id ? { ...e, hecho: !e.hecho, hechoFecha: !e.hecho ? new Date().toISOString().slice(0, 10) : "" } : e)));
+  }
+  function borrarExtra(id) { onChangeExtra(listaExtra.filter((e) => e.id !== id)); }
+  const extraPend = listaExtra.filter((e) => !e.hecho);
+  const extraHechos = listaExtra.filter((e) => e.hecho);
+
   const confirmados = pedidos
-    .filter((p) => esPedidoConEnvio(p) && p.clienteAvisado && p.envioConfirmado && p.estado === "Espejo listo")
+    .filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.clienteAvisado && p.envioConfirmado && p.estado === "Espejo listo")
     .sort((a, b) => (a.listo || "9999").localeCompare(b.listo || "9999"));
 
   const grupoIdCounts = confirmados.reduce((acc, p) => {
@@ -6596,9 +6621,71 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
 
   return (
     <div className="dg-page">
-      <p className="dg-hint" style={{ marginBottom: 14 }}>Estos son los envíos que PostVenta ya confirmó con el cliente, ordenados por fecha estimada.</p>
+      <p className="dg-hint" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</p>
+
+      {canEdit && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><Truck size={14} /> Agregar envío / colecta particular</div>
+          {!form ? (
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => nuevoForm("envio")}><Plus size={14} /> Envío particular</button>
+              <button className="dg-btn-ghost" onClick={() => nuevoForm("colecta")}><Plus size={14} /> Colecta / retiro (reclamo, devolución, falla)</button>
+            </div>
+          ) : (
+            <EnterFlow onSubmit={guardarExtra} autoFocus={false}>
+              <div className="dg-field-grid">
+                <Field label="Tipo">
+                  <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+                    <option value="envio">Envío particular</option>
+                    <option value="colecta">Colecta / retiro</option>
+                  </select>
+                </Field>
+                <Field label="Cliente"><input value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} /></Field>
+                <Field label="Teléfono"><input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} placeholder="Ej: 1122334455" /></Field>
+                <Field label="Fecha"><input type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} /></Field>
+                <Field label="Barrio"><input value={form.barrio} onChange={(e) => setForm({ ...form, barrio: e.target.value })} /></Field>
+                <Field label="Dirección (calle y número)"><input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} /></Field>
+                <Field label={form.tipo === "colecta" ? "Motivo (reclamo / devolución / falla)" : "Motivo / referencia"}><input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} /></Field>
+                <Field label="Notas"><input value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} /></Field>
+              </div>
+              <div className="dg-form-actions" style={{ marginTop: 10 }}>
+                <button type="button" className="dg-btn-ghost" onClick={() => setForm(null)}>Cancelar</button>
+                <button className="dg-btn-primary" onClick={guardarExtra}><Check size={14} /> Agregar a la lista</button>
+              </div>
+            </EnterFlow>
+          )}
+        </div>
+      )}
+
+      {extraPend.length > 0 && (
+        <div className="dg-task-list dg-logistics-list" style={{ marginTop: 14 }}>
+          {extraPend.map((e) => (
+            <article className="dg-section-card dg-logistics-card dg-logistics-extra" key={e.id}>
+              <div className="dg-logistics-head">
+                <span><Truck size={15} /> {e.tipo === "colecta" ? "Colecta / retiro" : "Envío particular"}</span>
+                <time>{e.fecha || ""}</time>
+              </div>
+              <div className="dg-logistics-data">
+                <div className="dg-logistics-datum dg-logistics-name"><span><User size={13} /> Nombre</span><strong>{e.cliente || "—"}</strong></div>
+                {e.telefono && <div className="dg-logistics-datum dg-logistics-phone"><span><Phone size={13} /> Teléfono</span><strong>{e.telefono}</strong></div>}
+                <div className="dg-logistics-datum dg-logistics-address"><span><MapPin size={13} /> Dirección</span><strong>{e.direccion || "—"}</strong>{e.barrio && <small>Barrio: {e.barrio}</small>}</div>
+                {e.motivo && <div className="dg-logistics-datum"><span>Motivo</span><strong>{e.motivo}</strong></div>}
+              </div>
+              {e.notas && <p className="dg-pago-meta" style={{ marginTop: 6 }}>{e.notas}</p>}
+              {canEdit && (
+                <div className="dg-form-actions" style={{ marginTop: 8 }}>
+                  {waLink(e.telefono) && <a className="dg-btn-ghost dg-mini-btn" href={waLink(e.telefono)} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> WhatsApp</a>}
+                  <button className="dg-btn-primary dg-mini-btn" onClick={() => toggleHechoExtra(e.id)}><CheckCircle2 size={13} /> Marcar {e.tipo === "colecta" ? "retirado" : "entregado"}</button>
+                  <button className="dg-icon-btn dg-task-del" onClick={() => borrarExtra(e.id)}><Trash2 size={14} /></button>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+
       <div className="dg-task-list dg-logistics-list">
-        {entregas.length === 0 && <div className="dg-empty">No hay envíos confirmados pendientes de entregar.</div>}
+        {entregas.length === 0 && extraPend.length === 0 && <div className="dg-empty">No hay envíos ni colectas pendientes.</div>}
         {entregas.map((grupo) => {
           const items = grupo.pedidos;
           const principal = items[0];
@@ -6696,6 +6783,20 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit }) {
           );
         })}
       </div>
+
+      {extraHechos.length > 0 && (
+        <details className="dg-reclamo-editar" style={{ marginTop: 14 }}>
+          <summary>Envíos / colectas ya hechos ({extraHechos.length})</summary>
+          <div style={{ marginTop: 6 }}>
+            {extraHechos.map((e) => (
+              <div className="dg-pago-meta" key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0" }}>
+                <span style={{ flex: 1 }}>✓ {e.tipo === "colecta" ? "Colecta" : "Envío"} — {e.cliente || "—"}{e.direccion ? ` · ${e.direccion}` : ""}{e.hechoFecha ? ` · ${e.hechoFecha}` : ""}</span>
+                {canEdit && <button className="dg-icon-btn dg-task-del" onClick={() => borrarExtra(e.id)}><Trash2 size={13} /></button>}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -9409,7 +9510,7 @@ function SectorPage({
   pedidos, onChangePedidos, vendedores, onChangeVendedores, incomes, onChangeIncomes,
   purchases, onChangePurchases, quoteConfig, onChangeQuoteConfig, quotes, onChangeQuotes,
   leads, onChangeLeads, onCreateIncome, sectors, recursos, onChangeRecursos,
-  facturas, onChangeFacturas, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
+  facturas, onChangeFacturas, enviosLogistica, onChangeEnviosLogistica, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl,
@@ -9568,7 +9669,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "logistica" && (
-        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} />
+        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} />
           : <LockedPage label="Envíos confirmados" onLogin={onRequestLogin} />
       )}
 
@@ -10182,6 +10283,8 @@ function Style() {
       .dg-reclamo-editar { margin:2px 0 12px; border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:9px; padding:8px 11px; }
       .dg-reclamo-editar summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--dg-text-dim); display:flex; align-items:center; gap:6px; }
       .dg-reclamo-editar[open] summary { margin-bottom:4px; color:var(--dg-text); }
+      .dg-logistics-extra { border-color:rgba(var(--dg-accent-rgb),0.3); }
+      .dg-logistics-extra .dg-logistics-head span { color:var(--dg-accent); }
       .dg-fab-alerta-demora { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-warning); border-radius:12px; background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface)); }
       .dg-fab-alerta-demora > svg { flex:none; margin-top:1px; color:var(--dg-warning); }
       .dg-fab-alerta-demora strong { display:block; font-family:'Jost', sans-serif; font-size:14px; color:var(--dg-text); }
