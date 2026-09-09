@@ -16,6 +16,15 @@ import {
 import sectorScenes from "./assets/sector-scenes.webp";
 
 const ICONS = { Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones };
+
+const LOGO_MARK_D = "M33 120 L33 169 L4 169 L4 96 C4 82 6 79 14 78 C28 74 42 66 53 64 C64 66 77 71 90 75 C97 76 104 64 104 46 L104 0 L0 0 L0 46 C0 62 4 78 14 80 C28 84 42 91 53 92 C64 91 77 84 90 77 C97 78 104 90 104 96 L104 169";
+function LogoMark({ className, strokeWidth = 5 }) {
+  return (
+    <svg className={className} viewBox="-6 -6 116 181" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={LOGO_MARK_D} />
+    </svg>
+  );
+}
 const METODO_ICONS = { "Retira": Building2, "Envío": Truck, "Envío flex": Truck, "Interior": Truck, "Colocación": Wrench, "Otro": Package };
 const QUICK_ICONS = { MessageCircle, Check, ShoppingCart };
 const SUBPAGE_ICONS = {
@@ -576,7 +585,7 @@ function roundTo1000(n) { return Math.round(n / 1000) * 1000; }
 function fmtMoney(n) { return "$" + Math.round(n).toLocaleString("es-AR"); }
 
 function computeQuote(inputs, cfg) {
-  const { tipoProducto, ancho, alto, touch, desemp, horaTemp, bluetoothSel, panelesAdicionales, envioInterior, tipoCliente, cantidad } = inputs;
+  const { tipoProducto, ancho, alto, touch, desemp, desempTipo, horaTemp, bluetoothSel, panelesAdicionales, envioInterior, tipoCliente, cantidad } = inputs;
   const { materiales: M, embalaje: E, opcionales: O, cargaOperativa: C, reglas: R } = cfg;
 
   const tipoRow = TIPO_PRODUCTO_TABLE[tipoProducto] || TIPO_PRODUCTO_TABLE["Rectangular Simple"];
@@ -700,7 +709,7 @@ function computeQuote(inputs, cfg) {
 
   const modeloComercial = (tipoRow.esmerilado !== "Ninguno" ? "Esmerilado" : "Simple")
     + (touchDoble ? " + Doble touch (frontal + perimetral)" : touch === "Sí" ? " + Touch" : "")
-    + (desemp === "Sí" ? " + Desempañante" : "")
+    + (desemp === "Sí" ? ` + Desempañante ${desempTipo === "Touch" ? "touch" : "220V"}` : "")
     + (horaTemp === "Sí" ? " + Hora/Temperatura" : "")
     + (bluetoothSel !== "Sin Bluetooth" ? ` + ${bluetoothSel}` : "")
     + (desemp === "Sí" && panelesAdicionales > 0 ? ` (${1 + panelesAdicionales} paneles)` : "");
@@ -1523,7 +1532,7 @@ function App() {
       <div className="dg-app" data-theme={theme}>
         <header className="dg-header">
           <div className="dg-brand">
-            <div className="dg-brand-mark">DG</div>
+            <div className="dg-brand-mark"><LogoMark /></div>
             <div><div className="dg-brand-title">DECOGLASS</div><div className="dg-brand-sub">Gestión de sectores · Espejos LED</div></div>
           </div>
           <div className="dg-header-context" aria-label="Estado de la plataforma">
@@ -6331,6 +6340,10 @@ function reclamoFinalizado(r) {
   return r.finalizado === true || (typeof r.estado === "string" && r.estado.toLowerCase().includes("final"));
 }
 
+function saludoReclamo(r) {
+  const hola = r.cliente ? `Hola ${r.cliente}!` : "Hola!";
+  return `${hola} Te escribimos de DECOGLASS por tu reclamo${r.tipo ? ` (${r.tipo})` : ""}. `;
+}
 function mensajeSolucionReclamo(r) {
   const saludo = r.cliente ? `Hola ${r.cliente}! 👋` : "Hola! 👋";
   const contexto = r.notas ? ` (${r.notas})` : "";
@@ -6363,6 +6376,22 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
   const [notas, setNotas] = useState("");
   const [vista, setVista] = useState("activos");
   const [copiadoId, setCopiadoId] = useState(null);
+  const [avisandoId, setAvisandoId] = useState(null);
+  function setCampoReclamo(id, patch) { onChange(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r))); }
+  async function avisarEquipo(r) {
+    setAvisandoId(r.id);
+    try {
+      const resp = await fetch("/api/avisar-reclamo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reclamoId: r.id }) });
+      const d = await resp.json().catch(() => null);
+      if (resp.ok && d && d.ok) {
+        onChange(reclamos.map((x) => (x.id === r.id ? { ...x, avisado: new Date().toISOString().slice(0, 10) } : x)));
+        window.alert(d.enviadas ? `Aviso enviado a ${d.enviadas} dispositivo(s).` : "Nadie tiene las notificaciones activadas todavía.");
+      } else {
+        window.alert("No se pudo avisar: " + ((d && d.error) || ("HTTP " + resp.status)));
+      }
+    } catch (e) { window.alert("No se pudo conectar con el servidor."); }
+    finally { setAvisandoId(null); }
+  }
 
   function addReclamo() {
     if (!tipo) return;
@@ -6475,17 +6504,37 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
                           onChange(reclamos.map((x) => (x.id === r.id ? { ...x, pedidoCreado: true } : x)));
                         }}><Plus size={13} /> Mandar a hacer un espejo nuevo</button>
                   )}
+                  <details className="dg-reclamo-editar" open={!tieneCelular}>
+                    <summary><Pencil size={12} /> Datos del reclamo (editar)</summary>
+                    <div className="dg-field-grid" style={{ marginTop: 8 }}>
+                      <Field label="Tipo">
+                        <select value={r.tipo} onChange={(e) => setCampoReclamo(r.id, { tipo: e.target.value })}>
+                          {RECLAMO_TIPOS.map((t) => (<option key={t} value={t}>{t}</option>))}
+                        </select>
+                      </Field>
+                      <Field label="Cliente"><CampoTextoGuardado value={r.cliente} onGuardar={(v) => setCampoReclamo(r.id, { cliente: v })} placeholder="Nombre" /></Field>
+                      <Field label="Celular (para WhatsApp)"><CampoTextoGuardado value={r.celular} onGuardar={(v) => setCampoReclamo(r.id, { celular: v })} placeholder="Ej: 1122334455" /></Field>
+                      <Field label="Notas"><CampoTextoGuardado value={r.notas} onGuardar={(v) => setCampoReclamo(r.id, { notas: v })} placeholder="Detalle del problema" /></Field>
+                    </div>
+                  </details>
+
                   <Field label="Solución que le ofrecemos al cliente">
                     <CampoTextoGuardado value={r.solucion} onGuardar={(v) => setSolucion(r.id, v)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
                   </Field>
                   <div className="dg-form-actions" style={{ marginTop: 10 }}>
-                    {tieneCelular ? (
-                      <button className="dg-btn-ghost" onClick={() => enviarWhatsapp(r)}>
-                        <MessageCircle size={14} /> {copiadoId === r.id ? "Abriendo WhatsApp…" : "Ofrecer solución por WhatsApp"}
-                      </button>
-                    ) : (
-                      <span className="dg-pago-meta">Cargá el celular del cliente para poder escribirle.</span>
+                    {tieneCelular && (
+                      <a className="dg-btn-ghost" href={`${waLink(r.celular)}?text=${encodeURIComponent(saludoReclamo(r))}`} target="_blank" rel="noopener noreferrer">
+                        <MessageCircle size={14} /> Escribir por WhatsApp
+                      </a>
                     )}
+                    {tieneCelular && r.solucion && (
+                      <button className="dg-btn-ghost" onClick={() => enviarWhatsapp(r)}>
+                        <MessageCircle size={14} /> {copiadoId === r.id ? "Abriendo…" : "Enviar la solución"}
+                      </button>
+                    )}
+                    <button className="dg-btn-ghost" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
+                      <Bell size={14} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar al equipo otra vez" : "Avisar al equipo"}
+                    </button>
                     {r.solucion && !r.clienteAcepto && !r.pedidoCreado && (
                       <button className="dg-btn-ghost" onClick={() => setClienteAcepto(r.id)}><Check size={14} /> El cliente aceptó</button>
                     )}
@@ -8907,6 +8956,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const [alto, setAlto] = useState(60);
   const [touch, setTouch] = useState("No");
   const [desemp, setDesemp] = useState("No");
+  const [desempTipo, setDesempTipo] = useState("220");
   const [horaTemp, setHoraTemp] = useState("No");
   const [bluetoothSel, setBluetoothSel] = useState("Sin Bluetooth");
   const [panelesAdicionales, setPanelesAdicionales] = useState(0);
@@ -8919,7 +8969,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const inputs = { tipoProducto, ancho: Number(ancho) || 0, alto: Number(alto) || 0, touch, desemp, horaTemp, bluetoothSel, panelesAdicionales: Number(panelesAdicionales) || 0, envioInterior, tipoCliente, cantidad: Number(cantidad) || 1, cliente };
+  const inputs = { tipoProducto, ancho: Number(ancho) || 0, alto: Number(alto) || 0, touch, desemp, desempTipo, horaTemp, bluetoothSel, panelesAdicionales: Number(panelesAdicionales) || 0, envioInterior, tipoCliente, cantidad: Number(cantidad) || 1, cliente };
   const result = computeQuote(inputs, config);
   const mensaje = buildWhatsappMessage(inputs, result);
 
@@ -8927,7 +8977,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
   function saveQuote() {
-    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", celular: celular || "", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
+    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", celular: celular || "", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, desempTipo: desemp === "Sí" ? desempTipo : "", precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
     onQuotesChange([q, ...quotes]);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
@@ -8961,6 +9011,13 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
                   {Object.keys(config.opcionales.bluetooth).map((k) => (<option key={k} value={k}>{k}</option>))}
                 </select>
               </Field>
+              {desemp === "Sí" && (
+                <Field label="Tipo de desempañante">
+                  <select value={desempTipo} onChange={(e) => setDesempTipo(e.target.value)}>
+                    {DESEMP_TIPO_OPTIONS.map((o) => (<option key={o} value={o}>{o === "220" ? "220V (enchufe)" : "Touch (T)"}</option>))}
+                  </select>
+                </Field>
+              )}
               {desemp === "Sí" && (
                 <Field label="Paneles adicionales"><input type="number" min="0" value={panelesAdicionales} onChange={(e) => setPanelesAdicionales(e.target.value)} /></Field>
               )}
@@ -9584,7 +9641,8 @@ function Style() {
 
       .dg-header { display:flex; align-items:center; justify-content:space-between; max-width:960px; margin:0 auto 18px; gap:12px; flex-wrap:wrap; }
       .dg-brand { display:flex; align-items:center; gap:12px; }
-      .dg-brand-mark { font-family:'Jost', sans-serif; font-weight:700; font-size:15px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background: linear-gradient(145deg, rgba(var(--dg-accent-rgb),0.18), rgba(var(--dg-accent-rgb),0.04)); border:1px solid rgba(var(--dg-accent-rgb),0.35); color:var(--dg-accent); box-shadow: 0 0 18px rgba(var(--dg-accent-rgb),0.25); }
+      .dg-brand-mark { width:38px; height:38px; border-radius:11px; display:flex; align-items:center; justify-content:center; background:#312B48; border:none; box-shadow:none; flex:none; }
+      .dg-brand-mark svg { width:62%; height:62%; color:#F6ECE0; }
       .dg-brand-title { font-family:'Jost', sans-serif; font-weight:700; font-size:18px; letter-spacing:0.5px; }
       .dg-brand-sub { font-size:12px; color: var(--text-dim); }
       .dg-session { display:flex; align-items:center; gap:8px; }
@@ -9773,7 +9831,9 @@ function Style() {
       .dg-form { display:flex; flex-direction:column; gap:8px; }
       .dg-form label { font-size:12px; color:var(--dg-text-dim); margin-top:6px; display:block; }
       .dg-app, .dg-app *, .dg-modal, .dg-modal * { box-sizing: border-box; }
-      .dg-app { overflow-x: hidden; }
+      /* clip (no "hidden"): "hidden" convierte a .dg-app en su propio contenedor
+         de scroll y en iPhone eso rompe el deslizado y deja la nav pegada arriba. */
+      .dg-app { overflow-x: clip; }
       .dg-app, .dg-modal { color-scheme:inherit; }
       .dg-app select, .dg-app input, .dg-app textarea { color-scheme:inherit; }
       select option { background:var(--dg-surface); color:var(--dg-text); }
@@ -10119,6 +10179,9 @@ function Style() {
       .dg-reclamo-estado-resuelto { background:rgba(var(--dg-success-rgb),0.16); color:var(--dg-success); }
       .dg-reclamo-edad { font-size:11px; color:var(--dg-text-faint); }
       .dg-reclamo-edad-alerta { color:var(--dg-danger); font-weight:600; }
+      .dg-reclamo-editar { margin:2px 0 12px; border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:9px; padding:8px 11px; }
+      .dg-reclamo-editar summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--dg-text-dim); display:flex; align-items:center; gap:6px; }
+      .dg-reclamo-editar[open] summary { margin-bottom:4px; color:var(--dg-text); }
       .dg-fab-alerta-demora { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-warning); border-radius:12px; background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface)); }
       .dg-fab-alerta-demora > svg { flex:none; margin-top:1px; color:var(--dg-warning); }
       .dg-fab-alerta-demora strong { display:block; font-family:'Jost', sans-serif; font-size:14px; color:var(--dg-text); }
@@ -10758,7 +10821,7 @@ function Style() {
         transform:translateZ(0); -webkit-transform:translateZ(0); will-change:transform;
       }
       .dg-brand { min-width:230px; }
-      .dg-brand-mark { width:42px; height:42px; border-radius:50%; box-shadow:none; background:rgba(var(--dg-accent-rgb),.1); border-color:rgba(var(--dg-accent-rgb),.34); }
+      .dg-brand-mark { width:40px; height:40px; border-radius:12px; box-shadow:none; background:#312B48; border:none; }
       .dg-brand-title { color:var(--dg-text); font-size:17px; letter-spacing:.9px; }
       .dg-brand-sub { margin-top:1px; font-size:11px; color:var(--dg-text-faint); }
       .dg-header-context { display:flex; flex-direction:column; align-items:center; gap:2px; color:var(--text-dim); }
@@ -11161,11 +11224,11 @@ function Style() {
         }
         .dg-header { min-height:66px; padding:9px 0; }
         .dg-brand { min-width:0; }
-        .dg-brand-mark { width:37px; height:37px; }
+        .dg-brand-mark { width:35px; height:35px; border-radius:10px; }
         .dg-brand-title { display:none; }
         .dg-brand-sub, .dg-header-context { display:none; }
         .dg-login-btn { min-height:36px; padding:8px 10px; font-size:11.5px; }
-        .dg-nav { position:relative; top:auto; z-index:auto; margin:12px auto 19px; backdrop-filter:none; }
+        .dg-nav { position:sticky; top:calc(env(safe-area-inset-top, 0px) + 62px); z-index:30; margin:10px auto 16px; padding:6px 0; background:var(--dg-bg); backdrop-filter:none; }
         .dg-overview-head { gap:14px; padding:0 1px; }
         .dg-overview-copy h1 { font-size:25px; }
         .dg-building-shell { border-radius:17px; }
@@ -11308,7 +11371,8 @@ function Style() {
       /* ---- Portal público de seguimiento ---- */
       .dg-seguimiento { display:flex; align-items:flex-start; justify-content:center; padding-top:calc(48px + env(safe-area-inset-top, 0px)); }
       .dg-seguimiento-wrap { width:100%; max-width:420px; }
-      .dg-seguimiento-brand { font-family:'Jost', sans-serif; font-weight:700; font-size:15px; letter-spacing:1px; color:var(--dg-accent); text-align:center; margin-bottom:20px; }
+      .dg-seguimiento-brand { display:flex; flex-direction:column; align-items:center; gap:9px; font-family:'Jost', sans-serif; font-weight:700; font-size:15px; letter-spacing:2px; color:var(--dg-accent); text-align:center; margin-bottom:20px; }
+      .dg-seg-logo { width:42px; height:60px; color:var(--dg-accent); }
       .dg-seguimiento-card { background:var(--dg-surface-2); border:1.5px solid rgba(var(--dg-line-rgb),0.14); border-radius:18px; padding:22px; box-shadow:0 24px 60px -20px rgba(0,0,0,0.6); }
       .dg-seguimiento-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; font-family:'Jost', sans-serif; font-weight:600; font-size:14px; }
       .dg-seguimiento-pasos { display:flex; flex-direction:column; gap:0; margin-top:20px; }
@@ -12027,7 +12091,7 @@ function SeguimientoPublico({ pedidoId }) {
       <div className="dg-app dg-seguimiento" data-theme={tema}>
         <Style />
         <div className="dg-seguimiento-wrap">
-          <div className="dg-seguimiento-brand">DECOGLASS</div>
+          <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
           <div className="dg-empty" style={{ marginTop: 24 }}>
             {pedido === null ? "No encontramos ningún pedido con este link. Consultanos si creés que es un error." : "Este pedido fue cancelado. Consultanos si tenés dudas."}
           </div>
@@ -12052,7 +12116,7 @@ function SeguimientoPublico({ pedidoId }) {
     <div className="dg-app dg-seguimiento" data-theme={tema}>
       <Style />
       <div className="dg-seguimiento-wrap">
-        <div className="dg-seguimiento-brand">DECOGLASS</div>
+        <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
         <div className="dg-seguimiento-card">
           <div className="dg-seguimiento-head">
             <span>Pedido #{pedido.orden}</span>
@@ -12169,7 +12233,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
       <div className="dg-app dg-seguimiento" data-theme={tema}>
         <Style />
         <div className="dg-seguimiento-wrap">
-          <div className="dg-seguimiento-brand">DECOGLASS</div>
+          <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
           <div className="dg-empty" style={{ marginTop: 24 }}>No encontramos ningún pedido con este link. Consultanos si creés que es un error.</div>
           <a className="dg-btn-primary dg-seguimiento-whatsapp" href={`${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent("Hola! Tengo una consulta sobre mi pedido")}`} target="_blank" rel="noopener noreferrer">
             <MessageCircle size={15} /> Consultas y reclamos por WhatsApp
@@ -12190,7 +12254,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
     <div className="dg-app dg-seguimiento" data-theme={tema}>
       <Style />
       <div className="dg-seguimiento-wrap">
-        <div className="dg-seguimiento-brand">DECOGLASS</div>
+        <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
 
         {todosCancelados ? (
           <div className="dg-empty" style={{ marginTop: 12 }}>Este pedido fue cancelado. Consultanos si tenés dudas.</div>
