@@ -6072,7 +6072,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <RemitoViaCargoCampo pedido={draft} canEdit={canEditFull} onCambiar={(cambios) => setDraft((d) => ({ ...d, ...cambios }))} />
         )}
 
-        {draft.metodo === "Interior" && draft.ancho && draft.alto && (
+        {draft.metodo === "Interior" && draft.ancho && draft.alto && pedidoEstaListo(draft) && (
           <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 4 }}>
             <button type="button" className="dg-btn-ghost" onClick={() => abrirRotulos(draft)}><Printer size={14} /> Imprimir rótulo del paquete</button>
           </div>
@@ -6111,6 +6111,17 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   );
 }
 
+// Un pedido de Interior está "100% terminado" solo cuando TODOS los espejos de
+// su grupo están listos (no alcanza con que estén 4 de 5). Así los rótulos y la
+// papelería de Vía Cargo se habilitan recién cuando el pedido entero se puede
+// despachar.
+function grupoInteriorCompleto(pedido, todos) {
+  const grupo = pedido?.grupoId;
+  if (!grupo) return pedidoEstaListo(pedido);
+  const hermanos = (todos || []).filter((p) => p.grupoId === grupo && p.metodo === "Interior" && p.estado !== "Cancelado");
+  return hermanos.length > 0 && hermanos.every((p) => pedidoEstaListo(p));
+}
+
 function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
   const [busqueda, setBusqueda] = useState("");
 
@@ -6129,10 +6140,10 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
     .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.despachadoFecha || "").localeCompare(a.despachadoFecha || ""));
 
-  // Solo se imprime lo que ya está terminado y todavía no se despachó — no
-  // tiene sentido armar un rótulo de algo que sigue en fábrica, ni de algo
-  // que ya salió.
-  const listosParaDespachar = interior.filter((p) => p.estado === "Espejo listo" && p.ancho && p.alto);
+  // Solo se imprime cuando el pedido está 100% terminado (todos los espejos del
+  // grupo listos) y todavía no se despachó. Nunca de un pedido al que le falta
+  // algún espejo en fábrica.
+  const listosParaDespachar = interior.filter((p) => p.estado === "Espejo listo" && p.ancho && p.alto && grupoInteriorCompleto(p, pedidos));
 
   function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
   function updateGrupo(pedido, patch) {
@@ -6151,7 +6162,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
       {listosParaDespachar.length > 0 && (
         <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-success-rgb),.35)" }}>
           <div className="dg-section-header" style={{ color: "var(--dg-success)" }}><Truck size={14} /> Listos para despachar ({listosParaDespachar.length})</div>
-          <p className="dg-hint" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen los espejos que ya están terminados, nunca los que siguen en fábrica ni los que ya se despacharon.</p>
+          <p className="dg-hint" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen pedidos 100% terminados. Un pedido con espejos todavía en fábrica no aparece hasta que estén todos listos.</p>
           <div className="dg-order-despacho-btns">
             <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(listosParaDespachar)}><FileText size={14} /> 1. Datos para Vía Cargo</button>
             <button className="dg-btn-ghost" onClick={() => abrirRotulos(listosParaDespachar)}><Printer size={14} /> 2. Rótulos ({listosParaDespachar.length})</button>
@@ -6181,9 +6192,13 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
               <RemitoViaCargoCampo pedido={p} canEdit={canEdit} onCambiar={(cambios) => update(p.id, cambios)} />
 
               {listo && p.ancho && p.alto && (
-                <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
-                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(p)}><Printer size={13} /> Rótulo de este pedido</button>
-                </div>
+                grupoInteriorCompleto(p, pedidos) ? (
+                  <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
+                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(p)}><Printer size={13} /> Rótulo de este pedido</button>
+                  </div>
+                ) : (
+                  <p className="dg-hint" style={{ marginTop: 10 }}>El rótulo se habilita cuando estén listos todos los espejos del pedido.</p>
+                )
               )}
             </div>
           );
