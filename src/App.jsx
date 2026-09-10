@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore } from "./lib/storage";
+import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore } from "./lib/storage";
 import { supabase } from "./lib/supabaseClient";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
@@ -6587,8 +6587,159 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
   );
 }
 
-function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra }) {
+// ==== Seguimiento en vivo de envíos =========================================
+function idsTrackingEntrega(items) {
+  const ids = (items || []).map((p) => p.id);
+  const g = items && items[0] && items[0].grupoId;
+  if (g) ids.push(`grupo:${g}`);
+  return ids;
+}
+
+function useLeafletListo() {
+  const [listo, setListo] = useState(() => typeof window !== "undefined" && !!window.L);
+  useEffect(() => {
+    if (listo) return undefined;
+    const iv = window.setInterval(() => { if (window.L) { setListo(true); window.clearInterval(iv); } }, 200);
+    const tope = window.setTimeout(() => window.clearInterval(iv), 8000);
+    return () => { window.clearInterval(iv); window.clearTimeout(tope); };
+  }, [listo]);
+  return listo;
+}
+
+// El fletero: comparte la ubicación del navegador mientras el recorrido está activo.
+function RecorridoFleteControl({ onTerminar }) {
+  const [pos, setPos] = useState(null);
+  const [error, setError] = useState("");
+  const wakeRef = useRef(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) { setError("Este dispositivo no comparte ubicación."); return undefined; }
+    const watchId = navigator.geolocation.watchPosition(
+      (p) => {
+        setPos({ lat: p.coords.latitude, lng: p.coords.longitude, at: Date.now() });
+        trackingStore.mandarPosicion(p.coords.latitude, p.coords.longitude);
+      },
+      (e) => setError(e && e.code === 1
+        ? "Diste que NO a compartir la ubicación. Habilitala en los permisos del navegador."
+        : "No se pudo obtener la ubicación. Revisá que el GPS esté prendido."),
+      { enableHighAccuracy: true, maximumAge: 8000, timeout: 25000 }
+    );
+    (async () => { try { if (navigator.wakeLock) wakeRef.current = await navigator.wakeLock.request("screen"); } catch (e) {} })();
+    const onVis = async () => {
+      if (document.visibilityState !== "visible") return;
+      try { if (navigator.wakeLock && (!wakeRef.current || wakeRef.current.released)) wakeRef.current = await navigator.wakeLock.request("screen"); } catch (e) {}
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+      document.removeEventListener("visibilitychange", onVis);
+      try { wakeRef.current && wakeRef.current.release(); } catch (e) {}
+      wakeRef.current = null;
+    };
+  }, []);
+
+  const hace = pos ? Math.round((Date.now() - pos.at) / 1000) : null;
+  return (
+    <div className="dg-recorrido">
+      <div className="dg-recorrido-info">
+        <span className="dg-recorrido-dot" /> Compartiendo ubicación
+        {hace != null && <small> · última hace {hace}s</small>}
+        {!pos && !error && <small> · buscando señal…</small>}
+      </div>
+      {error && <p className="dg-error" style={{ margin: "5px 0" }}>{error}</p>}
+      <p className="dg-mapa-nota" style={{ padding: "6px 0 8px" }}>Dejá esta pantalla abierta y prendida durante el recorrido. Si usás <strong>Traccar Client</strong>, podés minimizar la app.</p>
+      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onTerminar}><XCircle size={13} /> Terminar recorrido</button>
+    </div>
+  );
+}
+
+// El cliente: mapa con el flete en camino.
+function MapaEnvioCliente({ trackingId }) {
+  const [row, setRow] = useState(null);
+  const leafletListo = useLeafletListo();
+  const canvasRef = useRef(null);
+  const mapRef = useRef(null);
+  const marcadoresRef = useRef({});
+
+  useEffect(() => {
+    if (!trackingId) return undefined;
+    let vivo = true;
+    const cargar = () => trackingStore.get(trackingId).then((r) => { if (vivo) setRow(r); }).catch(() => {});
+    cargar();
+    const stop = trackingStore.subscribe(trackingId, () => cargar());
+    const iv = window.setInterval(cargar, 12000);
+    return () => { vivo = false; stop(); window.clearInterval(iv); };
+  }, [trackingId]);
+
+  const activo = !!(row && row.activo && row.flete_lat != null && row.flete_lng != null);
+
+  useEffect(() => {
+    if (!activo || !leafletListo || !canvasRef.current) return;
+    const L = window.L;
+    const flete = [row.flete_lat, row.flete_lng];
+    if (!mapRef.current) {
+      mapRef.current = L.map(canvasRef.current, { zoomControl: true }).setView(flete, 14);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(mapRef.current);
+      window.setTimeout(() => { try { mapRef.current && mapRef.current.invalidateSize(); } catch (e) {} }, 120);
+    }
+    const map = mapRef.current;
+    const m = marcadoresRef.current;
+    if (!m.flete) m.flete = L.marker(flete, { icon: L.divIcon({ className: "dg-mapa-pin dg-mapa-flete", html: "🚚", iconSize: [34, 34], iconAnchor: [17, 17] }) }).addTo(map);
+    else m.flete.setLatLng(flete);
+    if (row.destino_lat != null && row.destino_lng != null) {
+      const dest = [row.destino_lat, row.destino_lng];
+      if (!m.destino) m.destino = L.marker(dest, { icon: L.divIcon({ className: "dg-mapa-pin dg-mapa-destino", html: "📍", iconSize: [34, 34], iconAnchor: [17, 30] }) }).addTo(map);
+      try { map.fitBounds(L.latLngBounds([flete, dest]).pad(0.35)); } catch (e) {}
+    } else {
+      map.setView(flete, 15);
+    }
+  }, [activo, leafletListo, row]);
+
+  useEffect(() => () => { try { mapRef.current && mapRef.current.remove(); } catch (e) {} mapRef.current = null; marcadoresRef.current = {}; }, []);
+
+  if (!activo) return null;
+  const min = row.eta_min, km = row.distancia_km;
+  return (
+    <div className="dg-mapa-wrap">
+      <div className="dg-mapa-estado">
+        <span className="dg-mapa-dot" /> El flete está en camino
+        {min != null ? <strong>&nbsp;· llega en ~{min} min</strong> : km != null ? <strong>&nbsp;· a {km} km</strong> : null}
+      </div>
+      {leafletListo
+        ? <div ref={canvasRef} className="dg-mapa-canvas" />
+        : <p className="dg-mapa-nota" style={{ padding: "16px 13px" }}>Cargando el mapa…</p>}
+      <p className="dg-mapa-nota">La ubicación se actualiza sola. El tiempo es aproximado.</p>
+    </div>
+  );
+}
+
+function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra, session }) {
   const listaExtra = Array.isArray(extra) ? extra : [];
+  const [trackingRows, setTrackingRows] = useState([]);
+  useEffect(() => {
+    let vivo = true;
+    const cargar = () => trackingStore.listActivos().then((r) => { if (vivo) setTrackingRows(r); }).catch(() => {});
+    cargar();
+    const iv = window.setInterval(cargar, 15000);
+    return () => { vivo = false; window.clearInterval(iv); };
+  }, []);
+  async function comenzarRecorrido(items) {
+    const dir = [datoEntrega(items, "detalleEntrega", ""), datoEntrega(items, "barrio", ""), datoEntrega(items, "localidad", ""), "Argentina"].filter(Boolean).join(", ");
+    let geo = null;
+    try { geo = dir ? await trackingStore.geocodificar(dir) : null; } catch (e) {}
+    await trackingStore.iniciarVarios(idsTrackingEntrega(items), {
+      fletero: session?.nombre || "Fletero",
+      clienteNombre: datoEntrega(items, "cliente", ""),
+      destinoLat: geo?.lat, destinoLng: geo?.lng, destinoTexto: geo?.texto || dir,
+    });
+    setTrackingRows(await trackingStore.listActivos());
+    if (!geo) window.alert("Empezó el recorrido, pero no pude ubicar la dirección en el mapa. El cliente igual va a ver el flete moviéndose (sin el pin del destino ni el tiempo estimado).");
+  }
+  async function terminarRecorrido(ids) {
+    await trackingStore.terminarVarios(ids);
+    setTrackingRows(await trackingStore.listActivos());
+  }
+  const hayRecorrido = trackingRows.length > 0;
   const [form, setForm] = useState(null);
   function nuevoForm(tipo) { setForm({ tipo, cliente: "", telefono: "", direccion: "", barrio: "", fecha: new Date().toISOString().slice(0, 10), motivo: "", notas: "" }); }
   function guardarExtra() {
@@ -6635,6 +6786,8 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
       return;
     }
     onChange(pedidos.map((p) => (p.id === pedido.id ? { ...p, estado: "Entregado", entregadoFecha: new Date().toISOString() } : p)));
+    const ids = [pedido.id, pedido.grupoId ? `grupo:${pedido.grupoId}` : null].filter(Boolean);
+    if (trackingRows.some((t) => ids.includes(t.id))) terminarRecorrido(ids);
   }
   function datoEntrega(items, field, fallback) {
     const pedido = items.find((p) => String(p[field] || "").trim());
@@ -6649,6 +6802,10 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   return (
     <div className="dg-page">
       <p className="dg-hint" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</p>
+
+      {hayRecorrido && canEdit && (
+        <RecorridoFleteControl onTerminar={() => terminarRecorrido(trackingRows.map((t) => t.id))} />
+      )}
 
       {canEdit && (
         <div className="dg-section-card">
@@ -6806,6 +6963,23 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                   {controlesEspejo(principal)}
                 </div>
               )}
+
+              {canEdit && (() => {
+                const ids = idsTrackingEntrega(items);
+                const enRecorrido = trackingRows.some((t) => ids.includes(t.id));
+                return (
+                  <div className="dg-recorrido-zona">
+                    {enRecorrido ? (
+                      <>
+                        <span className="dg-recorrido-activo"><MapPin size={13} /> En recorrido — el cliente ve el mapa</span>
+                        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => terminarRecorrido(ids)}>Terminar este</button>
+                      </>
+                    ) : (
+                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => comenzarRecorrido(items)}><Truck size={13} /> Comenzar recorrido</button>
+                    )}
+                  </div>
+                );
+              })()}
             </article>
           );
         })}
@@ -9696,7 +9870,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "logistica" && (
-        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} />
+        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} session={session} />
           : <LockedPage label="Envíos confirmados" onLogin={onRequestLogin} />
       )}
 
@@ -9826,6 +10000,23 @@ function Style() {
       .dg-chat-verif-row button { flex:none; padding:0 16px; border:none; border-radius:10px; background:var(--dg-accent); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
       .dg-chat-verif-err { font-size:11px; color:var(--dg-danger); }
       .dg-seguimiento-whatsapp-2 { justify-content:center; width:100%; margin-top:12px; text-decoration:none; font-size:12.5px; }
+
+      /* ---- Seguimiento en vivo del envío ---- */
+      .dg-mapa-wrap { margin-top:16px; border:1px solid var(--dg-accent); border-radius:14px; overflow:hidden; }
+      .dg-mapa-estado { display:flex; align-items:center; gap:7px; padding:10px 13px; font-size:13px; color:var(--dg-text); background:color-mix(in srgb, var(--dg-accent) 12%, var(--dg-surface)); }
+      .dg-mapa-estado strong { color:var(--dg-accent); }
+      .dg-mapa-dot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--dg-accent); box-shadow:0 0 0 4px color-mix(in srgb, var(--dg-accent) 25%, transparent); animation:dg-mapa-pulse 1.6s ease-in-out infinite; }
+      @keyframes dg-mapa-pulse { 50% { opacity:.35; } }
+      .dg-mapa-canvas { height:280px; width:100%; background:var(--dg-surface-2); }
+      .dg-mapa-canvas .leaflet-container { height:100%; width:100%; background:var(--dg-surface-2); font-family:'Jost', sans-serif; }
+      .dg-mapa-nota { font-size:10.5px; color:var(--dg-text-faint); padding:7px 13px; margin:0; }
+      .dg-mapa-pin { font-size:24px; line-height:1; text-align:center; filter:drop-shadow(0 1px 3px rgba(0,0,0,.45)); }
+      .dg-recorrido { margin:0 0 14px; border:1px solid var(--dg-accent); border-radius:12px; padding:11px 13px; background:color-mix(in srgb, var(--dg-accent) 9%, var(--dg-surface)); }
+      .dg-recorrido-info { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--dg-text); }
+      .dg-recorrido-info small { font-weight:500; color:var(--dg-text-dim); }
+      .dg-recorrido-dot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--dg-success); box-shadow:0 0 0 4px color-mix(in srgb, var(--dg-success) 22%, transparent); }
+      .dg-recorrido-zona { margin-top:10px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),0.15); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      .dg-recorrido-activo { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; color:var(--dg-success); }
       .dg-chat-input { display:flex; gap:7px; padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); align-items:flex-end; }
       .dg-chat-input textarea { flex:1; min-height:38px; max-height:120px; resize:none; border:1px solid rgba(var(--dg-line-rgb),0.18); border-radius:10px; padding:9px 11px;
         background:var(--dg-surface-2); color:var(--dg-text); font-family:'Jost',sans-serif; font-size:14px; line-height:1.35; }
@@ -12313,6 +12504,8 @@ function SeguimientoPublico({ pedidoId }) {
             <button className="dg-btn-ghost" onClick={() => abrirGarantia(pedido)}><ShieldCheck size={14} /> Descargar garantía</button>
           </div>
 
+          <MapaEnvioCliente trackingId={pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id} />
+
           <ChatClientePublico
             hiloId={pedido.id}
             meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", celular: pedido.celular || "", entregadoAt: pedido.entregadoFecha || null }}
@@ -12462,6 +12655,8 @@ function SeguimientoGrupoPublico({ grupoId }) {
             </div>
           </div>
         )}
+
+        {!todosCancelados && <MapaEnvioCliente trackingId={`grupo:${grupoId}`} />}
 
         {!todosCancelados && (
           <ChatClientePublico

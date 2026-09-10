@@ -432,6 +432,76 @@ export const chatStore = {
   },
 };
 
+// Seguimiento en vivo de envíos (mapa del flete).
+export const trackingStore = {
+  async get(id) {
+    if (!id) return null;
+    const { data, error } = await supabase.from("envio_tracking").select("*").eq("id", id).maybeSingle();
+    if (error) throw error;
+    return data || null;
+  },
+  async listActivos() {
+    const { data } = await supabase.from("envio_tracking").select("*").eq("activo", true);
+    return data || [];
+  },
+  async iniciarVarios(ids, meta) {
+    const results = [];
+    for (const id of ids) results.push(await this.iniciar(id, meta));
+    return results;
+  },
+  async terminarVarios(ids) {
+    if (!ids || !ids.length) return;
+    await supabase.from("envio_tracking").update({ activo: false }).in("id", ids);
+  },
+  async iniciar(id, meta) {
+    if (!id) return null;
+    const row = {
+      id,
+      activo: true,
+      fletero: meta?.fletero || null,
+      cliente_nombre: meta?.clienteNombre || null,
+      destino_lat: meta?.destinoLat ?? null,
+      destino_lng: meta?.destinoLng ?? null,
+      destino_texto: meta?.destinoTexto || null,
+      iniciado_at: new Date().toISOString(),
+      flete_lat: null, flete_lng: null, flete_at: null, eta_min: null, distancia_km: null,
+    };
+    const { error } = await supabase.from("envio_tracking").upsert(row, { onConflict: "id" });
+    if (error) throw error;
+    return row;
+  },
+  async terminar(id) {
+    if (!id) return;
+    await supabase.from("envio_tracking").update({ activo: false }).eq("id", id);
+  },
+  // Manda la posición del navegador del fletero al endpoint (que también recibe
+  // a Traccar Client) para que calcule el ETA y reparta a los recorridos activos.
+  async mandarPosicion(lat, lng) {
+    try {
+      await fetch("/api/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat, lng }),
+        keepalive: true,
+      });
+    } catch (e) { /* mejor esfuerzo */ }
+  },
+  async geocodificar(direccion) {
+    try {
+      const r = await fetch("/api/geocodificar?q=" + encodeURIComponent(direccion));
+      const j = await r.json();
+      return j && j.ok ? { lat: j.lat, lng: j.lng, texto: j.texto } : null;
+    } catch (e) { return null; }
+  },
+  subscribe(id, onChange) {
+    const channel = supabase
+      .channel("envio-tracking-" + Math.random().toString(36).slice(2, 8))
+      .on("postgres_changes", { event: "*", schema: "public", table: "envio_tracking", filter: `id=eq.${id}` }, onChange)
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch (e) {} };
+  },
+};
+
 export const storage = {
   async get(key) {
     const { data, error } = await supabase
