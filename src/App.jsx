@@ -3850,6 +3850,16 @@ function pedidoProcesoTaller(pedido) {
   return "simples";
 }
 
+// Biselado redondo de 60 o 70 cm: el espejo biselado viene prearmado de stock,
+// no hay que encargarlo. Salta la lista "Biselados sin pedir" y va a armar.
+function biseladoPrearmado(pedido) {
+  if (pedidoProcesoTaller(pedido) !== "biselados") return false;
+  const forma = textoComparable(pedido?.forma || "");
+  if (!(forma.includes("redondo") || forma.includes("redonda") || forma.includes("circular"))) return false;
+  const medidas = [Math.round(Number(pedido?.ancho) || 0), Math.round(Number(pedido?.alto) || 0)];
+  return medidas.some((m) => m === 60 || m === 70);
+}
+
 function descripcionPedidoFabrica(p) {
   const listaId = pedidoListaFabrica(p);
 
@@ -3864,7 +3874,9 @@ function descripcionPedidoFabrica(p) {
   const g = grupoListaArmar(p);
   if (g === "esmerilados_cortar") return "para CORTAR y después mandar a grabar (esmerilado) · pestaña «Espejos para armar»";
   if (g === "esmerilados_armar") return "volvió del grabado, para armar y entregar (esmerilado) · pestaña «Espejos para armar»";
-  if (g === "biselados_armar") return "para armar y entregar (biselado) · pestaña «Espejos para armar»";
+  if (g === "biselados_armar") return biseladoPrearmado(p)
+    ? "biselado PREARMADO — sacá el espejo de stock y armá · pestaña «Espejos para armar»"
+    : "para armar y entregar (biselado) · pestaña «Espejos para armar»";
   return "para CORTAR, armar y entregar (simple) · pestaña «Espejos para armar»";
 }
 function motivoDemoraFabrica(p) {
@@ -3943,10 +3955,10 @@ function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
 function pedidoListaFabrica(pedido) {
   if (pedido?.estado === "Mandar a grabar") return "mandar_grabar";
   if (pedido?.estado === "En grabado") return "en_grabado";
-  if (pedido?.estado === "Sin pedir" || pedido?.estado === "Pedir biselado") return "bisel_sin_pedir";
+  if ((pedido?.estado === "Sin pedir" || pedido?.estado === "Pedir biselado") && !biseladoPrearmado(pedido)) return "bisel_sin_pedir";
   if (pedido?.estado === "En biseladora") return "bisel_pedidos";
   if (pedidoEstaListo(pedido) || pedido?.estado === "Para armar" || pedido?.produccionEtapa) return "armar";
-  return pedidoProcesoTaller(pedido) === "biselados" ? "bisel_sin_pedir" : "armar";
+  return (pedidoProcesoTaller(pedido) === "biselados" && !biseladoPrearmado(pedido)) ? "bisel_sin_pedir" : "armar";
 }
 
 // --- Reloj de etapa: cuántos días hace que el pedido está frenado donde está ---
@@ -4178,7 +4190,7 @@ function registrosFabrica(pedido) {
 function proximoControlTaller(pedido) {
   if (pedido?.estado === "Mandar a grabar") return "Mandar a grabar";
   if (pedido?.estado === "En grabado") return "Esperando regreso del grabado";
-  if (["Sin pedir", "Pedir biselado"].includes(pedido?.estado) || (pedidoProcesoTaller(pedido) === "biselados" && !pedido?.produccionEtapa && pedido?.estado === "Verificado")) return "Pedir biselado";
+  if (!biseladoPrearmado(pedido) && (["Sin pedir", "Pedir biselado"].includes(pedido?.estado) || (pedidoProcesoTaller(pedido) === "biselados" && !pedido?.produccionEtapa && pedido?.estado === "Verificado"))) return "Pedir biselado";
   if (pedido?.estado === "En biseladora") return "Esperando regreso de la biseladora";
   return PRODUCCION_PASOS[pasosProduccionCompletados(pedido)]?.label || "Producción";
 }
@@ -5094,7 +5106,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   }
   function marcarVerificado(p) {
     if (p.estado !== "Sin pasar a fábrica") return;
-    const estadoInicialFabrica = pedidoProcesoTaller(p) === "biselados" ? "Sin pedir" : "Verificado";
+    const estadoInicialFabrica = (pedidoProcesoTaller(p) === "biselados" && !biseladoPrearmado(p)) ? "Sin pedir" : "Verificado";
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString() } : x)));
     if (onRegistrar) onRegistrar("Verificó un pedido", `#${p.orden} — ${p.cliente} — habilitado para fábrica`);
   }
@@ -7257,7 +7269,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         // Ya cortado, pero todavía no se armó ni se mandó a grabar/biselar si correspondía.
         return {
           ...cambiosBase,
-          estado: esEsmerilado ? "Mandar a grabar" : esBiselado ? "Sin pedir" : "Verificado",
+          estado: esEsmerilado ? "Mandar a grabar" : (esBiselado && !biseladoPrearmado(p)) ? "Sin pedir" : "Verificado",
           produccionArmadoFecha: "", produccionArmadoPor: "",
         };
       }
