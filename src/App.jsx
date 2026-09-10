@@ -6626,8 +6626,22 @@ function useLeafletListo() {
   return listo;
 }
 
+// Código del dispositivo que inicia un recorrido. Solo la ubicación de ESE
+// dispositivo entra al mapa. También es lo que se pone en Traccar Client.
+function codigoFlete() {
+  try {
+    let v = localStorage.getItem("dg_flete_codigo");
+    if (!v || v.length < 6) {
+      const abc = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      v = Array.from({ length: 6 }, () => abc[Math.floor(Math.random() * abc.length)]).join("");
+      localStorage.setItem("dg_flete_codigo", v);
+    }
+    return v;
+  } catch (e) { return "FLETE00"; }
+}
+
 // El fletero: comparte la ubicación del navegador mientras el recorrido está activo.
-function RecorridoFleteControl({ onTerminar }) {
+function RecorridoFleteControl({ token, onTerminar }) {
   const [pos, setPos] = useState(null);
   const [error, setError] = useState("");
   const wakeRef = useRef(null);
@@ -6637,7 +6651,7 @@ function RecorridoFleteControl({ onTerminar }) {
     const watchId = navigator.geolocation.watchPosition(
       (p) => {
         setPos({ lat: p.coords.latitude, lng: p.coords.longitude, at: Date.now() });
-        trackingStore.mandarPosicion(p.coords.latitude, p.coords.longitude);
+        trackingStore.mandarPosicion(p.coords.latitude, p.coords.longitude, token);
       },
       (e) => setError(e && e.code === 1
         ? "Diste que NO a compartir la ubicación. Habilitala en los permisos del navegador."
@@ -6667,8 +6681,9 @@ function RecorridoFleteControl({ onTerminar }) {
         {!pos && !error && <small> · buscando señal…</small>}
       </div>
       {error && <p className="dg-error" style={{ margin: "5px 0" }}>{error}</p>}
-      <p className="dg-mapa-nota" style={{ padding: "6px 0 8px" }}>Dejá esta pantalla abierta y prendida durante el recorrido. Si usás <strong>Traccar Client</strong>, podés minimizar la app.</p>
-      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onTerminar}><XCircle size={13} /> Terminar recorrido</button>
+      <p className="dg-mapa-nota" style={{ padding: "6px 0 6px" }}>Dejá esta pantalla abierta y prendida. Si usás <strong>Traccar Client</strong>, poné este código como <strong>Device identifier</strong> y podés minimizar la app:</p>
+      <div className="dg-flete-codigo">{token}</div>
+      <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 8 }} onClick={onTerminar}><XCircle size={13} /> Terminar recorrido</button>
     </div>
   );
 }
@@ -6825,6 +6840,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
       fletero: session?.nombre || "Fletero",
       clienteNombre: datoEntrega(items, "cliente", ""),
       destinoLat: lat, destinoLng: lng, destinoTexto: dir,
+      fleteroToken: miCodigo,
     });
     setTrackingRows(await trackingStore.listActivos());
     if (lat == null) window.alert("Recorrido iniciado. Este envío no tiene la ubicación marcada en el mapa, así que el cliente ve el flete moviéndose pero sin el pin del destino ni el tiempo estimado. Se marca desde PostVenta → Envíos.");
@@ -6834,6 +6850,9 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     setTrackingRows(await trackingStore.listActivos());
   }
   const hayRecorrido = trackingRows.length > 0;
+  // El mapa muestra SOLO la ubicación del dispositivo que inició el recorrido.
+  const miCodigo = codigoFlete();
+  const soyElQueInicio = trackingRows.some((t) => t.fletero_token === miCodigo);
   const [form, setForm] = useState(null);
   function nuevoForm(tipo) { setForm({ tipo, cliente: "", telefono: "", direccion: "", barrio: "", fecha: new Date().toISOString().slice(0, 10), motivo: "", notas: "" }); }
   function guardarExtra() {
@@ -6897,8 +6916,14 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     <div className="dg-page">
       <p className="dg-hint" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</p>
 
-      {hayRecorrido && canEdit && (
-        <RecorridoFleteControl onTerminar={() => terminarRecorrido(trackingRows.map((t) => t.id))} />
+      {hayRecorrido && soyElQueInicio && (
+        <RecorridoFleteControl token={miCodigo} onTerminar={() => terminarRecorrido(trackingRows.map((t) => t.id))} />
+      )}
+      {hayRecorrido && !soyElQueInicio && canEdit && (
+        <div className="dg-recorrido" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <span className="dg-recorrido-info"><span className="dg-recorrido-dot" /> Recorrido en curso — la ubicación la comparte quien lo inició{trackingRows[0]?.fletero ? ` (${trackingRows[0].fletero})` : ""}</span>
+          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => terminarRecorrido(trackingRows.map((t) => t.id))}><XCircle size={13} /> Terminar</button>
+        </div>
       )}
 
       {canEdit && (
@@ -7069,7 +7094,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                         <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => terminarRecorrido(ids)}>Terminar este</button>
                       </>
                     ) : (
-                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => comenzarRecorrido(items)}><Truck size={13} /> Comenzar recorrido</button>
+                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => comenzarRecorrido(items)}><Truck size={13} /> Comenzar recorrido <small style={{ opacity: 0.7 }}>· desde este celular</small></button>
                     )}
                   </div>
                 );
@@ -10111,6 +10136,7 @@ function Style() {
       .dg-recorrido-dot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--dg-success); box-shadow:0 0 0 4px color-mix(in srgb, var(--dg-success) 22%, transparent); }
       .dg-recorrido-zona { margin-top:10px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),0.15); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       .dg-recorrido-activo { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; color:var(--dg-success); }
+      .dg-flete-codigo { display:inline-block; font-family:'JetBrains Mono', monospace; font-size:22px; font-weight:700; letter-spacing:4px; color:var(--dg-accent); background:var(--dg-surface-2); border:1px dashed var(--dg-accent); border-radius:9px; padding:6px 14px; user-select:all; }
       .dg-chat-input { display:flex; gap:7px; padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); align-items:flex-end; }
       .dg-chat-input textarea { flex:1; min-height:38px; max-height:120px; resize:none; border:1px solid rgba(var(--dg-line-rgb),0.18); border-radius:10px; padding:9px 11px;
         background:var(--dg-surface-2); color:var(--dg-text); font-family:'Jost',sans-serif; font-size:14px; line-height:1.35; }

@@ -463,6 +463,7 @@ export const trackingStore = {
       destino_lat: meta?.destinoLat ?? null,
       destino_lng: meta?.destinoLng ?? null,
       destino_texto: meta?.destinoTexto || null,
+      fletero_token: meta?.fleteroToken || null,
       iniciado_at: new Date().toISOString(),
       flete_lat: null, flete_lng: null, flete_at: null, eta_min: null, distancia_km: null,
     };
@@ -474,14 +475,14 @@ export const trackingStore = {
     if (!id) return;
     await supabase.from("envio_tracking").update({ activo: false }).eq("id", id);
   },
-  // Manda la posición del navegador del fletero al endpoint (que también recibe
-  // a Traccar Client) para que calcule el ETA y reparta a los recorridos activos.
-  async mandarPosicion(lat, lng) {
+  // Manda la posición del navegador al endpoint. El token identifica el
+  // dispositivo que inició el recorrido: solo esa ubicación entra al mapa.
+  async mandarPosicion(lat, lng, token) {
     try {
       await fetch("/api/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat, lng }),
+        body: JSON.stringify({ lat, lng, token }),
         keepalive: true,
       });
     } catch (e) { /* mejor esfuerzo */ }
