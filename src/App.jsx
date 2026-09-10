@@ -6926,6 +6926,16 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     <div className="dg-page">
       <p className="dg-hint" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</p>
 
+      {canEdit && (
+        <details className="dg-reclamo-editar" style={{ marginBottom: 14 }}>
+          <summary><MapPin size={12} /> Código de rastreo de este celular</summary>
+          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+            <span className="dg-flete-codigo">{miCodigo}</span>
+            <p className="dg-mapa-nota" style={{ padding: 0 }}>Este código es de <strong>este dispositivo</strong> (no cambia, sirve para todos los recorridos). Ponelo como <strong>"Device identifier"</strong> en Traccar Client, en <strong>este mismo celular</strong>. El recorrido se empieza desde acá también.</p>
+          </div>
+        </details>
+      )}
+
       {hayRecorrido && soyElQueInicio && (
         <RecorridoFleteControl token={miCodigo} onTerminar={() => terminarRecorrido(trackingRows.map((t) => t.id))} />
       )}
