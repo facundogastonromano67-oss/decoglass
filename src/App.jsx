@@ -6836,14 +6836,24 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     else {
       try { const g = dir ? await trackingStore.geocodificar(dir) : null; if (g) { lat = g.lat; lng = g.lng; } } catch (e) {}
     }
-    await trackingStore.iniciarVarios(idsTrackingEntrega(items), {
-      fletero: session?.nombre || "Fletero",
-      clienteNombre: datoEntrega(items, "cliente", ""),
-      destinoLat: lat, destinoLng: lng, destinoTexto: dir,
-      fleteroToken: miCodigo,
-    });
-    setTrackingRows(await trackingStore.listActivos());
-    if (lat == null) window.alert("Recorrido iniciado. Este envío no tiene la ubicación marcada en el mapa, así que el cliente ve el flete moviéndose pero sin el pin del destino ni el tiempo estimado. Se marca desde PostVenta → Envíos.");
+    try {
+      await trackingStore.iniciarVarios(idsTrackingEntrega(items), {
+        fletero: session?.nombre || "Fletero",
+        clienteNombre: datoEntrega(items, "cliente", ""),
+        destinoLat: lat, destinoLng: lng, destinoTexto: dir,
+        fleteroToken: miCodigo,
+      });
+      const rows = await trackingStore.listActivos();
+      setTrackingRows(rows);
+      if (!rows.some((t) => idsTrackingEntrega(items).includes(t.id))) {
+        window.alert("El recorrido no quedó guardado. Revisá que hayas corrido los dos SQL en Supabase: envio-tracking-sql.sql y envio-tracking-sql-2.sql.");
+        return;
+      }
+      if (lat == null) window.alert("Recorrido iniciado. Este envío no tiene la ubicación marcada en el mapa, así que el cliente ve el flete moviéndose pero sin el pin del destino ni el tiempo estimado. Se marca desde PostVenta → Envíos.");
+    } catch (e) {
+      console.error("comenzar recorrido:", e);
+      window.alert("No se pudo empezar el recorrido: " + ((e && e.message) || e) + "\n\nCasi seguro falta correr los SQL en Supabase (envio-tracking-sql.sql y envio-tracking-sql-2.sql).");
+    }
   }
   async function terminarRecorrido(ids) {
     await trackingStore.terminarVarios(ids);
