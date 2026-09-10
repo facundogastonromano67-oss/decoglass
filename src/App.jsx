@@ -3740,7 +3740,7 @@ function emptyPedido(prefill) {
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
-    motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "",
+    motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "", destinoLat: null, destinoLng: null,
     tipoPedido: prefill?.tipoPedido || "venta", urgente: prefill?.urgente || false, reclamoId: prefill?.reclamoId || null,
   };
 }
@@ -6243,6 +6243,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
 function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   const [busqueda, setBusqueda] = useState("");
   const [copiedId, setCopiedId] = useState(null);
+  const [mapaPedido, setMapaPedido] = useState(null);
 
   const envios = pedidos
     .filter((p) => esPedidoConEnvio(p) && p.metodo !== "Interior")
@@ -6302,6 +6303,16 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                   <div className="dg-shipping-field"><Field label="Horario"><input disabled={!canEdit} value={p.horarioEntrega || ""} onChange={(e) => updateShipping(p, { horarioEntrega: e.target.value })} placeholder="Ej: 13 a 17 hs" /></Field></div>
                   <div className="dg-shipping-field"><Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo || ""} onChange={(e) => updateShipping(p, { listo: e.target.value })} /></Field></div>
                 </div>
+                {canEdit && (
+                  <div className="dg-shipping-mapa">
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setMapaPedido(p)}>
+                      <MapPin size={13} /> {p.destinoLat != null ? "Cambiar ubicación en el mapa" : "Marcar ubicación en el mapa"}
+                    </button>
+                    {p.destinoLat != null
+                      ? <span className="dg-shipping-mapa-ok"><CheckCircle2 size={12} /> Ubicación marcada — el flete no la tiene que buscar</span>
+                      : <span className="dg-pago-meta">Si la marcás, el cliente ve el pin del destino y el tiempo estimado, y el flete solo maneja.</span>}
+                  </div>
+                )}
               </EnterFlow>
             </details>
             <div className={`dg-shipping-total-preview ${costoEnvioPedido(p) > 0 ? "" : "dg-shipping-total-missing"}`}>
@@ -6320,6 +6331,15 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
           </div>
         ))}
       </div>
+
+      {mapaPedido && (
+        <ModalDestinoRecorrido
+          direccionTexto={[mapaPedido.detalleEntrega, mapaPedido.barrio, mapaPedido.localidad, "Argentina"].filter(Boolean).join(", ")}
+          valorInicial={mapaPedido.destinoLat != null ? { lat: mapaPedido.destinoLat, lng: mapaPedido.destinoLng } : null}
+          onConfirmar={(coord) => { updateShipping(mapaPedido, { destinoLat: coord ? coord.lat : null, destinoLng: coord ? coord.lng : null }); setMapaPedido(null); }}
+          onCancelar={() => setMapaPedido(null)}
+        />
+      )}
     </div>
   );
 }
@@ -6654,15 +6674,10 @@ function RecorridoFleteControl({ onTerminar }) {
 }
 
 // El cliente: mapa con el flete en camino.
-function MapaEnvioCliente({ trackingId }) {
+function useEnvioTracking(trackingId) {
   const [row, setRow] = useState(null);
-  const leafletListo = useLeafletListo();
-  const canvasRef = useRef(null);
-  const mapRef = useRef(null);
-  const marcadoresRef = useRef({});
-
   useEffect(() => {
-    if (!trackingId) return undefined;
+    if (!trackingId) { setRow(null); return undefined; }
     let vivo = true;
     const cargar = () => trackingStore.get(trackingId).then((r) => { if (vivo) setRow(r); }).catch(() => {});
     cargar();
@@ -6670,8 +6685,25 @@ function MapaEnvioCliente({ trackingId }) {
     const iv = window.setInterval(cargar, 12000);
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, [trackingId]);
+  return row;
+}
+function envioEnViaje(row) {
+  return !!(row && row.activo && row.flete_lat != null && row.flete_lng != null);
+}
+function envioEtaTexto(row) {
+  if (!row) return "en camino";
+  if (row.eta_min != null) return `llega en ~${row.eta_min} min`;
+  if (row.distancia_km != null) return `a ${row.distancia_km} km`;
+  return "en camino";
+}
 
-  const activo = !!(row && row.activo && row.flete_lat != null && row.flete_lng != null);
+function MapaEnvioCliente({ row }) {
+  const leafletListo = useLeafletListo();
+  const canvasRef = useRef(null);
+  const mapRef = useRef(null);
+  const marcadoresRef = useRef({});
+
+  const activo = envioEnViaje(row);
 
   useEffect(() => {
     if (!activo || !leafletListo || !canvasRef.current) return;
@@ -6698,17 +6730,75 @@ function MapaEnvioCliente({ trackingId }) {
   useEffect(() => () => { try { mapRef.current && mapRef.current.remove(); } catch (e) {} mapRef.current = null; marcadoresRef.current = {}; }, []);
 
   if (!activo) return null;
-  const min = row.eta_min, km = row.distancia_km;
   return (
     <div className="dg-mapa-wrap">
       <div className="dg-mapa-estado">
-        <span className="dg-mapa-dot" /> El flete está en camino
-        {min != null ? <strong>&nbsp;· llega en ~{min} min</strong> : km != null ? <strong>&nbsp;· a {km} km</strong> : null}
+        <span className="dg-mapa-dot" /> El flete está en viaje
+        <strong>&nbsp;· {envioEtaTexto(row)}</strong>
       </div>
       {leafletListo
         ? <div ref={canvasRef} className="dg-mapa-canvas" />
         : <p className="dg-mapa-nota" style={{ padding: "16px 13px" }}>Cargando el mapa…</p>}
       <p className="dg-mapa-nota">La ubicación se actualiza sola. El tiempo es aproximado.</p>
+    </div>
+  );
+}
+
+// Mini-mapa para fijar a mano la ubicación exacta del cliente.
+function ModalDestinoRecorrido({ direccionTexto, valorInicial, onConfirmar, onCancelar }) {
+  const leafletListo = useLeafletListo();
+  const canvasRef = useRef(null);
+  const mapRef = useRef(null);
+  const [coord, setCoord] = useState(null);
+  const [buscando, setBuscando] = useState(true);
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      if (valorInicial && valorInicial.lat != null) {
+        setCoord({ lat: Number(valorInicial.lat), lng: Number(valorInicial.lng) });
+        setBuscando(false);
+        return;
+      }
+      let g = null;
+      try { g = direccionTexto ? await trackingStore.geocodificar(direccionTexto) : null; } catch (e) {}
+      if (!vivo) return;
+      setCoord(g ? { lat: g.lat, lng: g.lng } : { lat: -34.6037, lng: -58.3816 });
+      setBuscando(false);
+    })();
+    return () => { vivo = false; };
+  }, [direccionTexto]);
+
+  useEffect(() => {
+    if (buscando || !leafletListo || !canvasRef.current || !coord || mapRef.current) return;
+    const L = window.L;
+    const map = L.map(canvasRef.current).setView([coord.lat, coord.lng], 15);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    const marker = L.marker([coord.lat, coord.lng], { draggable: true, icon: L.divIcon({ className: "dg-mapa-pin dg-mapa-destino", html: "📍", iconSize: [34, 34], iconAnchor: [17, 30] }) }).addTo(map);
+    marker.on("dragend", () => { const ll = marker.getLatLng(); setCoord({ lat: ll.lat, lng: ll.lng }); });
+    map.on("click", (e) => { marker.setLatLng(e.latlng); setCoord({ lat: e.latlng.lat, lng: e.latlng.lng }); });
+    mapRef.current = map;
+    window.setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 120);
+  }, [buscando, leafletListo, coord]);
+
+  useEffect(() => () => { try { mapRef.current && mapRef.current.remove(); } catch (e) {} mapRef.current = null; }, []);
+
+  return (
+    <div className="dg-overlay">
+      <div className="dg-modal" style={{ maxWidth: 480, padding: 0, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head" style={{ padding: "13px 16px" }}>
+          <div className="dg-modal-title"><MapPin size={15} /> Ubicación exacta del cliente</div>
+          <button type="button" className="dg-icon-btn" onClick={onCancelar}><X size={18} /></button>
+        </div>
+        <p className="dg-mapa-nota" style={{ padding: "0 16px 8px" }}>Tocá el mapa o arrastrá el 📍 hasta la puerta del cliente. Esto lo usa el flete para el mapa en vivo (así no tiene que buscar la dirección). {direccionTexto ? <em>({direccionTexto})</em> : null}</p>
+        {buscando
+          ? <p className="dg-mapa-nota" style={{ padding: 24, textAlign: "center" }}>Buscando la dirección…</p>
+          : <div ref={canvasRef} style={{ height: 320, width: "100%", background: "var(--dg-surface-2)" }} />}
+        <div className="dg-form-actions" style={{ padding: 14 }}>
+          <button type="button" className="dg-btn-ghost" onClick={() => onConfirmar(null)}>Quitar ubicación</button>
+          <button type="button" className="dg-btn-primary" disabled={!coord} onClick={() => onConfirmar(coord)}><Check size={14} /> Guardar ubicación</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -6725,15 +6815,19 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   }, []);
   async function comenzarRecorrido(items) {
     const dir = [datoEntrega(items, "detalleEntrega", ""), datoEntrega(items, "barrio", ""), datoEntrega(items, "localidad", ""), "Argentina"].filter(Boolean).join(", ");
-    let geo = null;
-    try { geo = dir ? await trackingStore.geocodificar(dir) : null; } catch (e) {}
+    let lat = null, lng = null;
+    const conPin = items.find((p) => p.destinoLat != null && p.destinoLng != null);
+    if (conPin) { lat = Number(conPin.destinoLat); lng = Number(conPin.destinoLng); }
+    else {
+      try { const g = dir ? await trackingStore.geocodificar(dir) : null; if (g) { lat = g.lat; lng = g.lng; } } catch (e) {}
+    }
     await trackingStore.iniciarVarios(idsTrackingEntrega(items), {
       fletero: session?.nombre || "Fletero",
       clienteNombre: datoEntrega(items, "cliente", ""),
-      destinoLat: geo?.lat, destinoLng: geo?.lng, destinoTexto: geo?.texto || dir,
+      destinoLat: lat, destinoLng: lng, destinoTexto: dir,
     });
     setTrackingRows(await trackingStore.listActivos());
-    if (!geo) window.alert("Empezó el recorrido, pero no pude ubicar la dirección en el mapa. El cliente igual va a ver el flete moviéndose (sin el pin del destino ni el tiempo estimado).");
+    if (lat == null) window.alert("Recorrido iniciado. Este envío no tiene la ubicación marcada en el mapa, así que el cliente ve el flete moviéndose pero sin el pin del destino ni el tiempo estimado. Se marca desde PostVenta → Envíos.");
   }
   async function terminarRecorrido(ids) {
     await trackingStore.terminarVarios(ids);
@@ -11424,6 +11518,8 @@ function Style() {
       .dg-shipping-editor-body { padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-bg); }
       .dg-shipping-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
       .dg-shipping-field { min-width:0; }
+      .dg-shipping-mapa { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:10px; padding-top:9px; border-top:1px dashed rgba(var(--dg-line-rgb),0.15); }
+      .dg-shipping-mapa-ok { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; color:var(--dg-success); }
       .dg-shipping-address { grid-column:1 / -1; }
       .dg-shipping-field .dg-field { gap:3px; }
       .dg-shipping-field .dg-field label { font-size:8.5px; }
@@ -12398,6 +12494,9 @@ function SeguimientoPublico({ pedidoId }) {
     return () => { activo = false; window.clearInterval(interval); };
   }, [pedidoId]);
 
+  const tracking = useEnvioTracking(pedido ? (pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id) : null);
+  const enViaje = envioEnViaje(tracking);
+
   if (pedido === undefined) {
     return (
       <div className="dg-app dg-seguimiento" data-theme={tema}>
@@ -12460,9 +12559,9 @@ function SeguimientoPublico({ pedidoId }) {
             <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{pedido.listo}</strong></p>
           )}
           {pasoActual === 3 && !esInterior && (
-            <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
-              <strong>Espejo listo para coordinar entrega.</strong>
-            </p>
+            enViaje
+              ? <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-accent)" }}><strong>🚚 En viaje — {envioEtaTexto(tracking)}.</strong></p>
+              : <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
           )}
           {pasoActual === 3 && esInterior && (
             <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
@@ -12504,7 +12603,7 @@ function SeguimientoPublico({ pedidoId }) {
             <button className="dg-btn-ghost" onClick={() => abrirGarantia(pedido)}><ShieldCheck size={14} /> Descargar garantía</button>
           </div>
 
-          <MapaEnvioCliente trackingId={pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id} />
+          <MapaEnvioCliente row={tracking} />
 
           <ChatClientePublico
             hiloId={pedido.id}
@@ -12540,6 +12639,9 @@ function SeguimientoGrupoPublico({ grupoId }) {
     const interval = window.setInterval(cargar, 20000);
     return () => { activo = false; window.clearInterval(interval); };
   }, [grupoId]);
+
+  const tracking = useEnvioTracking(grupoId ? `grupo:${grupoId}` : null);
+  const enViaje = envioEnViaje(tracking);
 
   if (espejos === undefined) {
     return (
@@ -12627,7 +12729,9 @@ function SeguimientoGrupoPublico({ grupoId }) {
                     <p className="dg-hint" style={{ marginTop: 8 }}><strong>{etapaFabricaPublica(pedido)}</strong></p>
                   )}
                   {pasoActual === 3 && !esInterior && (
-                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
+                    enViaje
+                      ? <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-accent)" }}><strong>🚚 En viaje — {envioEtaTexto(tracking)}.</strong></p>
+                      : <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
                   )}
                   {pasoActual === 3 && esInterior && (
                     <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo. Lo estamos preparando para despachar por Vía Cargo.</strong></p>
@@ -12656,7 +12760,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
           </div>
         )}
 
-        {!todosCancelados && <MapaEnvioCliente trackingId={`grupo:${grupoId}`} />}
+        {!todosCancelados && <MapaEnvioCliente row={tracking} />}
 
         {!todosCancelados && (
           <ChatClientePublico
