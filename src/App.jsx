@@ -5008,6 +5008,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const [nuevoTipoAbierto, setNuevoTipoAbierto] = useState(false);
   const [verificando, setVerificando] = useState(null);
   const [nextDraft, setNextDraft] = useState(null);
+  // Cuando venís de "guardar y cargar otro", esto avisa cuál ya quedó guardado.
+  const [avisoEspejo, setAvisoEspejo] = useState(null);
   const [agrupado, setAgrupado] = useState("mes");
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
@@ -5120,16 +5122,17 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     }
 
     if (opts?.addAnother) {
+      // Cuántos espejos tiene ya este pedido, para numerar el que sigue.
+      const yaGuardados = pedidosActualizados.filter((p) => p.grupoId === toSave.grupoId).length;
       setOpenPedido(null);
       setCreating(false);
-      setTimeout(() => {
-        setNextDraft(emptyPedido({
-          orden: toSave.orden, grupoId: toSave.grupoId, cliente: toSave.cliente, celular: toSave.celular, dniCuit: toSave.dniCuit,
-          vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, barrio: toSave.barrio, detalleEntrega: toSave.detalleEntrega, piso: toSave.piso,
-        }));
-      }, 0);
+      setAvisoEspejo({ guardados: yaGuardados, cliente: toSave.cliente || "", orden: toSave.orden });
+      setNextDraft(emptyPedido({
+        orden: toSave.orden, grupoId: toSave.grupoId, cliente: toSave.cliente, celular: toSave.celular, dniCuit: toSave.dniCuit,
+        vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, barrio: toSave.barrio, detalleEntrega: toSave.detalleEntrega, piso: toSave.piso,
+      }));
     } else {
-      setOpenPedido(null); setCreating(false); setNextDraft(null);
+      setOpenPedido(null); setCreating(false); setNextDraft(null); setAvisoEspejo(null);
     }
   }
   function marcarEntregado(p) {
@@ -5310,8 +5313,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
               <>
                 <div className="dg-fab-menu-backdrop" onClick={() => setNuevoTipoAbierto(false)} />
                 <div className="dg-fab-menu" style={{ right: 0, left: "auto", minWidth: 220 }}>
-                  <button onClick={() => { setNuevoTipoAbierto(false); setNextDraft(emptyPedido({ tipoPedido: "venta" })); setCreating(true); }}><ShoppingCart size={13} /> Venta normal</button>
-                  <button onClick={() => { setNuevoTipoAbierto(false); setNextDraft(emptyPedido({ tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo" })); setCreating(true); }}><AlertTriangle size={13} /> Reclamo / cambio / falla</button>
+                  <button onClick={() => { setNuevoTipoAbierto(false); setAvisoEspejo(null); setNextDraft(emptyPedido({ tipoPedido: "venta" })); setCreating(true); }}><ShoppingCart size={13} /> Venta normal</button>
+                  <button onClick={() => { setNuevoTipoAbierto(false); setAvisoEspejo(null); setNextDraft(emptyPedido({ tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo" })); setCreating(true); }}><AlertTriangle size={13} /> Reclamo / cambio / falla</button>
                 </div>
               </>
             )}
@@ -5518,15 +5521,19 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
 
       {(openPedido || creating || nextDraft) && (
         <PedidoModal
+          // El key es clave: sin él, React reusaba el formulario anterior y al
+          // cargar el segundo espejo se terminaba pisando el primero.
+          key={openPedido?.id || nextDraft?.id || "nuevo"}
           pedido={openPedido || nextDraft || emptyPedido()}
           vendedores={vendedores}
           canEditFull={canEditFull}
           canEditEstadoOnly={canEditEstadoOnly}
-          onClose={() => { setOpenPedido(null); setCreating(false); setNextDraft(null); }}
+          onClose={() => { setOpenPedido(null); setCreating(false); setNextDraft(null); setAvisoEspejo(null); }}
           onSave={savePedido}
           onDelete={openPedido && puedeBorrar ? () => removePedido(openPedido.id) : null}
           stockEspejos={stockEspejos}
           esNuevo={!openPedido}
+          aviso={openPedido ? null : avisoEspejo}
         />
       )}
 
@@ -5862,8 +5869,23 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones 
   );
 }
 
-function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo }) {
+function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso }) {
   const [draft, setDraft] = useState(() => normalizarPedidoFunciones(pedido));
+  const cajaModal = useRef(null);
+
+  // Al abrir para cargar otro espejo, arrancar arriba de todo (en las medidas)
+  // y no donde había quedado la pantalla del espejo anterior.
+  useEffect(() => {
+    if (!aviso) return undefined;
+    const t = window.setTimeout(() => {
+      try {
+        if (cajaModal.current) cajaModal.current.scrollTop = 0;
+        const overlay = cajaModal.current && cajaModal.current.parentElement;
+        if (overlay) overlay.scrollTop = 0;
+      } catch (e) {}
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [aviso]);
   const [intentoGuardar, setIntentoGuardar] = useState(false);
   const readOnly = !canEditFull && !canEditEstadoOnly;
   const saldo = (Number(draft.monto) || 0) - (Number(draft.anticipo) || 0);
@@ -5889,7 +5911,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         "Antes de guardar el pedido, repasá:\n\n" +
         "•  ¿El pedido NO lleva un segundo espejo?\n" +
         "     (si lleva otro, cerrá este aviso y usá\n" +
-        "     \"Guardar y agregar otro espejo del mismo cliente\")\n\n" +
+        "     \"Guardar y cargar otro espejo\")\n\n" +
         "•  ¿La cantidad está bien? Cargaste " + cant + " unidad" + (cant === 1 ? "" : "es") + ".\n\n" +
         "Aceptar = guardar y cerrar."
       );
@@ -5915,11 +5937,28 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
 
   return (
     <div className="dg-overlay">
-      <div className="dg-modal dg-modal-lg">
+      <div className="dg-modal dg-modal-lg" ref={cajaModal}>
         <div className="dg-modal-head">
-          <div className="dg-modal-title">{draft.orden ? `Pedido #${draft.orden}` : "Nuevo pedido"}</div>
+          <div className="dg-modal-title">
+            {draft.orden ? `Pedido #${draft.orden}` : "Nuevo pedido"}
+            {aviso && ` · espejo ${aviso.guardados + 1}`}
+          </div>
           <button className="dg-icon-btn" onClick={pedirCerrar}><X size={18} /></button>
         </div>
+
+        {aviso && (
+          <div className="dg-espejo-guardado" role="status">
+            <CheckCircle2 size={18} />
+            <div>
+              <strong>
+                {aviso.guardados === 1 ? "Listo, el primer espejo quedó guardado" : `Listo, ya van ${aviso.guardados} espejos guardados`}
+              </strong>
+              <span>
+                Ahora cargá el espejo {aviso.guardados + 1} de {aviso.cliente || "este pedido"}. Los datos del cliente y de la entrega ya están puestos: completá la medida y el producto.
+              </span>
+            </div>
+          </div>
+        )}
 
         {intentoGuardar && cantErrores > 0 && (
           <div className="dg-validacion-banner">
@@ -6141,8 +6180,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <button className="dg-btn-ghost" onClick={pedirCerrar}>Cerrar</button>
           {onDelete && canEditFull && <button className="dg-btn-ghost" onClick={onDelete}><Trash2 size={14} /> Eliminar</button>}
           {canEditFull && (
-            <button className="dg-btn-ghost" onClick={() => intentarGuardar({ addAnother: true })}>
-              <PackagePlus size={14} /> Guardar y agregar otro espejo del mismo cliente
+            <button className="dg-btn-ghost dg-btn-otro-espejo" onClick={() => intentarGuardar({ addAnother: true })}>
+              <PackagePlus size={14} /> Guardar y cargar otro espejo
             </button>
           )}
           {!readOnly && (
@@ -10609,6 +10648,13 @@ function Style() {
       .dg-modal .dg-btn-ghost:hover { background: rgba(255,255,255,0.16) !important; }
       .dg-modal .dg-icon-btn { color: #FFFFFF !important; }
       .dg-modal .dg-error { color: #FF8A80 !important; font-weight: 600; }
+      /* Estos dos viven adentro del modal, que es violeta oscuro en los dos
+         temas. Sin esto, en tema claro quedaban negro sobre oscuro: el toggle
+         de urgente no se leía y el cartel de "faltan datos" tampoco — que es
+         justo el que explica por qué no se puede guardar. */
+      .dg-modal .dg-urgente-toggle { color:#F1EAE1; }
+      .dg-modal .dg-validacion-banner { color:#FF8A80; }
+      .dg-modal .dg-validacion-banner strong { color:#FFB3AD; }
       .dg-modal-ajustes { max-width:820px; }
       .dg-modal-notificaciones { max-width:480px; max-height:82vh; }
       .dg-notificaciones-secciones { display:flex; flex-direction:column; gap:12px; }
@@ -11035,6 +11081,21 @@ function Style() {
       .dg-comision-total { display:flex; align-items:center; gap:10px; }
       .dg-comision-total strong { font-family:'JetBrains Mono', monospace; font-size:18px; color:var(--dg-warning); }
       .dg-chev-open { transform: rotate(90deg); }
+      /* Confirmación de que el espejo anterior se guardó. Entra con una
+         animación corta para que se note aunque el modal ya estuviera abierto. */
+      .dg-espejo-guardado { display:flex; align-items:flex-start; gap:11px; margin-bottom:14px; padding:12px 14px; border:1px solid rgba(127,209,180,.45); border-radius:12px; background:rgba(127,209,180,.13); animation:dg-espejo-guardado-in .4s cubic-bezier(.2,.85,.3,1.05); }
+      .dg-espejo-guardado > svg { flex:none; margin-top:1px; color:#7FD1B4; animation:dg-espejo-tilde .45s .08s both cubic-bezier(.2,.9,.3,1.5); }
+      .dg-espejo-guardado strong { display:block; color:#7FD1B4; font-family:'Jost',sans-serif; font-size:15px; font-weight:600; }
+      .dg-espejo-guardado span { display:block; margin-top:3px; color:#C9C3D6; font-size:13px; line-height:1.4; }
+      @keyframes dg-espejo-guardado-in { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:none; } }
+      @keyframes dg-espejo-tilde { from { opacity:0; transform:scale(.3); } to { opacity:1; transform:scale(1); } }
+      /* Que se note que este botón no es uno más de la fila. Lleva !important
+         porque .dg-modal .dg-btn-ghost pisa color y borde de todos. */
+      .dg-modal .dg-btn-otro-espejo { border-color:rgba(96,173,217,.75) !important; background:rgba(96,173,217,.16) !important; color:#9ACFEC !important; }
+      .dg-modal .dg-btn-otro-espejo:hover { border-color:#60ADD9 !important; background:rgba(96,173,217,.28) !important; color:#FFFFFF !important; }
+      @media (prefers-reduced-motion: reduce) {
+        .dg-espejo-guardado, .dg-espejo-guardado > svg { animation:none; }
+      }
       .dg-validacion-banner { display:flex; gap:10px; align-items:flex-start; background: rgba(var(--dg-danger-rgb),0.1); border:1px solid rgba(var(--dg-danger-rgb),0.35); border-radius:12px; padding:12px 14px; margin-bottom:14px; color:var(--dg-danger); font-size:13px; }
       .dg-validacion-banner strong { display:block; margin-bottom:4px; font-size:13px; }
       .dg-validacion-banner ul { margin:0; padding-left:16px; }
