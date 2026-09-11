@@ -563,7 +563,24 @@ const TIPO_PRODUCTO_TABLE = {
   "Orgánico":                 { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Orgánico" },
   "Soft":                     { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Soft" },
   "Irregular":                { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Irregular" },
+  "Capilla":                  { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Capilla" },
 };
+
+// Hacia dónde va la curva de una capilla. Parada, la curva va arriba o abajo;
+// acostada (más ancha que alta), va a un costado.
+const CAPILLA_CURVAS_PARADA = ["Curva arriba", "Curva abajo"];
+const CAPILLA_CURVAS_ACOSTADA = ["Curva a la derecha", "Curva a la izquierda"];
+
+function curvasCapilla(ancho, alto) {
+  return (Number(ancho) || 0) > (Number(alto) || 0) ? CAPILLA_CURVAS_ACOSTADA : CAPILLA_CURVAS_PARADA;
+}
+
+// Si cambian la medida y el espejo pasa de parado a acostado, la curva que
+// estaba elegida deja de existir: se cae en la primera de las que sí valen.
+function curvaCapilla(espejo) {
+  const opciones = curvasCapilla(espejo?.ancho, espejo?.alto);
+  return opciones.includes(espejo?.capillaCurva) ? espejo.capillaCurva : opciones[0];
+}
 
 const DEFAULT_QUOTE_CONFIG = {
   materiales: {
@@ -623,7 +640,7 @@ function roundTo1000(n) { return Math.round(n / 1000) * 1000; }
 function fmtMoney(n) { return "$" + Math.round(n).toLocaleString("es-AR"); }
 
 function computeQuote(inputs, cfg) {
-  const { tipoProducto, ancho, alto, touch, desemp, desempTipo, horaTemp, bluetoothSel, panelesAdicionales, envioInterior, tipoCliente, cantidad } = inputs;
+  const { tipoProducto, ancho, alto, touch, desemp, desempTipo, horaTemp, bluetoothSel, panelesAdicionales, envioInterior, tipoCliente, cantidad, capillaCurva } = inputs;
   const { materiales: M, embalaje: E, opcionales: O, cargaOperativa: C, reglas: R } = cfg;
 
   const tipoRow = TIPO_PRODUCTO_TABLE[tipoProducto] || TIPO_PRODUCTO_TABLE["Rectangular Simple"];
@@ -756,7 +773,8 @@ function computeQuote(inputs, cfg) {
     + (desempActivo ? ` + Desempañante ${desempTipo === "Touch" ? "touch" : "220V"}` : "")
     + (horaTemp === "Sí" ? " + Hora/Temperatura" : "")
     + (bluetoothSel !== "Sin Bluetooth" ? ` + ${bluetoothSel}` : "")
-    + (desempActivo && panelesAdicionales > 0 ? ` (${1 + panelesAdicionales} paneles)` : "");
+    + (desempActivo && panelesAdicionales > 0 ? ` (${1 + panelesAdicionales} paneles)` : "")
+    + (tipoProducto === "Capilla" && capillaCurva ? ` · ${capillaCurva.toLowerCase()}` : "");
 
   return {
     area, perimetro, estandar, factorTamaño, alertaMedidaMaxima, alertaPaneles, alertaComercial,
@@ -9804,6 +9822,7 @@ function nuevoEspejoPresupuesto(base) {
     bluetoothSel: base ? base.bluetoothSel : "Sin Bluetooth",
     panelesAdicionales: base ? base.panelesAdicionales : 0,
     cantidad: base ? base.cantidad : 1,
+    capillaCurva: base ? base.capillaCurva : CAPILLA_CURVAS_PARADA[0],
   };
 }
 
@@ -9839,6 +9858,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
       horaTemp: e.horaTemp,
       bluetoothSel: e.bluetoothSel,
       panelesAdicionales: Number(e.panelesAdicionales) || 0,
+      capillaCurva: curvaCapilla(e),
       envioInterior,
       tipoCliente,
       cantidad: Number(e.cantidad) || 1,
@@ -9958,6 +9978,13 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
                       <Field label="Ancho (cm)"><input type="number" value={e.ancho} onChange={(ev) => setEspejo(e.id, { ancho: ev.target.value })} /></Field>
                       <Field label="Alto (cm)"><input type="number" value={e.alto} onChange={(ev) => setEspejo(e.id, { alto: ev.target.value })} /></Field>
                       <Field label="Cantidad igual"><input type="number" min="1" value={e.cantidad} onChange={(ev) => setEspejo(e.id, { cantidad: ev.target.value })} /></Field>
+                      {e.tipoProducto === "Capilla" && (
+                        <Field label="¿Dónde va la curva?">
+                          <select value={curvaCapilla(e)} onChange={(ev) => setEspejo(e.id, { capillaCurva: ev.target.value })}>
+                            {curvasCapilla(e.ancho, e.alto).map((c) => (<option key={c} value={c}>{c}</option>))}
+                          </select>
+                        </Field>
+                      )}
                     </div>
 
                     <div className="dg-quote-section-title"><Sparkles size={13} />Funciones</div>
