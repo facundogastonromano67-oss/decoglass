@@ -6865,9 +6865,8 @@ function RecorridoFleteControl({ token, onTerminar }) {
         {!pos && !error && <small> · buscando señal…</small>}
       </div>
       {error && <p className="dg-error" style={{ margin: "5px 0" }}>{error}</p>}
-      <p className="dg-mapa-nota" style={{ padding: "6px 0 6px" }}>Dejá esta pantalla abierta y prendida. Si usás <strong>Traccar Client</strong>, poné este código como <strong>Device identifier</strong> y podés minimizar la app:</p>
-      <div className="dg-flete-codigo">{token}</div>
-      <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 8 }} onClick={onTerminar}><XCircle size={13} /> Terminar recorrido</button>
+      <p className="dg-mapa-nota" style={{ padding: "6px 0 6px" }}>Esto comparte la ubicación mientras <strong>esta pantalla esté abierta y prendida</strong>. Para que siga mandando con la app cerrada tiene que estar andando <strong>Traccar Client</strong> en este mismo celular, con el código de arriba.</p>
+      <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 2 }} onClick={onTerminar}><XCircle size={13} /> Terminar recorrido</button>
     </div>
   );
 }
@@ -7003,7 +7002,17 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     const cargar = () => trackingStore.listActivos().then((r) => { if (vivo) setTrackingRows(r); }).catch(() => {});
     cargar();
     const iv = window.setInterval(cargar, 15000);
-    return () => { vivo = false; window.clearInterval(iv); };
+    // Al volver a la app (que es cuando se mira si el GPS siguió mandando),
+    // pedir el dato de nuevo en vez de mostrar el de hasta 15 segundos atrás.
+    const alVolver = () => { if (document.visibilityState === "visible") cargar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+    return () => {
+      vivo = false;
+      window.clearInterval(iv);
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("focus", alVolver);
+    };
   }, []);
   async function comenzarRecorrido(items) {
     const dir = [datoEntrega(items, "detalleEntrega", ""), datoEntrega(items, "barrio", ""), datoEntrega(items, "localidad", ""), "Argentina"].filter(Boolean).join(", ");
