@@ -17,27 +17,6 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function distanciaKm(a, b, c, d) {
-  const R = 6371, r = Math.PI / 180;
-  const dLat = (c - a) * r, dLng = (d - b) * r;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-
-async function rutaOSRM(fLat, fLng, dLat, dLng) {
-  try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${fLng},${fLat};${dLng},${dLat}?overview=false`;
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 6000);
-    const r = await fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
-    const j = await r.json();
-    const ruta = j && j.routes && j.routes[0];
-    if (ruta) return { etaMin: Math.round(ruta.duration / 60), km: Math.round((ruta.distance / 1000) * 10) / 10 };
-  } catch (e) { /* cae al fallback */ }
-  const km = Math.round(distanciaKm(fLat, fLng, dLat, dLng) * 10) / 10;
-  return { etaMin: Math.max(1, Math.round((km / 22) * 60)), km };
-}
-
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -89,13 +68,8 @@ export default async function handler(req, res) {
 
   let n = 0;
   for (const row of activos) {
-    const patch = { flete_lat: lat, flete_lng: lng, flete_at: ahora };
-    if (row.destino_lat != null && row.destino_lng != null) {
-      const { etaMin, km } = await rutaOSRM(lat, lng, row.destino_lat, row.destino_lng);
-      patch.eta_min = etaMin;
-      patch.distancia_km = km;
-    }
-    const { error } = await supabase.from("envio_tracking").update(patch).eq("id", row.id);
+    const { error } = await supabase.from("envio_tracking")
+      .update({ flete_lat: lat, flete_lng: lng, flete_at: ahora }).eq("id", row.id);
     if (!error) n++;
   }
 

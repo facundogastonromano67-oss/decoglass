@@ -6162,7 +6162,33 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
     const grupo = pedido.grupoId || pedido.id;
     onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patch } : p)));
   }
-  function marcarEntregado(id) { update(id, { estado: "Entregado", entregadoFecha: new Date().toISOString().slice(0, 10) }); }
+  function marcarEntregadoGrupo(pedido) { updateGrupo(pedido, { estado: "Entregado", entregadoFecha: new Date().toISOString().slice(0, 10) }); }
+
+  // Un pedido = una tarjeta (aunque tenga varios espejos).
+  const gruposInterior = (() => {
+    const m = new Map();
+    interior.forEach((p) => {
+      const k = p.grupoId || p.id;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(p);
+    });
+    return [...m.values()]
+      .map((items) => items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0)))
+      .sort((a, b) => {
+        const aListo = a.every(pedidoEstaListo), bListo = b.every(pedidoEstaListo);
+        if (aListo !== bListo) return aListo ? -1 : 1;
+        return (b[0].orden || 0) - (a[0].orden || 0);
+      });
+  })();
+  const gruposDespachados = (() => {
+    const m = new Map();
+    despachados.forEach((p) => {
+      const k = p.grupoId || p.id;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(p);
+    });
+    return [...m.values()].map((items) => items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0)));
+  })();
 
   return (
     <div className="dg-page">
@@ -6184,33 +6210,57 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
       )}
 
       <div className="dg-task-list dg-pedido-list">
-        {interior.length === 0 && <div className="dg-empty">No hay pedidos al interior pendientes.</div>}
-        {interior.map((p) => {
-          const listo = pedidoEstaListo(p);
+        {gruposInterior.length === 0 && <div className="dg-empty">No hay pedidos al interior pendientes.</div>}
+        {gruposInterior.map((items) => {
+          const principal = items[0];
+          const listos = items.filter(pedidoEstaListo);
+          const todosListos = grupoInteriorCompleto(principal, pedidos);
+          const ordenes = [...new Set(items.map((p) => p.orden))].map((o) => `#${o}`).join(" · ");
+          const total = totalUnidades(items);
           return (
-            <div className={`dg-section-card dg-shipping-confirm-card ${listo ? "dg-fab-terminado" : ""}`} key={p.id}>
+            <div className={`dg-section-card dg-shipping-confirm-card ${todosListos ? "dg-fab-terminado" : ""}`} key={principal.grupoId || principal.id}>
               <div className="dg-section-header">
-                <Truck size={14} /> #{p.orden} · {p.cliente}
-                {listo && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Listo</span>}
+                <Truck size={14} /> {ordenes} · {principal.cliente}
+                {todosListos && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Listo</span>}
               </div>
-              <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma}{!listo && " · todavía en producción"}</div>
+              <div className="dg-pago-meta" style={{ marginBottom: 10 }}>
+                {total} {total === 1 ? "espejo" : "espejos"}
+                {items.length === 1 && ` · ${principal.ancho}×${principal.alto} cm · ${principal.forma}`}
+                {!todosListos && ` · ${listos.length}/${items.length} listos, el resto en producción`}
+              </div>
+
+              {items.length > 1 && (
+                <details className="dg-shipping-editor" style={{ marginBottom: 10 }}>
+                  <summary>
+                    <span className="dg-shipping-editor-icon"><Package size={14} /></span>
+                    <span><strong>Ver los {items.length} espejos</strong><small>{items.map((e) => `${e.ancho}×${e.alto}`).join(" · ")}</small></span>
+                    <ChevronRight size={16} />
+                  </summary>
+                  <div style={{ padding: "8px 4px 2px" }}>
+                    {items.map((e) => (
+                      <div className="dg-pago-meta" key={e.id} style={{ padding: "4px 0", display: "flex", justifyContent: "space-between", gap: 8 }}>
+                        <span>#{e.orden} · {e.ancho}×{e.alto} cm · {e.forma}</span>
+                        <span style={{ color: pedidoEstaListo(e) ? "var(--dg-success)" : "var(--dg-text-faint)" }}>{pedidoEstaListo(e) ? "listo" : "en producción"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
 
               <div className="dg-field-grid">
-                <Field label="Provincia"><input disabled={!canEdit} value={p.provincia || ""} onChange={(e) => updateGrupo(p, { provincia: e.target.value })} /></Field>
-                <Field label="Localidad"><input disabled={!canEdit} value={p.localidad || ""} onChange={(e) => updateGrupo(p, { localidad: e.target.value })} /></Field>
-                <Field label="Código postal"><input disabled={!canEdit} value={p.codigoPostal || ""} onChange={(e) => updateGrupo(p, { codigoPostal: e.target.value })} /></Field>
+                <Field label="Provincia"><input disabled={!canEdit} value={principal.provincia || ""} onChange={(e) => updateGrupo(principal, { provincia: e.target.value })} /></Field>
+                <Field label="Localidad"><input disabled={!canEdit} value={principal.localidad || ""} onChange={(e) => updateGrupo(principal, { localidad: e.target.value })} /></Field>
+                <Field label="Código postal"><input disabled={!canEdit} value={principal.codigoPostal || ""} onChange={(e) => updateGrupo(principal, { codigoPostal: e.target.value })} /></Field>
               </div>
 
-              <RemitoViaCargoCampo pedido={p} canEdit={canEdit} onCambiar={(cambios) => update(p.id, cambios)} />
+              <RemitoViaCargoCampo pedido={principal} canEdit={canEdit} onCambiar={(cambios) => updateGrupo(principal, cambios)} />
 
-              {listo && p.ancho && p.alto && (
-                grupoInteriorCompleto(p, pedidos) ? (
-                  <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
-                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(p)}><Printer size={13} /> Rótulo de este pedido</button>
-                  </div>
-                ) : (
-                  <p className="dg-hint" style={{ marginTop: 10 }}>El rótulo se habilita cuando estén listos todos los espejos del pedido.</p>
-                )
+              {todosListos && principal.ancho && principal.alto ? (
+                <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
+                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(listos)}><Printer size={13} /> Rótulos del pedido ({listos.length})</button>
+                </div>
+              ) : (
+                <p className="dg-hint" style={{ marginTop: 10 }}>Los rótulos se habilitan cuando estén listos todos los espejos del pedido.</p>
               )}
             </div>
           );
@@ -6218,22 +6268,27 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
       </div>
 
       <div className="dg-section-card" style={{ marginTop: 22 }}>
-        <div className="dg-section-header"><Check size={14} /> Despachados ({despachados.length})</div>
+        <div className="dg-section-header"><Check size={14} /> Despachados ({gruposDespachados.length})</div>
         <p className="dg-hint" style={{ marginBottom: 10 }}>Ya salieron hacia Vía Cargo. No aparecen en la lista general de pedidos para no hacer bulto. Marcá "Confirmar entrega" recién cuando sepas que el cliente ya lo recibió.</p>
-        {despachados.length === 0 && <div className="dg-empty">Todavía no despachaste ninguno.</div>}
+        {gruposDespachados.length === 0 && <div className="dg-empty">Todavía no despachaste ninguno.</div>}
         <div className="dg-task-list" style={{ marginBottom: 0 }}>
-          {despachados.map((p) => (
-            <div className="dg-task dg-pago-row" key={p.id}>
-              <div className="dg-pago-info">
-                <span>#{p.orden} · {p.cliente}</span>
-                <span className="dg-pago-meta">Despachado el {p.despachadoFecha || "—"} · Guía: {p.remitoNumeroGuia || "—"} · {p.localidad || "—"}{p.provincia ? `, ${p.provincia}` : ""}</span>
+          {gruposDespachados.map((items) => {
+            const p = items[0];
+            const ordenes = [...new Set(items.map((x) => x.orden))].map((o) => `#${o}`).join(" · ");
+            const total = totalUnidades(items);
+            return (
+              <div className="dg-task dg-pago-row" key={p.grupoId || p.id}>
+                <div className="dg-pago-info">
+                  <span>{ordenes} · {p.cliente}{total > 1 ? ` · ${total} espejos` : ""}</span>
+                  <span className="dg-pago-meta">Despachado el {p.despachadoFecha || "—"} · Guía: {p.remitoNumeroGuia || "—"} · {p.localidad || "—"}{p.provincia ? `, ${p.provincia}` : ""}</span>
+                </div>
+                {p.remitoNumeroGuia?.trim() && (
+                  <a className="dg-btn-ghost dg-mini-btn" href={linkViaCargo(p.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><ExternalLink size={13} /> Ver en Vía Cargo</a>
+                )}
+                <button className="dg-btn-primary dg-mini-btn" onClick={() => marcarEntregadoGrupo(p)}><CheckCircle2 size={13} /> Confirmar entrega</button>
               </div>
-              {p.remitoNumeroGuia?.trim() && (
-                <a className="dg-btn-ghost dg-mini-btn" href={linkViaCargo(p.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><ExternalLink size={13} /> Ver en Vía Cargo</a>
-              )}
-              <button className="dg-btn-primary dg-mini-btn" onClick={() => marcarEntregado(p.id)}><CheckCircle2 size={13} /> Confirmar entrega</button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
@@ -6705,12 +6760,6 @@ function useEnvioTracking(trackingId) {
 function envioEnViaje(row) {
   return !!(row && row.activo && row.flete_lat != null && row.flete_lng != null);
 }
-function envioEtaTexto(row) {
-  if (!row) return "en camino";
-  if (row.eta_min != null) return `llega en ~${row.eta_min} min`;
-  if (row.distancia_km != null) return `a ${row.distancia_km} km`;
-  return "en camino";
-}
 
 function MapaEnvioCliente({ row }) {
   const leafletListo = useLeafletListo();
@@ -6748,13 +6797,12 @@ function MapaEnvioCliente({ row }) {
   return (
     <div className="dg-mapa-wrap">
       <div className="dg-mapa-estado">
-        <span className="dg-mapa-dot" /> El flete está en viaje
-        <strong>&nbsp;· {envioEtaTexto(row)}</strong>
+        <span className="dg-mapa-dot" /> <strong>El flete está en viaje</strong>
       </div>
       {leafletListo
         ? <div ref={canvasRef} className="dg-mapa-canvas" />
         : <p className="dg-mapa-nota" style={{ padding: "16px 13px" }}>Cargando el mapa…</p>}
-      <p className="dg-mapa-nota">La ubicación se actualiza sola. El tiempo es aproximado.</p>
+      <p className="dg-mapa-nota">La ubicación del flete se actualiza sola.</p>
     </div>
   );
 }
@@ -6997,6 +7045,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
               {e.notas && <p className="dg-pago-meta" style={{ marginTop: 6 }}>{e.notas}</p>}
               {canEdit && (
                 <div className="dg-form-actions" style={{ marginTop: 8 }}>
+                  {soloDigitos(e.telefono).length >= 6 && <a className="dg-btn-ghost dg-mini-btn" href={`tel:${soloDigitos(e.telefono)}`}><Phone size={13} /> Llamar</a>}
                   {waLink(e.telefono) && <a className="dg-btn-ghost dg-mini-btn" href={waLink(e.telefono)} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> WhatsApp</a>}
                   <button className="dg-btn-primary dg-mini-btn" onClick={() => toggleHechoExtra(e.id)}><CheckCircle2 size={13} /> Marcar {e.tipo === "colecta" ? "retirado" : "entregado"}</button>
                   <button className="dg-icon-btn dg-task-del" onClick={() => borrarExtra(e.id)}><Trash2 size={14} /></button>
@@ -7106,8 +7155,12 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
               {canEdit && (() => {
                 const ids = idsTrackingEntrega(items);
                 const enRecorrido = trackingRows.some((t) => ids.includes(t.id));
+                const telDigits = soloDigitos(telefono);
                 return (
                   <div className="dg-recorrido-zona">
+                    {telDigits.length >= 6 && (
+                      <a className="dg-btn-ghost dg-mini-btn" href={`tel:${telDigits}`}><Phone size={13} /> Llamar al cliente</a>
+                    )}
                     {enRecorrido ? (
                       <>
                         <span className="dg-recorrido-activo"><MapPin size={13} /> En recorrido — el cliente ve el mapa</span>
@@ -12606,7 +12659,7 @@ function SeguimientoPublico({ pedidoId }) {
           )}
           {pasoActual === 3 && !esInterior && (
             enViaje
-              ? <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-accent)" }}><strong>🚚 En viaje — {envioEtaTexto(tracking)}.</strong></p>
+              ? <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-accent)" }}><strong>🚚 El flete está en viaje con tu pedido.</strong></p>
               : <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
           )}
           {pasoActual === 3 && esInterior && (
@@ -12776,7 +12829,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
                   )}
                   {pasoActual === 3 && !esInterior && (
                     enViaje
-                      ? <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-accent)" }}><strong>🚚 En viaje — {envioEtaTexto(tracking)}.</strong></p>
+                      ? <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-accent)" }}><strong>🚚 El flete está en viaje con tu pedido.</strong></p>
                       : <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
                   )}
                   {pasoActual === 3 && esInterior && (
