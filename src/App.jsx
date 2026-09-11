@@ -4034,6 +4034,14 @@ function medidaGrabado(pedido) {
   return texto;
 }
 
+// Cuándo se mandó a grabar. Si todavía no salió, vale la fecha de hoy: el
+// remito se imprime el día que se entregan los espejos al grabador.
+function fechaEnvioGrabado(pedido) {
+  const d = pedido?.grabadoEnviadoFecha ? new Date(pedido.grabadoEnviadoFecha) : new Date();
+  if (Number.isNaN(d.getTime())) return new Date().toLocaleDateString("es-AR");
+  return d.toLocaleDateString("es-AR");
+}
+
 function pedidoListaFabrica(pedido) {
   if (pedido?.estado === "Mandar a grabar") return "mandar_grabar";
   if (pedido?.estado === "En grabado") return "en_grabado";
@@ -8363,28 +8371,42 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <div className="dg-print-head">
           <div className="dg-print-brand">DECOGLASS — Fábrica</div>
           <div className="dg-print-sub">
-            {filtroEstado === "historial" ? "Historial de fabricación" : TALLER_LISTAS.find((t) => t.id === lista)?.label || lista} — {new Date().toLocaleDateString("es-AR")} · {totalUnidades(visibles)} espejo(s)
+            {lista === "mandar_grabar" && filtroEstado !== "historial" && filtroEstado !== "afuera"
+              ? `REMITO — Espejos entregados a grabado · ${new Date().toLocaleDateString("es-AR")}`
+              : `${filtroEstado === "historial" ? "Historial de fabricación" : TALLER_LISTAS.find((t) => t.id === lista)?.label || lista} — ${new Date().toLocaleDateString("es-AR")} · ${totalUnidades(visibles)} espejo(s)`}
           </div>
         </div>
-        {/* El papel que va al grabador lleva solo lo que necesita para cortar
-            y grabar. Las otras listas imprimen la tabla completa. */}
+        {/* El papel que va al grabador sirve de remito: lo que se entrega,
+            cuántas piezas, qué día y las firmas de los dos. Las otras listas
+            imprimen la tabla completa de siempre. */}
         {lista === "mandar_grabar" && filtroEstado !== "historial" && filtroEstado !== "afuera" ? (
-          <table className="dg-print-table">
-            <thead>
-              <tr><th>Ancho</th><th>Alto</th><th>Pulido</th><th>Grabado</th><th>Cliente</th></tr>
-            </thead>
-            <tbody>
-              {visibles.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.ancho} cm</td>
-                  <td>{p.alto} cm</td>
-                  <td>{p.pulido || "No"}</td>
-                  <td>{medidaGrabado(p)}</td>
-                  <td>{p.cliente}{Number(p.cant) > 1 ? ` (×${p.cant})` : ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <table className="dg-print-table">
+              <thead>
+                <tr><th>Cant.</th><th>Ancho</th><th>Alto</th><th>Pulido</th><th>Grabado</th><th>Cliente</th><th>Fecha</th></tr>
+              </thead>
+              <tbody>
+                {visibles.map((p) => (
+                  <tr key={p.id}>
+                    <td>{Number(p.cant) || 1}</td>
+                    <td>{p.ancho} cm</td>
+                    <td>{p.alto} cm</td>
+                    <td>{p.pulido || "No"}</td>
+                    <td>{medidaGrabado(p)}</td>
+                    <td>{p.cliente}</td>
+                    <td>{fechaEnvioGrabado(p)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="dg-print-remito-total">
+              Total entregado: <strong>{totalUnidades(visibles)}</strong> espejo(s) en {visibles.length} renglón(es)
+            </div>
+            <div className="dg-print-firmas">
+              <div><span>Entrega (Decoglass)</span></div>
+              <div><span>Recibe (grabador)</span></div>
+            </div>
+          </>
         ) : (
           <table className="dg-print-table">
             <thead>
@@ -11552,6 +11574,11 @@ function Style() {
         .dg-print-price div { font-family:'JetBrains Mono', monospace; font-size:18px; font-weight:700; color:#7C4A27; margin-bottom:4px; }
         .dg-print-price small { font-size:13px; color:#555; font-weight:400; }
         .dg-print-terms { margin-top:16px; font-size:13px; color:#555; }
+        .dg-print-remito-total { margin-top:14px; font-size:13px; color:#111; }
+        .dg-print-remito-total strong { font-family:'JetBrains Mono', monospace; font-size:15px; }
+        .dg-print-firmas { display:flex; gap:40px; margin-top:52px; }
+        .dg-print-firmas > div { flex:1; border-top:1px solid #111; padding-top:6px; }
+        .dg-print-firmas span { font-size:11px; color:#555; }
         .dg-print-table { display:table; width:100%; border-collapse:collapse; font-size:11px; }
         .dg-print-table th, .dg-print-table td { border-bottom:1px solid #ddd; padding:6px 8px; text-align:left; }
         .dg-print-table th { color:#555; font-weight:600; text-transform:uppercase; font-size:11px; }
