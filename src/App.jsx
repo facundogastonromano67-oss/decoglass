@@ -7103,15 +7103,23 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     <div className="dg-page">
       <Ayuda titulo="Qué entra en esta lista" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</Ayuda>
 
-      {canEdit && (() => {
+      {(() => {
         const miRecorrido = trackingRows.find((t) => String(t.fletero_token || "").toUpperCase() === miCodigo);
         const ultima = miRecorrido ? haceCuanto(miRecorrido.flete_at) : null;
         const urlPrueba = typeof window !== "undefined" ? `${window.location.origin}/api/track?id=${miCodigo}` : "";
         return (
-        <details className="dg-reclamo-editar" style={{ marginBottom: 14 }}>
-          <summary><MapPin size={12} /> Código de rastreo de este celular{hayRecorrido && (ultima ? ` · última posición ${ultima}` : " · todavía sin posición")}</summary>
-          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 9, alignItems: "flex-start" }}>
-            <span className="dg-flete-codigo">{miCodigo}</span>
+        <details className="dg-reclamo-editar dg-gps-bloque">
+          <summary>
+            <MapPin size={13} />
+            <span className="dg-gps-bloque-txt">Código de este celular</span>
+            <strong className="dg-flete-codigo">{miCodigo}</strong>
+            {hayRecorrido && (
+              <span className={`dg-gps-punta ${ultima ? "dg-gps-punta-ok" : "dg-gps-punta-mal"}`}>
+                {ultima ? `última posición ${ultima}` : "todavía sin posición"}
+              </span>
+            )}
+          </summary>
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 9, alignItems: "flex-start" }}>
 
             {hayRecorrido && (
               <div className={`dg-gps-estado ${ultima ? "dg-gps-estado-ok" : "dg-gps-estado-mal"}`}>
@@ -10360,6 +10368,15 @@ function Style() {
       .dg-gps-estado-mal { border:1px solid rgba(var(--dg-warning-rgb),.4); background:rgba(var(--dg-warning-rgb),.1); color:var(--dg-warning); }
       .dg-gps-estado strong { color:inherit; }
       .dg-flete-codigo { display:inline-block; font-family:'JetBrains Mono', monospace; font-size:24px; font-weight:700; letter-spacing:4px; color:var(--dg-accent); background:var(--dg-surface-2); border:1px dashed var(--dg-accent); border-radius:8px; padding:6px 14px; user-select:all; }
+      /* El código va en el título: es lo primero que hay que copiar para
+         configurar el GPS, no puede estar escondido adentro del desplegable. */
+      .dg-gps-bloque { margin-bottom:14px; }
+      .dg-gps-bloque > summary { flex-wrap:wrap; gap:8px; }
+      .dg-gps-bloque > summary .dg-flete-codigo { font-size:18px; letter-spacing:2px; padding:3px 10px; }
+      .dg-gps-bloque-txt { color:var(--dg-text-faint); font-size:11px; font-weight:750; letter-spacing:0.6px; text-transform:uppercase; }
+      .dg-gps-punta { font-size:11px; font-weight:650; }
+      .dg-gps-punta-ok { color:var(--dg-success); }
+      .dg-gps-punta-mal { color:var(--dg-warning); }
       .dg-chat-input { display:flex; gap:7px; padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); align-items:flex-end; }
       .dg-chat-input textarea { flex:1; min-height:38px; max-height:120px; resize:none; border:1px solid rgba(var(--dg-line-rgb),0.18); border-radius:12px; padding:9px 11px;
         background:var(--dg-surface-2); color:var(--dg-text); font-family:'Jost',sans-serif; font-size:15px; line-height:1.35; }
