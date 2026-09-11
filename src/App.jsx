@@ -4025,6 +4025,15 @@ function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
   );
 }
 
+// Lo que hay que grabar, tal como lo anotó ventas. "Aura" es un diseño fijo
+// de 2 cm: se le agrega la medida para que el grabador la tenga a la vista.
+function medidaGrabado(pedido) {
+  const texto = String(pedido?.grabado || "").trim();
+  if (!texto) return "—";
+  if (/\baura\b/i.test(texto) && !/\d\s*cm/i.test(texto)) return `${texto} · 2 cm`;
+  return texto;
+}
+
 function pedidoListaFabrica(pedido) {
   if (pedido?.estado === "Mandar a grabar") return "mandar_grabar";
   if (pedido?.estado === "En grabado") return "en_grabado";
@@ -8357,21 +8366,42 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             {filtroEstado === "historial" ? "Historial de fabricación" : TALLER_LISTAS.find((t) => t.id === lista)?.label || lista} — {new Date().toLocaleDateString("es-AR")} · {totalUnidades(visibles)} espejo(s)
           </div>
         </div>
-        <table className="dg-print-table">
-          <thead>
-            <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Funciones</th><th>Entrega</th><th>Estado</th><th>Entrega estimada</th></tr>
-          </thead>
-          <tbody>
-            {visibles.map((p) => (
-              <tr key={p.id}>
-                <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
-                <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
-                <td>{funcionesPedido(p, true).map((f) => f.label).join(", ") || "—"}</td>
-                <td>{p.metodo}</td><td>{p.estado}{p.demorado ? " (demorado)" : ""}</td><td>{p.listo || "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {/* El papel que va al grabador lleva solo lo que necesita para cortar
+            y grabar. Las otras listas imprimen la tabla completa. */}
+        {lista === "mandar_grabar" && filtroEstado !== "historial" && filtroEstado !== "afuera" ? (
+          <table className="dg-print-table">
+            <thead>
+              <tr><th>Ancho</th><th>Alto</th><th>Pulido</th><th>Grabado</th><th>Cliente</th></tr>
+            </thead>
+            <tbody>
+              {visibles.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.ancho} cm</td>
+                  <td>{p.alto} cm</td>
+                  <td>{p.pulido || "No"}</td>
+                  <td>{medidaGrabado(p)}</td>
+                  <td>{p.cliente}{Number(p.cant) > 1 ? ` (×${p.cant})` : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="dg-print-table">
+            <thead>
+              <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Funciones</th><th>Entrega</th><th>Estado</th><th>Entrega estimada</th></tr>
+            </thead>
+            <tbody>
+              {visibles.map((p) => (
+                <tr key={p.id}>
+                  <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
+                  <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
+                  <td>{funcionesPedido(p, true).map((f) => f.label).join(", ") || "—"}</td>
+                  <td>{p.metodo}</td><td>{p.estado}{p.demorado ? " (demorado)" : ""}</td><td>{p.listo || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {pedidoParaCancelar && (
