@@ -7117,11 +7117,12 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
               </div>
               <div className="dg-logistics-data">
                 <div className="dg-logistics-ident">
-                  <span className="dg-logistics-direccion"><MapPin size={18} /> {[e.direccion || "—", e.barrio].filter(Boolean).join(" · ")}</span>
+                  <span className="dg-logistics-nombre"><User size={18} /> {e.cliente || "—"}</span>
                   {soloDigitos(e.telefono).length >= 6 && (
                     <a className="dg-logistics-tel" href={`tel:${soloDigitos(e.telefono)}`}><Phone size={16} /> {e.telefono}</a>
                   )}
-                  <span className="dg-logistics-meta">{e.cliente || "—"}{e.motivo ? ` · ${e.motivo}` : ""}</span>
+                  <span className="dg-logistics-direccion"><MapPin size={18} /> {[e.direccion || "—", e.barrio].filter(Boolean).join(" · ")}</span>
+                  {e.motivo && <span className="dg-logistics-meta">{e.motivo}</span>}
                 </div>
               </div>
               {e.notas && <p className="dg-pago-meta" style={{ marginTop: 6 }}>{e.notas}</p>}
@@ -7167,11 +7168,12 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
 
               <div className="dg-logistics-data">
                 <div className="dg-logistics-ident">
-                  <span className="dg-logistics-direccion"><MapPin size={18} /> {[direccion, barrio, piso].filter(Boolean).join(" · ")}</span>
+                  <span className="dg-logistics-nombre"><User size={18} /> {nombre}</span>
                   {soloDigitos(telefono).length >= 6
                     ? <a className="dg-logistics-tel" href={`tel:${soloDigitos(telefono)}`}><Phone size={16} /> {telefono}</a>
                     : <span className="dg-logistics-tel"><Phone size={16} /> {telefono}</span>}
-                  <span className="dg-logistics-meta">{nombre} · {totalUnidades(items)} {totalUnidades(items) === 1 ? "espejo" : "espejos"} · {medidas}</span>
+                  <span className="dg-logistics-direccion"><MapPin size={18} /> {[direccion, barrio, piso].filter(Boolean).join(" · ")}</span>
+                  <span className="dg-logistics-meta">{totalUnidades(items)} {totalUnidades(items) === 1 ? "espejo" : "espejos"} · {medidas}</span>
                 </div>
 
                 <div className="dg-logistics-plata">
@@ -11601,10 +11603,10 @@ function Style() {
       /* Arriba y grande lo que el flete necesita leer manejando: a dónde va
          y a quién llama. El resto es contexto. */
       .dg-logistics-ident { min-width:0; display:flex; flex-direction:column; gap:5px; }
-      .dg-logistics-direccion { min-width:0; display:flex; align-items:flex-start; gap:9px; overflow-wrap:anywhere; color:var(--dg-text); font-family:'Jost',sans-serif; font-size:18px; font-weight:600; line-height:1.25; }
+      .dg-logistics-nombre, .dg-logistics-direccion { min-width:0; display:flex; align-items:flex-start; gap:9px; overflow-wrap:anywhere; color:var(--dg-text); font-family:'Jost',sans-serif; font-size:18px; font-weight:600; line-height:1.25; }
       .dg-logistics-tel { width:max-content; max-width:100%; display:flex; align-items:center; gap:9px; color:var(--dg-text); font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; text-decoration:none; }
       a.dg-logistics-tel:hover { color:var(--dg-accent-2); }
-      .dg-logistics-direccion > svg, .dg-logistics-tel > svg { flex:none; margin-top:2px; color:var(--dg-accent); }
+      .dg-logistics-nombre > svg, .dg-logistics-direccion > svg, .dg-logistics-tel > svg { flex:none; margin-top:2px; color:var(--dg-accent); }
       .dg-logistics-meta { min-width:0; overflow-wrap:anywhere; color:var(--dg-text-dim); font-size:13px; line-height:1.35; }
       /* La plata: sigue con su color, pero chica y en una sola línea. */
       .dg-logistics-plata { display:flex; align-items:center; flex-wrap:wrap; gap:7px 15px; margin-top:2px; padding-top:9px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
