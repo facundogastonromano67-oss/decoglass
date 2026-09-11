@@ -6801,6 +6801,17 @@ function useLeafletListo() {
 
 // Código del dispositivo que inicia un recorrido. Solo la ubicación de ESE
 // dispositivo entra al mapa. También es lo que se pone en Traccar Client.
+// "hace 40 segundos", "hace 3 minutos"... para saber si el GPS sigue vivo.
+function haceCuanto(iso) {
+  if (!iso) return null;
+  const seg = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (!Number.isFinite(seg) || seg < 0) return null;
+  if (seg < 90) return `hace ${seg} segundos`;
+  if (seg < 3600) return `hace ${Math.round(seg / 60)} minutos`;
+  if (seg < 86400) return `hace ${Math.round(seg / 3600)} horas`;
+  return `hace ${Math.round(seg / 86400)} días`;
+}
+
 function codigoFlete() {
   try {
     let v = localStorage.getItem("dg_flete_codigo");
@@ -7092,15 +7103,42 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     <div className="dg-page">
       <Ayuda titulo="Qué entra en esta lista" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</Ayuda>
 
-      {canEdit && (
+      {canEdit && (() => {
+        const miRecorrido = trackingRows.find((t) => String(t.fletero_token || "").toUpperCase() === miCodigo);
+        const ultima = miRecorrido ? haceCuanto(miRecorrido.flete_at) : null;
+        const urlPrueba = typeof window !== "undefined" ? `${window.location.origin}/api/track?id=${miCodigo}` : "";
+        return (
         <details className="dg-reclamo-editar" style={{ marginBottom: 14 }}>
-          <summary><MapPin size={12} /> Código de rastreo de este celular</summary>
-          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+          <summary><MapPin size={12} /> Código de rastreo de este celular{hayRecorrido && (ultima ? ` · última posición ${ultima}` : " · todavía sin posición")}</summary>
+          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 9, alignItems: "flex-start" }}>
             <span className="dg-flete-codigo">{miCodigo}</span>
-            <p className="dg-mapa-nota" style={{ padding: 0 }}>Este código es de <strong>este dispositivo</strong> (no cambia, sirve para todos los recorridos). Ponelo como <strong>"Device identifier"</strong> en Traccar Client, en <strong>este mismo celular</strong>. El recorrido se empieza desde acá también.</p>
+
+            {hayRecorrido && (
+              <div className={`dg-gps-estado ${ultima ? "dg-gps-estado-ok" : "dg-gps-estado-mal"}`}>
+                {ultima
+                  ? <><CheckCircle2 size={14} /> <span>Última posición recibida <strong>{ultima}</strong>.</span></>
+                  : <><AlertTriangle size={14} /> <span>El recorrido está abierto pero <strong>no llegó ninguna posición</strong> de este celular.</span></>}
+              </div>
+            )}
+
+            <p className="dg-mapa-nota" style={{ padding: 0 }}>Este código es de <strong>este dispositivo</strong> (no cambia, sirve para todos los recorridos). Va como <strong>"Device identifier"</strong> en la app de GPS, en <strong>este mismo celular</strong>. El recorrido se empieza desde acá también.</p>
+
+            <a className="dg-btn-ghost dg-mini-btn" href={urlPrueba} target="_blank" rel="noopener noreferrer">
+              <Sparkles size={13} /> Probar la conexión
+            </a>
+            <p className="dg-mapa-nota" style={{ padding: 0 }}>Abre una pestaña y te dice si el servidor recibe bien este código. Si eso anda pero la última posición queda vieja, el problema es la app de GPS del celular.</p>
+
+            <details className="dg-hint-details" style={{ marginTop: 2 }}>
+              <summary>Cómo saber si el GPS manda en segundo plano</summary>
+              <p className="dg-hint" style={{ marginTop: 6 }}>
+                Con el recorrido empezado: cerrá esta app del todo, esperá 5 minutos moviéndote, y volvé a entrar acá.
+                Si "última posición" avanzó, la app de GPS está mandando en segundo plano. Si quedó en el mismo horario de cuando cerraste, no está mandando.
+              </p>
+            </details>
           </div>
         </details>
-      )}
+        );
+      })()}
 
       {hayRecorrido && soyElQueInicio && (
         <RecorridoFleteControl token={miCodigo} onTerminar={() => terminarRecorrido(trackingRows.map((t) => t.id))} />
@@ -10316,6 +10354,11 @@ function Style() {
       .dg-recorrido-dot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--dg-success); box-shadow:0 0 0 4px color-mix(in srgb, var(--dg-success) 22%, transparent); }
       .dg-recorrido-zona { margin-top:10px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),0.15); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       .dg-recorrido-activo { display:inline-flex; align-items:center; gap:5px; font-size:13px; font-weight:600; color:var(--dg-success); }
+      .dg-gps-estado { display:flex; align-items:flex-start; gap:8px; padding:9px 11px; border-radius:8px; font-size:13px; line-height:1.35; }
+      .dg-gps-estado > svg { flex:none; margin-top:2px; }
+      .dg-gps-estado-ok { border:1px solid rgba(var(--dg-success-rgb),.35); background:rgba(var(--dg-success-rgb),.1); color:var(--dg-success); }
+      .dg-gps-estado-mal { border:1px solid rgba(var(--dg-warning-rgb),.4); background:rgba(var(--dg-warning-rgb),.1); color:var(--dg-warning); }
+      .dg-gps-estado strong { color:inherit; }
       .dg-flete-codigo { display:inline-block; font-family:'JetBrains Mono', monospace; font-size:24px; font-weight:700; letter-spacing:4px; color:var(--dg-accent); background:var(--dg-surface-2); border:1px dashed var(--dg-accent); border-radius:8px; padding:6px 14px; user-select:all; }
       .dg-chat-input { display:flex; gap:7px; padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); align-items:flex-end; }
       .dg-chat-input textarea { flex:1; min-height:38px; max-height:120px; resize:none; border:1px solid rgba(var(--dg-line-rgb),0.18); border-radius:12px; padding:9px 11px;
