@@ -562,10 +562,7 @@ const TIPO_PRODUCTO_TABLE = {
   "Puntas Curvas":            { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Puntas Curvas" },
   "Orgánico":                 { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Orgánico" },
   "Soft":                     { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Soft" },
-  // Irregular sale 15% más caro que un Orgánico o una Pastilla de la misma
-  // medida. Esos llevan 7,5% de recargo de forma, así que este lleva
-  // 1,075 × 1,15 − 1 = 0,23625.
-  "Irregular":                { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.23625, display: "Irregular" },
+  "Irregular":                { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Irregular" },
 };
 
 const DEFAULT_QUOTE_CONFIG = {
@@ -704,7 +701,7 @@ function computeQuote(inputs, cfg) {
   const alertaPaneles = desemp !== "Sí" && panelesAdicionales > 0
     ? "REVISAR: panel adicional sin desempañante"
     : panelSize === "NO ENTRA"
-    ? `REVISAR: para el desempañante la medida mínima es ${30 + R.margenMinDesempCm} cm. El precio está calculado con el panel más chico (30x30) — confirmá en el taller si entra.`
+    ? `revisá la medida — para el desempañante el mínimo es ${30 + R.margenMinDesempCm} cm. El precio sale calculado con el panel más chico (30x30), confirmalo en el taller.`
     : (ancho > 100 || alto > 100) && desemp === "Sí" && panelesAdicionales === 0
     ? "RECOMENDACIÓN: agregar panel adicional"
     : "OK";
@@ -10015,7 +10012,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
 
         <div className="dg-quote-result">
           {avisos.map((a, i) => (
-            <div className="dg-alert" key={i}><AlertTriangle size={14} /> <strong>{a.espejo}:</strong> {a.texto}</div>
+            <div className="dg-alert" key={i}><AlertTriangle size={14} /><span><strong>{a.espejo}:</strong> {a.texto}</span></div>
           ))}
 
           <div className="dg-price-card">
@@ -11522,7 +11519,13 @@ function Style() {
       .dg-quote-form, .dg-quote-result { flex:1; min-width:280px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:16px; }
       .dg-quote-section-title { display:flex; align-items:center; gap:7px; margin:16px 0 9px; padding-left:9px; border-left:3px solid var(--dg-accent); color:var(--dg-accent-2); font-family:'Jost', sans-serif; font-size:11px; font-weight:750; letter-spacing:0.6px; text-transform:uppercase; }
       .dg-quote-section-title:first-child { margin-top:0; }
-      .dg-alert { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),0.1); border:1px solid rgba(var(--dg-warning-rgb),0.3); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+      /* El ícono arriba y el texto en un solo bloque: si el aviso ocupa varios
+         renglones, el triángulo queda al lado de la primera línea y el texto
+         no se parte en pedazos sueltos. */
+      .dg-alert { display:flex; align-items:flex-start; gap:9px; font-size:13px; line-height:1.45; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),0.1); border:1px solid rgba(var(--dg-warning-rgb),0.3); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+      .dg-alert > svg { flex:none; margin-top:2px; }
+      .dg-alert > span { min-width:0; }
+      .dg-alert strong { font-weight:700; }
       .dg-price-card { display:flex; flex-direction:column; gap:2px; background: rgba(var(--dg-accent-rgb),0.08); border:1px solid rgba(var(--dg-accent-rgb),0.3); border-radius:12px; padding:14px; margin-bottom:14px; }
       .dg-price-label { font-size:11px; color:var(--dg-text-dim); }
       .dg-price-main { font-family:'JetBrains Mono', monospace; font-size:24px; color:var(--dg-accent); }
