@@ -5020,6 +5020,14 @@ function resumenComisionesLiquidadas(pedidos, empleado, periodo) {
 }
 
 // Campos que no pueden faltar al pasar un pedido. Devuelve { campo: "motivo" }
+const AVISO_PULIDO_ESMERILADO = "Los esmerilados van a grabado: el pulido tiene que ir en «Sí»";
+
+// ¿A este pedido hay que exigirle el pulido? Solo a los esmerilados, y
+// mientras ventas todavía lo tenga en la mano.
+function pulidoEsObligatorio(p) {
+  return p?.estado === "Sin pasar a fábrica" && pedidoProcesoTaller(p) === "esmerilados";
+}
+
 function validarPedido(p) {
   const errores = {};
   const falta = (v) => v === undefined || v === null || String(v).trim() === "";
@@ -5039,6 +5047,7 @@ function validarPedido(p) {
     errores.detalleEntrega = "Con envío hace falta la dirección";
   }
   if (falta(p.tipoFactura) || p.tipoFactura === "No aplica") errores.tipoFactura = "Definí el tipo de factura";
+  if (pulidoEsObligatorio(p) && p.pulido !== "Sí") errores.pulido = AVISO_PULIDO_ESMERILADO;
   return errores;
 }
 
@@ -6031,7 +6040,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Ancho (cm)" error={err("ancho")}><input type="number" disabled={!canEditFull} value={draft.ancho} onChange={(e) => set("ancho", e.target.value)} /></Field>
             <Field label="Alto (cm)" error={err("alto")}><input type="number" disabled={!canEditFull} value={draft.alto} onChange={(e) => set("alto", e.target.value)} /></Field>
             <Field label="Cantidad" error={err("cant")}><input type="number" disabled={!canEditFull} value={draft.cant} onChange={(e) => set("cant", e.target.value)} /></Field>
-            <Field label="Pulido"><select disabled={!canEditFull} value={draft.pulido} onChange={(e) => set("pulido", e.target.value)}>{PULIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Pulido" error={pulidoEsObligatorio(draft) && draft.pulido !== "Sí" ? AVISO_PULIDO_ESMERILADO : err("pulido")}>
+              <select disabled={!canEditFull} value={draft.pulido} onChange={(e) => set("pulido", e.target.value)}>{PULIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select>
+            </Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
             <Field label="Forma"><select disabled={!canEditFull} value={draft.forma} onChange={(e) => set("forma", e.target.value)}>{FORMA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
@@ -9861,8 +9872,9 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
 
                 {esteAbierto && (
                   <div className="dg-presu-espejo-body">
+                    <div className="dg-quote-section-title"><Calculator size={13} />Medida y producto</div>
                     <div className="dg-field-grid">
-                      <Field label="¿Dónde va? (opcional)"><input value={e.ubicacion} onChange={(ev) => setEspejo(e.id, { ubicacion: ev.target.value })} placeholder="Ej: Toilette, Baño principal" /></Field>
+                      <Field label="¿Dónde va?"><input value={e.ubicacion} onChange={(ev) => setEspejo(e.id, { ubicacion: ev.target.value })} placeholder="Ej: Toilette, Baño principal" /></Field>
                       <Field label="Tipo de producto">
                         <select value={e.tipoProducto} onChange={(ev) => setEspejo(e.id, { tipoProducto: ev.target.value })}>
                           {TIPOS_PRODUCTO_LIST.map((t) => (<option key={t} value={t}>{t}</option>))}
@@ -9873,7 +9885,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
                       <Field label="Cantidad igual"><input type="number" min="1" value={e.cantidad} onChange={(ev) => setEspejo(e.id, { cantidad: ev.target.value })} /></Field>
                     </div>
 
-                    <div className="dg-quote-section-title"><Sparkles size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />Funciones</div>
+                    <div className="dg-quote-section-title"><Sparkles size={13} />Funciones</div>
                     <div className="dg-field-grid">
                       <Field label="Touch"><select value={e.touch} onChange={(ev) => setEspejo(e.id, { touch: ev.target.value })}><option value="No">No</option><option value="Sí">Touch simple</option><option value="Doble">Doble touch (frontal + perimetral)</option></select></Field>
                       <Field label="Desempañante"><select value={e.desemp} onChange={(ev) => setEspejo(e.id, { desemp: ev.target.value })}><option>No</option><option>Sí</option></select></Field>
@@ -10851,7 +10863,9 @@ function Style() {
       .dg-section-card { background: rgba(var(--dg-line-rgb),0.025); border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:12px; margin-bottom:14px; transition: border-color .15s ease; }
       .dg-app[data-theme="light"] .dg-section-card { border-color: rgba(var(--dg-line-rgb),0.14); }
       .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:var(--dg-accent); font-family:'Jost', sans-serif; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.3px; }
-      .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; }
+      /* align-items:end = los controles se apoyan abajo. Si un título ocupa
+         dos renglones, crece hacia arriba y los inputs siguen alineados. */
+      .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; align-items:end; }
       .dg-money-row { margin-top:12px; padding-top:12px; border-top:1px dashed rgba(var(--dg-line-rgb),0.08); }
       .dg-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
       .dg-field label { font-size:11px; font-weight:600; letter-spacing:0.3px; text-transform:uppercase; color:var(--dg-text-faint); }
@@ -11417,7 +11431,7 @@ function Style() {
 
       .dg-quote-grid { display:flex; gap:16px; align-items:flex-start; }
       .dg-quote-form, .dg-quote-result { flex:1; min-width:280px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:16px; }
-      .dg-quote-section-title { font-family:'Jost', sans-serif; font-weight:600; font-size:13px; color:var(--dg-accent); margin:14px 0 6px; }
+      .dg-quote-section-title { display:flex; align-items:center; gap:7px; margin:16px 0 9px; padding-left:9px; border-left:3px solid var(--dg-accent); color:var(--dg-accent-2); font-family:'Jost', sans-serif; font-size:11px; font-weight:750; letter-spacing:0.6px; text-transform:uppercase; }
       .dg-quote-section-title:first-child { margin-top:0; }
       .dg-alert { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),0.1); border:1px solid rgba(var(--dg-warning-rgb),0.3); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
       .dg-price-card { display:flex; flex-direction:column; gap:2px; background: rgba(var(--dg-accent-rgb),0.08); border:1px solid rgba(var(--dg-accent-rgb),0.3); border-radius:12px; padding:14px; margin-bottom:14px; }
