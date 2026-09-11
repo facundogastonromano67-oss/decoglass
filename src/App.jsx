@@ -7117,10 +7117,11 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
               </div>
               <div className="dg-logistics-data">
                 <div className="dg-logistics-ident">
-                  <strong>{e.cliente || "—"}</strong>
-                  <span><MapPin size={14} /> {[e.direccion || "—", e.barrio].filter(Boolean).join(" · ")}</span>
-                  {e.telefono && <span><Phone size={14} /> {e.telefono}</span>}
-                  {e.motivo && <span><AlertTriangle size={14} /> {e.motivo}</span>}
+                  <span className="dg-logistics-direccion"><MapPin size={18} /> {[e.direccion || "—", e.barrio].filter(Boolean).join(" · ")}</span>
+                  {soloDigitos(e.telefono).length >= 6 && (
+                    <a className="dg-logistics-tel" href={`tel:${soloDigitos(e.telefono)}`}><Phone size={16} /> {e.telefono}</a>
+                  )}
+                  <span className="dg-logistics-meta">{e.cliente || "—"}{e.motivo ? ` · ${e.motivo}` : ""}</span>
                 </div>
               </div>
               {e.notas && <p className="dg-pago-meta" style={{ marginTop: 6 }}>{e.notas}</p>}
@@ -7166,38 +7167,30 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
 
               <div className="dg-logistics-data">
                 <div className="dg-logistics-ident">
-                  <strong>{nombre}</strong>
-                  <span><MapPin size={14} /> {[direccion, barrio, piso].filter(Boolean).join(" · ")}</span>
-                  <span><Phone size={14} /> {telefono}</span>
-                  <span><Package size={14} /> {totalUnidades(items)} {totalUnidades(items) === 1 ? "espejo" : "espejos"} · {medidas}</span>
+                  <span className="dg-logistics-direccion"><MapPin size={18} /> {[direccion, barrio, piso].filter(Boolean).join(" · ")}</span>
+                  {soloDigitos(telefono).length >= 6
+                    ? <a className="dg-logistics-tel" href={`tel:${soloDigitos(telefono)}`}><Phone size={16} /> {telefono}</a>
+                    : <span className="dg-logistics-tel"><Phone size={16} /> {telefono}</span>}
+                  <span className="dg-logistics-meta">{nombre} · {totalUnidades(items)} {totalUnidades(items) === 1 ? "espejo" : "espejos"} · {medidas}</span>
                 </div>
 
-                <div className="dg-logistics-money">
-                  <div className={`dg-logistics-datum dg-logistics-balance ${saldo > 0 ? "dg-logistics-balance-pending" : "dg-logistics-balance-paid"}`}>
-                    <span>Saldo</span>
-                    <strong>{saldo > 0 ? money(saldo) : "Saldado"}</strong>
-                    <small>Solo espejos</small>
-                  </div>
-                  <div className={`dg-logistics-datum dg-logistics-shipping ${costoEnvio <= 0 ? "dg-logistics-shipping-missing" : envioPagado ? "dg-logistics-shipping-paid" : "dg-logistics-shipping-pending"}`}>
-                    <span>Envío</span>
-                    <strong>{costoEnvio > 0 ? money(costoEnvio) : "Sin cargar"}</strong>
-                    <small>{costoEnvio <= 0 ? "Falta definirlo" : envioPagado ? "Ya pagado" : "Pendiente de pago"}</small>
-                  </div>
-                  <div className={`dg-logistics-datum dg-logistics-total ${totalACobrar > 0 ? "dg-logistics-balance-pending" : "dg-logistics-balance-paid"}`}>
-                    <span>A cobrar</span>
-                    <strong>{totalACobrar > 0 ? money(totalACobrar) : "Saldado"}</strong>
-                    <small>{envioPendiente > 0 ? "Espejos + envío" : costoEnvio > 0 ? "El envío ya se pagó" : "Solo espejos"}</small>
-                  </div>
+                <div className="dg-logistics-plata">
+                  <span className={`dg-logistics-plata-item ${saldo > 0 ? "dg-plata-debe" : "dg-plata-ok"}`}>
+                    Saldo <strong>{saldo > 0 ? money(saldo) : "Saldado"}</strong>
+                  </span>
+                  <span className={`dg-logistics-plata-item ${costoEnvio <= 0 ? "dg-plata-falta" : envioPagado ? "dg-plata-ok" : "dg-plata-debe"}`}>
+                    Envío <strong>{costoEnvio > 0 ? money(costoEnvio) : "Sin cargar"}</strong>
+                  </span>
+                  <span className={`dg-logistics-plata-item dg-logistics-plata-total ${totalACobrar > 0 ? "dg-plata-debe" : "dg-plata-ok"}`}>
+                    A cobrar <strong>{totalACobrar > 0 ? money(totalACobrar) : "Saldado"}</strong>
+                  </span>
+                  {canEdit && costoEnvio > 0 && (
+                    <button className={`dg-fabrica-btn dg-logistics-plata-btn ${envioPagado ? "dg-logistics-plata-btn-ok" : ""}`} onClick={() => setEnvioPagadoGrupo(items, !envioPagado)}>
+                      <CircleDollarSign size={14} /> {envioPagado ? "Envío pagado" : `Cobrar envío · ${money(costoEnvio)}`}
+                    </button>
+                  )}
                 </div>
               </div>
-
-              {canEdit && costoEnvio > 0 && (
-                <div className="dg-logistics-shipping-action">
-                  <button className={`dg-fabrica-btn ${envioPagado ? "dg-fabrica-btn-listo dg-checkbox-on" : ""}`} onClick={() => setEnvioPagadoGrupo(items, !envioPagado)}>
-                    <CircleDollarSign size={16} /> {envioPagado ? `Envío pagado · ${money(costoEnvio)}` : `Marcar envío pagado · ${money(costoEnvio)}`}
-                  </button>
-                </div>
-              )}
 
               {items.length > 1 ? (
                 <div className="dg-logistics-mirrors">
@@ -10307,7 +10300,6 @@ function Style() {
       .dg-room-tile:hover .dg-room-enter { opacity:1; transform:translateX(0); }
 
       .dg-fabrica-btn { min-width:0; display:flex; align-items:center; justify-content:center; gap:5px; padding:9px 6px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid rgba(var(--dg-line-rgb),0.1); background:var(--dg-surface); color:var(--dg-text-dim); white-space:nowrap; }
-      .dg-fabrica-btn-listo:hover { border-color:var(--dg-success); color:var(--dg-success); }
       .dg-recurso-link { display:flex; align-items:center; gap:8px; color:var(--dg-accent); text-decoration:none; font-size:13px; flex:1; }
       .dg-recurso-link:hover { text-decoration:underline; }
 
@@ -11606,22 +11598,25 @@ function Style() {
       .dg-logistics-head > strong { color:var(--dg-text-dim); font-family:'JetBrains Mono',monospace; font-size:11px; }
       .dg-logistics-head > time { color:var(--dg-text); font-family:'JetBrains Mono',monospace; font-size:11px; }
       .dg-logistics-data { display:flex; flex-direction:column; gap:10px; padding:11px 12px; background:var(--dg-order-info); }
-      .dg-logistics-ident { min-width:0; display:flex; flex-direction:column; gap:3px; }
-      .dg-logistics-ident > strong { overflow-wrap:anywhere; color:var(--dg-text); font-family:'Jost',sans-serif; font-size:18px; font-weight:600; line-height:1.2; }
-      .dg-logistics-ident > span { min-width:0; display:flex; align-items:flex-start; gap:7px; overflow-wrap:anywhere; color:var(--dg-text-dim); font-size:13px; line-height:1.35; }
-      .dg-logistics-ident > span > svg { flex:none; margin-top:2px; color:var(--dg-text-faint); }
-      .dg-logistics-money { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
-      .dg-logistics-datum { min-width:0; min-height:62px; display:flex; flex-direction:column; justify-content:center; gap:2px; padding:8px 10px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:8px; background:var(--dg-surface-2); }
-      .dg-logistics-datum > span { color:var(--dg-text-faint); font-size:11px; font-weight:750; letter-spacing:0.6px; text-transform:uppercase; }
-      .dg-logistics-datum > strong { overflow-wrap:anywhere; color:var(--dg-text); font-family:'JetBrains Mono',monospace; font-size:18px; line-height:1.15; }
-      .dg-logistics-datum > small { overflow:hidden; color:var(--dg-text-dim); font-size:11px; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
-      .dg-logistics-total > strong { font-size:24px; }
-      .dg-logistics-balance-pending > strong { color:var(--dg-danger); }
-      .dg-logistics-balance-paid > strong { color:var(--dg-success); }
-      .dg-logistics-shipping-pending > strong, .dg-logistics-shipping-missing > strong { color:var(--dg-warning); }
-      .dg-logistics-shipping-paid > strong { color:var(--dg-success); }
-      .dg-logistics-shipping-action { padding:0 10px 10px; background:var(--dg-order-info); }
-      .dg-logistics-shipping-action .dg-fabrica-btn { width:100%; min-height:38px; padding:8px 10px; font-size:11px; }
+      /* Arriba y grande lo que el flete necesita leer manejando: a dónde va
+         y a quién llama. El resto es contexto. */
+      .dg-logistics-ident { min-width:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-logistics-direccion { min-width:0; display:flex; align-items:flex-start; gap:9px; overflow-wrap:anywhere; color:var(--dg-text); font-family:'Jost',sans-serif; font-size:18px; font-weight:600; line-height:1.25; }
+      .dg-logistics-tel { width:max-content; max-width:100%; display:flex; align-items:center; gap:9px; color:var(--dg-text); font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; text-decoration:none; }
+      a.dg-logistics-tel:hover { color:var(--dg-accent-2); }
+      .dg-logistics-direccion > svg, .dg-logistics-tel > svg { flex:none; margin-top:2px; color:var(--dg-accent); }
+      .dg-logistics-meta { min-width:0; overflow-wrap:anywhere; color:var(--dg-text-dim); font-size:13px; line-height:1.35; }
+      /* La plata: sigue con su color, pero chica y en una sola línea. */
+      .dg-logistics-plata { display:flex; align-items:center; flex-wrap:wrap; gap:7px 15px; margin-top:2px; padding-top:9px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
+      .dg-logistics-plata-item { display:flex; align-items:baseline; gap:6px; color:var(--dg-text-faint); font-size:11px; font-weight:750; letter-spacing:0.6px; text-transform:uppercase; }
+      .dg-logistics-plata-item > strong { color:var(--dg-text); font-family:'JetBrains Mono',monospace; font-size:15px; font-weight:700; letter-spacing:0; text-transform:none; }
+      .dg-logistics-plata-total > strong { font-size:18px; }
+      .dg-plata-debe > strong { color:var(--dg-danger); }
+      .dg-plata-ok > strong { color:var(--dg-success); }
+      .dg-plata-falta > strong { color:var(--dg-warning); }
+      .dg-logistics-plata-btn { min-height:32px; margin-left:auto; padding:6px 11px; font-size:11px; }
+      /* Ya cobrado: el verde de "hecho" que usa el resto de la app. */
+      .dg-logistics-plata-btn-ok { border-color:rgba(var(--dg-success-rgb),.4); background:rgba(var(--dg-success-rgb),.12); color:var(--dg-success); }
       .dg-logistics-mirrors, .dg-logistics-single { padding:9px 10px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.11); background:var(--dg-order-flow); }
       .dg-logistics-mirrors { display:flex; flex-direction:column; gap:6px; }
       .dg-logistics-mirror { overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:8px; background:var(--dg-surface); }
@@ -11796,15 +11791,8 @@ function Style() {
         .dg-logistics-head > strong { grid-column:1; grid-row:2; }
         .dg-logistics-head > time { grid-column:2; grid-row:1 / 3; }
         .dg-logistics-data { gap:9px; padding:9px 10px; }
-        .dg-logistics-ident > strong { font-size:18px; }
-        .dg-logistics-money { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
-        .dg-logistics-total { grid-column:1 / -1; }
-        .dg-logistics-datum { min-height:58px; padding:8px 9px; }
-        .dg-logistics-datum > small { white-space:normal; }
-        .dg-logistics-datum > strong { font-size:15px; }
-        .dg-logistics-total > strong { font-size:18px; }
-        .dg-logistics-shipping-action { padding:0 8px 8px; }
-        .dg-logistics-shipping-action .dg-fabrica-btn { min-width:0; min-height:38px; padding:8px; font-size:11px; }
+        .dg-logistics-plata { gap:6px 13px; }
+        .dg-logistics-plata-btn { width:100%; min-height:38px; margin-left:0; justify-content:center; }
         .dg-logistics-mirror > summary { grid-template-columns:auto minmax(0,1fr) auto 16px; gap:6px; padding:7px 8px; }
       }
       @media (max-width:520px) {
