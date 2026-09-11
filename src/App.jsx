@@ -319,6 +319,33 @@ function detalleCobroEntrega(pedido) {
   return lineas.join("\n");
 }
 
+// Lo mismo que detalleCobroEntrega pero sumando todos los espejos del pedido.
+// El envío es uno solo aunque haya varios espejos, por eso va el mayor y no la suma.
+function detalleCobroEntregaGrupo(items) {
+  const lista = items || [];
+  if (lista.length <= 1) return detalleCobroEntrega(lista[0]);
+
+  const saldoEspejos = lista.reduce((total, p) => total + Math.max(0, pedidoSaldo(p)), 0);
+  if (!lista.some(esPedidoConEnvio)) {
+    return saldoEspejos > 0 ? `💰 Saldo pendiente: ${money(saldoEspejos)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+  }
+
+  const costoEnvio = lista.reduce((mayor, p) => Math.max(mayor, costoEnvioPedido(p)), 0);
+  const envioPendiente = lista.reduce((mayor, p) => Math.max(mayor, envioPendientePedido(p)), 0);
+  const total = saldoEspejos + envioPendiente;
+  const lineas = [
+    saldoEspejos > 0 ? `🪞 Saldo de los espejos: ${money(saldoEspejos)}` : "🪞 Espejos: saldados",
+    costoEnvio > 0
+      ? envioPendiente > 0
+        ? `🚚 Envío pendiente: ${money(costoEnvio)}`
+        : `🚚 Envío: ${money(costoEnvio)} (pagado)`
+      : "🚚 Envío: monto a confirmar",
+  ];
+  if (total > 0) lineas.push(`💰 ${costoEnvio > 0 ? "Total a pagar" : "Total parcial"}: ${money(total)}`);
+  else lineas.push("💰 No queda saldo pendiente.");
+  return lineas.join("\n");
+}
+
 function pedidoFueVerificado(pedido) {
   return Boolean(pedido) && pedido.estado !== "Sin pasar a fábrica" && pedido.estado !== "Cancelado";
 }
@@ -3299,7 +3326,7 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
             <div className="dg-panel-card">
               <div className="dg-panel-card-label">IVA a pagar este mes</div>
               <div className="dg-panel-card-valor" style={{ color: "var(--dg-warning)" }}>{money(iva.aPagar)}</div>
-              <div className="dg-panel-card-variacion">Débito de {labelMes(iva.mesDeVentaOrigen)}: {money(iva.debito)} − crédito de compras de este mes: {money(iva.credito)}</div>
+              <div className="dg-panel-card-variacion">{money(iva.debito)} de {labelMes(iva.mesDeVentaOrigen)} − {money(iva.credito)} de compras</div>
             </div>
           </div>
 
@@ -3318,9 +3345,12 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
             </div>
           )}
 
-          <p className="dg-hint" style={{ marginTop: 4 }}>
-            El IVA se calcula así: el IVA de lo que se vendió y cobró bancarizado en un mes se paga recién 2 meses después. El IVA de las compras con factura se descuenta el mismo mes en que se compra. Es una estimación — no reemplaza la liquidación real de tu contador.
-          </p>
+          <details className="dg-hint-details">
+            <summary>Cómo se calcula el IVA</summary>
+            <p className="dg-hint" style={{ marginTop: 6 }}>
+              El IVA de lo que se vendió y cobró bancarizado en un mes se paga recién 2 meses después. El IVA de las compras con factura se descuenta el mismo mes en que se compra. Es una estimación — no reemplaza la liquidación real de tu contador.
+            </p>
+          </details>
         </div>
       )}
 
@@ -3709,12 +3739,17 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
             <div className="dg-pago-info">
               <span className={e.estado === "pagado" ? "dg-task-done" : ""}>{e.concepto}</span>
               <span className="dg-pago-meta">
-                {TYPES[e[typeField]] || e[typeField]} · {isIncome ? (e.cliente || "—") : (e.proveedorId ? nombreProveedor(e.proveedorId) : "—")} · {sectors.find((s) => s.id === e.sectorId)?.name || "General"} · {e.fecha}
-                {isIncome && e.cuenta ? ` · ${CUENTA_INGRESO[e.cuenta]}` : ""}
-                {e.cuentaBanco && PAYMENT_METHODS[e.cuentaBanco] ? ` · ${PAYMENT_METHODS[e.cuentaBanco]}` : ""}
-                {!isIncome && e.conIva ? " · con IVA" : ""}
-                {!isIncome && e.gastoFijo ? " · gasto fijo" : ""}
-                {e.detalle ? ` · ${e.detalle}` : ""}
+                {[
+                  TYPES[e[typeField]] || e[typeField],
+                  isIncome ? e.cliente : (e.proveedorId ? nombreProveedor(e.proveedorId) : ""),
+                  sectors.find((s) => s.id === e.sectorId)?.name,
+                  e.fecha,
+                  isIncome && e.cuenta ? CUENTA_INGRESO[e.cuenta] : "",
+                  e.cuentaBanco ? PAYMENT_METHODS[e.cuentaBanco] : "",
+                  !isIncome && e.conIva ? "con IVA" : "",
+                  !isIncome && e.gastoFijo ? "gasto fijo" : "",
+                  e.detalle,
+                ].filter(Boolean).join(" · ")}
               </span>
             </div>
             {e.facturaUrl && (
@@ -6034,7 +6069,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
             <Field label="Barrio"><input disabled={!canEditFull} value={draft.barrio} onChange={(e) => set("barrio", e.target.value)} placeholder="Ej: Palermo, Centro..." /></Field>
             <Field label="Dirección" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Calle y número" /></Field>
-            <Field label="Piso / Depto (o casa)"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
+            <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
             <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
             <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
           </div>
@@ -6299,49 +6334,82 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   const [copiedId, setCopiedId] = useState(null);
   const [mapaPedido, setMapaPedido] = useState(null);
 
-  const envios = pedidos
+  const enviosListos = pedidos
     .filter((p) => esPedidoConEnvio(p) && p.metodo !== "Interior")
     .filter((p) => p.estado !== "Entregado" && pedidoEstaListo(p))
-    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()))
-    .sort((a, b) => (b.orden || 0) - (a.orden || 0));
+    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()));
 
-  function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
-  function updateShipping(pedido, patch) {
+  // Un pedido puede tener varios espejos y un solo envío: va una tarjeta por pedido.
+  const grupos = (() => {
+    const mapa = new Map();
+    enviosListos.forEach((p) => {
+      const clave = p.grupoId || p.id;
+      if (!mapa.has(clave)) mapa.set(clave, []);
+      mapa.get(clave).push(p);
+    });
+    return [...mapa.values()]
+      .map((items) => items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0)))
+      .sort((a, b) => (b[0].orden || 0) - (a[0].orden || 0));
+  })();
+
+  // Todos los cambios de esta pantalla son del pedido entero: los datos de
+  // entrega y el envío son uno solo aunque haya varios espejos.
+  function updateGrupo(pedido, patchDe) {
     const grupo = pedido.grupoId || pedido.id;
-    onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patch } : p)));
+    onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patchDe(p) } : p)));
   }
+  function updateShipping(pedido, patch) { updateGrupo(pedido, () => patch); }
 
-  function mensaje(p) {
-    const saldoTexto = detalleCobroEntrega(p);
-    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\nEspejo ${p.ancho}×${p.alto} cm\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha estimada: ${p.listo || "a coordinar"}\n\n${saldoTexto}\n\n¿Podés confirmarnos que estos datos son correctos?`;
+  function mensaje(items) {
+    const p = items[0];
+    const espejos = items.map((e) => `Espejo ${e.ancho}×${e.alto} cm`).join("\n");
+    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\n${espejos}\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha estimada: ${p.listo || "a coordinar"}\n\n${detalleCobroEntregaGrupo(items)}\n\n¿Podés confirmarnos que estos datos son correctos?`;
   }
-  function copiar(p) {
-    if (navigator.clipboard) navigator.clipboard.writeText(mensaje(p)).then(() => { setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); });
+  function copiar(items) {
+    const clave = items[0].grupoId || items[0].id;
+    if (navigator.clipboard) navigator.clipboard.writeText(mensaje(items)).then(() => { setCopiedId(clave); setTimeout(() => setCopiedId(null), 2000); });
   }
-  function marcarClienteAvisado(p) {
+  function marcarClienteAvisado(items) {
+    const p = items[0];
     if (!pedidoEstaListo(p)) {
       window.alert("Esperá a que fábrica marque el espejo como listo antes de confirmar con el cliente.");
       return;
     }
-    update(p.id, { clienteAvisado: true, clienteAvisadoFecha: new Date().toISOString(), vistoPostventa: p.vistoPostventa || new Date().toISOString() });
+    const ahora = new Date().toISOString();
+    updateGrupo(p, (x) => ({ clienteAvisado: true, clienteAvisadoFecha: ahora, vistoPostventa: x.vistoPostventa || ahora }));
   }
-  function marcarEnvioConfirmado(p) {
+  function marcarEnvioConfirmado(items) {
+    const p = items[0];
     if (!pedidoEstaListo(p) || !p.clienteAvisado) {
       window.alert("Primero confirmá con el cliente que los datos del envío sean correctos.");
       return;
     }
-    update(p.id, { envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() });
+    updateGrupo(p, () => ({ envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() }));
   }
 
   return (
     <div className="dg-page">
       <div className="dg-crm-filters"><Filter size={14} /><input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
       <div className="dg-task-list dg-pedido-list">
-        {envios.length === 0 && <div className="dg-empty">No hay pedidos con envío o interior pendientes.</div>}
-        {envios.map((p) => (
-          <div className="dg-section-card dg-shipping-confirm-card" key={p.id}>
-            <div className="dg-section-header"><Truck size={14} /> #{p.orden} · {p.cliente} {esperaAcusePostventa(p) && <span className="dg-pedido-flag dg-flag-nuevo" style={{ marginLeft: 8 }}>NUEVO</span>} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
-            <div className="dg-pago-meta" style={{ marginBottom: 10 }}>{p.ancho}×{p.alto} cm · {p.forma} · Método: {p.metodo}</div>
+        {grupos.length === 0 && <div className="dg-empty">No hay pedidos con envío pendientes.</div>}
+        {grupos.map((items) => {
+          const p = items[0];
+          const clave = p.grupoId || p.id;
+          // Espejos del mismo pedido que todavía no salieron de fábrica.
+          const enProduccion = pedidos.filter((x) => (x.grupoId || x.id) === clave && x.estado !== "Cancelado" && !pedidoEstaListo(x)).length;
+          const saldoEspejos = items.reduce((total, x) => total + Math.max(0, pedidoSaldo(x)), 0);
+          const costoEnvio = items.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0);
+          const envioPendiente = items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+          const totalPendiente = saldoEspejos + envioPendiente;
+          const ordenes = [...new Set(items.map((x) => x.orden))].map((o) => `#${o}`).join(" · ");
+          const medidas = items.map((x) => `${x.ancho}×${x.alto} cm`).join(" · ");
+          return (
+          <div className="dg-section-card dg-shipping-confirm-card" key={clave}>
+            <div className="dg-section-header"><Truck size={14} /> {ordenes} · {p.cliente} {esperaAcusePostventa(p) && <span className="dg-pedido-flag dg-flag-nuevo" style={{ marginLeft: 8 }}>NUEVO</span>} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
+            <div className="dg-pago-meta" style={{ marginBottom: 10 }}>
+              {items.length === 1 ? `${p.ancho}×${p.alto} cm · ${p.forma}` : `${items.length} espejos · ${medidas}`} · {p.metodo}
+              {enProduccion > 0 && ` · ${enProduccion === 1 ? "falta 1 espejo" : `faltan ${enProduccion} espejos`} en producción`}
+            </div>
             <details className="dg-shipping-editor">
               <summary>
                 <span className="dg-shipping-editor-icon"><Pencil size={14} /></span>
@@ -6353,7 +6421,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                   <div className="dg-shipping-field"><Field label="Teléfono"><input disabled={!canEdit} value={p.celular || ""} onChange={(e) => updateShipping(p, { celular: e.target.value })} /></Field></div>
                   <div className="dg-shipping-field"><Field label="Barrio"><input disabled={!canEdit} value={p.barrio || ""} onChange={(e) => updateShipping(p, { barrio: e.target.value })} placeholder="Ej: Palermo" /></Field></div>
                   <div className="dg-shipping-field dg-shipping-address"><Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega || ""} onChange={(e) => updateShipping(p, { detalleEntrega: e.target.value })} placeholder="Calle y número" /></Field></div>
-                  <div className="dg-shipping-field"><Field label="Piso / Depto (o casa)"><input disabled={!canEdit} value={p.piso || ""} onChange={(e) => updateShipping(p, { piso: e.target.value })} placeholder="Ej: 3° B — o 'casa'" /></Field></div>
+                  <div className="dg-shipping-field"><Field label="Piso / Depto"><input disabled={!canEdit} value={p.piso || ""} onChange={(e) => updateShipping(p, { piso: e.target.value })} placeholder="Ej: 3° B — o 'casa'" /></Field></div>
                   <div className="dg-shipping-field"><Field label="Horario"><input disabled={!canEdit} value={p.horarioEntrega || ""} onChange={(e) => updateShipping(p, { horarioEntrega: e.target.value })} placeholder="Ej: 13 a 17 hs" /></Field></div>
                   <div className="dg-shipping-field"><Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo || ""} onChange={(e) => updateShipping(p, { listo: e.target.value })} /></Field></div>
                 </div>
@@ -6364,26 +6432,27 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                     </button>
                     {p.destinoLat != null
                       ? <span className="dg-shipping-mapa-ok"><CheckCircle2 size={12} /> Ubicación marcada — el flete no la tiene que buscar</span>
-                      : <span className="dg-pago-meta">Si la marcás, el cliente ve el pin del destino y el tiempo estimado, y el flete solo maneja.</span>}
+                      : <span className="dg-pago-meta">Si la marcás, el cliente ve el pin del destino y el flete solo maneja.</span>}
                   </div>
                 )}
               </EnterFlow>
             </details>
-            <div className={`dg-shipping-total-preview ${costoEnvioPedido(p) > 0 ? "" : "dg-shipping-total-missing"}`}>
-              <span>{costoEnvioPedido(p) > 0 ? "Total a confirmar con el cliente" : "Total parcial · falta cargar el envío"}</span>
-              <strong>{money(totalPendientePedido(p))}</strong>
+            <div className={`dg-shipping-total-preview ${costoEnvio > 0 ? "" : "dg-shipping-total-missing"}`}>
+              <span>{costoEnvio > 0 ? "Total a confirmar con el cliente" : "Total parcial · falta cargar el envío"}</span>
+              <strong>{money(totalPendiente)}</strong>
             </div>
             <div className="dg-quote-actions dg-shipping-copy">
-              <button className="dg-btn-ghost" onClick={() => copiar(p)}>{copiedId === p.id ? <Check size={14} /> : <Copy size={14} />} {copiedId === p.id ? "Copiado" : "Copiar mensaje para el cliente"}</button>
+              <button className="dg-btn-ghost" onClick={() => copiar(items)}>{copiedId === clave ? <Check size={14} /> : <Copy size={14} />} {copiedId === clave ? "Copiado" : "Copiar mensaje para el cliente"}</button>
             </div>
             <FlujoPedido
               pedido={p}
               canEdit={canEdit}
-              onClienteConfirmado={marcarClienteAvisado}
-              onEnvioConfirmado={marcarEnvioConfirmado}
+              onClienteConfirmado={() => marcarClienteAvisado(items)}
+              onEnvioConfirmado={() => marcarEnvioConfirmado(items)}
             />
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {mapaPedido && (
@@ -6563,7 +6632,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
           <EnterFlow onSubmit={addReclamo} autoFocus={false}>
             <div className="dg-field-grid" style={{ marginTop: 12 }}>
               <Field label="Cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre (opcional)" /></Field>
-              <Field label="Celular (para la solución por WhatsApp)"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 1122334455" /></Field>
+              <Field label="Celular"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 1122334455" /></Field>
               <Field label="Notas"><input value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
             </div>
             <div className="dg-form-actions" style={{ marginTop: 10 }}>
@@ -6616,7 +6685,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
                         }}><Plus size={13} /> Mandar a hacer un espejo nuevo</button>
                   )}
                   <details className="dg-reclamo-editar" open={!tieneCelular}>
-                    <summary><Pencil size={12} /> Datos del reclamo (editar)</summary>
+                    <summary><Pencil size={12} /> Datos del reclamo</summary>
                     <div className="dg-field-grid" style={{ marginTop: 8 }}>
                       <Field label="Tipo">
                         <select value={r.tipo} onChange={(e) => setCampoReclamo(r.id, { tipo: e.target.value })}>
@@ -6624,12 +6693,12 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
                         </select>
                       </Field>
                       <Field label="Cliente"><CampoTextoGuardado value={r.cliente} onGuardar={(v) => setCampoReclamo(r.id, { cliente: v })} placeholder="Nombre" /></Field>
-                      <Field label="Celular (para WhatsApp)"><CampoTextoGuardado value={r.celular} onGuardar={(v) => setCampoReclamo(r.id, { celular: v })} placeholder="Ej: 1122334455" /></Field>
+                      <Field label="Celular"><CampoTextoGuardado value={r.celular} onGuardar={(v) => setCampoReclamo(r.id, { celular: v })} placeholder="Ej: 1122334455" /></Field>
                       <Field label="Notas"><CampoTextoGuardado value={r.notas} onGuardar={(v) => setCampoReclamo(r.id, { notas: v })} placeholder="Detalle del problema" /></Field>
                     </div>
                   </details>
 
-                  <Field label="Solución que le ofrecemos al cliente">
+                  <Field label="Solución para el cliente">
                     <CampoTextoGuardado value={r.solucion} onGuardar={(v) => setSolucion(r.id, v)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
                   </Field>
                   <div className="dg-form-actions" style={{ marginTop: 10 }}>
@@ -6643,11 +6712,11 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
                         <MessageCircle size={14} /> {copiadoId === r.id ? "Abriendo…" : "Enviar la solución"}
                       </button>
                     )}
-                    <button className="dg-btn-ghost" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
+                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
                       <Bell size={14} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar al equipo otra vez" : "Avisar al equipo"}
                     </button>
                     {r.solucion && !r.clienteAcepto && !r.pedidoCreado && (
-                      <button className="dg-btn-ghost" onClick={() => setClienteAcepto(r.id)}><Check size={14} /> El cliente aceptó</button>
+                      <button className="dg-btn-ghost dg-mini-btn" onClick={() => setClienteAcepto(r.id)}><Check size={14} /> El cliente aceptó</button>
                     )}
                     <button className="dg-btn-primary" onClick={() => finalizar(r.id)}><CheckCircle2 size={14} /> Marcar como resuelto</button>
                   </div>
@@ -10353,6 +10422,11 @@ function Style() {
       .dg-form textarea { width:100%; box-sizing:border-box; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1);
         border-radius:12px; padding:10px 12px; color:var(--dg-text); font-family:'Jost',sans-serif; font-size:15px; outline:none; resize:vertical; }
       .dg-form textarea:focus { border-color:var(--dg-accent); }
+      .dg-hint-details > summary { display:inline-flex; align-items:center; gap:6px; margin-top:6px; color:var(--dg-text-faint); font-size:11px; font-weight:650; list-style:none; cursor:pointer; }
+      .dg-hint-details > summary::-webkit-details-marker { display:none; }
+      .dg-hint-details > summary::before { content:"?"; display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; flex:none; border:1px solid rgba(var(--dg-line-rgb),.25); border-radius:50%; font-size:11px; font-weight:700; }
+      .dg-hint-details > summary:hover { color:var(--dg-accent); }
+      .dg-hint-details[open] > summary { color:var(--dg-accent); }
       .dg-hint { font-size:13px; color:var(--dg-text-dim); background:rgba(var(--dg-accent-rgb),0.06); border:1px solid rgba(var(--dg-accent-rgb),0.2); border-radius:8px; padding:8px 10px; }
       .dg-error { font-size:13px; color:var(--dg-danger); }
       .dg-form-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
