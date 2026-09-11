@@ -676,21 +676,27 @@ function computeQuote(inputs, cfg) {
   const bluetoothCostoReal = bt.componente + bt.parlantes;
 
   const panelSize = desemp === "Sí" ? determinePanel(ancho, alto, R.margenMinDesempCm) : "No aplica";
-  const panelDisponible = panelSize !== "No aplica" && panelSize !== "NO ENTRA";
-  const panelPrincipalCosto = panelDisponible ? O.paneles[panelSize].costoReal : 0;
-  const panelesAdicionalesCosto = panelDisponible ? panelesAdicionales * O.paneles[panelSize].costoReal : 0;
+  // Si según la tabla no entra, igual se cotiza: se toma el panel más chico,
+  // que es el que se intentaría poner. El aviso de arriba dice que hay que
+  // revisar la medida, pero el precio sale.
+  const panelParaPrecio = panelSize === "NO ENTRA" ? "30x30" : panelSize;
+  const panelDisponible = desemp === "Sí" && !!O.paneles[panelParaPrecio];
+  const panelPrincipalCosto = panelDisponible ? O.paneles[panelParaPrecio].costoReal : 0;
+  const panelesAdicionalesCosto = panelDisponible ? panelesAdicionales * O.paneles[panelParaPrecio].costoReal : 0;
   const cantidadTotalPaneles = panelDisponible ? 1 + panelesAdicionales : 0;
-  const precioAdicionalPaneles = panelDisponible && panelesAdicionales > 0 ? panelesAdicionales * O.paneles[panelSize].minimoAgregado : 0;
+  const precioAdicionalPaneles = panelDisponible && panelesAdicionales > 0 ? panelesAdicionales * O.paneles[panelParaPrecio].minimoAgregado : 0;
 
   const cargaTouch = touchDoble
     ? (O.dobleTouch?.carga ?? ((O.touch.carga || 0) + 8000))
     : (touch === "Sí" ? O.touch.carga : 0);
-  const cargaDesemp = desemp === "Sí" ? O.desemp.carga : 0;
+  const desempActivo = desemp === "Sí";
+  const desempCosto = desempCostoReal;
+  const cargaDesemp = desempActivo ? O.desemp.carga : 0;
   const cargaHoraTemp = horaTemp === "Sí" ? O.horaTemp.carga : 0;
   const cargaBluetooth = bt.carga;
-  const cargaPanelesAdicionales = desemp === "Sí" ? panelesAdicionales * C.panelAdicional : 0;
+  const cargaPanelesAdicionales = desempActivo ? panelesAdicionales * C.panelAdicional : 0;
 
-  const costoRealFunciones = touchCostoReal + desempCostoReal + horaTempCostoReal + bluetoothCostoReal + panelPrincipalCosto + panelesAdicionalesCosto
+  const costoRealFunciones = touchCostoReal + desempCosto + horaTempCostoReal + bluetoothCostoReal + panelPrincipalCosto + panelesAdicionalesCosto
     + cargaTouch + cargaDesemp + cargaHoraTemp + cargaBluetooth + cargaPanelesAdicionales;
 
   const costoTotalEstimado = costoBaseSinFunciones + costoRealFunciones;
@@ -698,18 +704,18 @@ function computeQuote(inputs, cfg) {
   const alertaPaneles = desemp !== "Sí" && panelesAdicionales > 0
     ? "REVISAR: panel adicional sin desempañante"
     : panelSize === "NO ENTRA"
-    ? `NO ENTRA: medida insuficiente con margen de ${R.margenMinDesempCm} cm`
+    ? `REVISAR: para el desempañante la medida mínima es ${30 + R.margenMinDesempCm} cm. El precio está calculado con el panel más chico (30x30) — confirmá en el taller si entra.`
     : (ancho > 100 || alto > 100) && desemp === "Sí" && panelesAdicionales === 0
     ? "RECOMENDACIÓN: agregar panel adicional"
     : "OK";
 
   function precioPorMargen(m) {
-    if (alertaMedidaMaxima !== "OK" || panelSize === "NO ENTRA") return 0;
+    if (alertaMedidaMaxima !== "OK") return 0;
     const base = (costoBaseSinFunciones / (1 - m)) * factorTamaño * (1 + tipoRow.recargoForma) * (1 + R.iva);
     const term = (costo, carga, activo) => (activo ? Math.max(R.minimoAgregado, ((costo + carga) / (1 - m)) * (1 + R.iva)) : 0);
     const funciones =
       term(touchCostoReal, cargaTouch, hayTouch) +
-      term(desempCostoReal + panelPrincipalCosto, cargaDesemp, desemp === "Sí") +
+      term(desempCosto + panelPrincipalCosto, cargaDesemp, desempActivo) +
       term(horaTempCostoReal, cargaHoraTemp, horaTemp === "Sí") +
       term(bluetoothCostoReal, cargaBluetooth, bluetoothSel !== "Sin Bluetooth");
     return base + funciones + precioAdicionalPaneles;
@@ -746,14 +752,14 @@ function computeQuote(inputs, cfg) {
   const margenReal = precioEfectivoSinIva ? (precioEfectivoSinIva - costoTotalEstimado) / precioEfectivoSinIva : 0;
 
   const esEsmeriladoOBiselado = tipoRow.esmerilado !== "Ninguno" || tipoProducto === "Biselado";
-  const tiempoFabricacion = esEsmeriladoOBiselado ? "25 días hábiles" : (desemp === "Sí" || bluetoothSel !== "Sin Bluetooth") ? "10 a 12 días hábiles" : "5 a 7 días hábiles";
+  const tiempoFabricacion = esEsmeriladoOBiselado ? "25 días hábiles" : (desempActivo || bluetoothSel !== "Sin Bluetooth") ? "10 a 12 días hábiles" : "5 a 7 días hábiles";
 
   const modeloComercial = (tipoRow.esmerilado !== "Ninguno" ? "Esmerilado" : "Simple")
     + (touchDoble ? " + Doble touch (frontal + perimetral)" : touch === "Sí" ? " + Touch" : "")
-    + (desemp === "Sí" ? ` + Desempañante ${desempTipo === "Touch" ? "touch" : "220V"}` : "")
+    + (desempActivo ? ` + Desempañante ${desempTipo === "Touch" ? "touch" : "220V"}` : "")
     + (horaTemp === "Sí" ? " + Hora/Temperatura" : "")
     + (bluetoothSel !== "Sin Bluetooth" ? ` + ${bluetoothSel}` : "")
-    + (desemp === "Sí" && panelesAdicionales > 0 ? ` (${1 + panelesAdicionales} paneles)` : "");
+    + (desempActivo && panelesAdicionales > 0 ? ` (${1 + panelesAdicionales} paneles)` : "");
 
   return {
     area, perimetro, estandar, factorTamaño, alertaMedidaMaxima, alertaPaneles, alertaComercial,
@@ -1285,8 +1291,10 @@ function App() {
       const guardada = qc ? JSON.parse(qc.value) : null;
       // Los precios y márgenes guardados mandan. El margen del desempañante no,
       // porque no se edita desde ningún lado: vale siempre el del código.
+      // Si la config guardada es vieja y le falta alguna regla, se completa con
+      // la del código en vez de quedar a medias.
       setQuoteConfig(guardada
-        ? { ...guardada, reglas: { ...guardada.reglas, margenMinDesempCm: DEFAULT_QUOTE_CONFIG.reglas.margenMinDesempCm } }
+        ? { ...DEFAULT_QUOTE_CONFIG, ...guardada, reglas: { ...DEFAULT_QUOTE_CONFIG.reglas, ...guardada.reglas, margenMinDesempCm: DEFAULT_QUOTE_CONFIG.reglas.margenMinDesempCm } }
         : DEFAULT_QUOTE_CONFIG);
     } catch (e) { setQuoteConfig(DEFAULT_QUOTE_CONFIG); }
     try {
