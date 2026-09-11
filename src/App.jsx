@@ -1619,7 +1619,7 @@ function App() {
             </button>
           )}
           {isAdmin && (
-            <button className={`dg-nav-btn ${vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setVistaPanel(true); setActiveSectorId(null); setVistaPendientes(false); setVistaConsultas(false); }} aria-current={vistaPanel ? "page" : undefined}><BarChart3 size={14} /> Panel de control</button>
+            <button className={`dg-nav-btn ${vistaPanel ? "dg-nav-on" : ""}`} onClick={() => { setVistaPanel(true); setActiveSectorId(null); setVistaPendientes(false); setVistaConsultas(false); }} aria-current={vistaPanel ? "page" : undefined}><BarChart3 size={14} /> Panel<span className="dg-nav-largo"> de control</span></button>
           )}
           {activeSector && !vistaPanel && !vistaPendientes && !vistaConsultas && (
             <span className="dg-nav-btn dg-nav-on dg-nav-crumb"><ChevronRight size={13} /> {activeSector.name}</span>
@@ -1799,6 +1799,17 @@ function SaveIndicator({ state, onDismiss }) {
       {state.estado === "ok" ? <Check size={15} /> : <Loader2 size={15} className="dg-spin" />}
       <span>{state.estado === "ok" ? "Guardado" : "Guardando..."}</span>
     </div>
+  );
+}
+
+// Explicación que siempre dice lo mismo. Antes ocupaba tres renglones arriba
+// de cada lista; ahora es una línea que se abre si la querés leer.
+function Ayuda({ titulo = "Cómo funciona", children, style }) {
+  return (
+    <details className="dg-hint-details" style={style}>
+      <summary>{titulo}</summary>
+      <p className="dg-hint" style={{ marginTop: 6 }}>{children}</p>
+    </details>
   );
 }
 
@@ -2062,9 +2073,9 @@ function PanelControlAdmin({ pedidos, incomes, reclamos, stockMateriales, sector
       </div>
 
       {quoteConfig && ventaEntregadosMes > 0 && (
-        <p className="dg-hint" style={{ marginTop: -10, marginBottom: 18 }}>
-          El margen es una estimación con los precios de materiales de hoy, no el costo exacto de cada pedido en su momento — sirve para ver la tendencia, no como número contable exacto.
-        </p>
+        <Ayuda titulo="Qué tan exacto es el margen" style={{ marginTop: -10, marginBottom: 18 }}>
+          Es una estimación con los precios de materiales de hoy, no el costo exacto de cada pedido en su momento — sirve para ver la tendencia, no como número contable exacto.
+        </Ayuda>
       )}
 
       <div className="dg-section-card">
@@ -2218,11 +2229,11 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vende
 
         {tab === "notificaciones" && (
           <div className="dg-page">
-            <p className="dg-hint" style={{ marginBottom: 14 }}>
+            <Ayuda titulo="Qué le llega a cada uno" style={{ marginBottom: 14 }}>
               Un resumen se arma solo una vez por día. A cada persona le llega solo lo de su sector: Fábrica ve demorados,
               Ventas ve sin confirmar y vencidos, Administración ve ambas cosas, y los administradores ven todo, incluidos
               reclamos y comisiones.
-            </p>
+            </Ayuda>
             <HistorialNotificacionesPanel />
           </div>
         )}
@@ -2429,9 +2440,9 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
 
   return (
     <div className="dg-page">
-      <p className="dg-hint" style={{ marginBottom: 14 }}>
+      <Ayuda titulo="Cómo funcionan los accesos" style={{ marginBottom: 14 }}>
         Un solo formulario de acceso para todos: usuario y clave. El sistema reconoce solo si es <strong>administrador</strong> (ve finanzas, comisiones, sueldos y ajustes) o <strong>encargado/operario</strong> de un sector.
-      </p>
+      </Ayuda>
 
       {solicitudes.length > 0 && (
         <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-warning-rgb),0.35)" }}>
@@ -2577,10 +2588,10 @@ function ComisionesPanel({ pedidos, onChangePedidos, empleados, onCreatePurchase
 
   return (
     <div className="dg-page">
-      <p className="dg-hint" style={{ marginBottom: 14 }}>
+      <Ayuda titulo="Cuándo entra un pedido a comisiones" style={{ marginBottom: 14 }}>
         Un pedido entra acá automáticamente cuando queda <strong>totalmente cobrado</strong> (saldo $0) y tiene vendedor asignado.
         La comisión se calcula sobre el monto <strong>sin contar el envío</strong>, con el % de cada vendedor cargado en Sueldos.
-      </p>
+      </Ayuda>
 
       {aviso && <div className="dg-comision-banner" style={{ background: "rgba(var(--dg-success-rgb),0.1)", borderColor: "rgba(var(--dg-success-rgb),0.35)", color: "var(--dg-success)" }}><Check size={15} /> {aviso}</div>}
 
@@ -3236,9 +3247,9 @@ function GastosFijosPanel({ plantillas, onChangePlantillas, proveedores, purchas
 
   return (
     <div className="dg-page">
-      <p className="dg-hint" style={{ marginBottom: 14 }}>
+      <Ayuda titulo="Por qué no se cargan solas" style={{ marginBottom: 14 }}>
         Estas son plantillas con el monto habitual — no se cargan solas cada mes. Tocá "Cargar este mes" cuando corresponda, así queda como una compra real (editable, con su propio estado de pago) y no como un número fantasma.
-      </p>
+      </Ayuda>
       <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 14 }}>
         <button className="dg-btn-primary" onClick={() => setEditando(vacio)}><Plus size={14} /> Nueva plantilla</button>
       </div>
@@ -6234,7 +6245,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
       {listosParaDespachar.length > 0 && (
         <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-success-rgb),.35)" }}>
           <div className="dg-section-header" style={{ color: "var(--dg-success)" }}><Truck size={14} /> Listos para despachar ({listosParaDespachar.length})</div>
-          <p className="dg-hint" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen pedidos 100% terminados. Un pedido con espejos todavía en fábrica no aparece hasta que estén todos listos.</p>
+          <Ayuda titulo="Qué pedidos entran acá" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen pedidos 100% terminados. Un pedido con espejos todavía en fábrica no aparece hasta que estén todos listos.</Ayuda>
           <div className="dg-order-despacho-btns">
             <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(listosParaDespachar)}><FileText size={14} /> 1. Datos para Vía Cargo</button>
             <button className="dg-btn-ghost" onClick={() => abrirRotulos(listosParaDespachar)}><Printer size={14} /> 2. Rótulos ({listosParaDespachar.length})</button>
@@ -7040,7 +7051,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
 
   return (
     <div className="dg-page">
-      <p className="dg-hint" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</p>
+      <Ayuda titulo="Qué entra en esta lista" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</Ayuda>
 
       {canEdit && (
         <details className="dg-reclamo-editar" style={{ marginBottom: 14 }}>
@@ -8292,9 +8303,9 @@ function BibliotecaMarketingPanel({ biblioteca, onChange }) {
 
   return (
     <div className="dg-page">
-      <p className="dg-hint" style={{ marginBottom: 14 }}>
+      <Ayuda titulo="Para qué sirve la biblioteca" style={{ marginBottom: 14 }}>
         Subí fotos reales de tus espejos acá. Cuando generás ideas del mes en el Calendario de contenido, se las asigna automáticamente rotando entre ellas — sin costo.
-      </p>
+      </Ayuda>
       <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginBottom: 16 }}>
         <label className="dg-btn-primary" style={{ cursor: "pointer" }}>
           {subiendo ? <Loader2 size={14} className="dg-spin" /> : <PackagePlus size={14} />} {subiendo ? "Subiendo..." : "Subir fotos"}
@@ -9586,7 +9597,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
               <Field label="Cantidad idéntica"><input type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
               <Field label="Envío interior"><select value={envioInterior} onChange={(e) => setEnvioInterior(e.target.value)}><option>No</option><option>Sí</option></select></Field>
               <Field label="Nombre del cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Opcional" /></Field>
-              <Field label="Celular (para enviar por WhatsApp)"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 5491122334455" /></Field>
+              <Field label="Celular"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 5491122334455" /></Field>
             </div>
           </div>
 
@@ -9616,13 +9627,19 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
           </div>
 
           <div className="dg-quote-meta">
-            <div><span>Escala</span><strong>{result.escalaComercial}</strong></div>
-            <div><span>Margen aplicado</span><strong>{Math.round(result.margenAplicado * 100)}%</strong></div>
-            <div><span>Margen real estimado</span><strong>{Math.round(result.margenReal * 100)}%</strong></div>
-            <div><span>Costo total estimado</span><strong>{fmtMoney(result.costoTotalEstimado)}</strong></div>
             <div><span>Total pedido ({inputs.cantidad} u.)</span><strong>{fmtMoney(result.totalPedidoTransferencia)}</strong></div>
             <div><span>Tiempo de fabricación</span><strong>{result.tiempoFabricacion}</strong></div>
           </div>
+
+          <details className="dg-quote-internos">
+            <summary>Costos y márgenes</summary>
+            <div className="dg-quote-meta">
+              <div><span>Escala</span><strong>{result.escalaComercial}</strong></div>
+              <div><span>Margen aplicado</span><strong>{Math.round(result.margenAplicado * 100)}%</strong></div>
+              <div><span>Margen real estimado</span><strong>{Math.round(result.margenReal * 100)}%</strong></div>
+              <div><span>Costo total estimado</span><strong>{fmtMoney(result.costoTotalEstimado)}</strong></div>
+            </div>
+          </details>
 
           <div className="dg-mensaje-box">
             <div className="dg-quote-section-title">Mensaje para el cliente</div>
@@ -11126,6 +11143,13 @@ function Style() {
       .dg-quote-meta strong { font-family:'JetBrains Mono', monospace; font-size:13px; }
       .dg-mensaje-box { margin-top:4px; }
       .dg-mensaje-text { white-space:pre-wrap; font-family:'Jost',sans-serif; font-size:13px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:12px; margin:6px 0 10px; line-height:1.5; }
+      .dg-quote-internos { margin-bottom:14px; }
+      .dg-quote-internos > summary { display:inline-flex; align-items:center; gap:6px; margin-bottom:8px; color:var(--dg-text-faint); font-size:11px; font-weight:750; letter-spacing:0.6px; text-transform:uppercase; list-style:none; cursor:pointer; }
+      .dg-quote-internos > summary::-webkit-details-marker { display:none; }
+      .dg-quote-internos > summary::after { content:"›"; transition:transform .15s ease; }
+      .dg-quote-internos[open] > summary { color:var(--dg-accent); }
+      .dg-quote-internos[open] > summary::after { transform:rotate(90deg); }
+      .dg-quote-internos .dg-quote-meta { margin-bottom:0; }
       .dg-quote-actions { display:flex; gap:8px; flex-wrap:wrap; }
       .dg-quotes-history { margin-top:18px; }
       .dg-config-editor { margin-top:12px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:12px; }
@@ -11418,7 +11442,8 @@ function Style() {
       .dg-nav-btn { flex:none; min-height:30px; padding:5px 9px; border-radius:8px; justify-content:flex-start; color:var(--dg-text-faint); font-size:11px; }
       @media (max-width:640px) {
         .dg-nav { gap:5px; row-gap:5px; margin:12px auto 18px; }
-        .dg-nav-btn { flex:1 1 auto; min-width:calc(50% - 4px); justify-content:center; padding:8px 9px; font-size:13px; background:rgba(var(--dg-line-rgb),.04); }
+        .dg-nav-btn { flex:1 1 0; min-width:0; gap:5px; justify-content:center; padding:8px 5px; font-size:11px; white-space:nowrap; background:rgba(var(--dg-line-rgb),.04); }
+        .dg-nav-largo { display:none; }
         .dg-nav-btn.dg-nav-on { background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent); }
         .dg-nav-crumb { flex-basis:100%; min-width:0; justify-content:flex-start; background:transparent !important; }
       }
