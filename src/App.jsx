@@ -8403,8 +8403,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               Total entregado: <strong>{totalUnidades(visibles)}</strong> espejo(s) en {visibles.length} renglón(es)
             </div>
             <div className="dg-print-firmas">
-              <div><span>Entrega (Decoglass)</span></div>
-              <div><span>Recibe (grabador)</span></div>
+              <div><span>Entregado por</span></div>
+              <div><span>Recibido conforme</span></div>
             </div>
           </>
         ) : (
