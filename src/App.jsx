@@ -751,16 +751,43 @@ function computeQuote(inputs, cfg) {
   };
 }
 
-function buildWhatsappMessage(inputs, result) {
-  const { cliente, ancho, alto, envioInterior } = inputs;
-  const saludo = cliente ? `Hola ${cliente}, te paso el presupuesto:` : "Hola, te paso el presupuesto:";
-  let msg = `${saludo}\n\nEspejo ${result.tipoComercialDisplay} retroiluminado\n• Modelo: ${result.modeloComercial}\n\n📏 Medida: ${ancho} × ${alto} cm\n\n`;
-  if (result.precio3Cuotas) msg += `💰 ${fmtMoney(roundTo1000(result.precio3Cuotas))} - Hasta 3 cuotas\n`;
-  if (result.precioTransferencia) msg += `💰 ${fmtMoney(roundTo1000(result.precioTransferencia))} - Transferencia`;
-  msg += `\n\n🕛 Tiempo de fabricación: ${result.tiempoFabricacion}\n\n`;
-  msg += envioInterior === "Sí"
+// Arma el texto para el cliente. Con un solo espejo sale igual que siempre;
+// con varios, los numera y agrega el total abajo.
+function buildWhatsappMessage(datos, lineas, totales) {
+  const { cliente, envioInterior } = datos;
+  const cierre = envioInterior === "Sí"
     ? "Se puede encargar con un anticipo del 50% y el saldo restante antes del despacho."
     : "Se puede encargar con un anticipo del 50% y el saldo restante al momento de retirar o antes de la entrega.";
+  const saludo = cliente ? `Hola ${cliente}, te paso el presupuesto:` : "Hola, te paso el presupuesto:";
+  if (lineas.length === 0) return `${saludo}\n\n${cierre}`;
+
+  if (lineas.length === 1) {
+    const { espejo, result } = lineas[0];
+    const unidades = Number(espejo.cantidad) || 1;
+    let msg = `${saludo}\n\nEspejo ${result.tipoComercialDisplay} retroiluminado\n• Modelo: ${result.modeloComercial}\n\n📏 Medida: ${espejo.ancho} × ${espejo.alto} cm\n\n`;
+    if (result.precio3Cuotas) msg += `💰 ${fmtMoney(roundTo1000(result.precio3Cuotas))} - Hasta 3 cuotas\n`;
+    if (result.precioTransferencia) msg += `💰 ${fmtMoney(roundTo1000(result.precioTransferencia))} - Transferencia`;
+    if (unidades > 1) msg += `\n\nPor las ${unidades} unidades: ${fmtMoney(roundTo1000(result.totalPedidoTransferencia))} - Transferencia`;
+    msg += `\n\n🕛 Tiempo de fabricación: ${totales.tiempoFabricacion}\n\n${cierre}`;
+    return msg;
+  }
+
+  let msg = saludo + "\n";
+  lineas.forEach((l, i) => {
+    const { espejo, result } = l;
+    const unidades = Number(espejo.cantidad) || 1;
+    msg += `\n${i + 1}) ${etiquetaEspejo(espejo, i).toUpperCase()}\n`;
+    msg += `Espejo ${result.tipoComercialDisplay} retroiluminado\n`;
+    msg += `• Modelo: ${result.modeloComercial}\n`;
+    msg += `📏 Medida: ${espejo.ancho} × ${espejo.alto} cm${unidades > 1 ? ` — ${unidades} unidades` : ""}\n`;
+    if (result.precio3Cuotas) msg += `💰 ${fmtMoney(roundTo1000(result.precio3Cuotas))} - Hasta 3 cuotas\n`;
+    if (result.precioTransferencia) msg += `💰 ${fmtMoney(roundTo1000(result.precioTransferencia))} - Transferencia\n`;
+    if (unidades > 1) msg += `   (${fmtMoney(roundTo1000(result.totalPedidoTransferencia))} por las ${unidades})\n`;
+  });
+  msg += `\n———————————\n`;
+  msg += `TOTAL: ${fmtMoney(roundTo1000(totales.transferencia))} - Transferencia\n`;
+  if (totales.tresCuotas) msg += `       ${fmtMoney(roundTo1000(totales.tresCuotas))} - Hasta 3 cuotas\n`;
+  msg += `\n🕛 Tiempo de fabricación: ${totales.tiempoFabricacion}\n\n${cierre}`;
   return msg;
 }
 
@@ -9625,34 +9652,117 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   );
 }
 
+function nuevoEspejoPresupuesto(base) {
+  return {
+    id: uid(),
+    ubicacion: base ? base.ubicacion : "",
+    tipoProducto: base ? base.tipoProducto : TIPOS_PRODUCTO_LIST[0],
+    ancho: base ? base.ancho : 60,
+    alto: base ? base.alto : 60,
+    touch: base ? base.touch : "No",
+    desemp: base ? base.desemp : "No",
+    desempTipo: base ? base.desempTipo : "220",
+    horaTemp: base ? base.horaTemp : "No",
+    bluetoothSel: base ? base.bluetoothSel : "Sin Bluetooth",
+    panelesAdicionales: base ? base.panelesAdicionales : 0,
+    cantidad: base ? base.cantidad : 1,
+  };
+}
+
+function etiquetaEspejo(espejo, i) {
+  return (espejo.ubicacion || "").trim() || `Espejo ${i + 1}`;
+}
+
+// De menor a mayor demora: para un presupuesto con varios espejos vale el más lento.
+const ORDEN_TIEMPOS = ["5 a 7 días hábiles", "10 a 12 días hábiles", "25 días hábiles"];
+
 function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) {
-  const [tipoProducto, setTipoProducto] = useState(TIPOS_PRODUCTO_LIST[0]);
-  const [ancho, setAncho] = useState(60);
-  const [alto, setAlto] = useState(60);
-  const [touch, setTouch] = useState("No");
-  const [desemp, setDesemp] = useState("No");
-  const [desempTipo, setDesempTipo] = useState("220");
-  const [horaTemp, setHoraTemp] = useState("No");
-  const [bluetoothSel, setBluetoothSel] = useState("Sin Bluetooth");
-  const [panelesAdicionales, setPanelesAdicionales] = useState(0);
-  const [envioInterior, setEnvioInterior] = useState("No");
-  const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
-  const [cantidad, setCantidad] = useState(1);
   const [cliente, setCliente] = useState("");
   const [celular, setCelular] = useState("");
+  const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
+  const [envioInterior, setEnvioInterior] = useState("No");
+  const [espejos, setEspejos] = useState(() => [nuevoEspejoPresupuesto()]);
+  const [abierto, setAbierto] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const inputs = { tipoProducto, ancho: Number(ancho) || 0, alto: Number(alto) || 0, touch, desemp, desempTipo, horaTemp, bluetoothSel, panelesAdicionales: Number(panelesAdicionales) || 0, envioInterior, tipoCliente, cantidad: Number(cantidad) || 1, cliente };
-  const result = computeQuote(inputs, config);
-  const mensaje = buildWhatsappMessage(inputs, result);
+  // Cada espejo se cotiza con el MISMO motor de siempre. Lo único que cambia
+  // es que ahora hay varios y se suman: los precios de un espejo suelto dan
+  // exactamente igual que antes.
+  const lineas = espejos.map((e) => {
+    const inputs = {
+      tipoProducto: e.tipoProducto,
+      ancho: Number(e.ancho) || 0,
+      alto: Number(e.alto) || 0,
+      touch: e.touch,
+      desemp: e.desemp,
+      desempTipo: e.desempTipo,
+      horaTemp: e.horaTemp,
+      bluetoothSel: e.bluetoothSel,
+      panelesAdicionales: Number(e.panelesAdicionales) || 0,
+      envioInterior,
+      tipoCliente,
+      cantidad: Number(e.cantidad) || 1,
+      cliente,
+    };
+    return { espejo: e, inputs, result: computeQuote(inputs, config) };
+  });
+
+  const cant = (e) => Number(e.cantidad) || 1;
+  const unidades = espejos.reduce((a, e) => a + cant(e), 0);
+  const totalTransferencia = lineas.reduce((a, l) => a + (l.result.totalPedidoTransferencia || 0), 0);
+  const hayTres = lineas.length > 0 && lineas.every((l) => l.result.precio3Cuotas);
+  const total3Cuotas = hayTres ? lineas.reduce((a, l) => a + l.result.precio3Cuotas * cant(l.espejo), 0) : null;
+  const costoTotal = lineas.reduce((a, l) => a + l.result.costoTotalEstimado * cant(l.espejo), 0);
+  const ventaSinIva = lineas.reduce((a, l) => a + l.result.precioEfectivoSinIva * cant(l.espejo), 0);
+  const margenRealTotal = ventaSinIva ? (ventaSinIva - costoTotal) / ventaSinIva : 0;
+  const tiempoFabricacion = lineas.reduce((peor, l) => (
+    ORDEN_TIEMPOS.indexOf(l.result.tiempoFabricacion) > ORDEN_TIEMPOS.indexOf(peor) ? l.result.tiempoFabricacion : peor
+  ), ORDEN_TIEMPOS[0]);
+
+  const avisos = [];
+  lineas.forEach((l, i) => {
+    ["alertaMedidaMaxima", "alertaPaneles", "alertaComercial"].forEach((k) => {
+      if (l.result[k] && l.result[k] !== "OK") avisos.push({ espejo: etiquetaEspejo(l.espejo, i), texto: l.result[k] });
+    });
+  });
+
+  const totales = { transferencia: totalTransferencia, tresCuotas: total3Cuotas, tiempoFabricacion, unidades };
+  const mensaje = buildWhatsappMessage({ cliente, envioInterior }, lineas, totales);
+
+  function setEspejo(id, patch) {
+    setEspejos((lista) => lista.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  }
+  function agregarEspejo(base) {
+    const nuevo = nuevoEspejoPresupuesto(base);
+    setEspejos((lista) => [...lista, nuevo]);
+    setAbierto(nuevo.id);
+  }
+  function quitarEspejo(id) {
+    setEspejos((lista) => (lista.length <= 1 ? lista : lista.filter((e) => e.id !== id)));
+    setAbierto(null);
+  }
 
   function copyMessage() {
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
   function saveQuote() {
-    const q = { id: uid(), fecha: new Date().toISOString().slice(0, 10), cliente: cliente || "Sin nombre", celular: celular || "", tipoProducto, medida: `${ancho}x${alto}`, cantidad: inputs.cantidad, desempTipo: desemp === "Sí" ? desempTipo : "", precioTransferencia: result.precioTransferencia, precio3Cuotas: result.precio3Cuotas };
+    const uno = lineas.length === 1 ? lineas[0] : null;
+    const q = {
+      id: uid(), fecha: new Date().toISOString().slice(0, 10),
+      cliente: cliente || "Sin nombre", celular: celular || "",
+      resumen: uno
+        ? `${uno.espejo.tipoProducto} ${uno.espejo.ancho}×${uno.espejo.alto} cm${cant(uno.espejo) > 1 ? ` ×${cant(uno.espejo)}` : ""}`
+        : `${lineas.length} espejos · ${unidades} unidad${unidades === 1 ? "" : "es"}`,
+      espejos: lineas.map((l, i) => ({
+        ubicacion: etiquetaEspejo(l.espejo, i), tipoProducto: l.espejo.tipoProducto,
+        medida: `${l.espejo.ancho}x${l.espejo.alto}`, cantidad: cant(l.espejo),
+        precioTransferencia: l.result.precioTransferencia,
+      })),
+      cantidad: unidades,
+      precioTransferencia: totalTransferencia, precio3Cuotas: total3Cuotas,
+    };
     onQuotesChange([q, ...quotes]);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
@@ -9662,57 +9772,96 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
     <div className="dg-page">
       <div className="dg-quote-grid">
         <div className="dg-quote-form">
-          <div className="dg-section-card">
-            <div className="dg-section-header"><Calculator size={14} /> Datos del espejo</div>
-            <div className="dg-field-grid">
-              <Field label="Tipo de producto">
-                <select value={tipoProducto} onChange={(e) => setTipoProducto(e.target.value)}>
-                  {TIPOS_PRODUCTO_LIST.map((t) => (<option key={t} value={t}>{t}</option>))}
-                </select>
-              </Field>
-              <Field label="Ancho (cm)"><input type="number" value={ancho} onChange={(e) => setAncho(e.target.value)} /></Field>
-              <Field label="Alto (cm)"><input type="number" value={alto} onChange={(e) => setAlto(e.target.value)} /></Field>
-            </div>
-          </div>
-
-          <div className="dg-section-card">
-            <div className="dg-section-header"><Sparkles size={14} /> Funciones</div>
-            <div className="dg-field-grid">
-              <Field label="Touch"><select value={touch} onChange={(e) => setTouch(e.target.value)}><option value="No">No</option><option value="Sí">Touch simple</option><option value="Doble">Doble touch (frontal + perimetral)</option></select></Field>
-              <Field label="Desempañante"><select value={desemp} onChange={(e) => setDesemp(e.target.value)}><option>No</option><option>Sí</option></select></Field>
-              <Field label="Hora / Temperatura"><select value={horaTemp} onChange={(e) => setHoraTemp(e.target.value)}><option>No</option><option>Sí</option></select></Field>
-              <Field label="Bluetooth">
-                <select value={bluetoothSel} onChange={(e) => setBluetoothSel(e.target.value)}>
-                  {Object.keys(config.opcionales.bluetooth).map((k) => (<option key={k} value={k}>{k}</option>))}
-                </select>
-              </Field>
-              {desemp === "Sí" && (
-                <Field label="Tipo de desempañante">
-                  <select value={desempTipo} onChange={(e) => setDesempTipo(e.target.value)}>
-                    {DESEMP_TIPO_OPTIONS.map((o) => (<option key={o} value={o}>{o === "220" ? "220V (enchufe)" : "Touch (T)"}</option>))}
-                  </select>
-                </Field>
-              )}
-              {desemp === "Sí" && (
-                <Field label="Paneles adicionales"><input type="number" min="0" value={panelesAdicionales} onChange={(e) => setPanelesAdicionales(e.target.value)} /></Field>
-              )}
-            </div>
-          </div>
 
           <div className="dg-section-card">
             <div className="dg-section-header"><User size={14} /> Cliente y entrega</div>
             <div className="dg-field-grid">
+              <Field label="Nombre del cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Opcional" /></Field>
+              <Field label="Celular"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 5491122334455" /></Field>
               <Field label="Tipo de cliente">
                 <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)}>
                   <option>Consumidor Final</option><option>Revendedor</option>
                 </select>
               </Field>
-              <Field label="Cantidad idéntica"><input type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} /></Field>
               <Field label="Envío interior"><select value={envioInterior} onChange={(e) => setEnvioInterior(e.target.value)}><option>No</option><option>Sí</option></select></Field>
-              <Field label="Nombre del cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Opcional" /></Field>
-              <Field label="Celular"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 5491122334455" /></Field>
             </div>
           </div>
+
+          <div className="dg-presu-lista-titulo">
+            <span><Calculator size={14} /> Espejos del presupuesto</span>
+            <small>{espejos.length} {espejos.length === 1 ? "espejo" : "espejos"}{unidades !== espejos.length ? ` · ${unidades} unidades` : ""}</small>
+          </div>
+
+          {espejos.map((e, i) => {
+            const l = lineas[i];
+            const esteAbierto = abierto === e.id;
+            return (
+              <div className={`dg-section-card dg-presu-espejo ${esteAbierto ? "dg-presu-espejo-abierto" : ""}`} key={e.id}>
+                <button type="button" className="dg-presu-espejo-head" onClick={() => setAbierto(esteAbierto ? null : e.id)}>
+                  <span className="dg-presu-espejo-n">{i + 1}</span>
+                  <span className="dg-presu-espejo-txt">
+                    <strong>{etiquetaEspejo(e, i)}</strong>
+                    <small>{e.ancho}×{e.alto} cm · {l.result.modeloComercial}{cant(e) > 1 ? ` · ${cant(e)} u` : ""}</small>
+                  </span>
+                  <span className="dg-presu-espejo-precio">{fmtMoney(roundTo1000(l.result.totalPedidoTransferencia))}</span>
+                  <ChevronRight size={16} className={esteAbierto ? "dg-presu-chevron-on" : ""} />
+                </button>
+
+                {esteAbierto && (
+                  <div className="dg-presu-espejo-body">
+                    <div className="dg-field-grid">
+                      <Field label="¿Dónde va? (opcional)"><input value={e.ubicacion} onChange={(ev) => setEspejo(e.id, { ubicacion: ev.target.value })} placeholder="Ej: Toilette, Baño principal" /></Field>
+                      <Field label="Tipo de producto">
+                        <select value={e.tipoProducto} onChange={(ev) => setEspejo(e.id, { tipoProducto: ev.target.value })}>
+                          {TIPOS_PRODUCTO_LIST.map((t) => (<option key={t} value={t}>{t}</option>))}
+                        </select>
+                      </Field>
+                      <Field label="Ancho (cm)"><input type="number" value={e.ancho} onChange={(ev) => setEspejo(e.id, { ancho: ev.target.value })} /></Field>
+                      <Field label="Alto (cm)"><input type="number" value={e.alto} onChange={(ev) => setEspejo(e.id, { alto: ev.target.value })} /></Field>
+                      <Field label="Cantidad igual"><input type="number" min="1" value={e.cantidad} onChange={(ev) => setEspejo(e.id, { cantidad: ev.target.value })} /></Field>
+                    </div>
+
+                    <div className="dg-quote-section-title"><Sparkles size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />Funciones</div>
+                    <div className="dg-field-grid">
+                      <Field label="Touch"><select value={e.touch} onChange={(ev) => setEspejo(e.id, { touch: ev.target.value })}><option value="No">No</option><option value="Sí">Touch simple</option><option value="Doble">Doble touch (frontal + perimetral)</option></select></Field>
+                      <Field label="Desempañante"><select value={e.desemp} onChange={(ev) => setEspejo(e.id, { desemp: ev.target.value })}><option>No</option><option>Sí</option></select></Field>
+                      <Field label="Hora / Temperatura"><select value={e.horaTemp} onChange={(ev) => setEspejo(e.id, { horaTemp: ev.target.value })}><option>No</option><option>Sí</option></select></Field>
+                      <Field label="Bluetooth">
+                        <select value={e.bluetoothSel} onChange={(ev) => setEspejo(e.id, { bluetoothSel: ev.target.value })}>
+                          {Object.keys(config.opcionales.bluetooth).map((k) => (<option key={k} value={k}>{k}</option>))}
+                        </select>
+                      </Field>
+                      {e.desemp === "Sí" && (
+                        <Field label="Tipo de desempañante">
+                          <select value={e.desempTipo} onChange={(ev) => setEspejo(e.id, { desempTipo: ev.target.value })}>
+                            {DESEMP_TIPO_OPTIONS.map((o) => (<option key={o} value={o}>{o === "220" ? "220V (enchufe)" : "Touch (T)"}</option>))}
+                          </select>
+                        </Field>
+                      )}
+                      {e.desemp === "Sí" && (
+                        <Field label="Paneles adicionales"><input type="number" min="0" value={e.panelesAdicionales} onChange={(ev) => setEspejo(e.id, { panelesAdicionales: ev.target.value })} /></Field>
+                      )}
+                    </div>
+
+                    <div className="dg-presu-espejo-pie">
+                      <span className="dg-presu-espejo-unit">
+                        {fmtMoney(roundTo1000(l.result.precioTransferencia))} c/u
+                        {l.result.precio3Cuotas ? ` · ${fmtMoney(roundTo1000(l.result.precio3Cuotas))} en 3 cuotas` : ""}
+                      </span>
+                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => agregarEspejo(e)}><Copy size={13} /> Duplicar</button>
+                      {espejos.length > 1 && (
+                        <button type="button" className="dg-btn-ghost dg-mini-btn dg-presu-quitar" onClick={() => quitarEspejo(e.id)}><Trash2 size={13} /> Quitar</button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          <button className="dg-btn-ghost dg-suggest-btn" onClick={() => agregarEspejo()}>
+            <Plus size={14} /> Agregar otro espejo
+          </button>
 
           {isAdmin && (
             <button className="dg-btn-ghost dg-suggest-btn" onClick={() => setShowConfig((v) => !v)}>
@@ -9723,34 +9872,43 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
         </div>
 
         <div className="dg-quote-result">
-          {result.alertaMedidaMaxima !== "OK" && (
-            <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaMedidaMaxima}</div>
-          )}
-          {result.alertaPaneles !== "OK" && (
-            <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaPaneles}</div>
-          )}
-          {result.alertaComercial !== "OK" && (
-            <div className="dg-alert"><AlertTriangle size={14} /> {result.alertaComercial}</div>
-          )}
+          {avisos.map((a, i) => (
+            <div className="dg-alert" key={i}><AlertTriangle size={14} /> <strong>{a.espejo}:</strong> {a.texto}</div>
+          ))}
 
           <div className="dg-price-card">
-            <span className="dg-price-label">Transferencia (con IVA)</span>
-            <strong className="dg-price-main">{fmtMoney(roundTo1000(result.precioTransferencia))}</strong>
-            {result.precio3Cuotas && <span className="dg-price-sub">{fmtMoney(roundTo1000(result.precio3Cuotas))} en 3 cuotas</span>}
+            <span className="dg-price-label">{lineas.length > 1 ? `Total del presupuesto (${unidades} ${unidades === 1 ? "espejo" : "espejos"}) · transferencia` : "Transferencia (con IVA)"}</span>
+            <strong className="dg-price-main">{fmtMoney(roundTo1000(totalTransferencia))}</strong>
+            {total3Cuotas && <span className="dg-price-sub">{fmtMoney(roundTo1000(total3Cuotas))} en 3 cuotas</span>}
           </div>
 
+          {lineas.length > 1 && (
+            <div className="dg-presu-detalle">
+              <div className="dg-quote-section-title">Espejo por espejo</div>
+              {lineas.map((l, i) => (
+                <div className="dg-presu-detalle-fila" key={l.espejo.id}>
+                  <span className="dg-presu-detalle-txt">
+                    <strong>{etiquetaEspejo(l.espejo, i)}</strong>
+                    <small>{l.espejo.ancho}×{l.espejo.alto} cm{cant(l.espejo) > 1 ? ` · ${cant(l.espejo)} u × ${fmtMoney(roundTo1000(l.result.precioTransferencia))}` : ""}</small>
+                  </span>
+                  <span className="dg-presu-detalle-monto">{fmtMoney(roundTo1000(l.result.totalPedidoTransferencia))}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="dg-quote-meta">
-            <div><span>Total pedido ({inputs.cantidad} u.)</span><strong>{fmtMoney(result.totalPedidoTransferencia)}</strong></div>
-            <div><span>Tiempo de fabricación</span><strong>{result.tiempoFabricacion}</strong></div>
+            <div><span>Tiempo de fabricación</span><strong>{tiempoFabricacion}</strong></div>
+            <div><span>Unidades</span><strong>{unidades}</strong></div>
           </div>
 
           <details className="dg-quote-internos">
             <summary>Costos y márgenes</summary>
             <div className="dg-quote-meta">
-              <div><span>Escala</span><strong>{result.escalaComercial}</strong></div>
-              <div><span>Margen aplicado</span><strong>{Math.round(result.margenAplicado * 100)}%</strong></div>
-              <div><span>Margen real estimado</span><strong>{Math.round(result.margenReal * 100)}%</strong></div>
-              <div><span>Costo total estimado</span><strong>{fmtMoney(result.costoTotalEstimado)}</strong></div>
+              <div><span>Escala</span><strong>{lineas.length ? lineas[0].result.escalaComercial : "—"}</strong></div>
+              <div><span>Margen real estimado</span><strong>{Math.round(margenRealTotal * 100)}%</strong></div>
+              <div><span>Costo total estimado</span><strong>{fmtMoney(costoTotal)}</strong></div>
+              <div><span>Ganancia estimada</span><strong>{fmtMoney(ventaSinIva - costoTotal)}</strong></div>
             </div>
           </details>
 
@@ -9776,7 +9934,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
             {quotes.slice(0, 12).map((q) => (
               <div className="dg-task dg-pago-row" key={q.id}>
                 <div className="dg-pago-info">
-                  <span>{q.cliente} — {q.tipoProducto} {q.medida} cm {q.cantidad > 1 ? `x${q.cantidad}` : ""}</span>
+                  <span>{q.cliente} — {q.resumen || `${q.tipoProducto} ${q.medida} cm${q.cantidad > 1 ? ` ×${q.cantidad}` : ""}`}</span>
                   <span className="dg-pago-meta">{q.fecha}</span>
                 </div>
                 <span className="dg-pago-monto">{fmtMoney(roundTo1000(q.precioTransferencia))}</span>
@@ -9794,14 +9952,20 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
         </div>
         <div className="dg-print-row"><span>Fecha</span><span>{new Date().toLocaleDateString("es-AR")}</span></div>
         {cliente && <div className="dg-print-row"><span>Cliente</span><span>{cliente}</span></div>}
-        <div className="dg-print-row"><span>Producto</span><span>Espejo {result.tipoComercialDisplay} retroiluminado</span></div>
-        <div className="dg-print-row"><span>Modelo</span><span>{result.modeloComercial}</span></div>
-        <div className="dg-print-row"><span>Medida</span><span>{ancho} × {alto} cm{inputs.cantidad > 1 ? ` — Cantidad: ${inputs.cantidad}` : ""}</span></div>
-        <div className="dg-print-row"><span>Tiempo de fabricación</span><span>{result.tiempoFabricacion}</span></div>
+        {lineas.map((l, i) => (
+          <div className="dg-print-row" key={l.espejo.id}>
+            <span>{etiquetaEspejo(l.espejo, i)}</span>
+            <span>
+              Espejo {l.result.tipoComercialDisplay} · {l.espejo.ancho} × {l.espejo.alto} cm
+              {cant(l.espejo) > 1 ? ` · ${cant(l.espejo)} u` : ""} — {l.result.modeloComercial}
+              {" — "}{fmtMoney(roundTo1000(l.result.totalPedidoTransferencia))}
+            </span>
+          </div>
+        ))}
+        <div className="dg-print-row"><span>Tiempo de fabricación</span><span>{tiempoFabricacion}</span></div>
         <div className="dg-print-price">
-          <div>{fmtMoney(roundTo1000(result.precioTransferencia))} <small>transferencia</small></div>
-          {result.precio3Cuotas && <div>{fmtMoney(roundTo1000(result.precio3Cuotas))} <small>hasta 3 cuotas</small></div>}
-          {inputs.cantidad > 1 && <div>{fmtMoney(result.totalPedidoTransferencia)} <small>total del pedido</small></div>}
+          <div>{fmtMoney(roundTo1000(totalTransferencia))} <small>transferencia</small></div>
+          {total3Cuotas && <div>{fmtMoney(roundTo1000(total3Cuotas))} <small>hasta 3 cuotas</small></div>}
         </div>
         <div className="dg-print-terms">
           {envioInterior === "Sí" ? "Se puede encargar con un anticipo del 50% y el saldo restante antes del despacho." : "Se puede encargar con un anticipo del 50% y el saldo restante al momento de retirar o antes de la entrega."}
@@ -11214,6 +11378,31 @@ function Style() {
       .dg-quote-meta strong { font-family:'JetBrains Mono', monospace; font-size:13px; }
       .dg-mensaje-box { margin-top:4px; }
       .dg-mensaje-text { white-space:pre-wrap; font-family:'Jost',sans-serif; font-size:13px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.08); border-radius:12px; padding:12px; margin:6px 0 10px; line-height:1.5; }
+      /* Presupuesto con varios espejos: uno por tarjeta, plegadas. */
+      .dg-presu-lista-titulo { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin:2px 0 8px; }
+      .dg-presu-lista-titulo > span { display:flex; align-items:center; gap:6px; color:var(--dg-accent); font-family:'Jost',sans-serif; font-size:13px; font-weight:600; }
+      .dg-presu-lista-titulo > small { color:var(--dg-text-faint); font-size:11px; }
+      .dg-presu-espejo { padding:0; margin-bottom:10px; overflow:hidden; }
+      .dg-presu-espejo-abierto { border-color:rgba(var(--dg-accent-rgb),.4); }
+      .dg-presu-espejo-head { width:100%; display:grid; grid-template-columns:auto minmax(0,1fr) auto 16px; align-items:center; gap:10px; padding:11px 13px; border:0; background:transparent; color:inherit; font-family:'Jost',sans-serif; text-align:left; cursor:pointer; }
+      .dg-presu-espejo-n { width:22px; height:22px; flex:none; display:flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent); font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; }
+      .dg-presu-espejo-txt { min-width:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-presu-espejo-txt > strong { overflow:hidden; color:var(--dg-text); font-size:15px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-presu-espejo-txt > small { overflow:hidden; color:var(--dg-text-dim); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-presu-espejo-precio { color:var(--dg-accent); font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700; white-space:nowrap; }
+      .dg-presu-espejo-head > svg { color:var(--dg-text-faint); transition:transform .18s ease; }
+      .dg-presu-chevron-on { transform:rotate(90deg); color:var(--dg-accent); }
+      .dg-presu-espejo-body { padding:2px 13px 13px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-presu-espejo-pie { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px; padding-top:11px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-presu-espejo-unit { flex:1; min-width:150px; color:var(--dg-text-dim); font-size:11px; }
+      .dg-presu-quitar { border-color:rgba(var(--dg-danger-rgb),.35); color:var(--dg-danger); }
+      .dg-presu-detalle { margin-bottom:14px; }
+      .dg-presu-detalle-fila { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid rgba(var(--dg-line-rgb),.07); }
+      .dg-presu-detalle-fila:last-child { border-bottom:none; }
+      .dg-presu-detalle-txt { min-width:0; display:flex; flex-direction:column; gap:1px; }
+      .dg-presu-detalle-txt > strong { color:var(--dg-text); font-size:13px; font-weight:600; }
+      .dg-presu-detalle-txt > small { color:var(--dg-text-dim); font-size:11px; }
+      .dg-presu-detalle-monto { color:var(--dg-text); font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700; white-space:nowrap; }
       .dg-quote-internos { margin-bottom:14px; }
       .dg-quote-internos > summary { display:inline-flex; align-items:center; gap:6px; margin-bottom:8px; color:var(--dg-text-faint); font-size:11px; font-weight:750; letter-spacing:0.6px; text-transform:uppercase; list-style:none; cursor:pointer; }
       .dg-quote-internos > summary::-webkit-details-marker { display:none; }
