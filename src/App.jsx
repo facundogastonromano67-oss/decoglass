@@ -7350,11 +7350,13 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
   const [minimo, setMinimo] = useState("");
   const [filtroCat, setFiltroCat] = useState("todas");
   const [editando, setEditando] = useState(null);
+  const [agregando, setAgregando] = useState(false);
 
   function addItem() {
     if (!nombre.trim()) return;
     onChange([...stock, { id: uid(), nombre: nombre.trim(), categoria, unidad: unidad.trim() || "u", cantidad: Number(cantidad) || 0, minimo: Number(minimo) || 0 }]);
     setNombre(""); setCantidad(""); setMinimo("");
+    setAgregando(false);
   }
   function update(id, patch) { onChange(stock.map((s) => (s.id === id ? { ...s, ...patch } : s))); }
   function removeItem(id) { onChange(stock.filter((s) => s.id !== id)); }
@@ -7386,7 +7388,13 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
         </button>
       )}
 
-      {canEdit && stock.length > 0 && (
+      {canEdit && stock.length > 0 && !agregando && (
+        <button className="dg-btn-ghost dg-suggest-btn" onClick={() => setAgregando(true)}>
+          <PackagePlus size={14} /> Agregar un material
+        </button>
+      )}
+
+      {canEdit && stock.length > 0 && agregando && (
         <div className="dg-section-card">
           <div className="dg-section-header"><PackagePlus size={14} /> Agregar material</div>
           <EnterFlow onSubmit={addItem} autoFocus={false}>
@@ -7398,7 +7406,10 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
             <Field label="Mínimo de alerta"><input type="number" value={minimo} onChange={(e) => setMinimo(e.target.value)} /></Field>
           </div>
           </EnterFlow>
-          <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button></div>
+          <div className="dg-form-actions">
+            <button className="dg-btn-ghost" onClick={() => setAgregando(false)}>Cancelar</button>
+            <button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button>
+          </div>
         </div>
       )}
 
@@ -7418,12 +7429,13 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
       {porCategoria.map((g) => g.items.length > 0 && (
         <div className="dg-section-card" key={g.categoria}>
           <div className="dg-section-header"><Package size={14} /> {g.categoria}</div>
-          <div className="dg-task-list" style={{ marginBottom: 0 }}>
+          <div className="dg-task-list dg-mat-lista" style={{ marginBottom: 0 }}>
             {g.items.map((s) => {
               const cant = Number(s.cantidad) || 0;
               const bajo = cant <= Number(s.minimo);
+              const abierto = editando === s.id;
               return (
-                <div className={`dg-mat-fila ${bajo ? "dg-mat-fila-baja" : ""}`} key={s.id}>
+                <div className={`dg-mat-fila ${bajo ? "dg-mat-fila-baja" : ""} ${abierto ? "dg-mat-fila-abierta" : ""}`} key={s.id}>
                   <div className="dg-mat-info">
                     <span className="dg-mat-nombre">{s.nombre}</span>
                     <span className="dg-mat-min">
@@ -7444,13 +7456,25 @@ function StockMaterialesPanel({ stock, onChange, canEdit, puedeBorrar = true }) 
                     <div className="dg-mat-stepper"><span className="dg-mat-cant-ro">{cant}</span> <span className="dg-mat-uni">{s.unidad}</span></div>
                   )}
                   {canEdit && (
-                    <button type="button" className={`dg-icon-btn ${editando === s.id ? "dg-icon-btn-on" : ""}`} aria-label="Editar mínimo y unidad" onClick={() => setEditando(editando === s.id ? null : s.id)}><Settings2 size={14} /></button>
+                    <button type="button" className={`dg-icon-btn dg-mat-editar-btn ${abierto ? "dg-icon-btn-on" : ""}`} aria-label={`Editar ${s.nombre}`} onClick={() => setEditando(abierto ? null : s.id)}><Pencil size={14} /></button>
                   )}
-                  {canEdit && puedeBorrar && <button className="dg-icon-btn dg-task-del" aria-label="Borrar material" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
-                  {canEdit && editando === s.id && (
+                  {canEdit && abierto && (
                     <div className="dg-mat-editar">
-                      <label>Mínimo de alerta<input type="number" value={s.minimo} onChange={(e) => update(s.id, { minimo: Number(e.target.value) || 0 })} /></label>
-                      <label>Unidad<input value={s.unidad} onChange={(e) => update(s.id, { unidad: e.target.value })} placeholder="u" /></label>
+                      <div className="dg-field-grid">
+                        <Field label="Material"><input value={s.nombre} onChange={(e) => update(s.id, { nombre: e.target.value })} /></Field>
+                        <Field label="Categoría"><select value={s.categoria} onChange={(e) => update(s.id, { categoria: e.target.value })}>{MATERIAL_CATEGORIAS.map((c) => (<option key={c}>{c}</option>))}</select></Field>
+                        <Field label="Unidad"><input value={s.unidad} onChange={(e) => update(s.id, { unidad: e.target.value })} placeholder="u" /></Field>
+                        <Field label="Mínimo de alerta"><input type="number" value={s.minimo} onChange={(e) => update(s.id, { minimo: Number(e.target.value) || 0 })} /></Field>
+                      </div>
+                      <div className="dg-mat-editar-pie">
+                        <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => setEditando(null)}><Check size={13} /> Listo</button>
+                        {puedeBorrar && (
+                          <button type="button" className="dg-btn-ghost dg-mini-btn dg-mat-borrar"
+                            onClick={() => { if (window.confirm(`¿Borrar "${s.nombre}" de la lista de materiales?`)) removeItem(s.id); }}>
+                            <Trash2 size={13} /> Borrar material
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -11248,10 +11272,15 @@ function Style() {
       .dg-lead-name { font-size:13px; font-weight:600; }
       .dg-lead-actions { display:flex; align-items:center; gap:6px; }
       .dg-lead-estado-select { background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:5px 8px; font-size:11px; }
-      .dg-mat-fila { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:11px 0; border-bottom:1px solid rgba(var(--dg-line-rgb),0.06); }
+      /* Grid y no flex-wrap: así las columnas quedan alineadas entre filas y
+         todas las filas miden lo mismo. Y con padding a los costados, que el
+         texto no quede pegado al borde de la lista. */
+      .dg-mat-lista { max-height:none; overflow:visible; }
+      .dg-mat-fila { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:9px 12px; padding:11px 13px; border-bottom:1px solid rgba(var(--dg-line-rgb),0.06); }
       .dg-mat-fila:last-child { border-bottom:none; }
-      .dg-mat-info { display:flex; flex-direction:column; gap:2px; flex:1; min-width:130px; }
-      .dg-mat-nombre { font-size:13px; color:var(--dg-text); font-weight:500; }
+      .dg-mat-fila-abierta { background:rgba(var(--dg-accent-rgb),0.05); }
+      .dg-mat-info { min-width:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-mat-nombre { overflow-wrap:anywhere; font-size:13px; color:var(--dg-text); font-weight:500; }
       .dg-mat-min { font-size:11px; color:var(--dg-text-dim); display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
       .dg-mat-stepper { display:flex; align-items:center; gap:6px; }
       .dg-mat-btn { width:36px; height:36px; flex:none; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; line-height:1;
@@ -11264,9 +11293,10 @@ function Style() {
       .dg-mat-uni { font-size:11px; color:var(--dg-text-dim); }
       .dg-mat-fila-baja .dg-mat-cant, .dg-mat-fila-baja .dg-mat-cant-ro { color:var(--dg-danger); }
       .dg-mat-fila-baja .dg-mat-cant { border-color:rgba(var(--dg-danger-rgb),0.45); }
-      .dg-mat-editar { flex-basis:100%; display:flex; gap:12px; flex-wrap:wrap; padding:8px 0 2px; }
-      .dg-mat-editar label { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--dg-text-dim); }
-      .dg-mat-editar input { width:100px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.16); border-radius:8px; padding:6px 8px; color:var(--dg-text); font-size:13px; }
+      .dg-mat-editar { grid-column:1 / -1; display:flex; flex-direction:column; gap:11px; padding:4px 0 6px; }
+      .dg-mat-editar-pie { display:flex; gap:8px; flex-wrap:wrap; }
+      .dg-mat-borrar { border-color:rgba(var(--dg-danger-rgb),0.35); color:var(--dg-danger); }
+      .dg-mat-borrar:hover { border-color:var(--dg-danger); background:rgba(var(--dg-danger-rgb),0.1); }
       .dg-icon-btn-on { color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 14%, transparent); }
       .dg-stock-cantidad { width:64px; text-align:center; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:6px 4px; color:var(--dg-accent); font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; }
 
@@ -11456,6 +11486,12 @@ function Style() {
         .dg-nav { gap:5px; row-gap:5px; margin:12px auto 18px; }
         .dg-nav-btn { flex:1 1 0; min-width:0; gap:5px; justify-content:center; padding:8px 5px; font-size:11px; white-space:nowrap; background:rgba(var(--dg-line-rgb),.04); }
         .dg-nav-largo { display:none; }
+        /* En el celular el nombre se lleva todo el ancho y los controles van
+           en la línea de abajo, siempre en el mismo lugar. */
+        .dg-mat-fila { grid-template-columns:minmax(0,1fr) auto; row-gap:10px; padding:12px 13px; }
+        .dg-mat-info { grid-column:1 / -1; }
+        .dg-mat-stepper { grid-column:1; }
+        .dg-mat-editar-btn { grid-column:2; justify-self:end; }
         .dg-nav-btn.dg-nav-on { background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent); }
         .dg-nav-crumb { flex-basis:100%; min-width:0; justify-content:flex-start; background:transparent !important; }
       }
