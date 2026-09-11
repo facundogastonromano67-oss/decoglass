@@ -562,6 +562,10 @@ const TIPO_PRODUCTO_TABLE = {
   "Puntas Curvas":            { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Puntas Curvas" },
   "Orgánico":                 { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Orgánico" },
   "Soft":                     { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.075, display: "Soft" },
+  // Irregular sale 15% más caro que un Orgánico o una Pastilla de la misma
+  // medida. Esos llevan 7,5% de recargo de forma, así que este lleva
+  // 1,075 × 1,15 − 1 = 0,23625.
+  "Irregular":                { clase: "Especial", esmerilado: "Ninguno",       cargaBase: "Simple / Touch", recargoForma: 0.23625, display: "Irregular" },
 };
 
 const DEFAULT_QUOTE_CONFIG = {
@@ -605,7 +609,7 @@ const DEFAULT_QUOTE_CONFIG = {
     iva: 0.21, factor3cuotas: 1.20407, limiteMedidaEstandar: 0.81,
     margenMinorista: 0.4, margenRevendedor: 0.3, margenConstructora10: 0.25, margenConstructora20: 0.2,
     recargoNoEstandar: 0.3, minRevendedorQty: 5, minConstructora10Qty: 10, minConstructora20Qty: 20,
-    minimoAgregado: 20000, medidaMaxAncho: 240, medidaMaxAlto: 170, margenMinDesempCm: 18,
+    minimoAgregado: 20000, medidaMaxAncho: 240, medidaMaxAlto: 170, margenMinDesempCm: 15,
   },
 };
 
@@ -1278,7 +1282,12 @@ function App() {
     } catch (e) { setIncomes([]); }
     try {
       const qc = await storage.get("quote-config", true);
-      setQuoteConfig(qc ? JSON.parse(qc.value) : DEFAULT_QUOTE_CONFIG);
+      const guardada = qc ? JSON.parse(qc.value) : null;
+      // Los precios y márgenes guardados mandan. El margen del desempañante no,
+      // porque no se edita desde ningún lado: vale siempre el del código.
+      setQuoteConfig(guardada
+        ? { ...guardada, reglas: { ...guardada.reglas, margenMinDesempCm: DEFAULT_QUOTE_CONFIG.reglas.margenMinDesempCm } }
+        : DEFAULT_QUOTE_CONFIG);
     } catch (e) { setQuoteConfig(DEFAULT_QUOTE_CONFIG); }
     try {
       const q = await storage.get("quotes", true);
@@ -4314,6 +4323,17 @@ function pedidoTipoDesempanante(pedido) {
   return /(?:^|\s)(?:touch|t)(?:\s|$)/.test(value) ? "Touch" : "220";
 }
 
+// Deja los nombres parejos: "JUAN perez" y "juan PEREZ" quedan los dos
+// "Juan Perez". Así el mismo cliente no aparece escrito de tres formas
+// distintas según quién cargó el pedido.
+function nombrePropio(texto) {
+  return String(texto || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("es-AR")
+    .replace(/(^|[\s'’\-\/(.])(\p{L})/gu, (todo, antes, letra) => antes + letra.toLocaleUpperCase("es-AR"));
+}
+
 function normalizarPedidoFunciones(pedido) {
   const tieneDesempanante = pedidoTieneDesempanante(pedido);
   return {
@@ -5132,6 +5152,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
 
   function savePedido(pedido, opts) {
     pedido = normalizarPedidoFunciones(pedido);
+    pedido = { ...pedido, cliente: nombrePropio(pedido.cliente) };
     const exists = pedidos.some((p) => p.id === pedido.id);
     const previous = pedidos.find((p) => p.id === pedido.id);
     const ordenDelGrupo = pedido.grupoId
