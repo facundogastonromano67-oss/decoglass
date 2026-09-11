@@ -4778,10 +4778,23 @@ function BotonCompartirSeguimiento({ pedido }) {
     }
   }
 
+  // Abre WhatsApp con el mensaje escrito. No manda nada solo: el que aprieta
+  // "enviar" sigue siendo la persona.
+  const wa = waLink(pedido.celular);
+  const texto = `Hola${pedido.cliente ? ` ${pedido.cliente}` : ""}! Podés seguir el estado de tu pedido${pedido.orden ? ` #${pedido.orden}` : ""} desde este link:\n${link}`;
+
   return (
-    <button className="dg-btn-ghost dg-mini-btn" onClick={compartir} title="Copiar link para que el cliente vea el estado de su pedido">
-      {copiado ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link de seguimiento</>}
-    </button>
+    <span className="dg-seg-botones">
+      <button className="dg-btn-ghost dg-mini-btn" onClick={compartir} title="Copiar link para que el cliente vea el estado de su pedido">
+        {copiado ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link de seguimiento</>}
+      </button>
+      {wa && (
+        <a className="dg-btn-ghost dg-mini-btn dg-seg-wa" href={`${wa}?text=${encodeURIComponent(texto)}`}
+           target="_blank" rel="noopener noreferrer" title={`Mandarle el seguimiento a ${pedido.cliente || "el cliente"} por WhatsApp`}>
+          <MessageCircle size={12} /> Mandar por WhatsApp
+        </a>
+      )}
+    </span>
   );
 }
 
@@ -5297,6 +5310,24 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     if (onRegistrar && p) onRegistrar("Borró un pedido", `#${p.orden} — ${p.cliente} — ${money(p.monto)}`);
     setOpenPedido(null);
   }
+  // Borra todos los espejos del pedido de una. Antes había que ir uno por uno.
+  function removeGrupo(espejos) {
+    if (!espejos || espejos.length === 0) return;
+    const p = espejos[0];
+    const cuantos = espejos.length;
+    const ordenes = [...new Set(espejos.map((e) => e.orden))].map((o) => `#${o}`).join(", ");
+    const total = espejos.reduce((a, e) => a + (Number(e.monto) || 0), 0);
+    const ok = window.confirm(
+      `¿Borrar el pedido completo de ${p.cliente || "sin nombre"}?\n\n` +
+      `${ordenes} — ${cuantos} espejo${cuantos === 1 ? "" : "s"} — ${money(total)}\n\n` +
+      "Se borran todos juntos y no se puede deshacer."
+    );
+    if (!ok) return;
+    const ids = new Set(espejos.map((e) => e.id));
+    onChange(pedidos.filter((x) => !ids.has(x.id)));
+    if (onRegistrar) onRegistrar("Borró un pedido completo", `${ordenes} — ${p.cliente} — ${cuantos} espejo(s) — ${money(total)}`);
+    setOpenPedido(null);
+  }
   function marcarClienteAvisado(p) {
     if (!pedidoEstaListo(p)) {
       window.alert("La confirmación con el cliente se habilita cuando fábrica marque el espejo como listo.");
@@ -5569,6 +5600,14 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                     );
                   })}
                 </div>
+
+                {canEditFull && puedeBorrar && (
+                  <div className="dg-order-borrar">
+                    <button className="dg-btn-ghost dg-mini-btn dg-order-borrar-btn" onClick={() => removeGrupo(espejos)}>
+                      <Trash2 size={13} /> {espejos.length > 1 ? `Borrar el pedido completo (${espejos.length} espejos)` : "Borrar este pedido"}
+                    </button>
+                  </div>
+                )}
               </div>
             </details>
           );
@@ -11910,6 +11949,13 @@ function Style() {
       .dg-order-flow { width:100%; margin:0; overflow:hidden; padding:7px 10px 8px; border:0; border-top:2px solid rgba(var(--dg-accent-rgb),.42); border-radius:0; background:var(--dg-order-flow); }
       .dg-order-flow-title { margin:0 0 3px; color:var(--dg-text-dim); }
       .dg-order-flow-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:3px; }
+      .dg-seg-botones { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+      .dg-seg-wa { text-decoration:none; }
+      /* Borrar el pedido entero: separado del resto y en rojo, para que no se
+         toque por error al salir de la tarjeta. */
+      .dg-order-borrar { display:flex; justify-content:flex-end; margin-top:12px; padding-top:11px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-order-borrar-btn { border-color:rgba(var(--dg-danger-rgb),.35); color:var(--dg-danger); }
+      .dg-order-borrar-btn:hover { border-color:var(--dg-danger); background:rgba(var(--dg-danger-rgb),.1); }
       .dg-order-flow-title-row .dg-order-flow-title { margin:0; }
       .dg-order-flow-nav { min-height:30px; display:grid; grid-template-columns:minmax(100px,1fr) auto minmax(100px,1fr); gap:8px; align-items:center; padding:2px 0 3px; border:0; background:transparent; }
       .dg-order-flow-label { min-width:0; display:flex; align-items:baseline; gap:6px; }
