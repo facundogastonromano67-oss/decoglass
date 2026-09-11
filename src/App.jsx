@@ -53,13 +53,23 @@ const SECTOR_DESCRIPTIONS = {
 };
 
 const SECTOR_VISUAL = {
-  marketing:      { accent: "#C96F5D", position: "0% 0%" },
-  ventas:         { accent: "#C28B47", position: "50% 0%" },
-  administracion: { accent: "var(--dg-estado-grabado)", position: "100% 0%" },
-  fabrica:        { accent: "#A89782", position: "0% 100%" },
-  postventa:      { accent: "var(--dg-estado-bisel)", position: "50% 100%" },
-  logistica:      { accent: "var(--dg-estado-biseladora)", position: "100% 100%" },
+  marketing:      { accent: "var(--dg-sec-marketing-foto)",      position: "0% 0%" },
+  ventas:         { accent: "var(--dg-sec-ventas-foto)",         position: "50% 0%" },
+  administracion: { accent: "var(--dg-sec-administracion-foto)", position: "100% 0%" },
+  fabrica:        { accent: "var(--dg-sec-fabrica-foto)",        position: "0% 100%" },
+  postventa:      { accent: "var(--dg-sec-postventa-foto)",      position: "50% 100%" },
+  logistica:      { accent: "var(--dg-sec-logistica-foto)",      position: "100% 100%" },
 };
+
+// Color de identidad del sector. Un sector agregado a mano no tiene color
+// propio: en ese caso cae en el celeste y no se rompe nada.
+function colorSector(id) {
+  return SECTOR_VISUAL[id] ? `var(--dg-sec-${id})` : "var(--dg-accent)";
+}
+// El mismo color pero para lo que va encima de la foto de la sala.
+function colorSectorFoto(id) {
+  return SECTOR_VISUAL[id] ? `var(--dg-sec-${id}-foto)` : "var(--dg-accent)";
+}
 
 function RoomScene({ sector }) {
   const visual = SECTOR_VISUAL[sector.id] || { accent: "var(--dg-accent)", position: "50% 50%" };
@@ -1568,14 +1578,14 @@ function App() {
       <button
         key={sector.id}
         className={`dg-room-tile dg-room-tile-${sector.tipo}`}
-        style={{ "--glow": glow }}
+        style={{ "--glow": glow, "--sc": colorSector(sector.id), "--scf": colorSectorFoto(sector.id) }}
         onClick={() => { setActiveSectorId(sector.id); setVistaPanel(false); setVistaPendientes(false); setVistaConsultas(false); }}
         aria-label={`Abrir sector ${sector.name}`}
       >
         <RoomScene sector={sector} />
-        <div className="dg-room-plate" style={{ "--glow": glow }}>
+        <div className="dg-room-plate">
           <span className="dg-room-plate-num">{String(i + 1).padStart(2, "0")}</span>
-          <div className="dg-room-plate-icon" style={{ "--glow": glow }}>{Icon && <Icon size={16} />}</div>
+          <div className="dg-room-plate-icon">{Icon && <Icon size={16} />}</div>
           <div className="dg-room-plate-text">
             <span className="dg-room-plate-name">{sector.name}</span>
             <span className="dg-room-plate-sub">{SECTOR_DESCRIPTIONS[sector.id]}</span>
@@ -10375,8 +10385,8 @@ function SectorPage({
   const canEditLogistica = isAdmin || esEncargado;
 
   return (
-    <div className="dg-sector-page">
-      <section className="dg-sector-hero" style={{ "--glow": glow }}>
+    <div className="dg-sector-page" style={{ "--sc": colorSector(sector.id), "--scf": colorSectorFoto(sector.id) }}>
+      <section className="dg-sector-hero">
         <RoomScene sector={sector} />
         <div className="dg-sector-hero-content">
           <div className="dg-sector-hero-title">
@@ -10520,6 +10530,12 @@ function Style() {
         --dg-warning:#E7B15A; --dg-warning-rgb:231,177,90;
         --dg-danger:#E37B6C; --dg-danger-rgb:227,123,108;
         --dg-estado-grabado:#7FB3D4; --dg-estado-bisel:#A99AD6; --dg-estado-biseladora:#E0A96B;
+        /* Identidad de cada sector. Los "-foto" van sobre la imagen de la sala,
+           que es oscura en los dos temas, así que no se redefinen en el claro. */
+        --dg-sec-marketing:#C97BB0; --dg-sec-ventas:#D2A75A; --dg-sec-administracion:#9189CE;
+        --dg-sec-fabrica:#A89782; --dg-sec-postventa:#CE8A6E; --dg-sec-logistica:#7FA8B8;
+        --dg-sec-marketing-foto:#C97BB0; --dg-sec-ventas-foto:#D2A75A; --dg-sec-administracion-foto:#9189CE;
+        --dg-sec-fabrica-foto:#A89782; --dg-sec-postventa-foto:#CE8A6E; --dg-sec-logistica-foto:#7FA8B8;
         --dg-shadow:rgba(9,7,20,.6);
         --bg:var(--dg-bg); --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22); --text:var(--dg-text); --text-dim:var(--dg-text-dim);
         font-family:'Jost', sans-serif;
@@ -10535,6 +10551,8 @@ function Style() {
         --dg-warning:#96611A; --dg-warning-rgb:150,97,26;
         --dg-danger:#B04A3D; --dg-danger-rgb:176,74,61;
         --dg-estado-grabado:#2F6E93; --dg-estado-bisel:#5B4C86; --dg-estado-biseladora:#8A5A2A;
+        --dg-sec-marketing:#8E3C77; --dg-sec-ventas:#8A6420; --dg-sec-administracion:#4E4694;
+        --dg-sec-fabrica:#6B5E4F; --dg-sec-postventa:#9A4B2E; --dg-sec-logistica:#35637E;
         --dg-shadow:rgba(49,43,72,.16);
         --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22);
         color-scheme:light;
@@ -10862,7 +10880,10 @@ function Style() {
 
       .dg-section-card { background: rgba(var(--dg-line-rgb),0.025); border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:12px; margin-bottom:14px; transition: border-color .15s ease; }
       .dg-app[data-theme="light"] .dg-section-card { border-color: rgba(var(--dg-line-rgb),0.14); }
-      .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:var(--dg-accent); font-family:'Jost', sans-serif; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.3px; }
+      .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:var(--sc, var(--dg-accent)); font-family:'Jost', sans-serif; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.3px; }
+      /* Adentro de un modal el fondo es violeta oscuro en los dos temas: el
+         color claro del sector no se leería, así que ahí vuelve el celeste. */
+      .dg-modal { --sc:#60ADD9; --scf:#60ADD9; }
       /* align-items:end = los controles se apoyan abajo. Si un título ocupa
          dos renglones, crece hacia arriba y los inputs siguen alineados. */
       .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; align-items:end; }
@@ -11616,7 +11637,7 @@ function Style() {
 
       .dg-room-plate { position:absolute; display:flex; align-items:center; backdrop-filter:blur(14px); }
       .dg-room-plate-num { font-family:'JetBrains Mono', monospace; }
-      .dg-room-plate-icon { --glow:var(--dg-accent); display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--glow) 18%, transparent); color: var(--glow); }
+      .dg-room-plate-icon { display:flex; align-items:center; justify-content:center; background: color-mix(in srgb, var(--scf, var(--dg-accent)) 18%, transparent); color: var(--scf, var(--dg-accent)); }
       .dg-room-plate-text { display:flex; flex-direction:column; min-width:0; flex:1; }
       .dg-room-plate-name { font-family:'Jost', sans-serif; font-weight:600; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .dg-room-plate-sub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -11791,11 +11812,11 @@ function Style() {
       .dg-building-foot { min-height:38px; display:flex; align-items:center; justify-content:center; gap:9px; border-top:1px solid rgba(var(--dg-line-rgb),.08); color:var(--dg-text-faint); font-size:11px; background:rgba(var(--dg-line-rgb),.012); }
       .dg-building-foot .dg-live-dot { width:5px; height:5px; box-shadow:none; }
       .dg-room-tile { aspect-ratio:16/9; border-radius:12px !important; border-color:rgba(var(--dg-line-rgb),.105); background:var(--dg-bg); box-shadow:none; text-align:left; }
-      .dg-room-tile:hover { transform:translateY(-2px); border-color:color-mix(in srgb, var(--glow) 58%, rgba(var(--dg-line-rgb),.12)); box-shadow:0 16px 34px -24px rgba(0,0,0,.9); }
+      .dg-room-tile:hover { transform:translateY(-2px); border-color:color-mix(in srgb, var(--sc, var(--dg-accent)) 58%, rgba(var(--dg-line-rgb),.12)); box-shadow:0 16px 34px -24px rgba(0,0,0,.9); }
       .dg-scene-image { filter:grayscale(1) sepia(.1) saturate(.76) contrast(.74) brightness(1.32); }
       .dg-room-tile:hover .dg-scene-image { transform:scale(1.045); filter:grayscale(1) sepia(.08) saturate(.82) contrast(.78) brightness(1.38); }
       .dg-scene-shade { background:linear-gradient(180deg,rgba(8,6,4,0),rgba(8,6,4,.025) 52%,rgba(8,6,4,.44) 100%),linear-gradient(125deg,color-mix(in srgb,var(--accent) 5%,transparent),transparent 54%); }
-      .dg-room-plate { left:10px; right:10px; bottom:9px; gap:8px; padding:9px 10px; border:0; border-top:1px solid color-mix(in srgb,var(--glow) 45%,rgba(var(--dg-line-rgb),.08)); border-radius:12px; background:rgba(12,9,7,.76); box-shadow:none; }
+      .dg-room-plate { left:10px; right:10px; bottom:9px; gap:8px; padding:9px 10px; border:0; border-top:2px solid color-mix(in srgb,var(--scf, var(--dg-accent)) 62%,rgba(var(--dg-line-rgb),.08)); border-radius:12px; background:rgba(12,9,7,.76); box-shadow:none; }
       .dg-room-plate-num { color:#AFA394; font-size:11px; }
       .dg-room-plate-icon { width:25px; height:25px; min-width:25px; border-radius:50%; }
       .dg-room-plate-name { color:#F3EDE4; font-size:13px; }
@@ -11810,7 +11831,7 @@ function Style() {
       .dg-sector-hero .dg-scene-shade { background:linear-gradient(90deg,rgba(9,7,5,.76) 0%,rgba(9,7,5,.48) 52%,rgba(9,7,5,.12) 100%),linear-gradient(0deg,rgba(9,7,5,.46),transparent 72%); }
       .dg-sector-hero-content { position:relative; z-index:2; flex:1; min-width:0; }
       .dg-sector-hero-title { display:flex; align-items:center; gap:10px; }
-      .dg-sector-hero-icon { width:36px; height:36px; min-width:36px; display:flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--glow) 46%,rgba(238,226,210,.14)); border-radius:12px; background:color-mix(in srgb,var(--glow) 12%,rgba(12,9,7,.7)); color:var(--glow); }
+      .dg-sector-hero-icon { width:36px; height:36px; min-width:36px; display:flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--scf, var(--dg-accent)) 46%,rgba(238,226,210,.14)); border-radius:12px; background:color-mix(in srgb,var(--scf, var(--dg-accent)) 12%,rgba(12,9,7,.7)); color:var(--scf, var(--dg-accent)); }
       .dg-sector-hero-title h1 { margin:0; color:#F3EDE4; font-family:'Jost',sans-serif; font-size:clamp(24px,3vw,24px); line-height:1; letter-spacing:-0.2px; text-shadow:0 1px 12px rgba(0,0,0,.45); }
       .dg-sector-hero-title p { margin:4px 0 0; color:#E0D8CD; font-size:11px; text-shadow:0 1px 10px rgba(0,0,0,.5); }
       .dg-sector-hero-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
@@ -11821,7 +11842,7 @@ function Style() {
       .dg-sector-workbar .dg-sector-tabs::-webkit-scrollbar { display:none; }
       .dg-sector-tab { flex:0 0 auto; min-height:32px; display:flex; align-items:center; gap:5px; padding:6px 9px; border:1px solid transparent; border-radius:8px; color:var(--dg-text-faint); font-size:11px; background:transparent; }
       .dg-sector-tab:hover { color:var(--dg-text); background:rgba(var(--dg-line-rgb),.035); }
-      .dg-sector-tab-on { color:var(--dg-accent-2); border-color:rgba(var(--dg-accent-rgb),.22); background:rgba(var(--dg-accent-rgb),.095); }
+      .dg-sector-tab-on { color:var(--sc, var(--dg-accent-2)); border-color:color-mix(in srgb,var(--sc, var(--dg-accent)) 40%,transparent); background:color-mix(in srgb,var(--sc, var(--dg-accent)) 13%,transparent); }
 
       .dg-section-card, .dg-quick-actions, .dg-task-table-wrap, .dg-chart-card, .dg-total-card, .dg-month-group {
         border-color:rgba(var(--dg-line-rgb),.095); border-radius:12px; background:var(--dg-surface); box-shadow:none;
