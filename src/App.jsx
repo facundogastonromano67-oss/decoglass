@@ -10126,6 +10126,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const [showConfig, setShowConfig] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [efectivoSinFactura, setEfectivoSinFactura] = useState(false);
 
   // Cada espejo se cotiza con el MISMO motor de siempre. Lo único que cambia
   // es que ahora hay varios y se suman: los precios de un espejo suelto dan
@@ -10360,6 +10361,23 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
             <strong className="dg-price-main">{fmtMoney(roundTo1000(totalTransferencia))}</strong>
             {total3Cuotas && <span className="dg-price-sub">{fmtMoney(roundTo1000(total3Cuotas))} en 3 cuotas</span>}
           </div>
+
+          {/* Solo si el cliente lo pide: si no, ni aparece. */}
+          <label className="dg-check-inline dg-efectivo-check">
+            <input type="checkbox" checked={efectivoSinFactura} onChange={(ev) => setEfectivoSinFactura(ev.target.checked)} />
+            El cliente pide precio en efectivo sin factura
+          </label>
+
+          {efectivoSinFactura && (
+            <div className="dg-price-card dg-price-card-efectivo">
+              <span className="dg-price-label">Precio en efectivo sin factura</span>
+              <strong className="dg-price-main">{fmtMoney(roundTo1000(ventaSinIva))}</strong>
+              <span className="dg-price-sub">
+                {lineas.length > 1 ? `Por los ${unidades} espejos. ` : ""}
+                No entra en el mensaje ni en la impresión.
+              </span>
+            </div>
+          )}
 
           {lineas.length > 1 && (
             <div className="dg-presu-detalle">
@@ -11892,6 +11910,10 @@ function Style() {
       .dg-price-label { font-size:11px; color:var(--dg-text-dim); }
       .dg-price-main { font-family:'JetBrains Mono', monospace; font-size:24px; color:var(--dg-accent); }
       .dg-price-sub { font-size:13px; color:var(--dg-text-dim); }
+      /* En verde para que no se confunda con el precio que sí se manda. */
+      .dg-efectivo-check { margin:-6px 0 12px; white-space:normal; }
+      .dg-price-card-efectivo { background:rgba(var(--dg-success-rgb),0.08); border-color:rgba(var(--dg-success-rgb),0.35); }
+      .dg-price-card-efectivo .dg-price-main { color:var(--dg-success); }
       .dg-quote-meta { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px; }
       .dg-quote-meta div { background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.06); border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
       .dg-quote-meta span { font-size:11px; color:var(--dg-text-dim); }
