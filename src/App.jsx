@@ -262,6 +262,151 @@ const MOTIVOS_CANCELACION = ["Cliente se arrepintió", "Precio", "Demora en la e
 const MOTIVOS_REPROCESO = ["Espejo dañado en fábrica", "Medida incorrecta", "Cliente pidió un cambio", "Falla en una función (touch, luz, etc)", "Se rompió en el transporte", "Otro"];
 const METODO_OPTIONS = ["A confirmar", "Retira", "Envío", "Envío flex", "Interior", "Colocación", "Otro"];
 const PULIDO_OPTIONS = ["No", "Sí"];
+
+/* ===========================================================================
+   Lista de precios minorista — los 100 modelos que se venden ya armados.
+   c = código · f = forma · tp = tipo de producto del presupuestador
+   a/h = ancho y alto en cm · t = tipo de vidrio · x = touch
+   p = transferencia · q = 3 cuotas · e = efectivo
+   Estos precios son el punto de partida. Una vez cargados al stock se
+   actualizan desde «Aumentar precios» y lo que vale es lo que dice el stock.
+   =========================================================================== */
+const LISTA_PRECIOS = [
+  { c: "LBREC040060", f: "Rectangular", tp: "Rectangular Simple", a: 40, h: 60, t: "Biselado", x: "No", p: 207203, q: 249487, e: 171242 },
+  { c: "LBTREC040060", f: "Rectangular", tp: "Rectangular Simple", a: 40, h: 60, t: "Biselado", x: "Touch", p: 217287, q: 261628, e: 179576 },
+  { c: "LEREC040060", f: "Rectangular", tp: "Esmerilado Recto", a: 40, h: 60, t: "Esm.", x: "No", p: 207203, q: 249487, e: 171242 },
+  { c: "LETREC040060", f: "Rectangular", tp: "Esmerilado Recto", a: 40, h: 60, t: "Esm.", x: "Touch", p: 217287, q: 261628, e: 179576 },
+  { c: "LBREC050070", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 70, t: "Biselado", x: "No", p: 230565, q: 277617, e: 190550 },
+  { c: "LBTREC050070", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 70, t: "Biselado", x: "Touch", p: 240649, q: 289758, e: 198883 },
+  { c: "LEREC050070", f: "Rectangular", tp: "Esmerilado Recto", a: 50, h: 70, t: "Esm.", x: "No", p: 230565, q: 277617, e: 190550 },
+  { c: "LETREC050070", f: "Rectangular", tp: "Esmerilado Recto", a: 50, h: 70, t: "Esm.", x: "Touch", p: 240649, q: 289758, e: 198883 },
+  { c: "LREC050070", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 70, t: "Simple", x: "No", p: 177426, q: 213634, e: 146633 },
+  { c: "LTREC050070", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 70, t: "Simple", x: "Touch", p: 187510, q: 225775, e: 154967 },
+  { c: "LBREC050080", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 80, t: "Biselado", x: "No", p: 241331, q: 290580, e: 199447 },
+  { c: "LBTREC050080", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 80, t: "Biselado", x: "Touch", p: 251415, q: 302721, e: 207781 },
+  { c: "LEREC050080", f: "Rectangular", tp: "Esmerilado Recto", a: 50, h: 80, t: "Esm.", x: "No", p: 241331, q: 290580, e: 199447 },
+  { c: "LETREC050080", f: "Rectangular", tp: "Esmerilado Recto", a: 50, h: 80, t: "Esm.", x: "Touch", p: 251415, q: 302721, e: 207781 },
+  { c: "LREC050080", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 80, t: "Simple", x: "No", p: 182041, q: 219190, e: 150447 },
+  { c: "LTREC050080", f: "Rectangular", tp: "Rectangular Simple", a: 50, h: 80, t: "Simple", x: "Touch", p: 192125, q: 231331, e: 158781 },
+  { c: "LREC060070", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 70, t: "Simple", x: "No", p: 183242, q: 220636, e: 151440 },
+  { c: "LTREC060070", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 70, t: "Simple", x: "Touch", p: 193325, q: 232777, e: 159773 },
+  { c: "LBREC060080", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 80, t: "Biselado", x: "No", p: 257589, q: 310155, e: 212883 },
+  { c: "LBTREC060080", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 80, t: "Biselado", x: "Touch", p: 267672, q: 322296, e: 221216 },
+  { c: "LEREC060080", f: "Rectangular", tp: "Esmerilado Recto", a: 60, h: 80, t: "Esm.", x: "No", p: 257589, q: 310155, e: 212883 },
+  { c: "LETREC060080", f: "Rectangular", tp: "Esmerilado Recto", a: 60, h: 80, t: "Esm.", x: "Touch", p: 267672, q: 322296, e: 221216 },
+  { c: "LREC060080", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 80, t: "Simple", x: "No", p: 188457, q: 226916, e: 155750 },
+  { c: "LTREC060080", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 80, t: "Simple", x: "Touch", p: 198541, q: 239057, e: 164083 },
+  { c: "LBREC060090", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 90, t: "Biselado", x: "No", p: 270185, q: 325322, e: 223293 },
+  { c: "LBTREC060090", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 90, t: "Biselado", x: "Touch", p: 280268, q: 337463, e: 231627 },
+  { c: "LEREC060090", f: "Rectangular", tp: "Esmerilado Recto", a: 60, h: 90, t: "Esm.", x: "No", p: 270185, q: 325322, e: 223293 },
+  { c: "LETREC060090", f: "Rectangular", tp: "Esmerilado Recto", a: 60, h: 90, t: "Esm.", x: "Touch", p: 280268, q: 337463, e: 231627 },
+  { c: "LREC060090", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 90, t: "Simple", x: "No", p: 193673, q: 233195, e: 160060 },
+  { c: "LTREC060090", f: "Rectangular", tp: "Rectangular Simple", a: 60, h: 90, t: "Simple", x: "Touch", p: 203756, q: 245336, e: 168393 },
+  { c: "LBR050", f: "Circular", tp: "Redondo Simple", a: 50, h: 50, t: "Biselado", x: "No", p: 218830, q: 263486, e: 180851 },
+  { c: "LBTR050", f: "Circular", tp: "Redondo Simple", a: 50, h: 50, t: "Biselado", x: "Touch", p: 228913, q: 275627, e: 189184 },
+  { c: "LER050", f: "Circular", tp: "Esmerilado Redondo", a: 50, h: 50, t: "Esm.", x: "No", p: 218830, q: 263486, e: 180851 },
+  { c: "LETR050", f: "Circular", tp: "Esmerilado Redondo", a: 50, h: 50, t: "Esm.", x: "Touch", p: 228913, q: 275627, e: 189184 },
+  { c: "LR050", f: "Circular", tp: "Redondo Simple", a: 50, h: 50, t: "Simple", x: "No", p: 168196, q: 202520, e: 139005 },
+  { c: "LTR050", f: "Circular", tp: "Redondo Simple", a: 50, h: 50, t: "Simple", x: "Touch", p: 178280, q: 214661, e: 147339 },
+  { c: "LBR060", f: "Circular", tp: "Redondo Simple", a: 60, h: 60, t: "Biselado", x: "No", p: 246502, q: 296806, e: 203721 },
+  { c: "LBTR060", f: "Circular", tp: "Redondo Simple", a: 60, h: 60, t: "Biselado", x: "Touch", p: 256585, q: 308947, e: 212054 },
+  { c: "LER060", f: "Circular", tp: "Esmerilado Redondo", a: 60, h: 60, t: "Esm.", x: "No", p: 246502, q: 296806, e: 203721 },
+  { c: "LETR060", f: "Circular", tp: "Esmerilado Redondo", a: 60, h: 60, t: "Esm.", x: "Touch", p: 256585, q: 308947, e: 212054 },
+  { c: "LR060", f: "Circular", tp: "Redondo Simple", a: 60, h: 60, t: "Simple", x: "No", p: 178027, q: 214356, e: 147129 },
+  { c: "LTR060", f: "Circular", tp: "Redondo Simple", a: 60, h: 60, t: "Simple", x: "Touch", p: 188110, q: 226498, e: 155463 },
+  { c: "LBR070", f: "Circular", tp: "Redondo Simple", a: 70, h: 70, t: "Biselado", x: "No", p: 278619, q: 335477, e: 230264 },
+  { c: "LBTR070", f: "Circular", tp: "Redondo Simple", a: 70, h: 70, t: "Biselado", x: "Touch", p: 288702, q: 347618, e: 238597 },
+  { c: "LER070", f: "Circular", tp: "Esmerilado Redondo", a: 70, h: 70, t: "Esm.", x: "No", p: 278619, q: 335477, e: 230264 },
+  { c: "LETR070", f: "Circular", tp: "Esmerilado Redondo", a: 70, h: 70, t: "Esm.", x: "Touch", p: 288702, q: 347618, e: 238597 },
+  { c: "LR070", f: "Circular", tp: "Redondo Simple", a: 70, h: 70, t: "Simple", x: "No", p: 189058, q: 227639, e: 156246 },
+  { c: "LTR070", f: "Circular", tp: "Redondo Simple", a: 70, h: 70, t: "Simple", x: "Touch", p: 199141, q: 239780, e: 164579 },
+  { c: "LBR080", f: "Circular", tp: "Redondo Simple", a: 80, h: 80, t: "Biselado", x: "No", p: 315181, q: 379500, e: 260480 },
+  { c: "LBTR080", f: "Circular", tp: "Redondo Simple", a: 80, h: 80, t: "Biselado", x: "Touch", p: 325264, q: 391641, e: 268813 },
+  { c: "LER080", f: "Circular", tp: "Esmerilado Redondo", a: 80, h: 80, t: "Esm.", x: "No", p: 315181, q: 379500, e: 260480 },
+  { c: "LETR080", f: "Circular", tp: "Esmerilado Redondo", a: 80, h: 80, t: "Esm.", x: "Touch", p: 325264, q: 391641, e: 268813 },
+  { c: "LR080", f: "Circular", tp: "Redondo Simple", a: 80, h: 80, t: "Simple", x: "No", p: 201289, q: 242366, e: 166355 },
+  { c: "LTR080", f: "Circular", tp: "Redondo Simple", a: 80, h: 80, t: "Simple", x: "Touch", p: 211373, q: 254507, e: 174688 },
+  { c: "LBR090", f: "Circular", tp: "Redondo Simple", a: 90, h: 90, t: "Biselado", x: "No", p: 356187, q: 428874, e: 294370 },
+  { c: "LBTR090", f: "Circular", tp: "Redondo Simple", a: 90, h: 90, t: "Biselado", x: "Touch", p: 366271, q: 441015, e: 302703 },
+  { c: "LER090", f: "Circular", tp: "Esmerilado Redondo", a: 90, h: 90, t: "Esm.", x: "No", p: 356187, q: 428874, e: 294370 },
+  { c: "LETR090", f: "Circular", tp: "Esmerilado Redondo", a: 90, h: 90, t: "Esm.", x: "Touch", p: 366271, q: 441015, e: 302703 },
+  { c: "LR090", f: "Circular", tp: "Redondo Simple", a: 90, h: 90, t: "Simple", x: "No", p: 214721, q: 258540, e: 177456 },
+  { c: "LTR090", f: "Circular", tp: "Redondo Simple", a: 90, h: 90, t: "Simple", x: "Touch", p: 224805, q: 270681, e: 185789 },
+  { c: "LP040070", f: "Pastilla", tp: "Pastilla Simple", a: 40, h: 70, t: "Simple", x: "No", p: 201861, q: 243054, e: 166827 },
+  { c: "LTP040070", f: "Pastilla", tp: "Pastilla Simple", a: 40, h: 70, t: "Simple", x: "Touch", p: 211944, q: 255195, e: 175160 },
+  { c: "LP040080", f: "Pastilla", tp: "Pastilla Simple", a: 40, h: 80, t: "Simple", x: "No", p: 205875, q: 247888, e: 170145 },
+  { c: "LTP040080", f: "Pastilla", tp: "Pastilla Simple", a: 40, h: 80, t: "Simple", x: "Touch", p: 215959, q: 260029, e: 178478 },
+  { c: "LP050080", f: "Pastilla", tp: "Pastilla Simple", a: 50, h: 80, t: "Simple", x: "No", p: 212291, q: 255614, e: 175447 },
+  { c: "LTP050080", f: "Pastilla", tp: "Pastilla Simple", a: 50, h: 80, t: "Simple", x: "Touch", p: 222375, q: 267755, e: 183781 },
+  { c: "LP050085", f: "Pastilla", tp: "Pastilla Simple", a: 50, h: 85, t: "Simple", x: "No", p: 214599, q: 258392, e: 177354 },
+  { c: "LTP050085", f: "Pastilla", tp: "Pastilla Simple", a: 50, h: 85, t: "Simple", x: "Touch", p: 224682, q: 270533, e: 185688 },
+  { c: "LP060085", f: "Pastilla", tp: "Pastilla Simple", a: 60, h: 85, t: "Simple", x: "No", p: 221315, q: 266479, e: 182905 },
+  { c: "LTP060085", f: "Pastilla", tp: "Pastilla Simple", a: 60, h: 85, t: "Simple", x: "Touch", p: 231398, q: 278620, e: 191238 },
+  { c: "LP060090", f: "Pastilla", tp: "Pastilla Simple", a: 60, h: 90, t: "Simple", x: "No", p: 223923, q: 269618, e: 185060 },
+  { c: "LTP060090", f: "Pastilla", tp: "Pastilla Simple", a: 60, h: 90, t: "Simple", x: "Touch", p: 234006, q: 281759, e: 193393 },
+  { c: "LC040070", f: "Capilla Arriba", tp: "Capilla", a: 40, h: 70, t: "Simple", x: "No", p: 201861, q: 243054, e: 166827 },
+  { c: "LTC040070", f: "Capilla Arriba", tp: "Capilla", a: 40, h: 70, t: "Simple", x: "Touch", p: 211944, q: 255195, e: 175160 },
+  { c: "LC040080", f: "Capilla Arriba", tp: "Capilla", a: 40, h: 80, t: "Simple", x: "No", p: 205875, q: 247888, e: 170145 },
+  { c: "LTC040080", f: "Capilla Arriba", tp: "Capilla", a: 40, h: 80, t: "Simple", x: "Touch", p: 215959, q: 260029, e: 178478 },
+  { c: "LC050080", f: "Capilla Arriba", tp: "Capilla", a: 50, h: 80, t: "Simple", x: "No", p: 212291, q: 255614, e: 175447 },
+  { c: "LTC050080", f: "Capilla Arriba", tp: "Capilla", a: 50, h: 80, t: "Simple", x: "Touch", p: 222375, q: 267755, e: 183781 },
+  { c: "LC050085", f: "Capilla Arriba", tp: "Capilla", a: 50, h: 85, t: "Simple", x: "No", p: 214599, q: 258392, e: 177354 },
+  { c: "LTC050085", f: "Capilla Arriba", tp: "Capilla", a: 50, h: 85, t: "Simple", x: "Touch", p: 224682, q: 270533, e: 185688 },
+  { c: "LC060090", f: "Capilla Arriba", tp: "Capilla", a: 60, h: 90, t: "Simple", x: "No", p: 223923, q: 269618, e: 185060 },
+  { c: "LTC060090", f: "Capilla Arriba", tp: "Capilla", a: 60, h: 90, t: "Simple", x: "Touch", p: 234006, q: 281759, e: 193393 },
+  { c: "LC060100", f: "Capilla Arriba", tp: "Capilla", a: 60, h: 100, t: "Simple", x: "No", p: 229138, q: 275898, e: 189370 },
+  { c: "LTC060100", f: "Capilla Arriba", tp: "Capilla", a: 60, h: 100, t: "Simple", x: "Touch", p: 239221, q: 288039, e: 197703 },
+  { c: "LPC050070", f: "P. Curvas", tp: "Puntas Curvas", a: 50, h: 70, t: "Simple", x: "No", p: 177426, q: 213634, e: 146633 },
+  { c: "LTPC050070", f: "P. Curvas", tp: "Puntas Curvas", a: 50, h: 70, t: "Simple", x: "Touch", p: 187510, q: 225775, e: 154967 },
+  { c: "LPC050080", f: "P. Curvas", tp: "Puntas Curvas", a: 50, h: 80, t: "Simple", x: "No", p: 182041, q: 219190, e: 150447 },
+  { c: "LTPC050080", f: "P. Curvas", tp: "Puntas Curvas", a: 50, h: 80, t: "Simple", x: "Touch", p: 192125, q: 231331, e: 158781 },
+  { c: "LPC060070", f: "P. Curvas", tp: "Puntas Curvas", a: 60, h: 70, t: "Simple", x: "No", p: 183242, q: 220636, e: 151440 },
+  { c: "LTPC060070", f: "P. Curvas", tp: "Puntas Curvas", a: 60, h: 70, t: "Simple", x: "Touch", p: 193325, q: 232777, e: 159773 },
+  { c: "LPC060080", f: "P. Curvas", tp: "Puntas Curvas", a: 60, h: 80, t: "Simple", x: "No", p: 188457, q: 226916, e: 155750 },
+  { c: "LTPC060080", f: "P. Curvas", tp: "Puntas Curvas", a: 60, h: 80, t: "Simple", x: "Touch", p: 198541, q: 239057, e: 164083 },
+  { c: "LPC060090", f: "P. Curvas", tp: "Puntas Curvas", a: 60, h: 90, t: "Simple", x: "No", p: 193673, q: 233195, e: 160060 },
+  { c: "LTPC060090", f: "P. Curvas", tp: "Puntas Curvas", a: 60, h: 90, t: "Simple", x: "Touch", p: 203756, q: 245336, e: 168393 },
+  { c: "LPC070080", f: "P. Curvas", tp: "Puntas Curvas", a: 70, h: 80, t: "Simple", x: "No", p: 194873, q: 234641, e: 161052 },
+  { c: "LTPC070080", f: "P. Curvas", tp: "Puntas Curvas", a: 70, h: 80, t: "Simple", x: "Touch", p: 204957, q: 246782, e: 169386 },
+  { c: "LO055075", f: "Orgánico", tp: "Orgánico", a: 55, h: 75, t: "Simple", x: "No", p: 182792, q: 220094, e: 151067 },
+  { c: "LTO055075", f: "Orgánico", tp: "Orgánico", a: 55, h: 75, t: "Simple", x: "Touch", p: 192875, q: 232235, e: 159401 },
+  { c: "LS060075", f: "Soft Orgánico", tp: "Soft", a: 60, h: 75, t: "Simple", x: "No", p: 185850, q: 223776, e: 153595 },
+  { c: "LTS060075", f: "Soft Orgánico", tp: "Soft", a: 60, h: 75, t: "Simple", x: "Touch", p: 195933, q: 235917, e: 161928 },
+];
+
+// «60 x 90 - Rectangular» / «90 Ø - Circular», como en la lista impresa.
+function medidaCatalogo(m) {
+  return m.f === "Circular" && m.a === m.h ? `${m.a} Ø` : `${m.a} x ${m.h}`;
+}
+// Agrupados por forma, que es como los busca el vendedor.
+const LISTA_PRECIOS_POR_FORMA = LISTA_PRECIOS.reduce((acc, m) => {
+  (acc[m.f] = acc[m.f] || []).push(m);
+  return acc;
+}, {});
+
+function descripcionCatalogo(m) {
+  // En la lista la capilla es una sola; el «Arriba» es para la ficha del taller.
+  const forma = m.f.startsWith("Capilla") ? "Capilla" : m.f;
+  return `${medidaCatalogo(m)} - ${forma}`;
+}
+
+// El nombre completo, para el desplegable del presupuestador (ahí hay lugar).
+function nombreCatalogo(m) {
+  const extras = [m.t !== "Simple" ? m.t : null, m.x === "Touch" ? "touch" : null].filter(Boolean);
+  return descripcionCatalogo(m) + (extras.length ? " - " + extras.join(" ") : "");
+}
+
+// Lo que la descripción NO dice: tipo de vidrio y funciones.
+function extrasFichaEspejo(s) {
+  return [
+    s.tipo && s.tipo !== "Simple" ? s.tipo : null,
+    s.touch && s.touch !== "No" ? "touch" : null,
+    s.desemp === "Desempañante" ? "desempañante" : null,
+    s.horaTemp === "Hora y Temperatura" ? "hora/temp" : null,
+    s.tono && !["Sin led", "3 tonos"].includes(s.tono) ? `luz ${s.tono}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
 const TALLER_MODELOS = [
   { id: "simples", label: "Simples", description: "Corte, pulido y armado estándar", color: "var(--dg-accent)" },
   { id: "esmerilados", label: "Esmerilados", description: "Grabado o esmerilado antes del armado", color: "var(--dg-warning)" },
@@ -6181,6 +6326,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                       touch: s.touch || d.touch, desemp: s.desemp || d.desemp,
                       desempTipo: s.desempTipo || d.desempTipo, desempCantidad: s.desempCantidad || d.desempCantidad,
                       horaTemp: s.horaTemp || d.horaTemp, bluetooth: s.bluetooth || d.bluetooth,
+                      // El precio de lista entra solo si todavía no escribieron uno.
+                      ...(Number(s.precio) > 0 && !String(d.monto || "").trim() ? { monto: String(s.precio) } : {}),
                     } : {}),
                     ...(esNuevo ? (id
                       ? { estado: "Espejo listo", produccionListaFecha: new Date().toISOString() }
@@ -7649,6 +7796,7 @@ function emptyStockEspejo() {
     id: uid(), modelo: "", descripcion: "", cantidad: 0,
     ancho: "", alto: "", forma: "Rectangular", tipo: "Simple", tono: "3 tonos", grabado: "", pulido: "No",
     touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No",
+    precio: "", precio3: "", precioEfectivo: "",
   };
 }
 function resumenFichaEspejo(s) {
@@ -7685,15 +7833,36 @@ function FichaEspejoFields({ v, set }) {
   );
 }
 
+// Campos de precio: los mismos en el alta y en la edición.
+function PreciosStockFields({ v, set }) {
+  return (
+    <div className="dg-field-grid">
+      <Field label="Precio transferencia"><input type="number" value={v.precio ?? ""} onChange={(e) => set("precio", e.target.value)} placeholder="0" /></Field>
+      <Field label="Precio 3 cuotas"><input type="number" value={v.precio3 ?? ""} onChange={(e) => set("precio3", e.target.value)} placeholder="0" /></Field>
+      <Field label="Precio efectivo"><input type="number" value={v.precioEfectivo ?? ""} onChange={(e) => set("precioEfectivo", e.target.value)} placeholder="0" /></Field>
+    </div>
+  );
+}
+
 function StockEspejosPanel({ stock, onChange, canEdit }) {
   const [nuevo, setNuevo] = useState(emptyStockEspejo);
   const [editando, setEditando] = useState(null);
+  const [agregando, setAgregando] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
+  const [porcentaje, setPorcentaje] = useState("");
+  const [aumento, setAumento] = useState(null);   // el aumento esperando confirmación
   const setNuevoF = (k, val) => setNuevo((n) => ({ ...n, [k]: val }));
+
+  // Lo que todavía no está en el stock, comparando por código.
+  const yaCargados = new Set(stock.map((s) => String(s.modelo || "").trim().toUpperCase()).filter(Boolean));
+  const faltantes = LISTA_PRECIOS.filter((m) => !yaCargados.has(m.c));
+  const conPrecio = stock.filter((s) => Number(s.precio) > 0);
 
   function addItem() {
     if (!nuevo.descripcion.trim()) return;
     onChange([{ ...nuevo, id: uid(), modelo: nuevo.modelo.trim(), descripcion: nuevo.descripcion.trim(), cantidad: Number(nuevo.cantidad) || 0 }, ...stock]);
     setNuevo(emptyStockEspejo());
+    setAgregando(false);
   }
   function updateCantidad(id, val) { onChange(stock.map((s) => (s.id === id ? { ...s, cantidad: Number(val) || 0 } : s))); }
   function removeItem(id) { onChange(stock.filter((s) => s.id !== id)); }
@@ -7702,37 +7871,148 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
     setEditando(null);
   }
 
+  // Carga los modelos de la lista que falten. A los que ya están no los toca:
+  // si alguien le cambió el precio a mano, ese precio queda.
+  function cargarLista() {
+    if (!faltantes.length) return;
+    onChange([...stock, ...faltantes.map((m) => ({
+      ...emptyStockEspejo(),
+      modelo: m.c, descripcion: descripcionCatalogo(m), cantidad: 0, deLista: true,
+      ancho: m.a, alto: m.h, forma: m.f, tipo: m.t, touch: m.x,
+      precio: m.p, precio3: m.q, precioEfectivo: m.e,
+    }))]);
+  }
+
+  function pedirAumento() {
+    const pct = Number(String(porcentaje).replace(",", "."));
+    if (!Number.isFinite(pct) || pct === 0 || !conPrecio.length) return;
+    setAumento({ pct, ejemplo: conPrecio[0] });
+  }
+  function aplicarAumento() {
+    const factor = 1 + aumento.pct / 100;
+    const subir = (v) => (Number(v) > 0 ? Math.round(Number(v) * factor) : v);
+    onChange(stock.map((s) => ({ ...s, precio: subir(s.precio), precio3: subir(s.precio3), precioEfectivo: subir(s.precioEfectivo) })));
+    setAumento(null);
+    setPorcentaje("");
+  }
+
+  const filtro = busqueda.trim().toLowerCase();
+  const visibles = filtro
+    ? stock.filter((s) => `${s.modelo || ""} ${s.descripcion || ""} ${s.ancho}x${s.alto} ${s.forma || ""} ${s.tipo || ""} ${s.touch === "No" ? "" : "touch"}`.toLowerCase().includes(filtro))
+    : stock;
+
   return (
     <div className="dg-page">
-      {canEdit && (
+      {canEdit && faltantes.length > 0 && (
+        <button className="dg-btn-ghost dg-suggest-btn" onClick={cargarLista}>
+          <Sparkles size={14} /> Cargar la lista de precios — {faltantes.length} {faltantes.length === 1 ? "modelo" : "modelos"}{stock.length ? " que faltan" : ""}
+        </button>
+      )}
+
+      {canEdit && !agregando && (
+        <button className="dg-btn-ghost dg-suggest-btn" onClick={() => setAgregando(true)}>
+          <PackagePlus size={14} /> Agregar un modelo a mano
+        </button>
+      )}
+
+      {canEdit && agregando && (
         <div className="dg-section-card">
-          <div className="dg-section-header"><Package size={14} /> Agregar modelo al stock</div>
+          <div className="dg-section-header"><PackagePlus size={14} /> Agregar modelo al stock</div>
           <EnterFlow onSubmit={addItem} autoFocus={false}>
             <div className="dg-field-grid">
               <Field label="Modelo / código"><input value={nuevo.modelo} onChange={(e) => setNuevoF("modelo", e.target.value)} /></Field>
-              <Field label="Descripción"><input value={nuevo.descripcion} onChange={(e) => setNuevoF("descripcion", e.target.value)} placeholder="Ej: 70Ø - Esmerilado" /></Field>
+              <Field label="Descripción"><input value={nuevo.descripcion} onChange={(e) => setNuevoF("descripcion", e.target.value)} placeholder="Ej: 70 Ø - Circular" /></Field>
               <Field label="Cantidad"><input type="number" value={nuevo.cantidad} onChange={(e) => setNuevoF("cantidad", e.target.value)} /></Field>
             </div>
+            <div className="dg-stock-ficha-titulo">Precio de venta</div>
+            <PreciosStockFields v={nuevo} set={setNuevoF} />
             <div className="dg-stock-ficha-titulo">Ficha del producto — se usa para autocompletar el pedido</div>
             <FichaEspejoFields v={nuevo} set={setNuevoF} />
           </EnterFlow>
-          <div className="dg-form-actions"><button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button></div>
+          <div className="dg-form-actions">
+            <button className="dg-btn-ghost" onClick={() => { setAgregando(false); setNuevo(emptyStockEspejo()); }}>Cancelar</button>
+            <button className="dg-btn-primary" onClick={addItem}><Plus size={16} /> Agregar</button>
+          </div>
         </div>
       )}
-      <div className="dg-task-list">
-        {stock.length === 0 && <div className="dg-empty">No hay modelos cargados en stock.</div>}
-        {stock.map((s) => (
-          <div className="dg-task" key={s.id}>
-            <div className="dg-pago-info">
-              <span>{s.modelo ? `#${s.modelo} — ` : ""}{s.descripcion}</span>
-              <span className="dg-pago-meta">{resumenFichaEspejo(s) || s.funciones || s.espesor || "Sin ficha cargada — tocá el lápiz para completarla"}</span>
-            </div>
-            {canEdit && <button className="dg-icon-btn" onClick={() => setEditando({ ...emptyStockEspejo(), ...s })} title="Editar ficha"><Pencil size={14} /></button>}
-            <input type="number" className="dg-stock-cantidad" disabled={!canEdit} value={s.cantidad} onChange={(e) => updateCantidad(s.id, e.target.value)} />
-            {canEdit && <button className="dg-icon-btn dg-task-del" onClick={() => removeItem(s.id)}><Trash2 size={14} /></button>}
+
+      {canEdit && conPrecio.length > 0 && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><TrendingUp size={14} /> Aumentar precios</div>
+          <p className="dg-hint">Cuando aumenta el vidrio, subí de una sola vez los tres precios de los {conPrecio.length} modelos que tienen precio cargado.</p>
+          <div className="dg-aumento-fila">
+            <input type="number" step="0.1" value={porcentaje} onChange={(e) => setPorcentaje(e.target.value)} placeholder="5" />
+            <span className="dg-aumento-signo">%</span>
+            <button className="dg-btn-primary" disabled={!Number(String(porcentaje).replace(",", "."))} onClick={pedirAumento}>
+              <TrendingUp size={14} /> Aumentar
+            </button>
           </div>
-        ))}
+        </div>
+      )}
+
+      {stock.length > 0 && (
+        <div className="dg-crm-filters">
+          <Search size={14} />
+          <input className="dg-pedido-search" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar por código, medida, forma…" />
+          <span className="dg-stock-contador">{visibles.length} de {stock.length}</span>
+        </div>
+      )}
+
+      <div className="dg-task-list dg-stock-lista">
+        {stock.length === 0 && <div className="dg-empty">No hay modelos cargados en stock.</div>}
+        {stock.length > 0 && visibles.length === 0 && <div className="dg-empty">Ningún modelo coincide con la búsqueda.</div>}
+        {visibles.map((s) => {
+          // En los de la lista la descripción ya dice medida, forma y tipo.
+          const resumen = s.deLista
+            ? extrasFichaEspejo(s)
+            : (resumenFichaEspejo(s) || s.funciones || s.espesor || "Sin ficha cargada — tocá el lápiz para completarla");
+          return (
+            <div className="dg-stock-fila" key={s.id}>
+              <div className="dg-stock-info">
+                <span className="dg-stock-nombre">{s.descripcion || (s.modelo ? `#${s.modelo}` : "Sin nombre")}</span>
+                <span className="dg-stock-meta">
+                  {s.modelo && <span className="dg-stock-cod">#{s.modelo}</span>}
+                  {Number(s.precio) > 0 && <span className="dg-stock-precio">{money(s.precio)}</span>}
+                  {resumen && <span>{resumen}</span>}
+                </span>
+              </div>
+              {canEdit && <button className="dg-icon-btn" onClick={() => setEditando({ ...emptyStockEspejo(), ...s })} title="Editar ficha"><Pencil size={14} /></button>}
+              <input type="number" className="dg-stock-cantidad" disabled={!canEdit} value={s.cantidad} onChange={(e) => updateCantidad(s.id, e.target.value)} />
+              {canEdit && <button className="dg-icon-btn dg-task-del" onClick={() => removeItem(s.id)} title="Borrar modelo"><Trash2 size={14} /></button>}
+            </div>
+          );
+        })}
       </div>
+
+      {aumento && (
+        <div className="dg-overlay" onClick={() => setAumento(null)}>
+          <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="dg-modal-head">
+              <div className="dg-modal-title">Aumentar {aumento.pct}% todos los precios</div>
+              <button className="dg-icon-btn" onClick={() => setAumento(null)}><X size={18} /></button>
+            </div>
+            <div className="dg-form">
+              <p className="dg-modal-texto">Se actualizan los tres precios de <strong>{conPrecio.length} {conPrecio.length === 1 ? "modelo" : "modelos"}</strong>. Por ejemplo:</p>
+              <div className="dg-aumento-ejemplo">
+                <div className="dg-aumento-ejemplo-tit">{aumento.ejemplo.modelo ? `#${aumento.ejemplo.modelo}` : aumento.ejemplo.descripcion}</div>
+                {[["Transferencia", "precio"], ["3 cuotas", "precio3"], ["Efectivo", "precioEfectivo"]].map(([lbl, k]) => (
+                  Number(aumento.ejemplo[k]) > 0 ? (
+                    <div className="dg-aumento-ejemplo-fila" key={k}>
+                      <span>{lbl}</span>
+                      <span>{money(aumento.ejemplo[k])} → <strong>{money(Math.round(Number(aumento.ejemplo[k]) * (1 + aumento.pct / 100)))}</strong></span>
+                    </div>
+                  ) : null
+                ))}
+              </div>
+              <p className="dg-modal-texto dg-modal-texto-aviso">No se deshace solo: para volver atrás hay que hacer el aumento al revés.</p>
+            </div>
+            <div className="dg-form-actions">
+              <button className="dg-btn-ghost" onClick={() => setAumento(null)}>Cancelar</button>
+              <button className="dg-btn-primary" onClick={aplicarAumento}><Check size={14} /> Sí, aumentar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editando && (
         <div className="dg-overlay" onClick={() => setEditando(null)}>
@@ -7747,6 +8027,8 @@ function StockEspejosPanel({ stock, onChange, canEdit }) {
                 <Field label="Descripción"><input value={editando.descripcion || ""} onChange={(e) => setEditando({ ...editando, descripcion: e.target.value })} /></Field>
                 <Field label="Cantidad"><input type="number" value={editando.cantidad} onChange={(e) => setEditando({ ...editando, cantidad: e.target.value })} /></Field>
               </div>
+              <div className="dg-stock-ficha-titulo">Precio de venta</div>
+              <PreciosStockFields v={editando} set={(k, val) => setEditando((d) => ({ ...d, [k]: val }))} />
               <div className="dg-stock-ficha-titulo">Ficha del producto</div>
               <FichaEspejoFields v={editando} set={(k, val) => setEditando((d) => ({ ...d, [k]: val }))} />
             </div>
@@ -9823,6 +10105,7 @@ function nuevoEspejoPresupuesto(base) {
     panelesAdicionales: base ? base.panelesAdicionales : 0,
     cantidad: base ? base.cantidad : 1,
     capillaCurva: base ? base.capillaCurva : CAPILLA_CURVAS_PARADA[0],
+    catalogoCodigo: base ? base.catalogoCodigo : "",
   };
 }
 
@@ -9967,6 +10250,36 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
 
                 {esteAbierto && (
                   <div className="dg-presu-espejo-body">
+                    <div className="dg-quote-section-title"><Package size={13} />Modelo de la lista</div>
+                    <div className="dg-field-grid">
+                      <Field label="Traer un modelo ya armado (opcional)">
+                        <select value={e.catalogoCodigo || ""} onChange={(ev) => {
+                          const m = LISTA_PRECIOS.find((x) => x.c === ev.target.value);
+                          setEspejo(e.id, m
+                            ? { catalogoCodigo: m.c, tipoProducto: m.tp, ancho: m.a, alto: m.h, touch: m.x === "Touch" ? "Sí" : "No" }
+                            : { catalogoCodigo: "" });
+                        }}>
+                          <option value="">A medida — no está en la lista</option>
+                          {Object.keys(LISTA_PRECIOS_POR_FORMA).map((forma) => (
+                            <optgroup label={forma} key={forma}>
+                              {LISTA_PRECIOS_POR_FORMA[forma].map((m) => (
+                                <option key={m.c} value={m.c}>{nombreCatalogo(m)} — {m.c}</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+                    {(() => {
+                      const m = LISTA_PRECIOS.find((x) => x.c === e.catalogoCodigo);
+                      return m ? (
+                        <p className="dg-hint dg-presu-lista-precio">
+                          Precio de lista: <strong>{fmtMoney(m.p)}</strong> transferencia · {fmtMoney(m.q)} en 3 cuotas · {fmtMoney(m.e)} efectivo.
+                          El presupuesto de abajo se calcula igual que siempre — si difiere, mandá el de lista.
+                        </p>
+                      ) : null;
+                    })()}
+
                     <div className="dg-quote-section-title"><Calculator size={13} />Medida y producto</div>
                     <div className="dg-field-grid">
                       <Field label="¿Dónde va?"><input value={e.ubicacion} onChange={(ev) => setEspejo(e.id, { ubicacion: ev.target.value })} placeholder="Ej: Toilette, Baño principal" /></Field>
@@ -10903,6 +11216,28 @@ function Style() {
       .dg-marketing-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
       .dg-marketing-thumb-del { position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.6); border:none; border-radius:8px; color:#fff; padding:5px; cursor:pointer; }
       .dg-marketing-mini-thumb { width:44px; height:44px; border-radius:8px; object-fit:cover; flex-shrink:0; }
+      .dg-modal-texto { font-size:13px; line-height:1.5; color:#C9C3D6; margin:0 0 4px; }
+      .dg-modal-texto strong { color:#FFFFFF; }
+      .dg-modal-texto-aviso { color:#E8B05C; }
+      .dg-presu-lista-precio { margin:10px 0 0; }
+      /* Como los materiales: sin scroll propio, en grilla para que todas las
+         filas midan igual, y con padding para que el texto no toque el borde. */
+      .dg-stock-lista { max-height:none; overflow:visible; }
+      .dg-stock-fila { display:grid; grid-template-columns:minmax(0,1fr) auto auto auto; align-items:center; gap:4px 10px; padding:11px 13px; border-bottom:1px solid rgba(var(--dg-line-rgb),0.06); }
+      .dg-stock-fila:last-child { border-bottom:none; }
+      .dg-stock-info { min-width:0; display:flex; flex-direction:column; gap:3px; }
+      .dg-stock-nombre { overflow-wrap:anywhere; font-size:13px; font-weight:500; color:var(--dg-text); }
+      .dg-stock-meta { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:11px; color:var(--dg-text-dim); }
+      .dg-stock-cod { font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:0.2px; }
+      .dg-stock-precio { padding:1px 7px; border-radius:999px; background:rgba(var(--dg-accent-rgb),0.14); color:var(--dg-text); font-family:'JetBrains Mono', monospace; font-weight:700; font-size:11px; white-space:nowrap; }
+      .dg-stock-contador { margin-left:auto; font-size:11px; color:var(--dg-text-faint); font-family:'JetBrains Mono', monospace; }
+      .dg-aumento-fila { display:flex; align-items:center; gap:8px; margin-top:10px; }
+      .dg-aumento-fila input { width:110px; }
+      .dg-aumento-signo { font-family:'JetBrains Mono', monospace; font-weight:700; color:var(--dg-text-dim); }
+      .dg-aumento-ejemplo { margin:12px 0; padding:12px 14px; border-radius:10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); }
+      .dg-aumento-ejemplo-tit { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:0.3px; color:#C9C3D6; margin-bottom:8px; }
+      .dg-aumento-ejemplo-fila { display:flex; justify-content:space-between; gap:12px; font-size:13px; color:#C9C3D6; padding:3px 0; }
+      .dg-aumento-ejemplo-fila strong { color:#7FD1B4; }
       .dg-stock-ficha-titulo { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; color:var(--dg-text-faint); margin:16px 0 8px; }
       .dg-seccion-nota { margin-left:8px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),0.12); border-radius:8px; padding:2px 6px; vertical-align:middle; }
 
