@@ -7,7 +7,8 @@ import {
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
-  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare
+  Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare,
+  Mic, NotebookPen, CalendarClock, Undo2
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -681,9 +682,25 @@ function MonthAccordion({ groups, renderItem, defaultOpenCount = 1 }) {
   );
 }
 
+// WhatsApp necesita el número en formato internacional: 54 9 + característica +
+// número. Los celulares se cargan de muchas formas («11 2233-4455», «011 15 2233
+// 4455», «+54 9 11…») y todas terminan en el mismo link. Si no parece un número
+// argentino, se deja como vino.
 function waLink(tel) {
   const clean = String(tel || "").replace(/[^0-9]/g, "");
-  return clean ? `https://wa.me/${clean}` : null;
+  if (!clean) return null;
+  let n = clean.replace(/^00/, "");
+  const tenia54 = n.startsWith("54");
+  if (tenia54) { n = n.slice(2); if (n.startsWith("9")) n = n.slice(1); }
+  n = n.replace(/^0/, "");
+  // El «15» de los celulares va después de la característica (2 a 4 dígitos).
+  if (n.length === 12) {
+    for (const largo of [2, 3, 4]) {
+      if (n.slice(largo, largo + 2) === "15") { n = n.slice(0, largo) + n.slice(largo + 2); break; }
+    }
+  }
+  if (n.length === 10) return `https://wa.me/549${n}`;
+  return `https://wa.me/${tenia54 ? clean.replace(/^00/, "") : clean}`;
 }
 function igLink(user) {
   const clean = String(user || "").trim().replace(/^@/, "");
@@ -1074,7 +1091,7 @@ const SHARED_SYNC_KEYS = [
   "vendedores", "recursos-venta", "facturas-manuales", "envios-logistica",
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
-  "marketing-biblioteca", "marketing-contenido",
+  "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas",
 ];
 
 function App() {
@@ -1089,6 +1106,8 @@ function App() {
   const [gastosFijosPlantillas, setGastosFijosPlantillas] = useState(null);
   const [bibliotecaMarketing, setBibliotecaMarketing] = useState(null);
   const [contenidoMarketing, setContenidoMarketing] = useState(null);
+  const [deudas, setDeudas] = useState(null);
+  const [notasAnotador, setNotasAnotador] = useState(null);
   const [pedidos, setPedidos] = useState(null);
   const [recursos, setRecursos] = useState(null);
   const [facturas, setFacturas] = useState(null);
@@ -1234,6 +1253,8 @@ function App() {
       "gastos-fijos-plantillas": setGastosFijosPlantillas,
       "marketing-biblioteca": setBibliotecaMarketing,
       "marketing-contenido": setContenidoMarketing,
+      "deudas-v2": setDeudas,
+      "anotador-notas": setNotasAnotador,
     };
 
     setters[row.key]?.(parsed);
@@ -1498,6 +1519,26 @@ function App() {
       setContenidoMarketing(cm ? JSON.parse(cm.value) : []);
     } catch (e) { setContenidoMarketing([]); }
     try {
+      const de2 = await storage.get("deudas-v2", true);
+      let listaDeudas = de2 ? JSON.parse(de2.value) : [];
+      // Lo cargado con la versión anterior («deudas», lista plana) pasa a
+      // v2 como pagos únicos, una sola vez.
+      const de1 = await storage.get("deudas", true);
+      const viejas = de1 ? JSON.parse(de1.value) : [];
+      if (Array.isArray(viejas) && viejas.length) {
+        const ids = new Set(listaDeudas.map((d) => d.id));
+        const migradas = viejas.filter((d) => d && !ids.has(d.id)).map((d) => ({ ...d, tipo: "unico", pagos: d.pagos || [] }));
+        listaDeudas = [...listaDeudas, ...migradas];
+        await storage.set("deudas-v2", JSON.stringify(listaDeudas), true);
+        await storage.set("deudas", "[]", true);
+      }
+      setDeudas(listaDeudas);
+    } catch (e) { setDeudas([]); }
+    try {
+      const an = await storage.get("anotador-notas", true);
+      setNotasAnotador(an ? JSON.parse(an.value) : []);
+    } catch (e) { setNotasAnotador([]); }
+    try {
       let pedidosGuardados = await pedidosStore.getAll();
       if (pedidosGuardados.length === 0) {
         // Migración de una sola vez: si la tabla nueva está vacía pero el
@@ -1706,6 +1747,8 @@ function App() {
   async function persistGastosFijosPlantillas(next) { guardar("gastos-fijos-plantillas", next, () => setGastosFijosPlantillas(next)); }
   async function persistBibliotecaMarketing(next) { guardar("marketing-biblioteca", next, () => setBibliotecaMarketing(next)); }
   async function persistContenidoMarketing(next) { guardar("marketing-contenido", next, () => setContenidoMarketing(next)); }
+  async function persistDeudas(next) { guardar("deudas-v2", next, () => setDeudas(next)); }
+  async function persistNotasAnotador(next) { guardar("anotador-notas", next, () => setNotasAnotador(next)); }
   async function persistEmpleadosSueldo(next) { guardar("empleados-sueldo", next, () => setEmpleadosSueldo(next)); }
   async function persistLiquidaciones(next) { guardar("liquidaciones-sueldo", next, () => setLiquidaciones(next)); }
 
@@ -1945,6 +1988,8 @@ function App() {
             gastosFijosPlantillas={gastosFijosPlantillas} onChangeGastosFijosPlantillas={persistGastosFijosPlantillas}
             bibliotecaMarketing={bibliotecaMarketing} onChangeBibliotecaMarketing={persistBibliotecaMarketing}
             contenidoMarketing={contenidoMarketing} onChangeContenidoMarketing={persistContenidoMarketing}
+            deudas={deudas || []} onChangeDeudas={persistDeudas}
+            notasAnotador={notasAnotador || []} onChangeNotasAnotador={persistNotasAnotador}
           />
         )}
 
@@ -3560,8 +3605,12 @@ function GastosFijosPanel({ plantillas, onChangePlantillas, proveedores, purchas
   );
 }
 
-function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangePurchases, proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas, empleadosSueldo, liquidaciones, pedidos, driveFacturasUrl }) {
+function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangePurchases, proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas, empleadosSueldo, liquidaciones, pedidos, driveFacturasUrl, deudas, onChangeDeudas, notasAnotador, onChangeNotasAnotador, session, onRegistrar }) {
   const [tab, setTab] = useState("resumen");
+  const hoyFin = isoLocal(hoyLocal());
+  const deudasPendientes = (deudas || []).filter((d) => deudaActiva(d) && tipoDeuda(d) !== "flexible")
+    .flatMap(pagosProgramados).sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
+  const vencidasFin = deudasPendientes.filter((p) => p.fecha < hoyFin);
   const mesActual = new Date().toISOString().slice(0, 7);
 
   const facturacionMes = incomes.filter((i) => (i.fecha || "").slice(0, 7) === mesActual && i.estado === "pagado").reduce((a, i) => a + Number(i.monto || 0), 0);
@@ -3577,6 +3626,7 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
     <div className="dg-page">
       <div className="dg-quickviews" style={{ marginBottom: 16 }}>
         <button className={`dg-quickview-btn ${tab === "resumen" ? "dg-quickview-on" : ""}`} onClick={() => setTab("resumen")}><Wallet size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Resumen</button>
+        <button className={`dg-quickview-btn ${tab === "vencimientos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("vencimientos")}><CalendarClock size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Deudas{vencidasFin.length > 0 && <span className="dg-venc-tab-badge">{vencidasFin.length}</span>}</button>
         <button className={`dg-quickview-btn ${tab === "ingresos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("ingresos")}><TrendingUp size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Ingresos</button>
         <button className={`dg-quickview-btn ${tab === "compras" ? "dg-quickview-on" : ""}`} onClick={() => setTab("compras")}><TrendingDown size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Compras</button>
         <button className={`dg-quickview-btn ${tab === "proveedores" ? "dg-quickview-on" : ""}`} onClick={() => setTab("proveedores")}><Truck size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Proveedores</button>
@@ -3585,6 +3635,29 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
 
       {tab === "resumen" && (
         <div className="dg-fin-resumen">
+          <AnotadorVoz
+            session={session} onRegistrar={onRegistrar}
+            purchases={purchases} onChangePurchases={onChangePurchases}
+            incomes={incomes} onChangeIncomes={onChangeIncomes}
+            deudas={deudas} onChangeDeudas={onChangeDeudas}
+            notas={notasAnotador} onChangeNotas={onChangeNotasAnotador}
+            onVerVencimientos={() => setTab("vencimientos")}
+          />
+
+          {deudasPendientes.length > 0 && (
+            <div className="dg-section-card dg-venc-resumen">
+              <div className="dg-section-header"><CalendarClock size={14} /> Próximos pagos</div>
+              {deudasPendientes.slice(0, 5).map((p) => (
+                <div className="dg-venc-resumen-fila" key={p.clave}>
+                  <span className={p.fecha < hoyFin ? "dg-venc-resumen-vencida" : ""}>{p.fecha < hoyFin ? "Vencida · " : ""}{p.fecha === hoyFin ? "Hoy" : fechaLargaAnotador(p.fecha)}</span>
+                  <strong>{nombreDeuda(p.deuda)}{p.etiqueta ? ` · ${p.etiqueta}` : ""}</strong>
+                  <b>{p.estimado ? "~ " : ""}{money(p.monto)}</b>
+                </div>
+              ))}
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setTab("vencimientos")}><CalendarClock size={13} /> Ver deudas y calendario</button>
+            </div>
+          )}
+
           <div className="dg-panel-grid">
             <div className="dg-panel-card">
               <div className="dg-panel-card-label">Facturación de {labelMes(mesActual)}</div>
@@ -3626,6 +3699,7 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
         </div>
       )}
 
+      {tab === "vencimientos" && <DeudasPanel deudas={deudas} onChangeDeudas={onChangeDeudas} purchases={purchases} onChangePurchases={onChangePurchases} session={session} onRegistrar={onRegistrar} />}
       {tab === "ingresos" && <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={onChangeIncomes} proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl} />}
       {tab === "compras" && <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={onChangePurchases} proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl} />}
       {tab === "proveedores" && <ProveedoresPanel proveedores={proveedores} purchases={purchases} onChange={onChangeProveedores} />}
@@ -10120,6 +10194,1305 @@ function categorizarEgreso(texto) {
   return mejorScore > 0 ? mejor : null;
 }
 
+/* ===========================================================================
+   Motor del anotador de voz.
+
+   Recibe lo que se dijo (ya pasado a texto) y devuelve qué es:
+   - egreso: plata que ya salió ("gasté", "pagué", "cargué nafta")
+   - deuda: algo que hay que pagar más adelante ("tengo que pagar", "vence")
+   - ingreso: plata que entró ("cobré", "me pagaron")
+   con el monto, la fecha, la categoría y un concepto corto.
+
+   No usa ningún servicio de afuera: son reglas, pensadas para cómo se habla
+   en Argentina ("100 mil", "un millón seiscientos", "2 palos", "50 lucas").
+   =========================================================================== */
+
+// Pasa a minúsculas y sin acentos SIN cambiar el largo del texto, así las
+// posiciones que se encuentran en la versión normalizada sirven para cortar
+// el texto original.
+function normalizarAlineado(texto) {
+  let out = "";
+  for (const c of String(texto || "")) {
+    const n = c.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    out += n.length === c.length ? n : c.toLowerCase().slice(0, c.length).padEnd(c.length, " ");
+  }
+  return out;
+}
+
+const ANOTADOR_MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const ANOTADOR_DIAS = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+
+const NUM_UNIDADES = {
+  cero: 0, un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
+  diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
+  veinte: 20, veintiun: 21, veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23, veinticuatro: 24, veinticinco: 25,
+  veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29,
+  treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90,
+  cien: 100, ciento: 100, doscientos: 200, doscientas: 200, trescientos: 300, trescientas: 300,
+  cuatrocientos: 400, cuatrocientas: 400, quinientos: 500, quinientas: 500, seiscientos: 600, seiscientas: 600,
+  setecientos: 700, setecientas: 700, ochocientos: 800, ochocientas: 800, novecientos: 900, novecientas: 900,
+};
+const NUM_MULT = { mil: 1e3, luca: 1e3, lucas: 1e3, millon: 1e6, millones: 1e6, palo: 1e6, palos: 1e6, mill: 1e6 };
+
+function hoyLocal(base) {
+  const d = base ? new Date(base) : new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function isoLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function sumarDias(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+function ultimoDiaMes(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function fechaValida(y, m, d) {
+  if (m < 0 || m > 11 || d < 1 || d > ultimoDiaMes(y, m)) return null;
+  return new Date(y, m, d);
+}
+
+/* --- Fechas ------------------------------------------------------------------
+   haciaAdelante = true para deudas (el próximo 16 de octubre), false para
+   gastos (el último lunes). Devuelve { fecha: "AAAA-MM-DD", desde, hasta }. */
+function buscarFecha(n, hoy, haciaAdelante) {
+  const cand = [];
+  const push = (m, fecha) => { if (fecha) cand.push({ desde: m.index, hasta: m.index + m[0].length, fecha: isoLocal(fecha) }); };
+  let m;
+
+  // 16 de octubre (de 2026)
+  const reMes = new RegExp(`(?:\\b(?:el|para el|hasta el|dia)\\s+)?\\b(\\d{1,2}|[a-z]+)\\s+de\\s+(${ANOTADOR_MESES.join("|")})(?:\\s+(?:de|del)\\s+(\\d{4}))?`, "g");
+  while ((m = reMes.exec(n))) {
+    // el día puede venir en palabras: "dieciséis de octubre", "primero de noviembre"
+    const dia = /^\d+$/.test(m[1]) ? Number(m[1]) : m[1] === "primero" ? 1 : NUM_UNIDADES[m[1]];
+    if (!dia || dia > 31) continue;
+    const mes = ANOTADOR_MESES.indexOf(m[2]);
+    let anio = m[3] ? Number(m[3]) : hoy.getFullYear();
+    let f = fechaValida(anio, mes, dia);
+    if (f && !m[3]) {
+      if (haciaAdelante && f < sumarDias(hoy, -15)) f = fechaValida(anio + 1, mes, dia);
+      if (!haciaAdelante && f > sumarDias(hoy, 15)) f = fechaValida(anio - 1, mes, dia);
+    }
+    push(m, f);
+  }
+  // 16/10 o 16-10 o 16/10/2026
+  const reBarra = /\b(?:el\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/g;
+  while ((m = reBarra.exec(n))) {
+    const dia = Number(m[1]), mes = Number(m[2]) - 1;
+    let anio = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : hoy.getFullYear();
+    let f = fechaValida(anio, mes, dia);
+    if (f && !m[3]) {
+      if (haciaAdelante && f < sumarDias(hoy, -15)) f = fechaValida(anio + 1, mes, dia);
+      if (!haciaAdelante && f > sumarDias(hoy, 15)) f = fechaValida(anio - 1, mes, dia);
+    }
+    push(m, f);
+  }
+  // hoy / ayer / anteayer / mañana / pasado mañana
+  const reRel = /\b(pasado\s+manana|anteayer|antes\s+de\s+ayer|ayer|hoy|manana)\b/g;
+  while ((m = reRel.exec(n))) {
+    const k = m[1].replace(/\s+/g, " ");
+    const delta = k === "hoy" ? 0 : k === "ayer" ? -1 : (k === "anteayer" || k === "antes de ayer") ? -2 : k === "manana" ? 1 : 2;
+    // "mañana" a la mañana no es fecha si viene después de "a la"
+    if (k === "manana" && /\b(a|de|por)\s+la\s+$/.test(n.slice(0, m.index))) continue;
+    push(m, sumarDias(hoy, delta));
+  }
+  // en 10 días / dentro de 2 semanas / la semana que viene / el mes que viene
+  const reEn = /\b(?:en|dentro\s+de)\s+(\d{1,3})\s+(dias?|semanas?|meses?)\b/g;
+  while ((m = reEn.exec(n))) {
+    const k = Number(m[1]);
+    const f = m[2].startsWith("dia") ? sumarDias(hoy, k) : m[2].startsWith("semana") ? sumarDias(hoy, 7 * k)
+      : fechaValida(hoy.getFullYear(), hoy.getMonth() + k, Math.min(hoy.getDate(), 28)) || new Date(hoy.getFullYear(), hoy.getMonth() + k, 28);
+    push(m, f);
+  }
+  const reViene = /\b(?:la\s+)?semana\s+que\s+viene\b|\b(?:la\s+)?proxima\s+semana\b/g;
+  while ((m = reViene.exec(n))) push(m, sumarDias(hoy, 7));
+  // fin de mes / a fin de mes / fin de octubre
+  const reFin = new RegExp(`\\b(?:a\\s+|para\\s+)?fin(?:es)?\\s+de(?:l)?\\s+(mes|${ANOTADOR_MESES.join("|")})\\b`, "g");
+  while ((m = reFin.exec(n))) {
+    let mes = m[1] === "mes" ? hoy.getMonth() : ANOTADOR_MESES.indexOf(m[1]);
+    let anio = hoy.getFullYear();
+    if (haciaAdelante && mes < hoy.getMonth()) anio++;
+    push(m, new Date(anio, mes, ultimoDiaMes(anio, mes)));
+  }
+  // el lunes / el próximo martes / el viernes pasado
+  const reDia = new RegExp(`\\b(?:el\\s+)?(?:proximo\\s+)?(${ANOTADOR_DIAS.join("|")})(\\s+(?:que\\s+viene|pasado))?\\b`, "g");
+  while ((m = reDia.exec(n))) {
+    const objetivo = ANOTADOR_DIAS.indexOf(m[1]);
+    const futuro = m[2] ? /viene/.test(m[2]) : haciaAdelante;
+    let d = hoy.getDay(), delta;
+    if (futuro) { delta = (objetivo - d + 7) % 7; if (delta === 0) delta = 7; }
+    else { delta = -((d - objetivo + 7) % 7); }
+    push(m, sumarDias(hoy, delta));
+  }
+  // el 5 / el día 5 (solo si no se agarró otra fecha)
+  if (!cand.length) {
+    const reNum = /\bel\s+(?:dia\s+)?(\d{1,2})\b(?!\s*(?:mil|millon|millones|lucas?|palos?|pesos|%|[.,]\d))(\s+(?:de\s+este\s+mes|del\s+mes\s+que\s+viene|del\s+proximo\s+mes|del\s+mes\s+proximo))?/g;
+    while ((m = reNum.exec(n))) {
+      const dia = Number(m[1]);
+      if (dia < 1 || dia > 31) continue;
+      let y = hoy.getFullYear(), mes = hoy.getMonth();
+      if (m[2] && /viene|proximo/.test(m[2])) { mes++; if (mes > 11) { mes = 0; y++; } }
+      else if (!m[2] && haciaAdelante && dia < hoy.getDate()) { mes++; if (mes > 11) { mes = 0; y++; } }
+      else if (!m[2] && !haciaAdelante && dia > hoy.getDate()) { mes--; if (mes < 0) { mes = 11; y--; } }
+      push(m, fechaValida(y, mes, Math.min(dia, ultimoDiaMes(y, mes))));
+    }
+  }
+  if (!cand.length) return null;
+  cand.sort((a, b) => (b.hasta - b.desde) - (a.hasta - a.desde));
+  return cand[0];
+}
+
+/* --- Montos ---------------------------------------------------------------- */
+
+// Un número escrito con cifras: 100.000 / 100,000 / 1.600.000 / 1,6 / 100000
+function numeroDeCifras(t) {
+  if (/^\d{1,3}([.,]\d{3})+$/.test(t)) return Number(t.replace(/[.,]/g, ""));
+  if (/^\d+[.,]\d{1,2}$/.test(t)) return Number(t.replace(",", "."));
+  if (/^\d+$/.test(t)) return Number(t);
+  return null;
+}
+
+function buscarMonto(n, excluir) {
+  // Tokens con su posición. Excluye las partes que ya son la fecha.
+  const tokens = [];
+  const re = /\$\s?\d[\d.,]*|\d[\d.,]*|[a-z]+/g;
+  let m;
+  while ((m = re.exec(n))) {
+    const desde = m.index, hasta = m.index + m[0].length;
+    if (excluir && desde < excluir.hasta && hasta > excluir.desde) { tokens.push({ corte: true }); continue; }
+    tokens.push({ t: m[0], desde, hasta });
+  }
+
+  const esNum = (tk) => tk && !tk.corte && (numeroDeCifras(tk.t.replace(/^\$\s?/, "").replace(/[.,]$/, "")) !== null || tk.t in NUM_UNIDADES);
+  const esMult = (tk) => tk && !tk.corte && tk.t in NUM_MULT;
+  const valorNum = (tk) => { const c = numeroDeCifras(tk.t.replace(/^\$\s?/, "").replace(/[.,]$/, "")); return c !== null ? c : NUM_UNIDADES[tk.t]; };
+
+  const grupos = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (!(esNum(tokens[i]) || esMult(tokens[i]))) continue;
+    let j = i;
+    const seq = [];
+    while (j < tokens.length) {
+      const tk = tokens[j];
+      if (esNum(tk) || esMult(tk)) { seq.push(tk); j++; continue; }
+      // "treinta y cinco", "un palo y medio"
+      if (tk && !tk.corte && tk.t === "y" && tokens[j + 1] && (esNum(tokens[j + 1]) || tokens[j + 1].t === "medio")) { seq.push(tk); j++; continue; }
+      if (tk && !tk.corte && tk.t === "medio" && seq.length && seq[seq.length - 1].t === "y") { seq.push(tk); j++; continue; }
+      break;
+    }
+    grupos.push({ seq, desde: seq[0].desde, hasta: seq[seq.length - 1].hasta, siguiente: tokens[j], anterior: tokens[i - 1] });
+    i = j - 1;
+  }
+
+  const candidatos = [];
+  for (const g of grupos) {
+    let total = 0, actual = 0, ultimoMult = 0, decimalPendiente = null, tieneMult = false, soloArticulo = true;
+    for (const tk of g.seq) {
+      if (tk.t === "y") continue;
+      if (tk.t === "medio") { total += (ultimoMult || 1) / 2; continue; }
+      if (esMult(tk)) {
+        tieneMult = true;
+        const mult = NUM_MULT[tk.t];
+        const base = decimalPendiente !== null ? decimalPendiente : (actual || 1);
+        decimalPendiente = null;
+        if (mult === 1e6) { total = (total + base) * 1e6; }
+        else { total += base * mult; }
+        actual = 0; ultimoMult = mult;
+        continue;
+      }
+      const v = valorNum(tk);
+      if (!["un", "una", "uno"].includes(tk.t)) soloArticulo = false;
+      if (!Number.isInteger(v)) { decimalPendiente = v; continue; }
+      actual += v;
+    }
+    if (decimalPendiente !== null) actual += decimalPendiente;
+    // "un millón seiscientos" = 1.600.000: lo que sigue a millón sin "mil" son miles.
+    if (ultimoMult === 1e6 && actual > 0 && actual < 1000) actual *= 1000;
+    const valor = Math.round(total + actual);
+    if (!valor || (soloArticulo && !tieneMult)) continue;
+
+    const sig = g.siguiente && !g.siguiente.corte ? g.siguiente.t : "";
+    const dijoPesos = /^pesos?$/.test(sig) || /^\$/.test(g.seq[0].t);
+    // Puntaje: parece plata si dice pesos/$, si tiene mil/millón, o si es grande.
+    let puntaje = 0;
+    if (dijoPesos) puntaje += 3;
+    if (tieneMult) puntaje += 2;
+    if (valor >= 1000) puntaje += 1;
+    if (valor < 100 && !dijoPesos && !tieneMult) puntaje -= 3;   // "2 cuotas", "la camioneta 1"
+    if (/^(cuotas?|dias?|meses?|anos?|litros?|unidades|espejos?|horas?|veces|por|x)$/.test(sig)) puntaje -= 4;
+    let hasta = g.hasta;
+    if (/^pesos?$/.test(sig)) hasta = g.siguiente.hasta;
+    candidatos.push({ valor, puntaje, desde: g.desde, hasta });
+  }
+  if (!candidatos.length) return null;
+  candidatos.sort((a, b) => b.puntaje - a.puntaje || b.valor - a.valor);
+  return candidatos[0].puntaje > -1 ? candidatos[0] : null;
+}
+
+/* --- Qué tipo de movimiento es -------------------------------------------- */
+
+const SENALES_DEUDA = [
+  /\btengo que pagar\b/, /\btenemos que pagar\b/, /\bhay que pagar\b/, /\bhabria que pagar\b/, /\bvamos a tener que pagar\b/, /\bvoy a tener que pagar\b/,
+  /\bvence\b/, /\bvencen\b/, /\bvencimiento\b/, /\bse vence\b/, /\bdebo\b/, /\bdebemos\b/, /\ble debemos\b/, /\ble debo\b/,
+  /\ba pagar\b/, /\bpor pagar\b/, /\bse paga\b/, /\bpagar el\b/, /\bpagar la\b/, /\bcheque\b/, /\bpendiente de pago\b/, /\bqueda pendiente\b/,
+];
+const SENALES_EGRESO = [
+  /\bgaste\b/, /\bgastamos\b/, /\bgasto\b/, /\bpague\b/, /\bpagamos\b/, /\bpago\b(?!\s+de\s+la\s+cuota\s+que)/, /\bcompre\b/, /\bcompramos\b/,
+  /\bcargue\b/, /\bcargamos\b/, /\bfui a\b/, /\bfuimos a\b/, /\babone\b/, /\babonamos\b/, /\bme cobraron\b/, /\bnos cobraron\b/, /\b(me|nos) cobro\b/,
+  /\bsalio\b/, /\bsalieron\b/, /\bse pago\b/, /\bse compro\b/, /\bsaque\b/, /\btransferi\b/, /\bdeposite a\b/,
+];
+const SENALES_INGRESO = [
+  /\bcobre\b/, /\bcobramos\b/, /\bme pagaron\b/, /\bnos pagaron\b/, /\bentro\b/, /\bentraron\b/, /\bingreso\b/, /\bingresaron\b/,
+  /\bvendi\b/, /\bvendimos\b/, /\bme transfirieron\b/, /\bnos transfirieron\b/, /\bme depositaron\b/, /\bnos depositaron\b/, /\brecibi\b/, /\brecibimos\b/,
+];
+
+// Palabras extra para el anotador (la lista general es para facturas).
+const CATEGORIAS_VOZ = [
+  { tipo: "combustible_logistica", palabras: ["camioneta", "auto", "vehiculo", "utilitario", "gomeria", "mecanico", "service", "cubierta", "patente", "vtv", "lavadero"] },
+  { tipo: "deudas", palabras: ["credito", "prestamo", "cuota", "tarjeta", "financiacion", "plan de pago", "moratoria", "cheque", "descubierto"] },
+  { tipo: "extraempresariales", palabras: ["personal", "casa", "familia", "supermercado", "colegio", "medico", "farmacia"] },
+];
+
+function categoriaDeVoz(n, categorizarBase) {
+  const base = categorizarBase ? categorizarBase(n) : null;
+  if (base) return { tipo: base, supuesta: false };
+  let mejor = null, score = 0;
+  for (const c of CATEGORIAS_VOZ) {
+    const s = c.palabras.filter((p) => new RegExp(`\\b${p}`).test(n)).length;
+    if (s > score) { score = s; mejor = c.tipo; }
+  }
+  return mejor ? { tipo: mejor, supuesta: false } : { tipo: "otros", supuesta: true };
+}
+
+const CUENTAS_VOZ = [
+  [/\befectivo\b|\bcash\b/, "efectivo_nuestro"], [/\bmercado ?pago\b/, "mercado_pago"], [/\bsantander\b/, "santander"],
+  [/\bcredicoop\b/, "credicoop"], [/\bicbc\b/, "icbc_nuestro"], [/\bdolares\b|\busd\b/, "usd"],
+];
+
+/* --- El concepto: lo que queda sin monto, fecha ni palabras de relleno ----- */
+
+function limpiarConcepto(original, n, cortes) {
+  // Borra los tramos de fecha y monto (de atrás para adelante).
+  let o = original, t = n;
+  const tramos = cortes.filter(Boolean).sort((a, b) => b.desde - a.desde);
+  for (const c of tramos) {
+    let desde = c.desde;
+    // se lleva la preposición que venía antes: "de 100 mil", "por 50 lucas", "en $3000"
+    const antes = t.slice(0, desde).match(/\b(de|del|por|en|a|el|para el|unos|como)\s+$/);
+    if (antes) desde -= antes[0].length;
+    o = o.slice(0, desde) + " " + o.slice(c.hasta);
+    t = t.slice(0, desde) + " " + t.slice(c.hasta);
+  }
+  const quitar = [
+    /\b(hoy|ayer|recien|reci[eé]n|esta manana|esta tarde|esta noche)\b/g,
+    /\b(tengo|tenemos|hay|habria|vamos a tener|voy a tener) que pagar\b/g,
+    /\b(fui|fuimos) a\b/g, /\b(gaste|gastamos|pague|pagamos|abone|abonamos|compre|compramos|cobre|cobramos|saque|sacamos)\b/g,
+    /\b(a|por) pagar\b/g, /\b(le|les) (debo|debemos)\b|\b(debo|debemos)\b/g, /\bse vence\b/g,
+    /\b(me|nos) (cobraron|cobro|pagaron|transfirieron|depositaron)\b/g, /\b(le|les) (tenemos|tengo) que pagar\b/g,
+    /\bpesos\b/g, /\bplata\b/g, /\$/g, /\ben efectivo\b|\bcon mercado ?pago\b|\bpor mercado ?pago\b|\bcon (la )?tarjeta\b/g,
+    /\b(que )?vence\b|\bvencimiento( de)?\b/g, /\b(anota|anotame|anotá|acordate|recorda|recordame)( que)?\b/g,
+  ];
+  for (const re of quitar) {
+    let m;
+    const r = new RegExp(re.source, "g");
+    const partes = [];
+    while ((m = r.exec(t))) partes.push([m.index, m.index + m[0].length]);
+    for (const [a, b] of partes.reverse()) { o = o.slice(0, a) + " ".repeat(b - a) + o.slice(b); t = t.slice(0, a) + " ".repeat(b - a) + t.slice(b); }
+  }
+  let c = o.replace(/\s+/g, " ").trim();
+  // conectores sueltos al principio o al final
+  for (let k = 0; k < 4; k++) {
+    c = c.replace(/^(y|e|que|el|la|los|las|un|una|unos|de|del|al|para|por|a|en|se|me|nos|lo|le|con)\s+/i, "")
+         .replace(/\s+(y|e|que|el|la|de|del|para|por|a|en|se|con|lo|le|un|una)$/i, "")
+         .replace(/[\s,.;:]+$/, "").trim();
+  }
+  if (!c) return "";
+  c = c.charAt(0).toUpperCase() + c.slice(1);
+  return c.length > 70 ? c.slice(0, 67).trimEnd() + "…" : c;
+}
+
+/* --- Todo junto ------------------------------------------------------------ */
+
+function interpretarNota(texto, opciones = {}) {
+  const original = String(texto || "").replace(/\s+/g, " ").trim();
+  const n = normalizarAlineado(original);
+  const hoy = hoyLocal(opciones.hoy);
+  const out = { texto: original, tipo: null, monto: null, fecha: null, categoria: null, categoriaSupuesta: false, cuenta: "", concepto: "", faltan: [] };
+  if (!original) { out.faltan.push("texto"); return out; }
+
+  const cuenta = (res) => res.reduce((a, r) => a + (r.test(n) ? 1 : 0), 0);
+  let pDeuda = cuenta(SENALES_DEUDA), pEgreso = cuenta(SENALES_EGRESO), pIngreso = cuenta(SENALES_INGRESO);
+
+  // Primero una fecha "neutra" para desempatar por tiempo verbal.
+  const fechaTentativa = buscarFecha(n, hoy, pDeuda >= pEgreso);
+  if (fechaTentativa) {
+    const f = fechaTentativa.fecha, h = isoLocal(hoy);
+    if (f > h && /\bpag/.test(n)) pDeuda += 1;
+    if (f < h) pEgreso += 0.5;
+  }
+  if (pDeuda === 0 && pEgreso === 0 && pIngreso === 0) out.tipo = null;
+  else if (pDeuda >= pEgreso && pDeuda >= pIngreso) out.tipo = "deuda";
+  else if (pIngreso > pEgreso) out.tipo = "ingreso";
+  else out.tipo = "egreso";
+
+  const fecha = buscarFecha(n, hoy, out.tipo === "deuda");
+  out.fecha = fecha ? fecha.fecha : (out.tipo === "deuda" ? null : isoLocal(hoy));
+
+  const monto = buscarMonto(n, fecha);
+  out.monto = monto ? monto.valor : null;
+
+  if (out.tipo === "egreso" || out.tipo === "deuda") {
+    const cat = categoriaDeVoz(n, opciones.categorizar);
+    out.categoria = out.tipo === "deuda" && cat.supuesta ? "deudas" : cat.tipo;
+    out.categoriaSupuesta = cat.supuesta && out.tipo !== "deuda";
+  }
+  const cu = CUENTAS_VOZ.find(([re]) => re.test(n));
+  out.cuenta = cu ? cu[1] : "";
+
+  out.concepto = limpiarConcepto(original, n, [fecha, monto]);
+
+  if (!out.tipo) out.faltan.push("tipo");
+  if (!out.monto) out.faltan.push("monto");
+  if (out.tipo === "deuda" && !out.fecha) out.faltan.push("fecha");
+  if (!out.concepto) out.concepto = out.tipo === "deuda" ? "Pago a vencer" : out.tipo === "ingreso" ? "Ingreso" : "Gasto";
+  return out;
+}
+
+const TIPO_NOTA_LABEL = { egreso: "Egreso", deuda: "Pago a vencer", ingreso: "Ingreso" };
+
+function fechaLargaAnotador(iso) {
+  if (!iso) return "sin fecha";
+  const [y, m, d] = iso.split("-").map(Number);
+  const texto = `${d} de ${ANOTADOR_MESES[m - 1]}`;
+  return y === new Date().getFullYear() ? texto : `${texto} de ${y}`;
+}
+function montoCorto(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace(/\.0$/, "").replace(".", ",")}M`;
+  if (v >= 1e3) return `${Math.round(v / 1e3)}k`;
+  return String(Math.round(v));
+}
+
+// Dictado con el reconocimiento de voz que ya trae el navegador (gratis).
+// Se escucha una frase por vez y se vuelve a prender sola hasta que tocan ✓:
+// así una pausa en el medio no corta la nota, y se evita el error de Chrome en
+// Android que repite el texto en modo continuo. Si queda en silencio, corta sola.
+function useDictado() {
+  const SR = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  const [escuchando, setEscuchando] = useState(false);
+  const [error, setError] = useState("");
+  const recRef = useRef(null);
+  const seguirRef = useRef(false);
+  const textoRef = useRef("");
+  const vaciasRef = useRef(0);   // sesiones seguidas sin escuchar nada
+
+  function mensajeError(codigo) {
+    if (codigo === "not-allowed" || codigo === "service-not-allowed") return "El navegador no tiene permiso para usar el micrófono. Tocá el candado de la barra de direcciones y permitilo.";
+    if (codigo === "no-speech") return "";
+    if (codigo === "network") return "Para dictar hace falta internet.";
+    if (codigo === "audio-capture") return "No se encontró un micrófono.";
+    if (codigo === "aborted") return "";
+    return "No se pudo escuchar. Probá de nuevo o escribilo.";
+  }
+
+  function arrancarUna(onTexto, onFin) {
+    const rec = new SR();
+    rec.lang = "es-AR";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (ev) => {
+      let finales = "", interino = "";
+      for (let i = 0; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) finales += ev.results[i][0].transcript;
+        else interino += ev.results[i][0].transcript;
+      }
+      if (finales) { vaciasRef.current = 0; textoRef.current = `${textoRef.current} ${finales}`.trim(); onTexto(textoRef.current); }
+      else if (interino) onTexto(`${textoRef.current} ${interino}`.trim());
+    };
+    rec.onerror = (ev) => {
+      const msg = mensajeError(ev.error);
+      if (msg) { setError(msg); seguirRef.current = false; }
+    };
+    let oyoAlgo = false;
+    const onresultOriginal = rec.onresult;
+    rec.onresult = (ev) => { oyoAlgo = true; onresultOriginal(ev); };
+    rec.onend = () => {
+      // Dos veces seguidas sin escuchar nada = se terminó de hablar (o se olvidaron de tocar ✓).
+      if (!oyoAlgo) vaciasRef.current += 1;
+      if (vaciasRef.current >= 2) seguirRef.current = false;
+      if (seguirRef.current) {
+        try { arrancarUna(onTexto, onFin); return; } catch (e) { seguirRef.current = false; }
+      }
+      recRef.current = null;
+      setEscuchando(false);
+      onFin(textoRef.current.trim());
+    };
+    recRef.current = rec;
+    rec.start();
+  }
+
+  function empezar(textoInicial, onTexto, onFin) {
+    if (!SR || recRef.current) return;
+    textoRef.current = textoInicial || "";
+    vaciasRef.current = 0;
+    seguirRef.current = true;
+    setError("");
+    setEscuchando(true);
+    try { arrancarUna(onTexto, onFin); }
+    catch (e) { seguirRef.current = false; setEscuchando(false); setError("No se pudo prender el micrófono."); }
+  }
+  function parar() {
+    seguirRef.current = false;
+    if (recRef.current) recRef.current.stop();
+  }
+  useEffect(() => () => { seguirRef.current = false; if (recRef.current) recRef.current.abort(); }, []);
+  return { disponible: !!SR, escuchando, error, empezar, parar };
+}
+
+function fraseNotaCargada(n) {
+  const quien = n.quien || "Alguien";
+  if (n.tipo === "egreso") {
+    const cuando = n.fechaMov && n.fechaMov !== isoLocal(hoyLocal()) ? ` el ${fechaLargaAnotador(n.fechaMov)}` : "";
+    return `${quien} realizó un egreso de ${money(n.monto)}${cuando} en la categoría ${PURCHASE_TYPES[n.categoria] || n.categoria}. Lo cargué como egreso de la empresa.`;
+  }
+  if (n.tipo === "deuda") return `Anoté un pago a vencer: ${n.concepto} — ${money(n.monto)} — vence el ${fechaLargaAnotador(n.fechaMov)}.`;
+  if (n.tipo === "ingreso") return `${quien} registró un ingreso de ${money(n.monto)} en ${INCOME_CHANNELS[n.categoria] || n.categoria}.`;
+  return n.texto;
+}
+
+function AnotadorVoz({ session, purchases, onChangePurchases, incomes, onChangeIncomes, deudas, onChangeDeudas, notas, onChangeNotas, onRegistrar, onVerVencimientos }) {
+  const dictado = useDictado();
+  const [texto, setTexto] = useState("");
+  const [ultima, setUltima] = useState(null);      // la última nota cargada (para deshacer / corregir)
+  const [borrador, setBorrador] = useState(null);  // cuando falta algo, se completa a mano
+  const [verHistorial, setVerHistorial] = useState(false);
+  const quien = session?.nombre || (session?.role === "admin" ? "Admin" : "Alguien");
+  const listaNotas = notas || [];
+  // El dictado termina un rato después de que se tocó el micrófono: para no
+  // guardar sobre datos viejos (la app se sincroniza cada pocos segundos),
+  // siempre se lee lo último que llegó.
+  const actualRef = useRef({});
+  actualRef.current = { purchases, incomes, deudas: deudas || [], notas: listaNotas };
+
+  function anotar(frase) {
+    const t = String(frase ?? texto).trim();
+    if (!t) return;
+    const r = interpretarNota(t, { categorizar: categorizarEgreso });
+    const completo = (r.tipo === "egreso" && r.monto) || (r.tipo === "deuda" && r.monto && r.fecha);
+    setUltima(null);
+    if (completo) { cargar({ ...r, fecha: r.fecha }); return; }
+    // Falta algo (o es un ingreso, que necesita saber de qué canal): se completa a mano.
+    setBorrador({
+      texto: t,
+      tipo: r.tipo || "egreso",
+      monto: r.monto ? String(r.monto) : "",
+      fecha: r.fecha || "",
+      concepto: r.concepto,
+      categoria: r.tipo === "ingreso" ? "local_nuestros" : (r.categoria || "otros"),
+      cuenta: r.cuenta || "",
+      faltan: r.faltan,
+    });
+  }
+
+  function cargar(r) {
+    const id = uid();
+    const ahora = new Date().toISOString();
+    const monto = Number(r.monto) || 0;
+    if (r.tipo === "egreso") {
+      onChangePurchases([{
+        id, concepto: r.concepto, monto, fecha: r.fecha || isoLocal(hoyLocal()), estado: "pagado",
+        cuentaBanco: r.cuenta || "", detalle: `Anotador de voz (${quien}): "${r.texto}"`, sectorId: "", origen: "anotador",
+        tipo: r.categoria || "otros", proveedorId: "", conIva: false, gastoFijo: false, cargadoPor: quien,
+      }, ...actualRef.current.purchases]);
+    } else if (r.tipo === "deuda") {
+      onChangeDeudas([...actualRef.current.deudas, {
+        id, tipo: "unico", pagos: [], motivo: r.concepto, monto, fecha: r.fecha, categoria: r.categoria || "deudas", estado: "pendiente",
+        origen: "anotador", cargadoPor: quien, creado: ahora, texto: r.texto,
+      }]);
+    } else if (r.tipo === "ingreso") {
+      const efectivo = r.cuenta === "efectivo_nuestro";
+      onChangeIncomes([{
+        id, concepto: r.concepto, monto, fecha: r.fecha || isoLocal(hoyLocal()), estado: "pagado",
+        cuentaBanco: r.cuenta || "", detalle: `Anotador de voz (${quien}): "${r.texto}"`, sectorId: "", origen: "anotador",
+        canal: r.categoria || "local_nuestros", cliente: "", metodo: r.cuenta || "", cuenta: efectivo ? "caja_efectivo" : "ingresos_bancarios", cargadoPor: quien,
+      }, ...actualRef.current.incomes]);
+    }
+    const nota = {
+      id: uid(), fecha: ahora, quien, texto: r.texto, tipo: r.tipo, monto, fechaMov: r.fecha || isoLocal(hoyLocal()),
+      categoria: r.categoria, concepto: r.concepto, refId: id, estado: "cargada", categoriaSupuesta: !!r.categoriaSupuesta,
+    };
+    onChangeNotas([nota, ...actualRef.current.notas].slice(0, 100));
+    if (onRegistrar) onRegistrar("Anotador de voz", fraseNotaCargada(nota));
+    setUltima(nota);
+    setBorrador(null);
+    setTexto("");
+  }
+
+  function deshacer(nota) {
+    const act = actualRef.current;
+    if (nota.tipo === "egreso") onChangePurchases(act.purchases.filter((p) => p.id !== nota.refId));
+    if (nota.tipo === "deuda") onChangeDeudas(act.deudas.filter((d) => d.id !== nota.refId));
+    if (nota.tipo === "ingreso") onChangeIncomes(act.incomes.filter((p) => p.id !== nota.refId));
+    const next = act.notas.map((x) => (x.id === nota.id ? { ...x, estado: "deshecha" } : x));
+    onChangeNotas(next);
+    if (onRegistrar) onRegistrar("Anotador de voz", `Deshizo: ${fraseNotaCargada(nota)}`);
+    setUltima(null);
+    setTexto(nota.texto);
+  }
+
+  // Cambiar la categoría que se eligió sola, sin tener que ir a la planilla.
+  function cambiarCategoria(nota, categoria) {
+    const act = actualRef.current;
+    if (nota.tipo === "egreso") onChangePurchases(act.purchases.map((p) => (p.id === nota.refId ? { ...p, tipo: categoria } : p)));
+    if (nota.tipo === "deuda") onChangeDeudas(act.deudas.map((d) => (d.id === nota.refId ? { ...d, categoria } : d)));
+    const actualizada = { ...nota, categoria, categoriaSupuesta: false };
+    onChangeNotas(act.notas.map((x) => (x.id === nota.id ? actualizada : x)));
+    setUltima(actualizada);
+  }
+
+  function tocarMicrofono() {
+    if (dictado.escuchando) { dictado.parar(); return; }
+    setUltima(null);
+    setBorrador(null);
+    dictado.empezar(texto, (t) => setTexto(t), (final) => { if (final) anotar(final); });
+  }
+
+  const b = borrador;
+  const setB = (k, v) => setBorrador((x) => ({ ...x, [k]: v }));
+  const categoriasB = b && b.tipo === "ingreso" ? INCOME_CHANNELS : PURCHASE_TYPES;
+
+  return (
+    <div className="dg-section-card dg-anotador">
+      <div className="dg-section-header"><NotebookPen size={14} /> Anotador</div>
+      <p className="dg-anotador-ayuda">
+        Contale qué pasó con la plata y se carga solo. Por ejemplo: <em>«Hoy cargué nafta para la camioneta, gasté 100 mil»</em> o <em>«El 16 de octubre hay que pagar la cuota del crédito, un millón seiscientos»</em>.
+      </p>
+
+      <div className="dg-anotador-entrada">
+        {dictado.disponible && (
+          <button type="button" className={`dg-anotador-mic ${dictado.escuchando ? "dg-anotador-mic-on" : ""}`} onClick={tocarMicrofono}
+            aria-label={dictado.escuchando ? "Terminar de dictar" : "Dictar una nota"}>
+            {dictado.escuchando ? <Check size={26} /> : <Mic size={26} />}
+          </button>
+        )}
+        <div className="dg-anotador-texto">
+          <textarea
+            rows={3}
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); anotar(); } }}
+            placeholder={dictado.escuchando ? "Te escucho…" : dictado.disponible ? "Tocá el micrófono y hablá, o escribilo acá" : "Escribilo acá (o usá el micrófono del teclado para dictar)"}
+          />
+          <div className="dg-anotador-acciones">
+            <span className="dg-anotador-estado">
+              {dictado.escuchando ? <><span className="dg-anotador-punto" /> Escuchando… tocá ✓ cuando termines</> : null}
+            </span>
+            <button type="button" className="dg-btn-primary" disabled={!texto.trim() || dictado.escuchando} onClick={() => anotar()}>
+              <NotebookPen size={14} /> Anotar
+            </button>
+          </div>
+        </div>
+      </div>
+      {dictado.error && <p className="dg-anotador-error"><AlertTriangle size={13} /> {dictado.error}</p>}
+      {!dictado.disponible && (
+        <p className="dg-anotador-nota">En este navegador el botón de micrófono no está disponible: tocá la caja de texto y usá el micrófono del teclado para dictar.</p>
+      )}
+
+      {ultima && (
+        <div className={`dg-anotador-resultado dg-anotador-${ultima.tipo}`} role="status">
+          <CheckCircle2 size={18} />
+          <div className="dg-anotador-resultado-txt">
+            <strong>{fraseNotaCargada(ultima)}</strong>
+            <small>«{ultima.texto}»</small>
+            {(ultima.tipo === "egreso" || ultima.tipo === "deuda") && (
+              <label className="dg-anotador-cat">
+                {ultima.categoriaSupuesta ? "No reconocí la categoría — elegila:" : "Categoría:"}
+                <select value={ultima.categoria} onChange={(e) => cambiarCategoria(ultima, e.target.value)}>
+                  {Object.entries(PURCHASE_TYPES).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+                </select>
+              </label>
+            )}
+            <div className="dg-anotador-resultado-botones">
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => deshacer(ultima)}><Undo2 size={13} /> Deshacer</button>
+              {ultima.tipo === "deuda" && onVerVencimientos && (
+                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onVerVencimientos}><CalendarClock size={13} /> Ver calendario de pagos</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {b && (
+        <div className="dg-anotador-completar">
+          <div className="dg-anotador-completar-tit">
+            <AlertCircle size={15} />
+            <span>
+              {b.faltan.includes("tipo") ? "No me quedó claro si es un gasto, un pago a vencer o un ingreso."
+                : b.faltan.includes("monto") ? "No entendí el monto."
+                : b.faltan.includes("fecha") ? "¿Para qué fecha vence?"
+                : b.tipo === "ingreso" ? "Es un ingreso: decime en qué canal entró."
+                : "Revisá los datos."}
+              {" "}Completalo y tocá «Cargar».
+            </span>
+          </div>
+          <small className="dg-anotador-dicho">«{b.texto}»</small>
+          <div className="dg-field-grid">
+            <Field label="Qué es">
+              <select value={b.tipo} onChange={(e) => setBorrador((x) => ({ ...x, tipo: e.target.value, categoria: e.target.value === "ingreso" ? "local_nuestros" : (x.tipo === "ingreso" ? "otros" : x.categoria) }))}>
+                {Object.entries(TIPO_NOTA_LABEL).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+              </select>
+            </Field>
+            <Field label="Monto"><input type="number" inputMode="numeric" value={b.monto} onChange={(e) => setB("monto", e.target.value)} placeholder="0" /></Field>
+            <Field label={b.tipo === "deuda" ? "Vence el" : "Fecha"}><input type="date" value={b.fecha} onChange={(e) => setB("fecha", e.target.value)} /></Field>
+            <Field label={b.tipo === "deuda" ? "Motivo" : "Concepto"}><input value={b.concepto} onChange={(e) => setB("concepto", e.target.value)} /></Field>
+            <Field label={b.tipo === "ingreso" ? "Canal" : "Categoría"}>
+              <select value={b.categoria} onChange={(e) => setB("categoria", e.target.value)}>
+                {Object.entries(categoriasB).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+              </select>
+            </Field>
+          </div>
+          <div className="dg-form-actions">
+            <button type="button" className="dg-btn-ghost" onClick={() => { setTexto(b.texto); setBorrador(null); }}>Cancelar</button>
+            <button type="button" className="dg-btn-primary"
+              disabled={!(Number(b.monto) > 0) || (b.tipo === "deuda" && !b.fecha)}
+              onClick={() => cargar({ ...b, monto: Number(b.monto), fecha: b.fecha || isoLocal(hoyLocal()), concepto: b.concepto.trim() || (b.tipo === "deuda" ? "Pago a vencer" : "Gasto"), categoriaSupuesta: false })}>
+              <Check size={14} /> Cargar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {listaNotas.length > 0 && (
+        <div className="dg-anotador-historial">
+          <button type="button" className="dg-anotador-historial-btn" onClick={() => setVerHistorial((v) => !v)} aria-expanded={verHistorial}>
+            <ChevronRight size={14} className={verHistorial ? "dg-presu-chevron-on" : ""} /> Últimas notas ({Math.min(listaNotas.length, 15)})
+          </button>
+          {verHistorial && (
+            <ul>
+              {listaNotas.slice(0, 15).map((nt) => (
+                <li key={nt.id} className={nt.estado === "deshecha" ? "dg-anotador-deshecha" : ""}>
+                  <span className="dg-anotador-h-cuando">{new Date(nt.fecha).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {nt.quien}</span>
+                  <span className="dg-anotador-h-que">
+                    <b className={`dg-anotador-chip dg-anotador-chip-${nt.tipo}`}>{TIPO_NOTA_LABEL[nt.tipo] || "Nota"}</b>
+                    {nt.concepto} · {money(nt.monto)}{nt.estado === "deshecha" ? " · deshecha" : ""}
+                  </span>
+                  <span className="dg-anotador-h-dicho">«{nt.texto}»</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===========================================================================
+   Deudas (Administración › Finanzas › Deudas).
+
+   Cuatro tipos:
+   - cuotas:   préstamos y planes. Cuota actual de un total, vencimiento
+               mensual, y una última cuota distinta si hace falta (ej. el
+               Santander que paga intereses y cancela todo en la cuota 12).
+   - tarjeta:  resumen mensual con un monto estimado que se corrige al pagar.
+   - flexible: deuda sin cuotas ni fecha (familiares). Va aparte y NO suma
+               a los totales mensuales.
+   - unico:    un pago suelto con fecha (lo que carga el anotador de voz).
+
+   El recorrido mes a mes y el calendario se calculan de las fichas: no se
+   escriben a mano, así no se desfasan.
+   =========================================================================== */
+
+const DIAS_SEMANA_CORTOS = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"];
+const TIPOS_DEUDA = { cuotas: "Préstamo / plan en cuotas", tarjeta: "Tarjeta (resumen mensual)", unico: "Pago único", flexible: "Flexible (fuera del total)" };
+const TIPOS_DEUDA_CORTO = { cuotas: "Cuotas", tarjeta: "Tarjeta", unico: "Pago único", flexible: "Flexible" };
+const HORIZONTE_TARJETAS = 12;   // meses que se proyectan las tarjetas sin fecha de fin
+
+function tipoDeuda(d) { return d?.tipo || "unico"; }   // las de antes no tenían tipo
+function nombreDeuda(d) { return d?.motivo || "Sin nombre"; }
+// Mismo día del mes, k meses después (si el mes es más corto, el último día).
+function fechaMasMeses(iso, k, dia) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const total = m - 1 + k;
+  const yy = y + Math.floor(total / 12);
+  const mm = ((total % 12) + 12) % 12;
+  return isoLocal(new Date(yy, mm, Math.min(dia || d, ultimoDiaMes(yy, mm))));
+}
+function nombreMesCorto(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  const nom = ANOTADOR_MESES[m - 1];
+  return `${nom.charAt(0).toUpperCase()}${nom.slice(1, 3)} ${String(y).slice(2)}`;
+}
+function nombreMesLargo(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  const nom = ANOTADOR_MESES[m - 1];
+  return `${nom.charAt(0).toUpperCase()}${nom.slice(1)} ${y}`;
+}
+
+// Todos los pagos que faltan de una deuda, en orden.
+function pagosProgramados(d) {
+  const tipo = tipoDeuda(d);
+  const out = [];
+  if (tipo === "unico") {
+    if (d.estado !== "pagada" && d.fecha) out.push({ deuda: d, clave: `${d.id}:u`, fecha: d.fecha, monto: Number(d.monto) || 0, etiqueta: "" });
+    return out;
+  }
+  if (d.estado === "terminada" || !d.proximoVencimiento) return out;
+  const dia = Number(d.dia) || Number(d.proximoVencimiento.slice(8, 10));
+  if (tipo === "cuotas") {
+    const total = Number(d.cuotasTotal) || 0;
+    const desde = Number(d.cuotaProxima) || 1;
+    for (let nro = desde; nro <= total; nro++) {
+      const ultima = nro === total && Number(d.montoUltimaCuota) > 0;
+      out.push({
+        deuda: d, clave: `${d.id}:${nro}`, nro, fecha: fechaMasMeses(d.proximoVencimiento, nro - desde, dia),
+        monto: ultima ? Number(d.montoUltimaCuota) : Number(d.montoCuota) || 0,
+        etiqueta: `cuota ${nro} de ${total}`, estimado: !!d.montoVariable,
+      });
+    }
+  }
+  if (tipo === "tarjeta") {
+    const limite = d.hasta ? `${d.hasta}-31` : fechaMasMeses(isoLocal(hoyLocal()), HORIZONTE_TARJETAS, 28);
+    for (let k = 0; k < 60; k++) {
+      const fecha = fechaMasMeses(d.proximoVencimiento, k, dia);
+      if (fecha > limite) break;
+      out.push({ deuda: d, clave: `${d.id}:${fecha}`, fecha, monto: Number(d.montoEstimado) || 0, etiqueta: "resumen", estimado: true });
+    }
+  }
+  return out;
+}
+function restaPagarDeuda(d) {
+  if (tipoDeuda(d) === "flexible") return Number(d.monto) || 0;
+  if (tipoDeuda(d) === "tarjeta") return Number(d.saldo) || 0;
+  return pagosProgramados(d).reduce((t, p) => t + p.monto, 0);
+}
+function deudaActiva(d) {
+  const tipo = tipoDeuda(d);
+  if (tipo === "unico") return d.estado !== "pagada";
+  return d.estado !== "terminada";
+}
+
+function DeudaForm({ inicial, onGuardar, onCancelar }) {
+  const [v, setV] = useState(() => ({
+    motivo: "", categoria: "deudas", observaciones: "",
+    montoCuota: "", cuotaProxima: "1", cuotasTotal: "", proximoVencimiento: "", montoUltimaCuota: "", totalDeuda: "", montoVariable: false,
+    montoEstimado: "", hasta: "", saldo: "", monto: "", fecha: "",
+    ...(inicial ? Object.fromEntries(Object.entries(inicial).map(([k, x]) => [k, typeof x === "number" ? String(x) : x])) : {}),
+    tipo: inicial ? tipoDeuda(inicial) : "cuotas",
+  }));
+  const set = (k, x) => setV((a) => ({ ...a, [k]: x }));
+  const num = (x) => Number(String(x).replace(",", ".")) || 0;
+  const t = v.tipo;
+  const valido = v.motivo.trim() && (
+    t === "cuotas" ? num(v.montoCuota) > 0 && num(v.cuotasTotal) >= 1 && num(v.cuotaProxima) >= 1 && num(v.cuotaProxima) <= num(v.cuotasTotal) + 1 && v.proximoVencimiento
+    : t === "tarjeta" ? !!v.proximoVencimiento
+    : t === "flexible" ? num(v.monto) > 0
+    : num(v.monto) > 0 && v.fecha);
+
+  function guardar() {
+    if (!valido) return;
+    const base = { id: inicial?.id || uid(), tipo: t, motivo: v.motivo.trim(), categoria: v.categoria, observaciones: v.observaciones.trim(), pagos: inicial?.pagos || [], creado: inicial?.creado || new Date().toISOString() };
+    let d;
+    if (t === "cuotas") {
+      d = { ...base, montoCuota: num(v.montoCuota), cuotaProxima: num(v.cuotaProxima), cuotasTotal: num(v.cuotasTotal), proximoVencimiento: v.proximoVencimiento, dia: Number(v.proximoVencimiento.slice(8, 10)),
+        montoUltimaCuota: num(v.montoUltimaCuota) || 0, totalDeuda: num(v.totalDeuda) || 0, montoVariable: !!v.montoVariable,
+        estado: num(v.cuotaProxima) > num(v.cuotasTotal) ? "terminada" : "activa" };
+    } else if (t === "tarjeta") {
+      d = { ...base, montoEstimado: num(v.montoEstimado), proximoVencimiento: v.proximoVencimiento, dia: Number(v.proximoVencimiento.slice(8, 10)), hasta: v.hasta || "", saldo: num(v.saldo) || 0, estado: inicial?.estado === "terminada" ? "terminada" : "activa" };
+    } else if (t === "flexible") {
+      d = { ...base, monto: num(v.monto), estado: "activa" };
+    } else {
+      d = { ...base, monto: num(v.monto), fecha: v.fecha, estado: inicial?.estado === "pagada" ? "pagada" : "pendiente" };
+    }
+    onGuardar(d);
+  }
+
+  return (
+    <div className="dg-deuda-form">
+      <div className="dg-field-grid">
+        <Field label="Tipo">
+          <select value={t} onChange={(e) => set("tipo", e.target.value)} disabled={!!inicial}>
+            {Object.entries(TIPOS_DEUDA).map(([k, x]) => (<option key={k} value={k}>{x}</option>))}
+          </select>
+        </Field>
+        <Field label={t === "unico" ? "Motivo" : "Acreedor / nombre"}><input value={v.motivo} onChange={(e) => set("motivo", e.target.value)} placeholder={t === "tarjeta" ? "Ej: Tarjeta Galicia" : "Ej: Santander préstamo"} /></Field>
+        {t !== "flexible" && (
+          <Field label="Categoría del egreso">
+            <select value={v.categoria} onChange={(e) => set("categoria", e.target.value)}>
+              {Object.entries(PURCHASE_TYPES).map(([k, x]) => (<option key={k} value={k}>{x}</option>))}
+            </select>
+          </Field>
+        )}
+      </div>
+
+      {t === "cuotas" && (
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="Monto de la cuota"><input type="number" inputMode="decimal" value={v.montoCuota} onChange={(e) => set("montoCuota", e.target.value)} /></Field>
+          <Field label="Próxima cuota a pagar (nro)"><input type="number" min="1" value={v.cuotaProxima} onChange={(e) => set("cuotaProxima", e.target.value)} /></Field>
+          <Field label="Total de cuotas"><input type="number" min="1" value={v.cuotasTotal} onChange={(e) => set("cuotasTotal", e.target.value)} /></Field>
+          <Field label="Vence esa cuota el"><input type="date" value={v.proximoVencimiento} onChange={(e) => set("proximoVencimiento", e.target.value)} /></Field>
+          <Field label="Última cuota distinta (opcional)"><input type="number" inputMode="decimal" value={v.montoUltimaCuota} onChange={(e) => set("montoUltimaCuota", e.target.value)} placeholder="Si la última es otro monto" /></Field>
+          <Field label="Total de la deuda (opcional)"><input type="number" inputMode="decimal" value={v.totalDeuda} onChange={(e) => set("totalDeuda", e.target.value)} /></Field>
+          <label className="dg-check-inline dg-deuda-variable"><input type="checkbox" checked={!!v.montoVariable} onChange={(e) => set("montoVariable", e.target.checked)} /> La cuota cambia (UVA o ajustable)</label>
+        </div>
+      )}
+      {t === "tarjeta" && (
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="Resumen estimado por mes"><input type="number" inputMode="decimal" value={v.montoEstimado} onChange={(e) => set("montoEstimado", e.target.value)} /></Field>
+          <Field label="Próximo vencimiento"><input type="date" value={v.proximoVencimiento} onChange={(e) => set("proximoVencimiento", e.target.value)} /></Field>
+          <Field label="Hasta (opcional)"><input type="month" value={v.hasta} onChange={(e) => set("hasta", e.target.value)} /></Field>
+          <Field label="Saldo total de la tarjeta"><input type="number" inputMode="decimal" value={v.saldo} onChange={(e) => set("saldo", e.target.value)} /></Field>
+        </div>
+      )}
+      {t === "flexible" && (
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="Monto adeudado"><input type="number" inputMode="decimal" value={v.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
+        </div>
+      )}
+      {t === "unico" && (
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="Monto"><input type="number" inputMode="decimal" value={v.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
+          <Field label="Vence el"><input type="date" value={v.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+        </div>
+      )}
+      <div className="dg-field-grid" style={{ marginTop: 12 }}>
+        <Field label="Observaciones"><input value={v.observaciones} onChange={(e) => set("observaciones", e.target.value)} placeholder="Ej: Se solicitaron $12.000.000" /></Field>
+      </div>
+      <div className="dg-form-actions">
+        <button type="button" className="dg-btn-ghost" onClick={onCancelar}>Cancelar</button>
+        <button type="button" className="dg-btn-primary" onClick={guardar} disabled={!valido}><Save size={14} /> Guardar</button>
+      </div>
+    </div>
+  );
+}
+
+function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, session, onRegistrar }) {
+  const lista = deudas || [];
+  const hoyIso = isoLocal(hoyLocal());
+  const mesHoy = hoyIso.slice(0, 7);
+  const en30 = isoLocal(sumarDias(hoyLocal(), 30));
+  const quien = session?.nombre || "Admin";
+  const [mes, setMes] = useState(() => { const h = hoyLocal(); return { y: h.getFullYear(), m: h.getMonth() }; });
+  const [diaElegido, setDiaElegido] = useState(null);
+  const [creando, setCreando] = useState(false);
+  const [editando, setEditando] = useState(null);
+  const [pagando, setPagando] = useState(null);   // { id, monto, egreso }
+  const [verTerminadas, setVerTerminadas] = useState(false);
+  const [verGastos, setVerGastos] = useState(false);
+  const archivoRef = useRef(null);
+
+  const activas = lista.filter(deudaActiva);
+  const flexibles = activas.filter((d) => tipoDeuda(d) === "flexible");
+  const conPagos = activas.filter((d) => tipoDeuda(d) !== "flexible");
+  const terminadas = lista.filter((d) => !deudaActiva(d));
+  const programados = conPagos.flatMap(pagosProgramados).sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
+  const suma = (arr) => arr.reduce((t, p) => t + (Number(p.monto) || 0), 0);
+
+  const vencidos = programados.filter((p) => p.fecha < hoyIso);
+  const delMes = programados.filter((p) => p.fecha.slice(0, 7) === mesHoy);
+  const proximos30 = programados.filter((p) => p.fecha >= hoyIso && p.fecha <= en30);
+  const restaCreditos = conPagos.filter((d) => tipoDeuda(d) !== "tarjeta").reduce((t, d) => t + restaPagarDeuda(d), 0);
+  const saldoTarjetas = conPagos.filter((d) => tipoDeuda(d) === "tarjeta").reduce((t, d) => t + restaPagarDeuda(d), 0);
+
+  function actualizar(id, cambio) { onChangeDeudas(lista.map((d) => (d.id === id ? { ...d, ...cambio } : d))); }
+
+  // ---- Pagar la próxima cuota / resumen / pago único ----
+  function empezarPago(d) {
+    const prox = pagosProgramados(d)[0];
+    setPagando({ id: d.id, monto: String(prox ? prox.monto : ""), egreso: true });
+  }
+  function confirmarPago(d) {
+    const prox = pagosProgramados(d)[0];
+    if (!prox) return;
+    const monto = Number(String(pagando.monto).replace(",", ".")) || 0;
+    let egresoId = "";
+    if (pagando.egreso && monto > 0) {
+      egresoId = uid();
+      onChangePurchases([{
+        id: egresoId, concepto: `${nombreDeuda(d)}${prox.etiqueta ? ` — ${prox.etiqueta}` : ""}`, monto, fecha: hoyIso, estado: "pagado", cuentaBanco: "",
+        detalle: `Pago de deuda (vencía el ${fechaLargaAnotador(prox.fecha)})`, sectorId: "", origen: "deuda", tipo: d.categoria || "deudas",
+        proveedorId: "", conIva: false, gastoFijo: false, cargadoPor: quien, deudaId: d.id,
+      }, ...purchases]);
+    }
+    const pago = { id: uid(), fecha: hoyIso, vencimiento: prox.fecha, nro: prox.nro || null, monto, egresoId, quien };
+    const pagos = [...(d.pagos || []), pago];
+    const tipo = tipoDeuda(d);
+    if (tipo === "unico") {
+      actualizar(d.id, { estado: "pagada", pagadaFecha: hoyIso, egresoId, pagos });
+    } else if (tipo === "cuotas") {
+      const siguiente = (Number(d.cuotaProxima) || 1) + 1;
+      actualizar(d.id, {
+        pagos, cuotaProxima: siguiente,
+        proximoVencimiento: fechaMasMeses(d.proximoVencimiento, 1, Number(d.dia) || Number(d.proximoVencimiento.slice(8, 10))),
+        estado: siguiente > Number(d.cuotasTotal) ? "terminada" : "activa",
+      });
+    } else if (tipo === "tarjeta") {
+      const siguienteVenc = fechaMasMeses(d.proximoVencimiento, 1, Number(d.dia) || Number(d.proximoVencimiento.slice(8, 10)));
+      actualizar(d.id, {
+        pagos, proximoVencimiento: siguienteVenc,
+        saldo: Math.max(0, (Number(d.saldo) || 0) - monto),
+        estado: d.hasta && siguienteVenc.slice(0, 7) > d.hasta ? "terminada" : "activa",
+      });
+    }
+    if (onRegistrar) onRegistrar("Pagó una deuda", `${nombreDeuda(d)}${prox.etiqueta ? ` (${prox.etiqueta})` : ""} — ${money(monto)}${egresoId ? " — cargó el egreso" : ""}`);
+    setPagando(null);
+  }
+  function deshacerUltimoPago(d) {
+    const pagos = [...(d.pagos || [])];
+    const ultimo = pagos.pop();
+    if (!ultimo) return;
+    const conEgreso = ultimo.egresoId && purchases.some((p) => p.id === ultimo.egresoId);
+    if (!window.confirm(`¿Deshacer el último pago de «${nombreDeuda(d)}» (${money(ultimo.monto)} del ${fechaLargaAnotador(ultimo.fecha)})?${conEgreso ? "\n\nTambién se borra el egreso que se cargó." : ""}`)) return;
+    if (conEgreso) onChangePurchases(purchases.filter((p) => p.id !== ultimo.egresoId));
+    const tipo = tipoDeuda(d);
+    if (tipo === "unico") actualizar(d.id, { pagos, estado: "pendiente", pagadaFecha: "", egresoId: "" });
+    if (tipo === "cuotas") actualizar(d.id, { pagos, cuotaProxima: Math.max(1, (Number(d.cuotaProxima) || 2) - 1), proximoVencimiento: ultimo.vencimiento, estado: "activa" });
+    if (tipo === "tarjeta") actualizar(d.id, { pagos, proximoVencimiento: ultimo.vencimiento, saldo: (Number(d.saldo) || 0) + (Number(ultimo.monto) || 0), estado: "activa" });
+  }
+  function borrar(d) {
+    if (!window.confirm(`¿Borrar «${nombreDeuda(d)}» con todo su historial de pagos? Los egresos que ya se cargaron quedan en Compras.`)) return;
+    onChangeDeudas(lista.filter((x) => x.id !== d.id));
+  }
+  function guardarDeuda(d) {
+    const existe = lista.some((x) => x.id === d.id);
+    onChangeDeudas(existe ? lista.map((x) => (x.id === d.id ? d : x)) : [...lista, d]);
+    if (onRegistrar) onRegistrar(existe ? "Editó una deuda" : "Cargó una deuda", `${nombreDeuda(d)} — ${TIPOS_DEUDA_CORTO[d.tipo]}`);
+    setCreando(false);
+    setEditando(null);
+  }
+
+  // ---- Importar un archivo de deudas (una sola vez, desde la planilla) ----
+  async function importar(ev) {
+    const archivo = ev.target.files && ev.target.files[0];
+    ev.target.value = "";
+    if (!archivo) return;
+    try {
+      const datos = JSON.parse(await archivo.text());
+      const entrantes = (Array.isArray(datos) ? datos : datos.deudas || []).filter((d) => d && d.id && d.motivo && TIPOS_DEUDA[d.tipo]);
+      const ids = new Set(lista.map((d) => d.id));
+      const nuevas = entrantes.filter((d) => !ids.has(d.id));
+      if (!nuevas.length) { window.alert("No hay deudas nuevas en ese archivo (ya estaban todas cargadas)."); return; }
+      const resumen = nuevas.map((d) => `• ${d.motivo}`).join("\n");
+      if (!window.confirm(`Se van a agregar ${nuevas.length} deudas:\n\n${resumen}\n\n¿Cargarlas?`)) return;
+      onChangeDeudas([...lista, ...nuevas]);
+      if (onRegistrar) onRegistrar("Importó deudas", `${nuevas.length} deudas desde ${archivo.name}`);
+    } catch (e) {
+      window.alert("Ese archivo no se pudo leer. Tiene que ser el archivo de deudas (.json).");
+    }
+  }
+
+  // ---- Calendario ----
+  const primerDia = new Date(mes.y, mes.m, 1);
+  const huecos = (primerDia.getDay() + 6) % 7;
+  const diasDelMes = ultimoDiaMes(mes.y, mes.m);
+  const claveDia = (d) => `${mes.y}-${String(mes.m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const porDia = {};
+  programados.forEach((p) => { (porDia[p.fecha] = porDia[p.fecha] || []).push(p); });
+  const ymMirado = claveDia(1).slice(0, 7);
+  const delMesMirado = programados.filter((p) => p.fecha.slice(0, 7) === ymMirado);
+  function moverMes(delta) {
+    setDiaElegido(null);
+    setMes((x) => { const d = new Date(x.y, x.m + delta, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+  }
+
+  // ---- Recorrido de pagos: 12 meses desde el actual ----
+  const meses12 = Array.from({ length: 12 }, (_, k) => fechaMasMeses(`${mesHoy}-01`, k, 1).slice(0, 7));
+  // También las que ya terminaron, si tuvieron algún pago dentro de estos 12 meses.
+  const enVentana = (d) => (d.pagos || []).some((p) => { const ym = (p.vencimiento || p.fecha || "").slice(0, 7); return ym >= meses12[0] && ym <= meses12[11]; });
+  const columnas = lista.filter((d) => ["cuotas", "tarjeta"].includes(tipoDeuda(d)) && (deudaActiva(d) || enVentana(d)));
+  const unicos = conPagos.filter((d) => tipoDeuda(d) === "unico");
+  const pagadoEnMes = (d, ym) => (d.pagos || []).filter((p) => (p.vencimiento || p.fecha).slice(0, 7) === ym).reduce((t, p) => t + (Number(p.monto) || 0), 0);
+  const celda = (d, ym) => {
+    const prog = pagosProgramados(d).filter((p) => p.fecha.slice(0, 7) === ym);
+    return { pendiente: suma(prog), pagado: pagadoEnMes(d, ym), estimado: prog.some((p) => p.estimado) };
+  };
+  const filasRecorrido = meses12.map((ym) => {
+    const celdas = columnas.map((d) => celda(d, ym));
+    const sueltos = unicos.map((d) => celda(d, ym)).concat(lista.filter((d) => tipoDeuda(d) === "unico" && d.estado === "pagada").map((d) => ({ pendiente: 0, pagado: pagadoEnMes(d, ym) })));
+    const sueltosTotal = sueltos.reduce((t, c) => t + c.pendiente + c.pagado, 0);
+    const total = celdas.reduce((t, c) => t + c.pendiente + c.pagado, 0) + sueltosTotal;
+    return { ym, celdas, sueltosTotal, total };
+  });
+
+  // ---- Totalidad de pagos mensuales (de Compras) ----
+  const CATS_GASTOS = ["sueldos", "materiales", "contenedor", "publicidad", "cargos_venta", "impuestos", "deudas", "administracion", "operativos", "combustible_logistica", "extraempresariales", "otros"];
+  const meses12Atras = Array.from({ length: 12 }, (_, k) => fechaMasMeses(`${mesHoy}-01`, -k, 1).slice(0, 7));
+  const gastosPorMes = meses12Atras.map((ym) => {
+    const delMesG = purchases.filter((p) => (p.fecha || "").slice(0, 7) === ym && p.tipo !== "mov_entre_cuentas");
+    const porCat = Object.fromEntries(CATS_GASTOS.map((c) => [c, delMesG.filter((p) => (CATS_GASTOS.includes(p.tipo) ? p.tipo : "otros") === c).reduce((t, p) => t + (Number(p.monto) || 0), 0)]));
+    return { ym, porCat, total: Object.values(porCat).reduce((t, x) => t + x, 0) };
+  }).filter((f) => f.total > 0 || f.ym === mesHoy);
+
+  const verPagosDia = diaElegido ? programados.filter((p) => p.fecha === diaElegido) : null;
+
+  function tarjetaDeuda(d) {
+    const tipo = tipoDeuda(d);
+    const prox = pagosProgramados(d)[0];
+    const pagosD = d.pagos || [];
+    const enEdicion = editando === d.id;
+    const esteVencido = prox && prox.fecha < hoyIso;
+    const faltanDatos = tipo === "tarjeta" && (!d.proximoVencimiento || !(Number(d.montoEstimado) > 0));
+    const avance = tipo === "cuotas" ? Math.min(1, ((Number(d.cuotaProxima) || 1) - 1) / (Number(d.cuotasTotal) || 1)) : null;
+    const ultimoProg = pagosProgramados(d).slice(-1)[0];
+    if (enEdicion) {
+      return (
+        <div className="dg-section-card dg-deuda" key={d.id}>
+          <div className="dg-section-header"><Pencil size={14} /> Editar {nombreDeuda(d)}</div>
+          <DeudaForm inicial={d} onGuardar={guardarDeuda} onCancelar={() => setEditando(null)} />
+        </div>
+      );
+    }
+    return (
+      <div className={`dg-section-card dg-deuda ${esteVencido ? "dg-deuda-vencida" : ""}`} key={d.id}>
+        <div className="dg-deuda-head">
+          <div className="dg-deuda-titulo">
+            <strong>{nombreDeuda(d)}</strong>
+            <span className={`dg-deuda-chip dg-deuda-chip-${tipo}`}>{TIPOS_DEUDA_CORTO[tipo]}</span>
+            {faltanDatos && <span className="dg-deuda-chip dg-deuda-chip-falta">Faltan datos</span>}
+          </div>
+          <div className="dg-deuda-acciones">
+            {pagosD.length > 0 && <button type="button" className="dg-icon-btn" onClick={() => deshacerUltimoPago(d)} title="Deshacer el último pago"><Undo2 size={14} /></button>}
+            <button type="button" className="dg-icon-btn" onClick={() => { setEditando(d.id); setPagando(null); }} title="Editar"><Pencil size={14} /></button>
+            <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrar(d)} title="Borrar"><Trash2 size={14} /></button>
+          </div>
+        </div>
+
+        <div className="dg-deuda-datos">
+          {tipo === "cuotas" && (<>
+            <div><span>Cuota</span><b>{money(d.montoCuota)}{d.montoVariable ? " ~" : ""}</b></div>
+            <div><span>Va por</span><b>{Math.min(Number(d.cuotaProxima) || 1, Number(d.cuotasTotal))} de {d.cuotasTotal}</b></div>
+            <div><span>Próximo vencimiento</span><b className={esteVencido ? "dg-deuda-rojo" : ""}>{prox ? fechaLargaAnotador(prox.fecha) : "—"}</b></div>
+            <div><span>Termina</span><b>{ultimoProg ? nombreMesLargo(ultimoProg.fecha.slice(0, 7)) : "—"}</b></div>
+            <div><span>Resta pagar</span><b>{money(restaPagarDeuda(d))}</b></div>
+            {Number(d.totalDeuda) > 0 && <div><span>Total de la deuda</span><b>{money(d.totalDeuda)}</b></div>}
+          </>)}
+          {tipo === "tarjeta" && (<>
+            <div><span>Resumen estimado</span><b>{Number(d.montoEstimado) > 0 ? money(d.montoEstimado) : "—"}</b></div>
+            <div><span>Próximo vencimiento</span><b className={esteVencido ? "dg-deuda-rojo" : ""}>{d.proximoVencimiento ? fechaLargaAnotador(d.proximoVencimiento) : "—"}</b></div>
+            <div><span>Hasta</span><b>{d.hasta ? nombreMesLargo(d.hasta) : "Mensual"}</b></div>
+            <div><span>Saldo de la tarjeta</span><b>{Number(d.saldo) > 0 ? money(d.saldo) : "—"}</b></div>
+          </>)}
+          {tipo === "unico" && (<>
+            <div><span>Monto</span><b>{money(d.monto)}</b></div>
+            <div><span>Vence</span><b className={esteVencido ? "dg-deuda-rojo" : ""}>{fechaLargaAnotador(d.fecha)}</b></div>
+          </>)}
+        </div>
+        {avance !== null && <div className="dg-deuda-barra" aria-hidden="true"><i style={{ width: `${Math.round(avance * 100)}%` }} /></div>}
+        {d.observaciones && <p className="dg-deuda-obs">{d.observaciones}</p>}
+        {faltanDatos && <p className="dg-deuda-obs dg-deuda-rojo">Cargale el resumen estimado y el vencimiento para que entre en el calendario.</p>}
+
+        {prox && pagando?.id !== d.id && (
+          <button type="button" className="dg-btn-ghost dg-mini-btn dg-deuda-pagar" onClick={() => empezarPago(d)}>
+            <Check size={13} /> Pagar {prox.etiqueta || "este pago"} · {money(prox.monto)}
+          </button>
+        )}
+        {pagando?.id === d.id && (
+          <div className="dg-deuda-pagando">
+            <div className="dg-field-grid">
+              <Field label={prox?.estimado ? "Monto real que se pagó" : "Monto pagado"}>
+                <input type="number" inputMode="decimal" value={pagando.monto} onChange={(e) => setPagando({ ...pagando, monto: e.target.value })} />
+              </Field>
+            </div>
+            <label className="dg-check-inline"><input type="checkbox" checked={pagando.egreso} onChange={(e) => setPagando({ ...pagando, egreso: e.target.checked })} /> Cargar también el egreso en Compras (fecha de hoy)</label>
+            <div className="dg-form-actions">
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setPagando(null)}>Cancelar</button>
+              <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => confirmarPago(d)} disabled={!(Number(String(pagando.monto).replace(",", ".")) >= 0)}><Check size={13} /> Confirmar pago</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="dg-page dg-venc">
+      <div className="dg-panel-grid dg-venc-totales">
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">Resta pagar en créditos y planes</div>
+          <div className="dg-panel-card-valor">{money(restaCreditos)}</div>
+          <div className="dg-panel-card-variacion">{saldoTarjetas > 0 ? `+ ${money(saldoTarjetas)} de saldo en tarjetas` : "Sin contar tarjetas"}</div>
+        </div>
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">A pagar en {nombreMesLargo(mesHoy).split(" ")[0].toLowerCase()}</div>
+          <div className="dg-panel-card-valor" style={{ color: "var(--dg-warning)" }}>{money(suma(delMes))}</div>
+          <div className="dg-panel-card-variacion">{delMes.length} {delMes.length === 1 ? "pago" : "pagos"}{delMes.some((p) => p.estimado) ? " · incluye estimados" : ""}</div>
+        </div>
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">Próximos 30 días</div>
+          <div className="dg-panel-card-valor">{money(suma(proximos30))}</div>
+          <div className="dg-panel-card-variacion">{proximos30.length} {proximos30.length === 1 ? "vencimiento" : "vencimientos"}</div>
+        </div>
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">Vencidos sin pagar</div>
+          <div className="dg-panel-card-valor" style={{ color: vencidos.length ? "var(--dg-danger)" : "var(--dg-text)" }}>{money(suma(vencidos))}</div>
+          <div className="dg-panel-card-variacion">{vencidos.length ? `${vencidos.length} atrasado${vencidos.length === 1 ? "" : "s"}` : "Todo al día"}</div>
+        </div>
+      </div>
+
+      {flexibles.map((d) => (
+        editando === d.id ? (
+          <div className="dg-section-card" key={d.id}>
+            <div className="dg-section-header"><Pencil size={14} /> Editar {nombreDeuda(d)}</div>
+            <DeudaForm inicial={d} onGuardar={guardarDeuda} onCancelar={() => setEditando(null)} />
+          </div>
+        ) : (
+          <div className="dg-section-card dg-deuda-aparte" key={d.id}>
+            <div className="dg-deuda-aparte-txt">
+              <span>{nombreDeuda(d)} · fuera del total</span>
+              <strong>{money(d.monto)}</strong>
+              {d.observaciones && <small>{d.observaciones}</small>}
+            </div>
+            <div className="dg-deuda-acciones">
+              <button type="button" className="dg-icon-btn" onClick={() => setEditando(d.id)} title="Editar"><Pencil size={14} /></button>
+              <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrar(d)} title="Borrar"><Trash2 size={14} /></button>
+            </div>
+          </div>
+        )
+      ))}
+
+      <div className="dg-venc-lista-head">
+        <strong>Deudas activas ({conPagos.length})</strong>
+        <span className="dg-deuda-botones-top">
+          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => archivoRef.current && archivoRef.current.click()}><Download size={13} /> Importar</button>
+          {!creando && <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => { setCreando(true); setEditando(null); }}><Plus size={13} /> Nueva deuda</button>}
+        </span>
+        <input ref={archivoRef} type="file" accept=".json,application/json" onChange={importar} hidden />
+      </div>
+
+      {creando && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><Plus size={14} /> Nueva deuda</div>
+          <DeudaForm onGuardar={guardarDeuda} onCancelar={() => setCreando(false)} />
+        </div>
+      )}
+
+      {conPagos.length === 0 && !creando && <div className="dg-empty">No hay deudas cargadas. Usá «Nueva deuda», «Importar» o el anotador de voz.</div>}
+      {conPagos
+        .slice()
+        .sort((a, b) => ((pagosProgramados(a)[0]?.fecha || "9999") < (pagosProgramados(b)[0]?.fecha || "9999") ? -1 : 1))
+        .map(tarjetaDeuda)}
+
+      {terminadas.length > 0 && (
+        <div className="dg-venc-pagadas">
+          <button type="button" className="dg-anotador-historial-btn" onClick={() => setVerTerminadas((v) => !v)} aria-expanded={verTerminadas}>
+            <ChevronRight size={14} className={verTerminadas ? "dg-presu-chevron-on" : ""} /> Terminadas y pagadas ({terminadas.length})
+          </button>
+          {verTerminadas && terminadas.map((d) => (
+            <div className="dg-deuda-terminada" key={d.id}>
+              <span><strong>{nombreDeuda(d)}</strong> · {TIPOS_DEUDA_CORTO[tipoDeuda(d)]}{(d.pagos || []).length ? ` · último pago ${fechaLargaAnotador(d.pagos[d.pagos.length - 1].fecha)}` : ""}</span>
+              <span className="dg-deuda-acciones">
+                {(d.pagos || []).length > 0 && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => deshacerUltimoPago(d)}><Undo2 size={13} /> Deshacer último pago</button>}
+                <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrar(d)} title="Borrar"><Trash2 size={14} /></button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="dg-section-card dg-venc-cal">
+        <div className="dg-section-header"><CalendarClock size={14} /> Calendario de pagos</div>
+        <div className="dg-venc-cal-head">
+          <button type="button" className="dg-icon-btn" onClick={() => moverMes(-1)} aria-label="Mes anterior"><ArrowLeft size={16} /></button>
+          <div className="dg-venc-cal-mes">
+            <strong>{nombreMesLargo(ymMirado)}</strong>
+            <small>{delMesMirado.length ? `${money(suma(delMesMirado))} a pagar` : "Sin pagos pendientes"}</small>
+          </div>
+          <button type="button" className="dg-icon-btn" onClick={() => moverMes(1)} aria-label="Mes siguiente"><ChevronRight size={16} /></button>
+        </div>
+        <div className="dg-venc-grid" role="grid">
+          {DIAS_SEMANA_CORTOS.map((d) => (<div className="dg-venc-dow" key={d}>{d}</div>))}
+          {Array.from({ length: huecos }, (_, i) => (<div key={`h${i}`} className="dg-venc-dia dg-venc-vacio" />))}
+          {Array.from({ length: diasDelMes }, (_, i) => {
+            const dia = i + 1;
+            const k = claveDia(dia);
+            const items = porDia[k] || [];
+            const total = suma(items);
+            const cls = ["dg-venc-dia", k === hoyIso ? "dg-venc-hoy" : "", items.length ? (k < hoyIso ? "dg-venc-con-vencida" : "dg-venc-con-pago") : "", diaElegido === k ? "dg-venc-elegido" : ""].join(" ");
+            return (
+              <button type="button" key={k} className={cls} disabled={!items.length} onClick={() => setDiaElegido(diaElegido === k ? null : k)}
+                aria-label={items.length ? `${dia}: ${items.length} pago(s), ${money(total)}` : String(dia)}>
+                <span className="dg-venc-num">{dia}</span>
+                {items.length > 0 && <span className="dg-venc-monto">{montoCorto(total)}</span>}
+              </button>
+            );
+          })}
+        </div>
+        {verPagosDia && (
+          <div className="dg-venc-dia-detalle">
+            <div className="dg-venc-dia-detalle-head">
+              <strong>{fechaLargaAnotador(diaElegido)}</strong>
+              <button type="button" className="dg-icon-btn" onClick={() => setDiaElegido(null)} aria-label="Cerrar"><X size={14} /></button>
+            </div>
+            {verPagosDia.map((p) => (
+              <div className="dg-venc-resumen-fila" key={p.clave}>
+                <span>{p.etiqueta || TIPOS_DEUDA_CORTO[tipoDeuda(p.deuda)]}</span>
+                <strong>{nombreDeuda(p.deuda)}</strong>
+                <b>{p.estimado ? "~ " : ""}{money(p.monto)}</b>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {columnas.length + unicos.length > 0 && (
+        <div className="dg-section-card dg-recorrido">
+          <div className="dg-section-header"><BarChart3 size={14} /> Recorrido de pagos</div>
+          <p className="dg-deuda-obs">Lo que sale cada mes por cada deuda. Con ✓ lo que ya se pagó; con ~ los montos estimados (tarjetas y cuotas que cambian). Los familiares no suman acá.</p>
+          <div className="dg-recorrido-scroll">
+            <table className="dg-recorrido-tabla">
+              <thead>
+                <tr>
+                  <th>Mes</th>
+                  {columnas.map((d) => (<th key={d.id} className="dg-num">{nombreDeuda(d)}</th>))}
+                  {unicos.length > 0 && <th className="dg-num">Pagos sueltos</th>}
+                  <th className="dg-num">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filasRecorrido.map((f) => (
+                  <tr key={f.ym} className={f.ym === mesHoy ? "dg-recorrido-actual" : ""}>
+                    <td>{nombreMesCorto(f.ym)}</td>
+                    {f.celdas.map((c, i) => (
+                      <td key={columnas[i].id} className="dg-num">
+                        {c.pagado > 0 && <span className="dg-recorrido-pagado">✓ {money(c.pagado)}</span>}
+                        {c.pendiente > 0 && <span>{c.estimado ? "~ " : ""}{money(c.pendiente)}</span>}
+                        {!c.pagado && !c.pendiente && <span className="dg-recorrido-vacio">—</span>}
+                      </td>
+                    ))}
+                    {unicos.length > 0 && <td className="dg-num">{f.sueltosTotal ? money(f.sueltosTotal) : <span className="dg-recorrido-vacio">—</span>}</td>}
+                    <td className="dg-num dg-recorrido-total">{money(f.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="dg-section-card dg-recorrido">
+        <button type="button" className="dg-anotador-historial-btn" onClick={() => setVerGastos((v) => !v)} aria-expanded={verGastos}>
+          <ChevronRight size={14} className={verGastos ? "dg-presu-chevron-on" : ""} /> Totalidad de pagos mensuales (de Compras)
+        </button>
+        {verGastos && (
+          <div className="dg-recorrido-scroll">
+            <table className="dg-recorrido-tabla">
+              <thead>
+                <tr><th>Mes</th>{CATS_GASTOS.map((c) => (<th key={c} className="dg-num">{PURCHASE_TYPES[c]}</th>))}<th className="dg-num">Total</th></tr>
+              </thead>
+              <tbody>
+                {gastosPorMes.map((f) => (
+                  <tr key={f.ym} className={f.ym === mesHoy ? "dg-recorrido-actual" : ""}>
+                    <td>{nombreMesCorto(f.ym)}</td>
+                    {CATS_GASTOS.map((c) => (<td key={c} className="dg-num">{f.porCat[c] ? money(f.porCat[c]) : <span className="dg-recorrido-vacio">—</span>}</td>))}
+                    <td className="dg-num dg-recorrido-total">{money(f.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   const [tipo, setTipo] = useState("egreso");
   const [monto, setMonto] = useState("");
@@ -11043,6 +12416,7 @@ function SectorPage({
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
+  deudas, onChangeDeudas, notasAnotador, onChangeNotasAnotador,
 }) {
   const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
   const [subpage, setSubpage] = useState(tabs[0].id);
@@ -11166,6 +12540,8 @@ function SectorPage({
             proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl}
             gastosFijosPlantillas={gastosFijosPlantillas} onChangeGastosFijosPlantillas={onChangeGastosFijosPlantillas}
             empleadosSueldo={empleadosSueldo} liquidaciones={liquidaciones} pedidos={pedidos}
+            deudas={deudas} onChangeDeudas={onChangeDeudas} notasAnotador={notasAnotador} onChangeNotasAnotador={onChangeNotasAnotador}
+            session={session} onRegistrar={onRegistrar}
           />
           : <LockedPage label="Finanzas" onLogin={onRequestLogin} />
       )}
@@ -12384,6 +13760,145 @@ function Style() {
       .dg-stock-cantidad { width:64px; text-align:center; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:8px; padding:6px 4px; color:var(--dg-accent); font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; }
 
       .dg-quickviews { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+
+      /* ---- Anotador ---- */
+      .dg-anotador-ayuda { margin:0 0 12px; font-size:13px; line-height:1.45; color:var(--dg-text-dim); }
+      .dg-anotador-ayuda em { font-style:normal; color:var(--dg-text); }
+      .dg-anotador-entrada { display:flex; align-items:flex-start; gap:14px; }
+      .dg-anotador-mic { flex:none; width:64px; height:64px; border-radius:50%; border:0; display:grid; place-items:center; background:var(--dg-accent); color:var(--dg-on-accent); cursor:pointer; box-shadow:0 6px 18px -6px rgba(var(--dg-accent-rgb),.7); transition:transform .12s ease, background .15s ease; }
+      .dg-anotador-mic:active { transform:scale(.94); }
+      .dg-anotador-mic:focus-visible { outline:3px solid rgba(var(--dg-accent-rgb),.45); outline-offset:3px; }
+      .dg-anotador-mic-on { background:var(--dg-danger); color:#fff; box-shadow:0 0 0 0 rgba(var(--dg-danger-rgb),.55); animation:dg-mic-pulso 1.4s ease-out infinite; }
+      @keyframes dg-mic-pulso { 0% { box-shadow:0 0 0 0 rgba(var(--dg-danger-rgb),.55); } 100% { box-shadow:0 0 0 18px rgba(var(--dg-danger-rgb),0); } }
+      .dg-anotador-texto { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
+      .dg-anotador-texto textarea { width:100%; box-sizing:border-box; resize:vertical; min-height:64px; padding:10px 12px; font-size:15px; line-height:1.4; font-family:'Jost',sans-serif; }
+      .dg-anotador-acciones { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+      .dg-anotador-estado { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--dg-danger); font-weight:600; }
+      .dg-anotador-punto { width:8px; height:8px; border-radius:50%; background:var(--dg-danger); animation:dg-mic-parpadeo 1s ease-in-out infinite; }
+      @keyframes dg-mic-parpadeo { 50% { opacity:.25; } }
+      .dg-anotador-error { display:flex; align-items:center; gap:6px; margin:10px 0 0; font-size:13px; color:var(--dg-danger); }
+      .dg-anotador-nota { margin:10px 0 0; font-size:12px; color:var(--dg-text-dim); }
+      .dg-anotador-resultado { --nc:var(--dg-success); --nc-rgb:var(--dg-success-rgb); display:flex; gap:10px; align-items:flex-start; margin-top:14px; padding:12px 14px; border-radius:10px; border:1px solid rgba(var(--nc-rgb),.4); background:rgba(var(--nc-rgb),.08); animation:dg-aviso-entra .22s ease-out; }
+      .dg-anotador-deuda { --nc:var(--dg-warning); --nc-rgb:var(--dg-warning-rgb); }
+      .dg-anotador-resultado > svg { flex:none; color:var(--nc); margin-top:1px; }
+      .dg-anotador-resultado-txt { display:flex; flex-direction:column; gap:6px; min-width:0; }
+      .dg-anotador-resultado-txt strong { font-size:14px; line-height:1.4; color:var(--dg-text); font-weight:600; }
+      .dg-anotador-resultado-txt small, .dg-anotador-dicho { font-size:12px; color:var(--dg-text-dim); font-style:italic; }
+      .dg-anotador-cat { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-anotador-cat select { width:auto; padding:4px 8px; font-size:12px; }
+      .dg-anotador-resultado-botones { display:flex; flex-wrap:wrap; gap:6px; }
+      .dg-anotador-completar { margin-top:14px; padding:12px 14px; border-radius:10px; border:1px solid rgba(var(--dg-warning-rgb),.45); background:rgba(var(--dg-warning-rgb),.07); display:flex; flex-direction:column; gap:8px; }
+      .dg-anotador-completar-tit { display:flex; gap:8px; align-items:flex-start; font-size:14px; color:var(--dg-text); font-weight:600; line-height:1.35; }
+      .dg-anotador-completar-tit svg { flex:none; color:var(--dg-warning); margin-top:1px; }
+      .dg-anotador-historial { margin-top:14px; border-top:1px solid rgba(var(--dg-line-rgb),.1); padding-top:10px; }
+      .dg-anotador-historial-btn { display:flex; align-items:center; gap:6px; border:0; background:transparent; color:var(--dg-text-dim); font-family:'Jost',sans-serif; font-size:13px; font-weight:600; cursor:pointer; padding:4px 0; }
+      .dg-anotador-historial-btn svg { transition:transform .18s ease; }
+      .dg-anotador-historial ul { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+      .dg-anotador-historial li { display:flex; flex-direction:column; gap:2px; padding:8px 10px; border-radius:8px; background:rgba(var(--dg-line-rgb),.04); }
+      .dg-anotador-deshecha { opacity:.55; }
+      .dg-anotador-h-cuando { font-size:11px; color:var(--dg-text-dim); font-family:'JetBrains Mono', monospace; }
+      .dg-anotador-h-que { font-size:13px; color:var(--dg-text); display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+      .dg-anotador-h-dicho { font-size:12px; color:var(--dg-text-dim); font-style:italic; }
+      .dg-anotador-chip { font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-success-rgb),.15); color:var(--dg-success); }
+      .dg-anotador-chip-deuda { background:rgba(var(--dg-warning-rgb),.15); color:var(--dg-warning); }
+      .dg-anotador-chip-ingreso { background:rgba(var(--dg-accent-rgb),.15); color:var(--dg-accent-2); }
+      @media (max-width:520px) {
+        .dg-anotador-entrada { flex-direction:column; align-items:center; }
+        .dg-anotador-mic { width:76px; height:76px; }
+        .dg-anotador-texto { width:100%; }
+        .dg-anotador-acciones .dg-btn-primary { flex:1; justify-content:center; }
+      }
+      @media (prefers-reduced-motion: reduce) { .dg-anotador-mic-on, .dg-anotador-punto, .dg-anotador-resultado { animation:none; } }
+
+      /* ---- Pagos a vencer ---- */
+      .dg-deuda { padding:14px 16px; }
+      .dg-deuda-vencida { border-color:rgba(var(--dg-danger-rgb),.5); }
+      .dg-deuda-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+      .dg-deuda-titulo { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; min-width:0; }
+      .dg-deuda-titulo strong { font-family:'Jost',sans-serif; font-size:16px; color:var(--dg-text); overflow-wrap:anywhere; }
+      .dg-deuda-chip { font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; padding:2px 7px; border-radius:6px; background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent-2); }
+      .dg-deuda-chip-tarjeta { background:rgba(var(--dg-warning-rgb),.16); color:var(--dg-text); }
+      .dg-deuda-chip-unico { background:rgba(var(--dg-line-rgb),.1); color:var(--dg-text-dim); }
+      .dg-deuda-chip-falta { background:rgba(var(--dg-danger-rgb),.15); color:var(--dg-danger); }
+      .dg-deuda-acciones { display:flex; align-items:center; gap:2px; flex:none; }
+      .dg-deuda-datos { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px 14px; margin-top:12px; }
+      .dg-deuda-datos > div { display:flex; flex-direction:column; gap:2px; min-width:0; }
+      .dg-deuda-datos span { font-size:11px; color:var(--dg-text-dim); }
+      .dg-deuda-datos b { font-family:'JetBrains Mono', monospace; font-size:14px; color:var(--dg-text); font-variant-numeric:tabular-nums; }
+      .dg-deuda-rojo { color:var(--dg-danger) !important; }
+      .dg-deuda-barra { height:6px; margin-top:12px; border-radius:99px; background:rgba(var(--dg-line-rgb),.1); overflow:hidden; }
+      .dg-deuda-barra i { display:block; height:100%; border-radius:99px; background:var(--dg-success); }
+      .dg-deuda-obs { margin:10px 0 0; font-size:12px; line-height:1.4; color:var(--dg-text-dim); }
+      .dg-app .dg-deuda .dg-deuda-pagar { margin-top:12px; border-color:rgba(var(--dg-success-rgb),.45); color:var(--dg-success); font-weight:600; }
+      .dg-deuda-pagando { margin-top:12px; padding:12px; border-radius:10px; border:1px solid rgba(var(--dg-success-rgb),.35); background:rgba(var(--dg-success-rgb),.07); display:flex; flex-direction:column; gap:8px; }
+      .dg-deuda-pagando .dg-check-inline { white-space:normal; }
+      .dg-deuda-form .dg-deuda-variable { align-self:end; padding-bottom:10px; white-space:normal; }
+      .dg-deuda-aparte { display:flex; align-items:center; justify-content:space-between; gap:12px; border-style:dashed; }
+      .dg-deuda-aparte-txt { display:flex; flex-direction:column; gap:2px; min-width:0; }
+      .dg-deuda-aparte-txt span { font-size:12px; font-weight:600; color:var(--dg-text-dim); }
+      .dg-deuda-aparte-txt strong { font-family:'JetBrains Mono', monospace; font-size:20px; color:var(--dg-text); }
+      .dg-deuda-aparte-txt small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-deuda-botones-top { display:flex; gap:6px; flex-wrap:wrap; }
+      .dg-deuda-terminada { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 12px; margin-top:8px; border-radius:9px; background:rgba(var(--dg-line-rgb),.04); font-size:13px; color:var(--dg-text-dim); }
+      .dg-deuda-terminada strong { color:var(--dg-text); }
+      .dg-venc-cal { margin-top:16px; }
+      .dg-venc-dia-detalle { margin-top:12px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-venc-dia-detalle-head { display:flex; align-items:center; justify-content:space-between; }
+      .dg-venc-dia-detalle-head strong { font-family:'Jost',sans-serif; color:var(--dg-text); }
+      .dg-recorrido { padding:14px 16px; }
+      .dg-recorrido-scroll { overflow-x:auto; margin-top:10px; border:1px solid rgba(var(--dg-line-rgb),.1); border-radius:10px; }
+      .dg-recorrido-tabla { width:100%; border-collapse:collapse; font-size:12px; }
+      .dg-recorrido-tabla th { position:sticky; top:0; padding:8px 10px; text-align:left; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
+      .dg-recorrido-tabla td { padding:7px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.07); color:var(--dg-text); white-space:nowrap; vertical-align:top; }
+      .dg-recorrido-tabla td:first-child, .dg-recorrido-tabla th:first-child { position:sticky; left:0; z-index:1; background:var(--dg-surface); font-weight:600; }
+      .dg-recorrido-tabla .dg-num { text-align:right; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+      .dg-recorrido-tabla td.dg-num span { display:block; }
+      .dg-recorrido-pagado { color:var(--dg-success); }
+      .dg-recorrido-vacio { color:var(--dg-text-dim); opacity:.6; }
+      .dg-recorrido-total { font-weight:700; }
+      .dg-recorrido-actual td { background:rgba(var(--dg-accent-rgb),.07); }
+      .dg-recorrido-actual td:first-child { background:var(--dg-surface); box-shadow:inset 3px 0 0 var(--dg-accent); }
+      .dg-venc-tab-badge { display:inline-block; margin-left:6px; min-width:16px; padding:0 5px; border-radius:8px; background:var(--dg-danger); color:#fff; font-size:10px; font-weight:700; line-height:16px; text-align:center; }
+      .dg-venc-totales { grid-template-columns:repeat(3, minmax(0,1fr)); margin-top:0; }
+      .dg-venc-cal-head { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:10px; margin-bottom:12px; }
+      .dg-venc-cal-mes { display:flex; flex-direction:column; align-items:center; gap:1px; }
+      .dg-venc-cal-mes strong { font-family:'Jost',sans-serif; font-size:17px; color:var(--dg-text); }
+      .dg-venc-cal-mes small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-venc-grid { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:4px; }
+      .dg-venc-dow { text-align:center; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; color:var(--dg-text-dim); padding:2px 0 4px; }
+      .dg-venc-dia { min-height:54px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:3px; padding:6px 2px; border-radius:8px; border:1px solid rgba(var(--dg-line-rgb),.07); background:rgba(var(--dg-line-rgb),.02); color:var(--dg-text-dim); font-family:'Jost',sans-serif; }
+      button.dg-venc-dia:disabled { cursor:default; opacity:1; }
+      .dg-venc-vacio { border-color:transparent; background:transparent; }
+      .dg-venc-num { font-size:13px; font-weight:600; }
+      .dg-venc-monto { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; padding:1px 4px; border-radius:5px; white-space:nowrap; }
+      .dg-venc-con-pago { cursor:pointer; border-color:rgba(var(--dg-warning-rgb),.45); background:rgba(var(--dg-warning-rgb),.1); color:var(--dg-text); }
+      .dg-venc-con-pago .dg-venc-monto { background:rgba(var(--dg-warning-rgb),.28); color:var(--dg-text); }
+      .dg-venc-con-vencida { cursor:pointer; border-color:rgba(var(--dg-danger-rgb),.5); background:rgba(var(--dg-danger-rgb),.1); color:var(--dg-text); }
+      .dg-venc-con-vencida .dg-venc-monto { background:rgba(var(--dg-danger-rgb),.28); color:var(--dg-text); }
+      .dg-venc-hoy { box-shadow:inset 0 0 0 2px var(--dg-accent); }
+      .dg-venc-hoy .dg-venc-num { color:var(--dg-accent-2); }
+      .dg-venc-elegido { outline:2px solid var(--dg-text); outline-offset:1px; }
+      .dg-venc-lista-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:18px 0 10px; }
+      .dg-venc-lista-head strong { font-family:'Jost',sans-serif; font-size:16px; color:var(--dg-text); }
+      .dg-venc-pagadas { margin-top:10px; }
+      .dg-venc-resumen-fila { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:baseline; gap:10px; padding:7px 0; border-bottom:1px solid rgba(var(--dg-line-rgb),.07); font-size:13px; }
+      .dg-venc-resumen-fila span { font-size:12px; color:var(--dg-text-dim); white-space:nowrap; }
+      .dg-venc-resumen-fila strong { font-weight:500; color:var(--dg-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-venc-resumen-fila b { font-family:'JetBrains Mono', monospace; color:var(--dg-text); }
+      .dg-venc-resumen-vencida { color:var(--dg-danger) !important; font-weight:600; }
+      .dg-venc-resumen .dg-mini-btn { margin-top:10px; }
+      @media (max-width:520px) {
+        .dg-venc-resumen-fila { grid-template-columns:minmax(0,1fr) auto; row-gap:1px; }
+        .dg-venc-resumen-fila span { grid-column:1 / -1; }
+      }
+      @media (max-width:640px) {
+        .dg-venc-totales { grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }
+        .dg-venc-totales .dg-panel-card { padding:12px; }
+        .dg-venc-totales .dg-panel-card-valor { font-size:18px; }
+        .dg-venc-dia { min-height:44px; padding:4px 1px; }
+        .dg-venc-monto { font-size:9px; padding:0 2px; }
+        .dg-venc-num { font-size:12px; }
+      }
       .dg-quickview-btn { background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.1); color:var(--dg-text-dim); border-radius:100px; padding:7px 13px; font-size:13px; cursor:pointer; white-space:nowrap; transition: all .15s ease; }
       .dg-quickview-btn:hover { color:var(--dg-text); }
       .dg-quickview-on { background: rgba(var(--dg-accent-rgb),0.15); border-color:var(--dg-accent); color:var(--dg-accent); font-weight:600; }

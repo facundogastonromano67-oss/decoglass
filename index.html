@@ -14,10 +14,37 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="" />
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin=""></script>
-    <title>DECOGLASS · Gestión</title>
+    <title>DECOGLASS</title>
+    <meta name="description" content="DECOGLASS — Espejos LED" />
   </head>
   <body style="margin:0; background:#191826;">
-    <div id="root"></div>
+    <div id="root">
+      <div id="dg-precarga" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#F6ECE0;text-align:center;">
+        <div style="font-weight:700;letter-spacing:3px;font-size:16px;color:#60ADD9;">DECOGLASS</div>
+        <div id="dg-precarga-txt" style="font-size:14px;color:#B4ACC2;">Cargando…</div>
+        <div id="dg-precarga-ayuda" style="display:none;max-width:320px;font-size:13px;line-height:1.5;color:#B4ACC2;">
+          <p style="margin:0 0 14px;">Está tardando más de lo normal. Probá con otra conexión (wifi o datos), o abrí el link en Chrome o Safari.</p>
+          <a id="dg-precarga-wa" href="https://wa.me/5491173571399" style="display:inline-block;padding:12px 18px;border-radius:12px;background:#25D366;color:#fff;font-weight:700;text-decoration:none;">Consultar por WhatsApp</a>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Sin sintaxis moderna a propósito: tiene que correr hasta en teléfonos viejos.
+      (function () {
+        var esSeguimiento = /^\/seguimiento\//.test(location.pathname);
+        var txt = document.getElementById("dg-precarga-txt");
+        if (esSeguimiento && txt) txt.innerHTML = "Cargando tu pedido…";
+        if (!esSeguimiento) return;
+        var wa = document.getElementById("dg-precarga-wa");
+        if (wa) wa.href = "https://wa.me/5491173571399?text=" + encodeURIComponent("Hola! No me abre el link de seguimiento: " + location.href);
+        function mostrarAyuda() {
+          var ayuda = document.getElementById("dg-precarga-ayuda");
+          if (ayuda) ayuda.style.display = "block";
+        }
+        setTimeout(mostrarAyuda, 8000);
+        window.addEventListener("error", function () { setTimeout(mostrarAyuda, 1500); });
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
