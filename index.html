@@ -34,7 +34,21 @@
         var esSeguimiento = /^\/seguimiento\//.test(location.pathname);
         var txt = document.getElementById("dg-precarga-txt");
         if (esSeguimiento && txt) txt.innerHTML = "Cargando tu pedido…";
-        if (!esSeguimiento) return;
+        if (!esSeguimiento) {
+          // App interna: si no arranca, mostrar el error para poder mandarlo.
+          var ultimoError = "";
+          window.addEventListener("error", function (e) { ultimoError = (e && e.message) || ultimoError; });
+          setTimeout(function () {
+            if (!document.getElementById("dg-precarga")) return;
+            var ayudaInt = document.getElementById("dg-precarga-ayuda");
+            if (!ayudaInt) return;
+            ayudaInt.innerHTML = "<p style=\"margin:0 0 10px;\">La app no terminó de abrir en este teléfono.</p>" +
+              "<p style=\"margin:0;font-size:11px;word-break:break-word;\">" + (ultimoError ? "Error: " + ultimoError.replace(/</g, "&lt;") + "<br>" : "") +
+              String(navigator.userAgent || "").replace(/</g, "&lt;") + "</p>";
+            ayudaInt.style.display = "block";
+          }, 10000);
+          return;
+        }
         var wa = document.getElementById("dg-precarga-wa");
         if (wa) wa.href = "https://wa.me/5491173571399?text=" + encodeURIComponent("Hola! No me abre el link de seguimiento: " + location.href + "\n\n(Datos para Decoglass: no arrancó la página · " + String(navigator.userAgent || "").slice(0, 180) + ")");
         function mostrarAyuda() {
@@ -43,6 +57,63 @@
         }
         setTimeout(mostrarAyuda, 8000);
         window.addEventListener("error", function () { setTimeout(mostrarAyuda, 1500); });
+      })();
+    </script>
+    <script>
+      // Reemplazos para iPhone con iOS 12. En teléfonos nuevos no hacen nada.
+      (function () {
+        var g = typeof self !== "undefined" ? self : window;
+        if (typeof g.globalThis === "undefined") g.globalThis = g;
+        if (!Object.fromEntries) {
+          Object.fromEntries = function (it) {
+            var o = {};
+            if (Array.isArray(it)) { for (var i = 0; i < it.length; i++) o[it[i][0]] = it[i][1]; return o; }
+            it.forEach(function (v, k) { o[k] = v; });
+            return o;
+          };
+        }
+        if (typeof g.queueMicrotask !== "function") {
+          g.queueMicrotask = function (fn) { Promise.resolve().then(fn).catch(function (e) { setTimeout(function () { throw e; }); }); };
+        }
+        if (typeof Promise.allSettled !== "function") {
+          Promise.allSettled = function (lista) {
+            return Promise.all(Array.prototype.map.call(lista, function (p) {
+              return Promise.resolve(p).then(
+                function (value) { return { status: "fulfilled", value: value }; },
+                function (reason) { return { status: "rejected", reason: reason }; });
+            }));
+          };
+        }
+        if (typeof g.AbortController === "undefined") {
+          // Sin cortar de verdad el pedido (ese Safari no sabe), pero sin romper.
+          var Senal = function () { this.aborted = false; this.onabort = null; this._l = []; };
+          Senal.prototype.addEventListener = function (t, f) { if (t === "abort") this._l.push(f); };
+          Senal.prototype.removeEventListener = function (t, f) { this._l = this._l.filter(function (x) { return x !== f; }); };
+          g.AbortController = function () { this.signal = new Senal(); };
+          g.AbortController.prototype.abort = function () {
+            var s = this.signal; if (s.aborted) return; s.aborted = true;
+            var ev = { type: "abort" };
+            if (s.onabort) s.onabort(ev);
+            s._l.forEach(function (f) { f(ev); });
+          };
+        }
+        if (typeof g.ResizeObserver === "undefined") {
+          // Alcanza para los gráficos: avisa el tamaño al empezar y cuando cambia la ventana.
+          g.ResizeObserver = function (cb) { this._cb = cb; this._els = []; var yo = this; this._r = function () { yo._avisar(); }; };
+          g.ResizeObserver.prototype._avisar = function () {
+            var yo = this;
+            if (!yo._els.length) return;
+            yo._cb(yo._els.map(function (el) { var r = el.getBoundingClientRect(); return { target: el, contentRect: { width: r.width, height: r.height, top: 0, left: 0 } }; }), yo);
+          };
+          g.ResizeObserver.prototype.observe = function (el) {
+            var yo = this;
+            if (yo._els.indexOf(el) < 0) yo._els.push(el);
+            if (yo._els.length === 1) { window.addEventListener("resize", yo._r); window.addEventListener("orientationchange", yo._r); }
+            setTimeout(function () { yo._avisar(); }, 0);
+          };
+          g.ResizeObserver.prototype.unobserve = function (el) { this._els = this._els.filter(function (x) { return x !== el; }); };
+          g.ResizeObserver.prototype.disconnect = function () { this._els = []; window.removeEventListener("resize", this._r); window.removeEventListener("orientationchange", this._r); };
+        }
       })();
     </script>
     <script type="module" src="/src/main.jsx"></script>

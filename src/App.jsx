@@ -15743,11 +15743,33 @@ function linkViaCargo(numeroGuia) {
   return `https://viacargo.com.ar/seguimiento-de-envio/${(numeroGuia || "").trim()}/`;
 }
 
+// Si la app interna se rompe (por ejemplo en un teléfono muy viejo), en lugar
+// de una pantalla en blanco se ve qué pasó, para poder mandar la captura.
+class ErrorApp extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    let navegador = "";
+    try { navegador = navigator.userAgent; } catch (e) {}
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, background: "#191826", color: "#F6ECE0", textAlign: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+        <div style={{ fontWeight: 700, letterSpacing: 3, color: "#60ADD9" }}>DECOGLASS</div>
+        <div style={{ fontSize: 15, maxWidth: 340 }}>Algo falló al abrir la app en este teléfono.</div>
+        <div style={{ fontSize: 12, color: "#B4ACC2", maxWidth: 340, wordBreak: "break-word" }}>
+          Error: {String((this.state.error && this.state.error.message) || this.state.error).slice(0, 200)}<br />{navegador}
+        </div>
+        <button type="button" onClick={() => window.location.reload()} style={{ marginTop: 6, padding: "12px 20px", borderRadius: 12, border: 0, background: "#60ADD9", color: "#10242F", fontWeight: 700, fontSize: 15 }}>Recargar</button>
+      </div>
+    );
+  }
+}
+
 export default function Root() {
   const path = window.location.pathname;
   const matchGrupo = path.match(/^\/seguimiento\/grupo\/([^/]+)\/?$/);
   if (matchGrupo) return <ErrorSeguimiento><SeguimientoGrupoPublico grupoId={matchGrupo[1]} /></ErrorSeguimiento>;
   const match = path.match(/^\/seguimiento\/([^/]+)\/?$/);
   if (match) return <ErrorSeguimiento><SeguimientoPublico pedidoId={match[1]} /></ErrorSeguimiento>;
-  return <App />;
+  return <ErrorApp><App /></ErrorApp>;
 }
