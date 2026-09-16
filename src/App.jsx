@@ -15,6 +15,19 @@ import {
   PieChart, Pie, Cell
 } from "recharts";
 import sectorScenes from "./assets/sector-scenes.webp";
+import sectorScenesJpg from "./assets/sector-scenes.jpg";
+
+// Safari muestra WebP recién desde iOS 14. Se prueba una vez con una imagen
+// WebP mínima; si no la puede leer, las fotos de los sectores van en JPG.
+let fotoEscenas = sectorScenes;
+try {
+  const prueba = new Image();
+  prueba.onerror = () => {
+    fotoEscenas = sectorScenesJpg;
+    try { window.dispatchEvent(new Event("dg-sin-webp")); } catch (e) {}
+  };
+  prueba.src = "data:image/webp;base64,UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==";
+} catch (e) {}
 
 const ICONS = { Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones };
 
@@ -75,9 +88,16 @@ function colorSectorFoto(id) {
 function RoomScene({ sector }) {
   const visual = SECTOR_VISUAL[sector.id] || { accent: "var(--dg-accent)", position: "50% 50%" };
   const Icon = ICONS[sector.icon];
+  const [foto, setFoto] = useState(fotoEscenas);
+  useEffect(() => {
+    const usarJpg = () => setFoto(sectorScenesJpg);
+    if (fotoEscenas !== foto) setFoto(fotoEscenas);
+    window.addEventListener("dg-sin-webp", usarJpg);
+    return () => window.removeEventListener("dg-sin-webp", usarJpg);
+  }, []);
   return (
     <div className="dg-room-scene" style={{ "--accent": visual.accent }}>
-      <div className="dg-scene-image" style={{ backgroundImage: `url(${sectorScenes})`, backgroundPosition: visual.position }} />
+      <div className="dg-scene-image" style={{ backgroundImage: `url(${foto})`, backgroundPosition: visual.position }} />
       <div className="dg-scene-shade" />
       {Icon && <Icon className="dg-scene-watermark" />}
     </div>
@@ -12282,13 +12302,17 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
         else onSuccess({ role: "sector", sectorId: perfil.sector_id || null, tipo: rolReal, nombre: nombreMostrar, via: "portero" });
         return;
       }
+      const claveMal = errAuth && (errAuth.status === 400 || /invalid login credentials|invalid_grant|email not confirmed/i.test(String(errAuth.message || "")));
       const match = usuarios.find((u) => u.nombre.trim().toLowerCase() === usuario.toLowerCase() && u.clave === clave);
+      if (!match && errAuth && !claveMal) {
+        return setError(`No se pudo iniciar sesión. Detalle: ${String(errAuth.message || errAuth.name || errAuth).slice(0, 160)}${errAuth.status ? ` (código ${errAuth.status})` : ""}`);
+      }
       if (!match) return setError("Usuario o clave incorrectos.");
       if (match.aprobado === false) return setError("Tu cuenta todavía está pendiente de aprobación por un administrador.");
       if (match.rol === "admin") onSuccess({ role: "admin", nombre: match.nombre, via: "viejo" });
       else onSuccess({ role: "sector", sectorId: match.sectorId, tipo: match.rol, nombre: match.nombre, via: "viejo" });
     } catch (e) {
-      setError("No se pudo iniciar sesión. Revisá tu conexión e intentá de nuevo.");
+      setError(`No se pudo iniciar sesión. Revisá tu conexión e intentá de nuevo. Detalle: ${String((e && (e.message || e.name)) || e).slice(0, 160)}`);
     } finally {
       setCargando(false);
     }
