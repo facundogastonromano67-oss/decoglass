@@ -11769,6 +11769,31 @@ function nuevoEspejoPresupuesto(base) {
     cantidad: base ? base.cantidad : 1,
     capillaCurva: base ? base.capillaCurva : CAPILLA_CURVAS_PARADA[0],
     catalogoCodigo: base ? base.catalogoCodigo : "",
+    sinLed: base ? !!base.sinLed : false,
+  };
+}
+
+const DESCUENTO_SIN_LED = 0.3;
+// Un espejo sin luz no lleva touch, desempañante, hora ni bluetooth.
+function inputsSinLed(inputs) {
+  return { ...inputs, touch: "No", desemp: "No", horaTemp: "No", bluetoothSel: "Sin Bluetooth", panelesAdicionales: 0 };
+}
+function aplicarSinLed(r, cfg) {
+  const f = 1 - DESCUENTO_SIN_LED;
+  const M = cfg.materiales;
+  const costoLuz = unitCost(M.ledPrecio, M.ledRendimiento) + unitCost(M.transformadorPrecio, M.transformadorRendimiento);
+  const precioEfectivoSinIva = r.precioEfectivoSinIva * f;
+  const costoTotalEstimado = Math.max(0, r.costoTotalEstimado - costoLuz);
+  return {
+    ...r,
+    sinLed: true,
+    precioTransferencia: r.precioTransferencia * f,
+    precio3Cuotas: r.precio3Cuotas ? r.precio3Cuotas * f : r.precio3Cuotas,
+    precioEfectivoSinIva,
+    totalPedidoTransferencia: r.totalPedidoTransferencia * f,
+    costoTotalEstimado,
+    margenReal: precioEfectivoSinIva ? (precioEfectivoSinIva - costoTotalEstimado) / precioEfectivoSinIva : 0,
+    modeloComercial: `${r.modeloComercial} · sin LED`,
   };
 }
 
@@ -11811,6 +11836,10 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
       cantidad: Number(e.cantidad) || 1,
       cliente,
     };
+    if (e.sinLed) {
+      const sinLuz = inputsSinLed(inputs);
+      return { espejo: e, inputs: sinLuz, result: aplicarSinLed(computeQuote(sinLuz, config), config) };
+    }
     return { espejo: e, inputs, result: computeQuote(inputs, config) };
   });
 
@@ -11858,7 +11887,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
       id: uid(), fecha: new Date().toISOString().slice(0, 10),
       cliente: cliente || "Sin nombre", celular: celular || "",
       resumen: uno
-        ? `${uno.espejo.tipoProducto} ${uno.espejo.ancho}×${uno.espejo.alto} cm${cant(uno.espejo) > 1 ? ` ×${cant(uno.espejo)}` : ""}`
+        ? `${uno.espejo.tipoProducto} ${uno.espejo.ancho}×${uno.espejo.alto} cm${uno.espejo.sinLed ? " sin LED" : ""}${cant(uno.espejo) > 1 ? ` ×${cant(uno.espejo)}` : ""}`
         : `${lineas.length} espejos · ${unidades} unidad${unidades === 1 ? "" : "es"}`,
       espejos: lineas.map((l, i) => ({
         ubicacion: etiquetaEspejo(l.espejo, i), tipoProducto: l.espejo.tipoProducto,
@@ -11966,6 +11995,16 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
 
                     <div className="dg-quote-section-title"><Sparkles size={13} />Funciones</div>
                     <div className="dg-field-grid">
+                      <Field label="Luz">
+                        <select value={e.sinLed ? "sin" : "con"} onChange={(ev) => setEspejo(e.id, { sinLed: ev.target.value === "sin" })}>
+                          <option value="con">Con luz LED</option>
+                          <option value="sin">Sin LED (30% menos)</option>
+                        </select>
+                      </Field>
+                    </div>
+                    {e.sinLed && <p className="dg-hint dg-presu-sin-led">Sin luz no lleva touch, desempañante, hora ni bluetooth. El precio es un 30% menos que el mismo espejo con luz.</p>}
+                    {!e.sinLed && (
+                    <div className="dg-field-grid" style={{ marginTop: 12 }}>
                       <Field label="Touch"><select value={e.touch} onChange={(ev) => setEspejo(e.id, { touch: ev.target.value })}><option value="No">No</option><option value="Sí">Touch simple</option><option value="Doble">Doble touch (frontal + perimetral)</option></select></Field>
                       <Field label="Desempañante"><select value={e.desemp} onChange={(ev) => setEspejo(e.id, { desemp: ev.target.value })}><option>No</option><option>Sí</option></select></Field>
                       <Field label="Hora / Temperatura"><select value={e.horaTemp} onChange={(ev) => setEspejo(e.id, { horaTemp: ev.target.value })}><option>No</option><option>Sí</option></select></Field>
@@ -11985,6 +12024,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
                         <Field label="Paneles adicionales"><input type="number" min="0" value={e.panelesAdicionales} onChange={(ev) => setEspejo(e.id, { panelesAdicionales: ev.target.value })} /></Field>
                       )}
                     </div>
+                    )}
 
                     <div className="dg-presu-espejo-pie">
                       <span className="dg-presu-espejo-unit">
@@ -12931,6 +12971,7 @@ function Style() {
       .dg-modal-texto strong { color:#FFFFFF; }
       .dg-modal-texto-aviso { color:#E8B05C; }
       .dg-presu-lista-precio { margin:10px 0 0; }
+      .dg-presu-sin-led { margin:10px 0 0; }
       /* Como los materiales: sin scroll propio, en grilla para que todas las
          filas midan igual, y con padding para que el texto no toque el borde. */
       .dg-stock-lista { max-height:none; overflow:visible; }
