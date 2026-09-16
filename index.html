@@ -36,7 +36,7 @@
         if (esSeguimiento && txt) txt.innerHTML = "Cargando tu pedido…";
         if (!esSeguimiento) return;
         var wa = document.getElementById("dg-precarga-wa");
-        if (wa) wa.href = "https://wa.me/5491173571399?text=" + encodeURIComponent("Hola! No me abre el link de seguimiento: " + location.href);
+        if (wa) wa.href = "https://wa.me/5491173571399?text=" + encodeURIComponent("Hola! No me abre el link de seguimiento: " + location.href + "\n\n(Datos para Decoglass: no arrancó la página · " + String(navigator.userAgent || "").slice(0, 180) + ")");
         function mostrarAyuda() {
           var ayuda = document.getElementById("dg-precarga-ayuda");
           if (ayuda) ayuda.style.display = "block";

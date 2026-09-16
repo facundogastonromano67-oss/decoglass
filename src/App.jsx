@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { Component, Fragment, useState, useEffect, useRef } from "react";
 import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore } from "./lib/storage";
 import { supabase } from "./lib/supabaseClient";
 import {
@@ -452,6 +452,12 @@ function confirmarEmbaladoInterior(pedido) {
 
 function esPedidoConEnvio(pedido) {
   return ENVIO_METODOS.includes(pedido?.metodo);
+}
+
+// El día que se manda (lo coordina PostVenta). Si todavía no se cargó, para el
+// flete y los avisos se usa «Listo para» como referencia.
+function fechaEnvioOListo(pedido) {
+  return pedido?.fechaEnvio || pedido?.listo || "";
 }
 
 function costoEnvioPedido(pedido) {
@@ -4121,7 +4127,7 @@ function emptyPedido(prefill) {
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
-    motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "", destinoLat: null, destinoLng: null,
+    motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "", destinoLat: null, destinoLng: null, fechaEnvio: "",
     tipoPedido: prefill?.tipoPedido || "venta", urgente: prefill?.urgente || false, reclamoId: prefill?.reclamoId || null,
     sinCargo: prefill?.sinCargo || false,
   };
@@ -4840,11 +4846,12 @@ function calcularPendientes(pedidos, reclamos, stockMateriales) {
       add("fabrica", "alta", `afu-${p.id}`, quien, `${pedidoListaFabrica(p) === "en_grabado" ? "grabado" : "biselado"} pasado de fecha (prometido ${p[campo]})`);
     }
 
-    if (p.estado === "Espejo listo" && esPedidoConEnvio(p) && !p.listo)
-      add("postventa", "media", `lst-${p.id}`, quien, "espejo listo — falta coordinar la fecha de entrega");
+    if (p.estado === "Espejo listo" && esPedidoConEnvio(p) && !p.fechaEnvio)
+      add("postventa", "media", `lst-${p.id}`, quien, "espejo listo — falta coordinar la fecha de envío");
 
-    if (p.listo && (p.listo === hoy || p.listo === manana) && esPedidoConEnvio(p) && !p.envioConfirmado && !cerrado)
-      add("postventa", "alta", `ent-${p.id}`, quien, `entrega ${p.listo === hoy ? "HOY" : "mañana"} sin confirmar con el cliente`);
+    const diaEnvio = fechaEnvioOListo(p);
+    if (diaEnvio && (diaEnvio === hoy || diaEnvio === manana) && esPedidoConEnvio(p) && !p.envioConfirmado && !cerrado)
+      add("postventa", "alta", `ent-${p.id}`, quien, `envío ${diaEnvio === hoy ? "HOY" : "mañana"} sin confirmar con el cliente`);
 
     if (cerrado && pedidoSaldo(p) > 0)
       add("logistica", "alta", `sld-${p.id}`, quien, `entregado con saldo sin cobrar: ${money(pedidoSaldo(p))}`);
@@ -6852,6 +6859,7 @@ function semanaActual() {
 function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
+  const [filaAbierta, setFilaAbierta] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [mapaPedido, setMapaPedido] = useState(null);
 
@@ -6884,7 +6892,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   function mensaje(items) {
     const p = items[0];
     const espejos = items.map((e) => `Espejo ${e.ancho}×${e.alto} cm`).join("\n");
-    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\n${espejos}\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha estimada: ${p.listo || "a coordinar"}\n\n${detalleCobroEntregaGrupo(items)}\n\n¿Podés confirmarnos que estos datos son correctos?`;
+    return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\n${espejos}\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha de envío: ${p.fechaEnvio ? fechaEntregaCorta(p.fechaEnvio) : "a coordinar"}\n\n${detalleCobroEntregaGrupo(items)}\n\n¿Podés confirmarnos que estos datos son correctos?`;
   }
   function copiar(items) {
     const clave = items[0].grupoId || items[0].id;
@@ -6917,9 +6925,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
         const filas = grupos
           .map((items) => {
             const p = items[0];
-            const fecha = items.map((x) => x.listo).filter(Boolean).sort()[0] || "";
+            const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
             return {
-              clave: p.grupoId || p.id, p, fecha,
+              clave: p.grupoId || p.id, p, items, fecha,
+              listoPara: items.map((x) => x.listo).filter(Boolean).sort()[0] || "",
               productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
               saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
               flete: items.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0),
@@ -6950,7 +6959,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                 <table className="dg-envios-tabla">
                   <thead>
                     <tr>
-                      <th>Fecha</th><th>Nombre</th><th>Barrio</th><th>Productos</th><th>Dirección</th>
+                      <th>Envío</th><th>Nombre</th><th>Barrio</th><th>Productos</th><th>Dirección</th>
                       <th className="dg-num">Saldo restante</th><th className="dg-num">Monto flete</th>
                     </tr>
                   </thead>
@@ -6958,13 +6967,21 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                     {filas.map((f) => {
                       const atrasada = f.fecha && f.fecha < semana.hoy;
                       const deSemana = f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo;
+                      const abierta = filaAbierta === f.clave;
+                      const irATarjeta = (ev) => {
+                        ev.stopPropagation();
+                        document.getElementById(`envio-${f.clave}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      };
                       return (
-                        <tr key={f.clave}
-                          className={`${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""}`}
-                          onClick={() => document.getElementById(`envio-${f.clave}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                          title="Ir a la tarjeta de este envío">
-                          <td className="dg-envios-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : <span className="dg-envios-falta">sin fecha</span>}</td>
-                          <td className="dg-envios-nombre">{f.p.cliente || "Sin nombre"}</td>
+                        <Fragment key={f.clave}>
+                        <tr
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""}`}
+                          onClick={() => setFilaAbierta(abierta ? null : f.clave)}
+                          aria-expanded={abierta}>
+                          <td className="dg-envios-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : <span className="dg-envios-falta">a coordinar</span>}</td>
+                          <td className="dg-envios-nombre">
+                            <button type="button" className="dg-envios-nombre-btn" onClick={irATarjeta} title="Ir a la tarjeta de este envío">{f.p.cliente || "Sin nombre"}</button>
+                          </td>
                           <td>{f.p.barrio || <span className="dg-envios-falta">—</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
                           <td className="dg-envios-dir">{[f.p.detalleEntrega, f.p.piso].filter(Boolean).join(" · ") || <span className="dg-envios-falta">sin dirección</span>}</td>
@@ -6975,6 +6992,23 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                               : <span className="dg-envios-falta">sin cargar</span>}
                           </td>
                         </tr>
+                        {abierta && (
+                          <tr className="dg-envios-detalle">
+                            <td colSpan={7}>
+                              <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
+                                <label className="dg-envios-detalle-fecha">
+                                  <span>Fecha de envío</span>
+                                  <input type="date" disabled={!canEdit} value={f.p.fechaEnvio || ""} onChange={(e) => updateShipping(f.p, { fechaEnvio: e.target.value })} />
+                                </label>
+                                <span><b>Teléfono</b> {f.p.celular || "—"}</span>
+                                <span><b>Horario</b> {f.p.horarioEntrega || "a coordinar"}</span>
+                                <span><b>Listo para</b> {f.listoPara ? fechaEntregaCorta(f.listoPara) : "—"}</span>
+                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -7015,7 +7049,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
             <details className="dg-shipping-editor">
               <summary>
                 <span className="dg-shipping-editor-icon"><Pencil size={14} /></span>
-                <span><strong>Cargar o corregir datos de entrega</strong><small>{[p.barrio, p.detalleEntrega].filter(Boolean).join(" · ") || "Sin dirección"} {p.listo && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> {fechaEntregaCorta(p.listo)}</span>}</small></span>
+                <span><strong>Cargar o corregir datos de entrega</strong><small>{[p.barrio, p.detalleEntrega].filter(Boolean).join(" · ") || "Sin dirección"} {p.fechaEnvio && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> Envío {fechaEntregaCorta(p.fechaEnvio)}</span>}</small></span>
                 <ChevronRight size={16} />
               </summary>
               <EnterFlow autoFocus={false} className="dg-shipping-editor-body">
@@ -7025,7 +7059,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                   <div className="dg-shipping-field dg-shipping-address"><Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega || ""} onChange={(e) => updateShipping(p, { detalleEntrega: e.target.value })} placeholder="Calle y número" /></Field></div>
                   <div className="dg-shipping-field"><Field label="Piso / Depto"><input disabled={!canEdit} value={p.piso || ""} onChange={(e) => updateShipping(p, { piso: e.target.value })} placeholder="Ej: 3° B — o 'casa'" /></Field></div>
                   <div className="dg-shipping-field"><Field label="Horario"><input disabled={!canEdit} value={p.horarioEntrega || ""} onChange={(e) => updateShipping(p, { horarioEntrega: e.target.value })} placeholder="Ej: 13 a 17 hs" /></Field></div>
-                  <div className="dg-shipping-field"><Field label="Fecha estimada"><input type="date" disabled={!canEdit} value={p.listo || ""} onChange={(e) => updateShipping(p, { listo: e.target.value })} /></Field></div>
+                  <div className="dg-shipping-field"><Field label="Fecha de envío"><input type="date" disabled={!canEdit} value={p.fechaEnvio || ""} onChange={(e) => updateShipping(p, { fechaEnvio: e.target.value })} /></Field></div>
                 </div>
                 {canEdit && (
                   <div className="dg-shipping-mapa">
@@ -7617,7 +7651,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
 
   const confirmados = pedidos
     .filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.clienteAvisado && p.envioConfirmado && p.estado === "Espejo listo")
-    .sort((a, b) => (a.listo || "9999").localeCompare(b.listo || "9999"));
+    .sort((a, b) => (fechaEnvioOListo(a) || "9999").localeCompare(fechaEnvioOListo(b) || "9999"));
 
   const grupoIdCounts = confirmados.reduce((acc, p) => {
     if (p.grupoId) acc[p.grupoId] = (acc[p.grupoId] || 0) + 1;
@@ -7628,14 +7662,14 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     const comparteGrupo = p.grupoId && grupoIdCounts[p.grupoId] > 1;
     const key = comparteGrupo
       ? `grupo:${p.grupoId}`
-      : `entrega:${normal(p.cliente)}|${normal(p.celular)}|${normal(p.detalleEntrega)}|${p.listo || ""}`;
+      : `entrega:${normal(p.cliente)}|${normal(p.celular)}|${normal(p.detalleEntrega)}|${fechaEnvioOListo(p)}`;
     if (!acc[key]) acc[key] = { key, pedidos: [] };
     acc[key].pedidos.push(p);
     return acc;
   }, {});
   const entregas = Object.values(gruposMap)
     .map((grupo) => ({ ...grupo, pedidos: grupo.pedidos.sort((a, b) => (a.orden || 0) - (b.orden || 0)) }))
-    .sort((a, b) => (a.pedidos[0]?.listo || "9999").localeCompare(b.pedidos[0]?.listo || "9999"));
+    .sort((a, b) => (fechaEnvioOListo(a.pedidos[0]) || "9999").localeCompare(fechaEnvioOListo(b.pedidos[0]) || "9999"));
 
   function setEnvioPagadoGrupo(items, pagado) {
     const ids = new Set(items.map((p) => p.id));
@@ -7795,7 +7829,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
           const direccion = datoEntrega(items, "detalleEntrega", "Sin dirección");
           const barrio = datoEntrega(items, "barrio", "");
           const piso = datoEntrega(items, "piso", "");
-          const fecha = datoEntrega(items, "listo", "Sin fecha");
+          const fecha = items.map(fechaEnvioOListo).find(Boolean) || "Sin fecha";
           const saldo = items.reduce((total, p) => total + Math.max(0, pedidoSaldo(p)), 0);
           const costoEnvio = items.reduce((mayor, p) => Math.max(mayor, costoEnvioPedido(p)), 0);
           const pedidosConCosto = items.filter((p) => costoEnvioPedido(p) > 0);
@@ -12912,6 +12946,17 @@ function Style() {
       .dg-envios-tabla { width:100%; min-width:760px; border-collapse:collapse; font-size:13px; }
       .dg-envios-tabla th { position:sticky; top:0; padding:9px 12px; text-align:left; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
       .dg-envios-tabla td { padding:9px 12px; vertical-align:top; color:var(--dg-text); border-top:1px solid rgba(var(--dg-line-rgb),.08); }
+      /* Todas las filas del mismo alto: una línea, lo que no entra se corta con «…». Tocando la fila se abre. */
+      .dg-envios-fila > td { height:42px; box-sizing:border-box; vertical-align:middle; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
+      .dg-envios-fila > td.dg-envios-productos, .dg-envios-fila > td.dg-envios-dir { max-width:200px; }
+      .dg-envios-fila-abierta > td { white-space:normal; overflow:visible; vertical-align:top; background:rgba(var(--dg-accent-rgb),.08); }
+      .dg-envios-nombre-btn { border:0; background:transparent; padding:0; font:inherit; font-weight:600; color:var(--dg-accent-2); text-decoration:underline; text-underline-offset:3px; cursor:pointer; text-align:left; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:inherit; }
+      .dg-envios-detalle > td { padding:0 12px 12px; border-top:0; background:rgba(var(--dg-accent-rgb),.08); cursor:default; }
+      .dg-envios-detalle-in { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; padding-top:4px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-envios-detalle-in b { font-weight:600; color:var(--dg-text); margin-right:4px; }
+      .dg-envios-detalle-fecha { display:flex; align-items:center; gap:8px; }
+      .dg-envios-detalle-fecha span { font-weight:600; color:var(--dg-text); }
+      .dg-envios-detalle-fecha input { width:auto; padding:5px 8px; font-size:13px; }
       .dg-envios-tabla tbody tr { cursor:pointer; }
       .dg-envios-tabla tbody tr:hover { background:rgba(var(--dg-accent-rgb),.06); }
       .dg-envios-tabla .dg-num { text-align:right; white-space:nowrap; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
@@ -15278,8 +15323,61 @@ function ChatEquipoPanel({ session, onClose }) {
   );
 }
 
+// Una consulta que tarda más de lo razonable se corta: mejor avisar y dejar
+// reintentar que dejar al cliente mirando «Buscando tu pedido…» para siempre.
+function conLimiteDeTiempo(promesa, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`sin respuesta en ${Math.round(ms / 1000)}s`)), ms);
+    promesa.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+// Lo que le llega a PostVenta si el cliente toca WhatsApp desde un error:
+// qué falló y desde qué teléfono, para poder ver la causa.
+function linkAyudaSeguimiento(motivo) {
+  let navegador = "";
+  try { navegador = navigator.userAgent.slice(0, 180); } catch (e) {}
+  const texto = `Hola! No me abre el link de seguimiento: ${window.location.href}\n\n(Datos para Decoglass: ${motivo || "sin detalle"} · ${navegador})`;
+  return `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(texto)}`;
+}
+function PantallaErrorSeguimiento({ motivo, onReintentar }) {
+  let tema = "dark";
+  try { tema = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) {}
+  return (
+    <div className="dg-app dg-seguimiento" data-theme={tema}>
+      <Style />
+      <div className="dg-seguimiento-wrap">
+        <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
+        <div className="dg-empty" style={{ marginTop: 24 }}>
+          No pudimos cargar tu pedido. Revisá la conexión (probá con wifi o con datos) y volvé a intentar.
+        </div>
+        {onReintentar && (
+          <button type="button" className="dg-btn-ghost dg-seguimiento-whatsapp-2" onClick={onReintentar}><RotateCcw size={14} /> Reintentar</button>
+        )}
+        <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkAyudaSeguimiento(motivo)} target="_blank" rel="noopener noreferrer">
+          <MessageCircle size={15} /> Avisarnos por WhatsApp
+        </a>
+      </div>
+    </div>
+  );
+}
+// Si algo se rompe adentro del portal, el cliente ve un aviso con WhatsApp en
+// lugar de una pantalla en blanco.
+class ErrorSeguimiento extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      const motivo = `error: ${String(this.state.error && this.state.error.message || this.state.error).slice(0, 120)}`;
+      return <PantallaErrorSeguimiento motivo={motivo} onReintentar={() => window.location.reload()} />;
+    }
+    return this.props.children;
+  }
+}
+
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
+  const [fallo, setFallo] = useState("");            // la conexión falló (no es lo mismo que «no existe»)
+  const [intento, setIntento] = useState(0);
   const [tema] = useState(() => {
     try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
   });
@@ -15288,18 +15386,24 @@ function SeguimientoPublico({ pedidoId }) {
     let activo = true;
     async function cargar() {
       try {
-        const p = await pedidosStore.getOne(pedidoId);
-        if (activo) setPedido(p || null);
-      } catch (e) { if (activo) setPedido(null); }
+        const p = await conLimiteDeTiempo(pedidosStore.getOne(pedidoId), 15000);
+        if (activo) { setPedido(p || null); setFallo(""); }
+      } catch (e) {
+        // Si ya se estaba mostrando el pedido, un corte momentáneo no lo borra.
+        if (activo) setFallo(String(e && e.message || e).slice(0, 120) || "error de conexión");
+      }
     }
     cargar();
     const interval = window.setInterval(cargar, 20000);
     return () => { activo = false; window.clearInterval(interval); };
-  }, [pedidoId]);
+  }, [pedidoId, intento]);
 
   const tracking = useEnvioTracking(pedido ? (pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id) : null);
   const enViaje = envioEnViaje(tracking);
 
+  if (pedido === undefined && fallo) {
+    return <PantallaErrorSeguimiento motivo={fallo} onReintentar={() => { setFallo(""); setIntento((x) => x + 1); }} />;
+  }
   if (pedido === undefined) {
     return (
       <div className="dg-app dg-seguimiento" data-theme={tema}>
@@ -15358,8 +15462,8 @@ function SeguimientoPublico({ pedidoId }) {
           {pasoActual === 1 && etapaFabricaPublica(pedido) && (
             <p className="dg-hint" style={{ marginTop: 10 }}><strong>{etapaFabricaPublica(pedido)}</strong></p>
           )}
-          {pedido.listo && pasoActual < pasosPub.length && (
-            <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{pedido.listo}</strong></p>
+          {fechaEnvioOListo(pedido) && pasoActual < pasosPub.length && (
+            <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{fechaEntregaCorta(fechaEnvioOListo(pedido)) || fechaEnvioOListo(pedido)}</strong></p>
           )}
           {pasoActual === 3 && !esInterior && (
             enViaje
@@ -15426,6 +15530,8 @@ function SeguimientoPublico({ pedidoId }) {
 
 function SeguimientoGrupoPublico({ grupoId }) {
   const [espejos, setEspejos] = useState(undefined); // undefined = cargando, null/[] = no encontrado
+  const [fallo, setFallo] = useState("");
+  const [intento, setIntento] = useState(0);
   const [tema] = useState(() => {
     try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
   });
@@ -15434,18 +15540,23 @@ function SeguimientoGrupoPublico({ grupoId }) {
     let activo = true;
     async function cargar() {
       try {
-        const lista = await pedidosStore.getByGrupoId(grupoId);
-        if (activo) setEspejos(lista);
-      } catch (e) { if (activo) setEspejos([]); }
+        const lista = await conLimiteDeTiempo(pedidosStore.getByGrupoId(grupoId), 15000);
+        if (activo) { setEspejos(lista); setFallo(""); }
+      } catch (e) {
+        if (activo) setFallo(String(e && e.message || e).slice(0, 120) || "error de conexión");
+      }
     }
     cargar();
     const interval = window.setInterval(cargar, 20000);
     return () => { activo = false; window.clearInterval(interval); };
-  }, [grupoId]);
+  }, [grupoId, intento]);
 
   const tracking = useEnvioTracking(grupoId ? `grupo:${grupoId}` : null);
   const enViaje = envioEnViaje(tracking);
 
+  if (espejos === undefined && fallo) {
+    return <PantallaErrorSeguimiento motivo={fallo} onReintentar={() => { setFallo(""); setIntento((x) => x + 1); }} />;
+  }
   if (espejos === undefined) {
     return (
       <div className="dg-app dg-seguimiento" data-theme={tema}>
@@ -15594,8 +15705,8 @@ function linkViaCargo(numeroGuia) {
 export default function Root() {
   const path = window.location.pathname;
   const matchGrupo = path.match(/^\/seguimiento\/grupo\/([^/]+)\/?$/);
-  if (matchGrupo) return <SeguimientoGrupoPublico grupoId={matchGrupo[1]} />;
+  if (matchGrupo) return <ErrorSeguimiento><SeguimientoGrupoPublico grupoId={matchGrupo[1]} /></ErrorSeguimiento>;
   const match = path.match(/^\/seguimiento\/([^/]+)\/?$/);
-  if (match) return <SeguimientoPublico pedidoId={match[1]} />;
+  if (match) return <ErrorSeguimiento><SeguimientoPublico pedidoId={match[1]} /></ErrorSeguimiento>;
   return <App />;
 }
