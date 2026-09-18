@@ -4537,6 +4537,10 @@ function prioridadListaArmar(pedido) {
    =========================================================================== */
 const TALLER_MAX_DIA = 10;
 const TALLER_MAX_ESPECIALES_DIA = 5;
+// El sábado se trabaja medio día.
+const TALLER_MAX_SIMPLES_SABADO = 3;
+const TALLER_MAX_ESP_SABADO = 3;
+const TALLER_MAX_SABADO = TALLER_MAX_SIMPLES_SABADO + TALLER_MAX_ESP_SABADO;
 const DIAS_TALLER = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 function claseTaller(pedido) {
@@ -4649,10 +4653,16 @@ function planTaller(pedidos, hoyIso) {
     if (!quedan.length && fecha > ultimoFijado && fecha > hastaSabado) break;
     const hechos = fecha === hoyIso ? hechosHoy : [];
     const items = [];
+    const sabado = new Date(`${fecha}T12:00:00`).getDay() === 6;
+    const maxDia = sabado ? TALLER_MAX_SABADO : TALLER_MAX_DIA;
+    const maxEsp = sabado ? TALLER_MAX_ESP_SABADO : TALLER_MAX_ESPECIALES_DIA;
+    const maxSimples = sabado ? TALLER_MAX_SIMPLES_SABADO : TALLER_MAX_DIA;
     let usados = hechos.reduce((t, x) => t + x.unidades, 0);
     let especiales = hechos.filter((x) => x.clase === "especial").reduce((t, x) => t + x.unidades, 0);
-    const libre = () => TALLER_MAX_DIA - usados;
-    const libreEsp = () => TALLER_MAX_ESPECIALES_DIA - especiales;
+    let simplesHoy = usados - especiales;
+    const libre = () => maxDia - usados;
+    const libreEsp = () => maxEsp - especiales;
+    const libreSimples = () => maxSimples - simplesHoy;
     const tomar = (x, n, fijadoAca) => {
       n = Math.min(n, x.restantes);
       if (n <= 0) return;
@@ -4660,13 +4670,17 @@ function planTaller(pedidos, hoyIso) {
       if (previo) previo.unidades += n;
       else items.push({ x, pedido: x.pedido, clase: x.clase, desde: x.unidades - x.restantes, unidades: n, total: x.unidades, fijadoAca });
       x.restantes -= n; usados += n;
-      if (x.clase === "especial") especiales += n;
+      if (x.clase === "especial") especiales += n; else simplesHoy += n;
     };
     // Cuánto le toca a un pedido hoy. Un pedido partible toma hasta 5 por día
     // (salvo en el relleno final), así no frena a los demás.
     const intentar = (x, { ignorarTopeEsp = false, relleno = false } = {}) => {
       if (x.restantes <= 0) return;
-      const lim = x.clase === "especial" && !ignorarTopeEsp ? Math.min(libre(), libreEsp()) : libre();
+      // El sábado no se cortan esmerilados nuevos: solo se arman los que volvieron.
+      if (sabado && grupoListaArmar(x.pedido) === "esmerilados_cortar") return;
+      const lim = x.clase === "especial"
+        ? (ignorarTopeEsp && !sabado ? libre() : Math.min(libre(), libreEsp()))
+        : Math.min(libre(), libreSimples());
       if (lim <= 0) return;
       if (x.partible) {
         // Su parte del día es una sola; más espejos, solo en el relleno final.
@@ -4699,7 +4713,8 @@ function planTaller(pedidos, hoyIso) {
 
     items.sort((a, b) => (b.fijadoAca ? 1 : 0) - (a.fijadoAca ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido));
     dias.push({
-      fecha, items, hechos,
+      fecha, items, hechos, sabado,
+      max: maxDia,
       total: usados,
       simples: items.filter((i) => i.clase === "simple").reduce((t, i) => t + i.unidades, 0) + hechos.filter((h) => h.clase === "simple").reduce((t, h) => t + h.unidades, 0),
       especiales,
@@ -9354,7 +9369,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           return (
             <>
               <p className="dg-dias-ayuda">
-                Hasta {TALLER_MAX_DIA} espejos por día y nunca más esmerilados/biselados que simples. Se reparte solo por urgencia y fecha de entrega.
+                Hasta {TALLER_MAX_DIA} espejos por día y nunca más esmerilados/biselados que simples. El sábado, medio día: hasta {TALLER_MAX_SIMPLES_SABADO} simples y {TALLER_MAX_ESP_SABADO} esmerilados para armar. Se reparte solo por urgencia y fecha de entrega.
                 {canEdit ? " Para cambiar un espejo de día usá «Pasar a otro día»." : ""}{puedeArrastrar ? " También podés arrastrarlo." : ""}
               </p>
               {plan.map((dia) => {
@@ -9363,8 +9378,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 semanaAnterior = semana;
                 const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && dia.items.some((x) => coincide(x.pedido)));
                 const hechosU = dia.hechos.reduce((t, x) => t + x.unidades, 0);
-                const lleno = dia.total >= TALLER_MAX_DIA;
-                const pasado = dia.total > TALLER_MAX_DIA;
+                const lleno = dia.total >= dia.max;
+                const pasado = dia.total > dia.max;
                 const items = dia.items.filter((x) => coincide(x.pedido));
                 return (
                   <Fragment key={dia.fecha}>
@@ -9378,9 +9393,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                       <button type="button" className="dg-dia-taller-head" onClick={() => toggleDia(dia.fecha)} aria-expanded={abierto}>
                         <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
+                        {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
                         <span className="dg-dia-taller-mix">{dia.simples} simple{dia.simples === 1 ? "" : "s"} · {dia.especiales} esm./bisel</span>
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
-                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{dia.total}/{TALLER_MAX_DIA}</span>
+                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{dia.total}/{dia.max}</span>
                       </button>
                       {abierto && (
                         <div className="dg-dia-taller-body">
@@ -13777,6 +13793,7 @@ function Style() {
       .dg-dia-taller-abierto > .dg-dia-taller-head .dg-fab-grupo-chevron { transform:rotate(90deg); }
       .dg-dia-taller-nombre { font-size:15px; font-weight:600; color:var(--dg-text); }
       .dg-dia-taller-hoy .dg-dia-taller-nombre { color:var(--dg-accent-2); }
+      .dg-dia-taller-medio { font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-warning-rgb),.16); color:var(--dg-text); }
       .dg-dia-taller-mix { font-size:12px; color:var(--dg-text-dim); }
       .dg-dia-taller-hechos { display:inline-flex; align-items:center; gap:3px; font-size:12px; font-weight:600; color:var(--dg-success); }
       .dg-dia-taller-cupo { margin-left:auto; min-width:48px; text-align:center; padding:3px 9px; border-radius:99px; font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; background:rgba(var(--dg-line-rgb),.08); color:var(--dg-text); }
