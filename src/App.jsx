@@ -4516,6 +4516,215 @@ function prioridadListaArmar(pedido) {
   return ORDEN_GRUPOS_ARMAR.indexOf(grupoListaArmar(pedido));
 }
 
+
+/* ===========================================================================
+   Reparto del taller por día (lunes a sábado).
+
+   - Máximo 10 espejos por día, contando unidades.
+   - Nunca más «especiales» (esmerilados y biselados) que simples: hasta 5 por
+     día. Si ya no quedan simples para repartir, el día se completa con
+     especiales (y al revés).
+   - Orden: primero lo que ya está empezado y los esmerilados que volvieron
+     del grabado, después urgentes y reclamos, después la fecha de entrega más
+     cercana, después los más viejos.
+   - Lo que se terminó hoy cuenta para el día de hoy (así el día no se vuelve
+     a llenar a medida que terminan).
+   - Un pedido que no entra en un día (más de 10, o más de 5 esmerilados/
+     biselados) se reparte en varios días, hasta 5 por día, así no frena a
+     los demás. Si sobra lugar, se completa con más espejos de ese pedido.
+   - Un pedido se puede fijar a mano en un día (campo diaTaller): va a ese día
+     aunque se pase del máximo, y el resto se reacomoda.
+   =========================================================================== */
+const TALLER_MAX_DIA = 10;
+const TALLER_MAX_ESPECIALES_DIA = 5;
+const DIAS_TALLER = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+
+function claseTaller(pedido) {
+  return pedidoProcesoTaller(pedido) === "simples" ? "simple" : "especial";
+}
+// Es trabajo del taller: está en «Espejos para armar» y no está terminado.
+function entraEnPlanTaller(pedido) {
+  if (!pedido || pedidoEstaListo(pedido)) return false;
+  if (pedido.estado === "Cancelado" || pedido.estado === "Sin pasar a fábrica") return false;
+  return pedidoListaFabrica(pedido) === "armar";
+}
+function unidadesPendientesTaller(pedido) {
+  if (esPedidoMultiUnidad(pedido)) return unidadesDePedido(pedido).filter((u) => u.etapa !== "embalado").length;
+  return Math.max(1, Number(pedido?.cant) || 1);
+}
+function diaLocalDe(fechaHora) {
+  if (!fechaHora) return "";
+  const d = new Date(fechaHora);
+  return isNaN(d.getTime()) ? "" : isoLocal(d);
+}
+// Cuántas unidades de este pedido se terminaron en el taller ese día.
+function unidadesHechasTallerEl(pedido, dia) {
+  if (!pedido || pedido.estado === "Cancelado") return 0;
+  const proceso = pedidoProcesoTaller(pedido);
+  const cant = Math.max(1, Number(pedido.cant) || 1);
+  let n = 0;
+  if (esPedidoMultiUnidad(pedido)) {
+    n += unidadesDePedido(pedido).filter((u) => u.etapa === "embalado" && diaLocalDe(u.produccionEmbaladoFecha) === dia).length;
+  } else if (diaLocalDe(pedido.produccionEmbaladoFecha) === dia) {
+    n += cant;
+  }
+  // Un esmerilado cortado ese día (para mandar a grabar) también fue trabajo del día.
+  if (proceso === "esmerilados" && diaLocalDe(pedido.produccionCortadoFecha) === dia && diaLocalDe(pedido.produccionEmbaladoFecha) !== dia) n += cant;
+  return n;
+}
+function rangoTaller(pedido) {
+  const empezado = !!pedido.produccionEtapa || (esPedidoMultiUnidad(pedido) && unidadesDePedido(pedido).some((u) => u.etapa));
+  if (empezado || grupoListaArmar(pedido) === "esmerilados_armar") return 0;
+  if (esUrgente(pedido)) return 1;
+  return 2;
+}
+function compararPrioridadTaller(a, b) {
+  const ra = rangoTaller(a), rb = rangoTaller(b);
+  if (ra !== rb) return ra - rb;
+  const fa = a.listo || "9999-12-31", fb = b.listo || "9999-12-31";
+  if (fa !== fb) return fa < fb ? -1 : 1;
+  const ca = a.fecha || "9999-12-31", cb = b.fecha || "9999-12-31";
+  if (ca !== cb) return ca < cb ? -1 : 1;
+  return (Number(a.orden) || 0) - (Number(b.orden) || 0);
+}
+function siguienteDiaTaller(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  let f = new Date(y, m - 1, d + 1);
+  if (f.getDay() === 0) f = new Date(f.getFullYear(), f.getMonth(), f.getDate() + 1);
+  return isoLocal(f);
+}
+function primerDiaTaller(hoyIso) {
+  const [y, m, d] = hoyIso.split("-").map(Number);
+  const f = new Date(y, m - 1, d);
+  return f.getDay() === 0 ? siguienteDiaTaller(hoyIso) : hoyIso;
+}
+// Un día fijado a mano que cae en domingo pasa al lunes; uno que ya pasó, a hoy.
+function diaFijadoValido(dia, primero) {
+  if (!dia || !/^\d{4}-\d{2}-\d{2}$/.test(dia)) return "";
+  if (dia < primero) return primero;
+  const [y, m, d] = dia.split("-").map(Number);
+  return new Date(y, m - 1, d).getDay() === 0 ? siguienteDiaTaller(dia) : dia;
+}
+function sabadoDeLaSemana(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const f = new Date(y, m - 1, d);
+  const faltan = (6 - f.getDay() + 7) % 7;
+  return isoLocal(new Date(f.getFullYear(), f.getMonth(), f.getDate() + faltan));
+}
+function nombreDiaTaller(iso, hoyIso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const f = new Date(y, m - 1, d);
+  const base = `${DIAS_TALLER[f.getDay()]} ${d}/${m}`;
+  if (iso === hoyIso) return `Hoy · ${base}`;
+  if (iso === siguienteDiaTaller(hoyIso) && f.getDay() !== 1) return `Mañana · ${base}`;
+  return base;
+}
+
+function planTaller(pedidos, hoyIso) {
+  const primero = primerDiaTaller(hoyIso);
+  // Un pedido que no entra entero en un día (más de 10 espejos, o más de 5
+  // esmerilados/biselados) se reparte en varios días.
+  const pool = (pedidos || []).filter(entraEnPlanTaller)
+    .map((p) => {
+      const unidades = unidadesPendientesTaller(p);
+      const clase = claseTaller(p);
+      const tope = clase === "especial" ? TALLER_MAX_ESPECIALES_DIA : TALLER_MAX_DIA;
+      return { pedido: p, unidades, restantes: unidades, clase, fijado: diaFijadoValido(p.diaTaller, primero), partible: unidades > tope };
+    })
+    .filter((x) => x.unidades > 0)
+    .sort((a, b) => compararPrioridadTaller(a.pedido, b.pedido));
+  const hechosHoy = primero === hoyIso
+    ? (pedidos || []).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
+    : [];
+
+  const ultimoFijado = pool.map((x) => x.fijado).filter(Boolean).sort().pop() || primero;
+  const hastaSabado = sabadoDeLaSemana(primero);
+  const empezado = (x) => x.restantes < x.unidades;
+  const ordenDelDia = (a, b) => (empezado(b) ? 1 : 0) - (empezado(a) ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido);
+
+  const dias = [];
+  let fecha = primero;
+  for (let vuelta = 0; vuelta < 400; vuelta++) {
+    const quedan = pool.filter((x) => x.restantes > 0);
+    if (!quedan.length && fecha > ultimoFijado && fecha > hastaSabado) break;
+    const hechos = fecha === hoyIso ? hechosHoy : [];
+    const items = [];
+    let usados = hechos.reduce((t, x) => t + x.unidades, 0);
+    let especiales = hechos.filter((x) => x.clase === "especial").reduce((t, x) => t + x.unidades, 0);
+    const libre = () => TALLER_MAX_DIA - usados;
+    const libreEsp = () => TALLER_MAX_ESPECIALES_DIA - especiales;
+    const tomar = (x, n, fijadoAca) => {
+      n = Math.min(n, x.restantes);
+      if (n <= 0) return;
+      const previo = items.find((it) => it.x === x);
+      if (previo) previo.unidades += n;
+      else items.push({ x, pedido: x.pedido, clase: x.clase, desde: x.unidades - x.restantes, unidades: n, total: x.unidades, fijadoAca });
+      x.restantes -= n; usados += n;
+      if (x.clase === "especial") especiales += n;
+    };
+    // Cuánto le toca a un pedido hoy. Un pedido partible toma hasta 5 por día
+    // (salvo en el relleno final), así no frena a los demás.
+    const intentar = (x, { ignorarTopeEsp = false, relleno = false } = {}) => {
+      if (x.restantes <= 0) return;
+      const lim = x.clase === "especial" && !ignorarTopeEsp ? Math.min(libre(), libreEsp()) : libre();
+      if (lim <= 0) return;
+      if (x.partible) {
+        // Su parte del día es una sola; más espejos, solo en el relleno final.
+        if (!relleno && items.some((it) => it.x === x)) return;
+        tomar(x, relleno ? lim : Math.min(lim, TALLER_MAX_ESPECIALES_DIA), false);
+      }
+      else if (x.restantes <= lim) tomar(x, x.restantes, false);
+    };
+
+    // 0) Lo fijado a mano para este día va sí o sí (un pedido grande, hasta
+    //    10 ese día; lo que sobra sigue en los días siguientes).
+    quedan.filter((x) => x.fijado === fecha).forEach((x) => {
+      tomar(x, x.partible ? Math.min(x.restantes, Math.max(1, libre())) : x.restantes, true);
+      x.fijado = "";
+    });
+    const candidatos = quedan.filter((x) => !x.fijado && x.restantes > 0).sort(ordenDelDia);
+    // 1) Lo que ya se empezó (también partes de pedidos grandes), lo que volvió
+    //    del grabado y lo urgente.
+    candidatos.forEach((x) => { if (empezado(x) || rangoTaller(x.pedido) <= 1) intentar(x); });
+    // 2) Esmerilados y biselados hasta el tope del día.
+    candidatos.forEach((x) => { if (x.clase === "especial") intentar(x); });
+    // 3) El resto con simples.
+    candidatos.forEach((x) => { if (x.clase === "simple") intentar(x); });
+    // 4) Si no quedan simples por repartir, se completa con especiales.
+    if (!candidatos.some((x) => x.clase === "simple" && x.restantes > 0)) {
+      candidatos.forEach((x) => { if (x.clase === "especial") intentar(x, { ignorarTopeEsp: true }); });
+    }
+    // 5) Si todavía sobra lugar, más espejos de los pedidos grandes.
+    candidatos.forEach((x) => { if (x.partible) intentar(x, { relleno: true, ignorarTopeEsp: !candidatos.some((y) => y.clase === "simple" && y.restantes > 0) }); });
+
+    items.sort((a, b) => (b.fijadoAca ? 1 : 0) - (a.fijadoAca ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido));
+    dias.push({
+      fecha, items, hechos,
+      total: usados,
+      simples: items.filter((i) => i.clase === "simple").reduce((t, i) => t + i.unidades, 0) + hechos.filter((h) => h.clase === "simple").reduce((t, h) => t + h.unidades, 0),
+      especiales,
+      pendientes: items.reduce((t, i) => t + i.unidades, 0),
+    });
+    fecha = siguienteDiaTaller(fecha);
+  }
+
+  // Para los pedidos repartidos: qué parte es y en qué día sigue.
+  const diasDe = new Map();
+  dias.forEach((d) => d.items.forEach((i) => {
+    if (!diasDe.has(i.pedido.id)) diasDe.set(i.pedido.id, []);
+    diasDe.get(i.pedido.id).push(d.fecha);
+  }));
+  dias.forEach((d) => d.items.forEach((i) => {
+    const lista = diasDe.get(i.pedido.id);
+    const k = lista.indexOf(d.fecha);
+    i.parte = k + 1;
+    i.partes = lista.length;
+    i.sigue = lista[k + 1] || "";
+    delete i.x;
+  }));
+  return dias;
+}
+
 function estadoProduccionLabel(pedido) {
   if (pedidoEstaListo(pedido)) return "Espejo listo";
   const lista = TALLER_LISTAS.find((item) => item.id === pedidoListaFabrica(pedido));
@@ -8448,6 +8657,26 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       return next;
     });
   }
+  // Lista por día: hoy abierto, el resto cerrado.
+  const hoyTaller = isoLocal(new Date());
+  const [diasAbiertos, setDiasAbiertos] = useState(() => new Set([primerDiaTaller(isoLocal(new Date()))]));
+  function toggleDia(fecha) {
+    setDiasAbiertos((prev) => {
+      const next = new Set(prev);
+      if (next.has(fecha)) next.delete(fecha); else next.add(fecha);
+      return next;
+    });
+  }
+  const [diaDestino, setDiaDestino] = useState(null);     // día sobre el que se está soltando al arrastrar
+  const puedeArrastrar = session?.role === "admin";
+  function moverADia(pedidoId, dia) {
+    const p = pedidos.find((x) => x.id === pedidoId);
+    if (!p) return;
+    const quien = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
+    onChange(pedidos.map((x) => (x.id === pedidoId ? { ...x, diaTaller: dia || "", diaTallerPor: dia ? quien : "" } : x)));
+    if (dia) setDiasAbiertos((prev) => new Set(prev).add(dia));
+    if (onRegistrar) onRegistrar("Movió un espejo de día", `#${p.orden} — ${p.cliente} — ${dia ? nombreDiaTaller(dia, isoLocal(new Date())) : "reparto automático"}`);
+  }
   const [multiAbierto, setMultiAbierto] = useState(() => new Set());
   function toggleMulti(id) {
     setMultiAbierto((prev) => {
@@ -9098,7 +9327,107 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       })()}
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
-        {(lista === "armar" && filtroEstado !== "afuera" && filtroEstado !== "historial") ? (() => {
+        {(lista === "armar" && filtroEstado === "activos") ? (() => {
+          const plan = planTaller(pedidos, hoyTaller);
+          const opcionesDias = plan.slice(0, 12).map((d) => d.fecha);
+          while (opcionesDias.length < 12) opcionesDias.push(siguienteDiaTaller(opcionesDias[opcionesDias.length - 1] || primerDiaTaller(hoyTaller)));
+          const coincide = (p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase());
+          // Un pedido repartido en varios días muestra en cada día solo sus unidades
+          // (los simples de varias unidades usan la tarjeta de siempre, con su avance).
+          const cartas = (x) => {
+            const p = x.pedido;
+            const cant = Math.max(1, Number(p.cant) || 1);
+            if (cant <= 1) return [renderCard(p, 1, 1)];
+            if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
+            return Array.from({ length: x.unidades }, (_, i) => renderCard(p, x.desde + i + 1, cant));
+          };
+          const lunesDe = (iso) => { const [y, m, d] = iso.split("-").map(Number); const f = new Date(y, m - 1, d); return isoLocal(new Date(y, m - 1, d - ((f.getDay() + 6) % 7))); };
+          const lunesHoy = lunesDe(primerDiaTaller(hoyTaller));
+          const tituloSemana = (iso) => {
+            const l = lunesDe(iso);
+            if (l === lunesHoy) return "Esta semana";
+            if (l === lunesDe(isoLocal(sumarDias(new Date(lunesHoy + "T12:00:00"), 7)))) return "Semana que viene";
+            const [, m, d] = l.split("-").map(Number);
+            return `Semana del ${d}/${m}`;
+          };
+          let semanaAnterior = "";
+          return (
+            <>
+              <p className="dg-dias-ayuda">
+                Hasta {TALLER_MAX_DIA} espejos por día y nunca más esmerilados/biselados que simples. Se reparte solo por urgencia y fecha de entrega.
+                {canEdit ? " Para cambiar un espejo de día usá «Pasar a otro día»." : ""}{puedeArrastrar ? " También podés arrastrarlo." : ""}
+              </p>
+              {plan.map((dia) => {
+                const semana = tituloSemana(dia.fecha);
+                const separador = semana !== semanaAnterior ? <div className="dg-dias-semana" key={`sem-${dia.fecha}`}>{semana}</div> : null;
+                semanaAnterior = semana;
+                const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && dia.items.some((x) => coincide(x.pedido)));
+                const hechosU = dia.hechos.reduce((t, x) => t + x.unidades, 0);
+                const lleno = dia.total >= TALLER_MAX_DIA;
+                const pasado = dia.total > TALLER_MAX_DIA;
+                const items = dia.items.filter((x) => coincide(x.pedido));
+                return (
+                  <Fragment key={dia.fecha}>
+                    {separador}
+                    <div
+                      className={`dg-dia-taller ${abierto ? "dg-dia-taller-abierto" : ""} ${dia.fecha === hoyTaller ? "dg-dia-taller-hoy" : ""} ${diaDestino === dia.fecha ? "dg-dia-taller-destino" : ""}`}
+                      onDragOver={puedeArrastrar ? (e) => { e.preventDefault(); if (diaDestino !== dia.fecha) setDiaDestino(dia.fecha); } : undefined}
+                      onDragLeave={puedeArrastrar ? (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDiaDestino(null); } : undefined}
+                      onDrop={puedeArrastrar ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); setDiaDestino(null); if (id) moverADia(id, dia.fecha); } : undefined}
+                    >
+                      <button type="button" className="dg-dia-taller-head" onClick={() => toggleDia(dia.fecha)} aria-expanded={abierto}>
+                        <ChevronRight size={16} className="dg-fab-grupo-chevron" />
+                        <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
+                        <span className="dg-dia-taller-mix">{dia.simples} simple{dia.simples === 1 ? "" : "s"} · {dia.especiales} esm./bisel</span>
+                        {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
+                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{dia.total}/{TALLER_MAX_DIA}</span>
+                      </button>
+                      {abierto && (
+                        <div className="dg-dia-taller-body">
+                          {items.length === 0 && dia.hechos.length === 0 && <div className="dg-dia-vacio">{puedeArrastrar ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
+                          {items.map((x) => (
+                            <div
+                              className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"}`}
+                              key={x.pedido.id}
+                              draggable={puedeArrastrar}
+                              onDragStart={puedeArrastrar ? (e) => { e.dataTransfer.setData("text/plain", x.pedido.id); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                              onDragEnd={puedeArrastrar ? () => setDiaDestino(null) : undefined}
+                            >
+                              <div className="dg-dia-item-bar">
+                                {puedeArrastrar && <span className="dg-dia-item-agarre" title="Arrastralo a otro día" aria-hidden="true">⠿</span>}
+                                <span className="dg-dia-item-tipo">{x.clase === "simple" ? "Simple" : grupoListaArmar(x.pedido) === "esmerilados_armar" ? "Esmerilado · volvió del grabado" : pedidoProcesoTaller(x.pedido) === "esmerilados" ? "Esmerilado" : "Biselado"}{x.partes > 1 ? ` · ${x.unidades} de ${x.total} u.` : x.unidades > 1 ? ` · ${x.unidades} u.` : ""}</span>
+                                {x.partes > 1 && <span className="dg-dia-item-parte">parte {x.parte} de {x.partes}{x.sigue ? ` · sigue ${nombreDiaTaller(x.sigue, hoyTaller)}` : " · última"}</span>}
+                                {x.fijadoAca && <span className="dg-dia-item-fijo" title={x.pedido.diaTallerPor ? `Lo fijó ${x.pedido.diaTallerPor}` : "Fijado a mano"}>fijado</span>}
+                                {canEdit && (
+                                  <select className="dg-dia-item-mover" value="" onChange={(e) => { const v = e.target.value; if (v) moverADia(x.pedido.id, v === "auto" ? "" : v); }} aria-label="Pasar a otro día">
+                                    <option value="">Pasar a otro día…</option>
+                                    {opcionesDias.filter((d) => d !== dia.fecha).map((d) => (<option key={d} value={d}>{nombreDiaTaller(d, hoyTaller)}</option>))}
+                                    {x.pedido.diaTaller && <option value="auto">Que lo reparta la app</option>}
+                                  </select>
+                                )}
+                              </div>
+                              {cartas(x)}
+                            </div>
+                          ))}
+                          {dia.hechos.length > 0 && (
+                            <details className="dg-dia-hechos">
+                              <summary><Check size={13} /> Terminados hoy ({hechosU})</summary>
+                              <ul>
+                                {dia.hechos.map((x) => (
+                                  <li key={x.pedido.id}>#{x.pedido.orden} {x.pedido.cliente} · {x.pedido.ancho}×{x.pedido.alto}{x.unidades > 1 ? ` · ${x.unidades} u.` : ""} · {x.clase === "simple" ? "simple" : "esm./bisel"}</li>
+                                ))}
+                              </ul>
+                            </details>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </Fragment>
+                );
+              })}
+            </>
+          );
+        })() : (lista === "armar" && filtroEstado !== "afuera" && filtroEstado !== "historial") ? (() => {
           const mapaGrupos = new Map();
           visibles.forEach((p) => {
             const grupo = grupoListaArmar(p);
@@ -9143,6 +9472,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <div className="dg-print-sub">
             {lista === "mandar_grabar" && filtroEstado !== "historial" && filtroEstado !== "afuera"
               ? `REMITO — Espejos entregados a grabado · ${new Date().toLocaleDateString("es-AR")}`
+              : (lista === "armar" && filtroEstado === "activos")
+              ? `Lista del día — ${nombreDiaTaller(primerDiaTaller(hoyTaller), hoyTaller)} · ${(planTaller(pedidos, hoyTaller)[0]?.pendientes) || 0} espejo(s) por hacer`
               : `${filtroEstado === "historial" ? "Historial de fabricación" : TALLER_LISTAS.find((t) => t.id === lista)?.label || lista} — ${new Date().toLocaleDateString("es-AR")} · ${totalUnidades(visibles)} espejo(s)`}
           </div>
         </div>
@@ -9183,7 +9514,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Funciones</th><th>Entrega</th><th>Estado</th><th>Entrega estimada</th></tr>
             </thead>
             <tbody>
-              {visibles.map((p) => (
+              {((lista === "armar" && filtroEstado === "activos") ? (planTaller(pedidos, hoyTaller)[0]?.items || []).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
                 <tr key={p.id}>
                   <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
                   <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
@@ -13435,6 +13766,36 @@ function Style() {
       .dg-fab-grupo-abierto { background:rgba(var(--dg-accent-rgb),0.08); border-color:rgba(var(--dg-accent-rgb),0.3); color:var(--dg-text); }
       .dg-fab-grupo-count { font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; color:var(--dg-accent);
         background:rgba(var(--dg-accent-rgb),0.12); border-radius:18px; padding:2px 9px; }
+      /* Espejos para armar, por día */
+      .dg-dias-ayuda { margin:0 0 12px; font-size:12px; line-height:1.45; color:var(--dg-text-dim); }
+      .dg-dias-semana { margin:16px 0 8px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-dias-semana:first-of-type { margin-top:4px; }
+      .dg-dia-taller { margin-bottom:8px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:12px; background:var(--dg-surface); overflow:hidden; transition:border-color .15s ease, box-shadow .15s ease; }
+      .dg-dia-taller-hoy { border-color:rgba(var(--dg-accent-rgb),.45); }
+      .dg-dia-taller-destino { border-color:var(--dg-accent); box-shadow:0 0 0 3px rgba(var(--dg-accent-rgb),.25); }
+      .dg-dia-taller-head { width:100%; display:flex; align-items:center; gap:10px; padding:12px 14px; border:0; background:transparent; color:inherit; font-family:'Jost',sans-serif; text-align:left; cursor:pointer; flex-wrap:wrap; }
+      .dg-dia-taller-abierto > .dg-dia-taller-head .dg-fab-grupo-chevron { transform:rotate(90deg); }
+      .dg-dia-taller-nombre { font-size:15px; font-weight:600; color:var(--dg-text); }
+      .dg-dia-taller-hoy .dg-dia-taller-nombre { color:var(--dg-accent-2); }
+      .dg-dia-taller-mix { font-size:12px; color:var(--dg-text-dim); }
+      .dg-dia-taller-hechos { display:inline-flex; align-items:center; gap:3px; font-size:12px; font-weight:600; color:var(--dg-success); }
+      .dg-dia-taller-cupo { margin-left:auto; min-width:48px; text-align:center; padding:3px 9px; border-radius:99px; font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; background:rgba(var(--dg-line-rgb),.08); color:var(--dg-text); }
+      .dg-dia-taller-lleno { background:rgba(var(--dg-success-rgb),.16); color:var(--dg-success); }
+      .dg-dia-taller-pasado { background:rgba(var(--dg-danger-rgb),.16); color:var(--dg-danger); }
+      .dg-dia-taller-body { padding:4px 10px 12px; border-top:1px solid rgba(var(--dg-line-rgb),.1); display:flex; flex-direction:column; gap:10px; }
+      .dg-dia-vacio { padding:14px; text-align:center; font-size:13px; color:var(--dg-text-dim); border:1px dashed rgba(var(--dg-line-rgb),.2); border-radius:10px; }
+      .dg-dia-item { display:flex; flex-direction:column; gap:6px; }
+      .dg-dia-item[draggable="true"] { cursor:grab; }
+      .dg-dia-item-bar { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; padding:4px 2px 0; }
+      .dg-dia-item-agarre { font-size:16px; line-height:1; color:var(--dg-text-dim); cursor:grab; user-select:none; }
+      .dg-dia-item-tipo { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-dia-item-especial .dg-dia-item-tipo { color:var(--dg-warning); }
+      .dg-dia-item-parte { font-size:11px; font-weight:600; color:var(--dg-accent-2); }
+      .dg-dia-item-fijo { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-accent-rgb),.15); color:var(--dg-accent-2); }
+      .dg-dia-item-mover { margin-left:auto; width:auto; max-width:190px; padding:5px 8px; font-size:12px; }
+      .dg-dia-hechos { padding:8px 10px; border-radius:9px; background:rgba(var(--dg-success-rgb),.07); font-size:12px; color:var(--dg-text-dim); }
+      .dg-dia-hechos summary { cursor:pointer; display:flex; align-items:center; gap:5px; font-weight:600; color:var(--dg-success); }
+      .dg-dia-hechos ul { margin:6px 0 0; padding-left:18px; }
       .dg-fab-card { position:relative; background: var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12);
         border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:12px; padding:0; }
       /* Interior: tiene que saltar a la vista desde lejos. */
