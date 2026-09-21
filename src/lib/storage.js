@@ -57,7 +57,22 @@ async function broadcastChange(row) {
   }
 }
 
+// Huella de una tabla: cuántas filas tiene y cuál es la última que se tocó.
+// Son unos pocos bytes, contra los cientos de KB de bajar todo.
+async function huellaTabla(tabla, columna = "updated_at") {
+  const { data, error, count } = await supabase
+    .from(tabla)
+    .select(columna, { count: "exact" })
+    .order(columna, { ascending: false, nullsFirst: false })
+    .limit(1);
+  if (error) throw error;
+  const ultima = data && data[0] ? data[0][columna] : "";
+  return `${count == null ? "?" : count}|${ultima || ""}`;
+}
+
 export const pedidosStore = {
+  huella() { return huellaTabla("pedidos_rows"); },
+
   async getAll() {
     const { data, error } = await supabase.from("pedidos_rows").select("id, data, updated_at");
     if (error) throw error;
@@ -114,6 +129,8 @@ export const pedidosStore = {
 // el cambio de la otra — a diferencia del bloque único (kv_store) de antes.
 function createRowStore(tableName) {
   return {
+    huella() { return huellaTabla(tableName); },
+
     async getAll() {
       const { data, error } = await supabase.from(tableName).select("id, data, updated_at");
       if (error) throw error;
@@ -302,6 +319,9 @@ export const chatStore = {
     if (error) throw error;
     return data || null;
   },
+
+  huellaHilos() { return huellaTabla("chat_hilos", "ultimo_mensaje_at"); },
+  huellaInterno() { return huellaTabla("chat_interno", "created_at"); },
 
   async listHilos() {
     const { data, error } = await supabase

@@ -1150,6 +1150,7 @@ function App() {
   const [saveState, setSaveState] = useState({ estado: "idle" });
   const [syncState, setSyncState] = useState("connecting");
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState("");
   const [session, setSession] = useState(() => loadSavedSession());
   const [theme, setTheme] = useState(() => {
     try {
@@ -1288,6 +1289,23 @@ function App() {
     if (row.updated_at) syncVersionsRef.current[row.key] = row.updated_at;
   }
 
+  // Huella de cada tabla, para no volver a bajar lo que no cambió.
+  const huellasRef = useRef({});
+  async function tablaCambio(nombre, store) {
+    if (typeof store.huella !== "function") return true;
+    try {
+      const h = await store.huella();
+      if (huellasRef.current[nombre] === h) return false;
+      huellasRef.current[nombre] = h;
+      return true;
+    } catch (e) {
+      return true; // si no se pudo consultar, se intenta bajar igual
+    }
+  }
+  const pestanaVisible = () => {
+    try { return document.visibilityState !== "hidden"; } catch (e) { return true; }
+  };
+
   async function refreshSharedData(full = false) {
     if (syncRefreshingRef.current) return;
     syncRefreshingRef.current = true;
@@ -1327,7 +1345,7 @@ function App() {
     );
 
     refreshSharedData(true);
-    const interval = window.setInterval(() => refreshSharedData(false), 4000);
+    const interval = window.setInterval(() => { if (pestanaVisible()) refreshSharedData(false); }, 4000);
     const refreshNow = () => refreshSharedData(false);
     const refreshWhenVisible = () => { if (document.visibilityState === "visible") refreshNow(); };
     window.addEventListener("focus", refreshNow);
@@ -1351,6 +1369,7 @@ function App() {
     if (pedidosRefreshingRef.current) return;
     pedidosRefreshingRef.current = true;
     try {
+      if (!(await tablaCambio("pedidos", pedidosStore))) return;
       const frescos = normalizarOrdenesPorGrupo(await pedidosStore.getAll());
       setPedidos(frescos);
     } catch (e) {
@@ -1360,11 +1379,12 @@ function App() {
     }
   }
 
-  function crearRefrescador(store, setter, refreshingRef) {
+  function crearRefrescador(store, setter, refreshingRef, nombre) {
     return async function refrescar() {
       if (refreshingRef.current) return;
       refreshingRef.current = true;
       try {
+        if (!(await tablaCambio(nombre, store))) return;
         setter(await store.getAll());
       } catch (e) {
         // sin conexión: se mantiene lo que ya está visible
@@ -1376,9 +1396,9 @@ function App() {
   const reclamosRefreshingRef = useRef(false);
   const stockEspejosRefreshingRef = useRef(false);
   const stockMaterialesRefreshingRef = useRef(false);
-  const refreshReclamos = crearRefrescador(reclamosStore, setReclamos, reclamosRefreshingRef);
-  const refreshStockEspejos = crearRefrescador(stockEspejosStore, setStockEspejos, stockEspejosRefreshingRef);
-  const refreshStockMateriales = crearRefrescador(stockMaterialesStore, setStockMateriales, stockMaterialesRefreshingRef);
+  const refreshReclamos = crearRefrescador(reclamosStore, setReclamos, reclamosRefreshingRef, "reclamos");
+  const refreshStockEspejos = crearRefrescador(stockEspejosStore, setStockEspejos, stockEspejosRefreshingRef, "stock-espejos");
+  const refreshStockMateriales = crearRefrescador(stockMaterialesStore, setStockMateriales, stockMaterialesRefreshingRef, "stock-materiales");
 
   useEffect(() => {
     if (loading) return undefined;
@@ -1387,7 +1407,10 @@ function App() {
     const unsubReclamos = reclamosStore.subscribeRealtime(() => { if (active) refreshReclamos(); });
     const unsubStockEspejos = stockEspejosStore.subscribeRealtime(() => { if (active) refreshStockEspejos(); });
     const unsubStockMateriales = stockMaterialesStore.subscribeRealtime(() => { if (active) refreshStockMateriales(); });
-    const refrescarTodo = () => { if (!active) return; refreshPedidos(); refreshReclamos(); refreshStockEspejos(); refreshStockMateriales(); };
+    const refrescarTodo = () => {
+      if (!active || !pestanaVisible()) return;
+      refreshPedidos(); refreshReclamos(); refreshStockEspejos(); refreshStockMateriales();
+    };
     const interval = window.setInterval(refrescarTodo, 4000);
     const refreshWhenVisible = () => { if (active && document.visibilityState === "visible") refrescarTodo(); };
     window.addEventListener("focus", refreshWhenVisible);
@@ -1409,8 +1432,9 @@ function App() {
   useEffect(() => {
     if (loading || !session) return undefined;
     let active = true;
-    const cargar = async () => {
+    const cargar = async (porSondeo = false) => {
       try {
+        if (porSondeo && !(await tablaCambio("chat-hilos", { huella: () => chatStore.huellaHilos() }))) return;
         const hilos = await chatStore.listHilos();
         if (!active) return;
         setChatHilos(hilos);
@@ -1438,7 +1462,7 @@ function App() {
     };
     cargar();
     const stop = chatStore.subscribeRealtime(() => { if (active) cargar(); });
-    const iv = window.setInterval(cargar, 15000);
+    const iv = window.setInterval(() => { if (pestanaVisible()) cargar(true); }, 15000);
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session]);
   const chatSinLeer = chatHilos.filter((h) => clasificarHilo(h) === "sin_leer").length;
@@ -1448,8 +1472,9 @@ function App() {
     if (loading || !session) return undefined;
     let active = true;
     const yo = idDispositivo();
-    const recalcular = async () => {
+    const recalcular = async (porSondeo = false) => {
       try {
+        if (porSondeo && !(await tablaCambio("chat-interno", { huella: () => chatStore.huellaInterno() }))) return;
         const msgs = await chatStore.internoListar();
         if (!active) return;
         let visto = "";
@@ -1460,7 +1485,7 @@ function App() {
     };
     recalcular();
     const stop = chatStore.internoSubscribe(() => recalcular());
-    const iv = window.setInterval(recalcular, 20000);
+    const iv = window.setInterval(() => { if (pestanaVisible()) recalcular(true); }, 20000);
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session, chatEquipoOpen]);
 
@@ -1476,6 +1501,36 @@ function App() {
   }, [loading, session]);
 
   async function load() {
+    setErrorCarga("");
+    // Si tarda demasiado, tampoco dejamos la pantalla colgada.
+    const reloj = setTimeout(() => setErrorCarga("La base de datos no respondió a tiempo."), 25000);
+    try {
+      await cargarTodo();
+      setErrorCarga("");
+    } catch (e) {
+      const detalle = String((e && (e.message || e.name)) || e || "").slice(0, 160);
+      setErrorCarga(detalle || "No se pudo conectar con la base de datos.");
+    } finally {
+      clearTimeout(reloj);
+    }
+  }
+
+  async function cargarTodo() {
+    // Primero una consulta chiquita para ver si la base contesta. Si no
+    // contesta, cortamos acá y mostramos el aviso: entrar con todo vacío
+    // sería peor, porque el primer guardado pisaría los datos buenos.
+    await conLimiteDeTiempo(storage.getVersions(["sectors"]), 12000);
+
+    // Antes de bajar todo, se anota la huella de cada tabla: así el primer
+    // sondeo no vuelve a bajar lo mismo. Va ANTES de leer, no después, para
+    // que un cambio hecho en el medio igual se detecte.
+    await Promise.all([
+      tablaCambio("pedidos", pedidosStore),
+      tablaCambio("reclamos", reclamosStore),
+      tablaCambio("stock-espejos", stockEspejosStore),
+      tablaCambio("stock-materiales", stockMaterialesStore),
+    ]).catch(() => {});
+
     let loadedSectors = DEFAULT_SECTORS;
     try {
       const s = await storage.get("sectors", true);
@@ -1820,6 +1875,23 @@ function App() {
   const canSeePedidos = !!session;
   const canEditPedidoFull = isAdmin || isVentas;
 
+  if (errorCarga) {
+    return (
+      <div style={wrap}>
+        <Style />
+        <div className="dg-app dg-carga-error" data-theme={theme}>
+          <div className="dg-carga-error-caja">
+            <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
+            <p className="dg-carga-error-txt">No pudimos conectarnos con la base de datos, así que la app no puede abrir. Probá de nuevo en un rato.</p>
+            <p className="dg-carga-error-detalle">Detalle: {errorCarga}</p>
+            <button type="button" className="dg-btn-primary dg-carga-error-btn" onClick={() => { setLoading(true); load(); }}>
+              <RotateCcw size={15} /> Reintentar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !enviosLogistica || !reclamos || !stockEspejos || !stockMateriales || !empleadosSueldo || !liquidaciones) {
     return (<div style={wrap}><Style /><div className="dg-app dg-loading" data-theme={theme}><Loader2 className="dg-spin" size={28} /><span>Cargando DECOGLASS...</span></div></div>);
   }
@@ -13090,6 +13162,11 @@ function Style() {
       .dg-app[data-theme="light"] .dg-fab-card,
       .dg-app[data-theme="light"] .dg-section-card,
       .dg-app[data-theme="light"] .dg-task-list { box-shadow:0 1px 3px rgba(65,52,39,.06); }
+      .dg-carga-error { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; background:var(--dg-bg); }
+      .dg-carga-error-caja { display:flex; flex-direction:column; align-items:center; gap:14px; max-width:360px; text-align:center; }
+      .dg-carga-error-txt { margin:0; font-size:15px; line-height:1.5; color:var(--dg-text); }
+      .dg-carga-error-detalle { margin:0; font-size:12px; line-height:1.4; color:var(--dg-text-dim); word-break:break-word; }
+      .dg-carga-error-btn { margin-top:4px; }
       .dg-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; min-height:60vh; color: var(--text-dim); }
       .dg-spin { animation: dg-spin 1s linear infinite; color:var(--dg-accent); }
       @keyframes dg-spin { to { transform: rotate(360deg); } }
