@@ -4614,12 +4614,25 @@ function prioridadListaArmar(pedido) {
    - Un pedido se puede fijar a mano en un día (campo diaTaller): va a ese día
      aunque se pase del máximo, y el resto se reacomoda.
    =========================================================================== */
+// Lo que cuesta cada espejo, en cuartos de punto.
+const CUARTOS_TALLER = { simples: 4, esmerilados_cortar: 1, esmerilados_armar: 2, biselados_armar: 2 };
+function cuartosTaller(pedido) { return CUARTOS_TALLER[grupoListaArmar(pedido)] || 4; }
+// 7 -> "7"  ·  9.5 -> "9,5"  ·  2.25 -> "2,25"
+function puntosTaller(n) { return String(Math.round(n * 100) / 100).replace(".", ","); }
+// Los grupos, en el orden en que el taller los hace.
+const GRUPOS_TABLA_DIA = [
+  { id: "simples", label: "Simples", detalle: "de cero — 1 punto cada uno" },
+  { id: "esmerilados_cortar", label: "Esmerilados para cortar", detalle: "cortar y mandar a grabar — 0,25" },
+  { id: "esmerilados_armar", label: "Esmerilados para armar", detalle: "volvieron del grabado — 0,5" },
+  { id: "biselados_armar", label: "Biselados para armar", detalle: "0,5" },
+];
+// Puntos de trabajo por día (10 = diez espejos simples de cero).
 const TALLER_MAX_DIA = 10;
-const TALLER_MAX_ESPECIALES_DIA = 5;
+// Lo máximo que se lleva un pedido grande en un solo día, para no frenar al resto.
+const TALLER_PARTE_DIA = 5;
 // El sábado se trabaja medio día.
 const TALLER_MAX_SIMPLES_SABADO = 3;
-const TALLER_MAX_ESP_SABADO = 3;
-const TALLER_MAX_SABADO = TALLER_MAX_SIMPLES_SABADO + TALLER_MAX_ESP_SABADO;
+const TALLER_MAX_SABADO = 5; // medio día
 const DIAS_TALLER = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 function claseTaller(pedido) {
@@ -4705,19 +4718,18 @@ function nombreDiaTaller(iso, hoyIso) {
 
 function planTaller(pedidos, hoyIso) {
   const primero = primerDiaTaller(hoyIso);
-  // Un pedido que no entra entero en un día (más de 10 espejos, o más de 5
-  // esmerilados/biselados) se reparte en varios días.
+  // Un pedido que no entra entero en un día se reparte en varios.
   const pool = (pedidos || []).filter(entraEnPlanTaller)
     .map((p) => {
       const unidades = unidadesPendientesTaller(p);
       const clase = claseTaller(p);
-      const tope = clase === "especial" ? TALLER_MAX_ESPECIALES_DIA : TALLER_MAX_DIA;
-      return { pedido: p, unidades, restantes: unidades, clase, fijado: diaFijadoValido(p.diaTaller, primero), partible: unidades > tope };
+      const cuartos = cuartosTaller(p);
+      return { pedido: p, unidades, restantes: unidades, clase, cuartos, fijado: diaFijadoValido(p.diaTaller, primero), partible: unidades * cuartos > TALLER_MAX_DIA * 4 };
     })
     .filter((x) => x.unidades > 0)
     .sort((a, b) => compararPrioridadTaller(a.pedido, b.pedido));
   const hechosHoy = primero === hoyIso
-    ? (pedidos || []).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
+    ? (pedidos || []).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p), cuartos: cuartosTaller(p) })).filter((x) => x.unidades > 0)
     : [];
 
   const ultimoFijado = pool.map((x) => x.fijado).filter(Boolean).sort().pop() || primero;
@@ -4734,13 +4746,13 @@ function planTaller(pedidos, hoyIso) {
     const items = [];
     const sabado = new Date(`${fecha}T12:00:00`).getDay() === 6;
     const maxDia = sabado ? TALLER_MAX_SABADO : TALLER_MAX_DIA;
-    const maxEsp = sabado ? TALLER_MAX_ESP_SABADO : TALLER_MAX_ESPECIALES_DIA;
-    const maxSimples = sabado ? TALLER_MAX_SIMPLES_SABADO : TALLER_MAX_DIA;
-    let usados = hechos.reduce((t, x) => t + x.unidades, 0);
+    const maxCuartos = maxDia * 4;
+    // El sábado se trabaja medio día: además del tope de puntos, no más de 3 simples.
+    const maxSimples = sabado ? TALLER_MAX_SIMPLES_SABADO : Infinity;
+    let usados = hechos.reduce((t, x) => t + x.unidades * x.cuartos, 0);
     let especiales = hechos.filter((x) => x.clase === "especial").reduce((t, x) => t + x.unidades, 0);
-    let simplesHoy = usados - especiales;
-    const libre = () => maxDia - usados;
-    const libreEsp = () => maxEsp - especiales;
+    let simplesHoy = hechos.filter((x) => x.clase === "simple").reduce((t, x) => t + x.unidades, 0);
+    const libre = () => maxCuartos - usados;
     const libreSimples = () => maxSimples - simplesHoy;
     const tomar = (x, n, fijadoAca) => {
       n = Math.min(n, x.restantes);
@@ -4748,23 +4760,23 @@ function planTaller(pedidos, hoyIso) {
       const previo = items.find((it) => it.x === x);
       if (previo) previo.unidades += n;
       else items.push({ x, pedido: x.pedido, clase: x.clase, desde: x.unidades - x.restantes, unidades: n, total: x.unidades, fijadoAca });
-      x.restantes -= n; usados += n;
+      x.restantes -= n; usados += n * x.cuartos;
       if (x.clase === "especial") especiales += n; else simplesHoy += n;
     };
-    // Cuánto le toca a un pedido hoy. Un pedido partible toma hasta 5 por día
-    // (salvo en el relleno final), así no frena a los demás.
-    const intentar = (x, { ignorarTopeEsp = false, relleno = false } = {}) => {
+    // Cuántos espejos de este pedido entran hoy, según los puntos que quedan.
+    // Un pedido partible se lleva como mucho media jornada (salvo en el relleno).
+    const intentar = (x, { relleno = false } = {}) => {
       if (x.restantes <= 0) return;
       // El sábado no se cortan esmerilados nuevos: solo se arman los que volvieron.
       if (sabado && grupoListaArmar(x.pedido) === "esmerilados_cortar") return;
-      const lim = x.clase === "especial"
-        ? (ignorarTopeEsp && !sabado ? libre() : Math.min(libre(), libreEsp()))
-        : Math.min(libre(), libreSimples());
+      let lim = Math.floor(libre() / x.cuartos);
+      if (x.clase === "simple") lim = Math.min(lim, libreSimples());
       if (lim <= 0) return;
       if (x.partible) {
         // Su parte del día es una sola; más espejos, solo en el relleno final.
         if (!relleno && items.some((it) => it.x === x)) return;
-        tomar(x, relleno ? lim : Math.min(lim, TALLER_MAX_ESPECIALES_DIA), false);
+        const parte = Math.max(1, Math.floor((TALLER_PARTE_DIA * 4) / x.cuartos));
+        tomar(x, relleno ? lim : Math.min(lim, parte), false);
       }
       else if (x.restantes <= lim) tomar(x, x.restantes, false);
     };
@@ -4779,22 +4791,17 @@ function planTaller(pedidos, hoyIso) {
     // 1) Lo que ya se empezó (también partes de pedidos grandes), lo que volvió
     //    del grabado y lo urgente.
     candidatos.forEach((x) => { if (empezado(x) || rangoTaller(x.pedido) <= 1) intentar(x); });
-    // 2) Esmerilados y biselados hasta el tope del día.
-    candidatos.forEach((x) => { if (x.clase === "especial") intentar(x); });
-    // 3) El resto con simples.
-    candidatos.forEach((x) => { if (x.clase === "simple") intentar(x); });
-    // 4) Si no quedan simples por repartir, se completa con especiales.
-    if (!candidatos.some((x) => x.clase === "simple" && x.restantes > 0)) {
-      candidatos.forEach((x) => { if (x.clase === "especial") intentar(x, { ignorarTopeEsp: true }); });
-    }
-    // 5) Si todavía sobra lugar, más espejos de los pedidos grandes.
-    candidatos.forEach((x) => { if (x.partible) intentar(x, { relleno: true, ignorarTopeEsp: !candidatos.some((y) => y.clase === "simple" && y.restantes > 0) }); });
+    // 2) El resto, por orden de urgencia y fecha, hasta llenar los puntos del día.
+    candidatos.forEach((x) => intentar(x));
+    // 3) Si todavía sobra lugar, más espejos de los pedidos grandes.
+    candidatos.forEach((x) => { if (x.partible) intentar(x, { relleno: true }); });
 
     items.sort((a, b) => (b.fijadoAca ? 1 : 0) - (a.fijadoAca ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido));
     dias.push({
       fecha, items, hechos, sabado,
       max: maxDia,
-      total: usados,
+      total: usados / 4,
+      espejos: items.reduce((t, i) => t + i.unidades, 0) + hechos.reduce((t, h) => t + h.unidades, 0),
       simples: items.filter((i) => i.clase === "simple").reduce((t, i) => t + i.unidades, 0) + hechos.filter((h) => h.clase === "simple").reduce((t, h) => t + h.unidades, 0),
       especiales,
       pendientes: items.reduce((t, i) => t + i.unidades, 0),
@@ -7078,7 +7085,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
           <Ayuda titulo="Qué pedidos entran acá" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen pedidos 100% terminados. Un pedido con espejos todavía en fábrica no aparece hasta que estén todos listos.</Ayuda>
           <div className="dg-order-despacho-btns">
             <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(listosParaDespachar)}><FileText size={14} /> 1. Datos para Vía Cargo</button>
-            <button className="dg-btn-ghost" onClick={() => abrirRotulos(listosParaDespachar)}><Printer size={14} /> 2. Rótulos ({listosParaDespachar.length})</button>
+            <button className="dg-btn-ghost" onClick={() => abrirRotulos(listosParaDespachar)}><Printer size={14} /> 2. Rótulos ({bultosDeEnvios(listosParaDespachar)})</button>
             <button className="dg-btn-ghost" onClick={() => abrirTirasContieneEspejo(listosParaDespachar.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}><AlertTriangle size={14} /> 3. Tiras "Contiene espejo"</button>
           </div>
         </div>
@@ -7132,7 +7139,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
 
               {todosListos && principal.ancho && principal.alto ? (
                 <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
-                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(listos)}><Printer size={13} /> Rótulos del pedido ({listos.length})</button>
+                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(listos)}><Printer size={13} /> Rótulos del pedido ({bultosDeEnvios(listos)})</button>
                 </div>
               ) : (
                 <p className="dg-hint" style={{ marginTop: 10 }}>Los rótulos se habilitan cuando estén listos todos los espejos del pedido.</p>
@@ -9451,7 +9458,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           return (
             <>
               <p className="dg-dias-ayuda">
-                Hasta {TALLER_MAX_DIA} espejos por día y nunca más esmerilados/biselados que simples. El sábado, medio día: hasta {TALLER_MAX_SIMPLES_SABADO} simples y {TALLER_MAX_ESP_SABADO} esmerilados para armar. Se reparte solo por urgencia y fecha de entrega.
+                El día se llena por trabajo, no por cantidad: {TALLER_MAX_DIA} puntos. Un simple de cero vale 1, un esmerilado que volvió del grabado 0,5 y uno que solo hay que cortar 0,25. El sábado, medio día: {TALLER_MAX_SABADO} puntos, como mucho {TALLER_MAX_SIMPLES_SABADO} simples y no se cortan esmerilados. Se reparte solo por urgencia y fecha de entrega.
                 {canEdit ? " Para cambiar un espejo de día usá «Pasar a otro día»." : ""}{puedeArrastrar ? " También podés arrastrarlo." : ""}
               </p>
               {(() => {
@@ -9479,7 +9486,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                       <span className="dg-tdia-tit">
                         <strong><ClipboardList size={14} /> Para hacer {nombreDiaTaller(hoyPlan.fecha, hoyTaller).toLowerCase()}</strong>
                         <small>
-                          {hoyPlan.total} espejo{hoyPlan.total === 1 ? "" : "s"} · {hoyPlan.simples} simple{hoyPlan.simples === 1 ? "" : "s"} · {hoyPlan.especiales} esm./bisel
+                          {hoyPlan.espejos} espejo{hoyPlan.espejos === 1 ? "" : "s"} · {puntosTaller(hoyPlan.total)} de {hoyPlan.max} puntos de trabajo
                           {hoyPlan.sabado ? " · medio día" : ""}
                         </small>
                       </span>
@@ -9494,8 +9501,20 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               <th>Forma</th><th>Tono</th><th>Proceso</th><th>Funciones</th><th>Grabado</th>
                             </tr>
                           </thead>
-                          <tbody>
-                            {filas.map((x) => {
+                          {GRUPOS_TABLA_DIA.map((grupo) => {
+                            const delGrupo = filas.filter((x) => grupoListaArmar(x.pedido) === grupo.id);
+                            if (delGrupo.length === 0) return null;
+                            const espejos = delGrupo.reduce((t, x) => t + x.unidades, 0);
+                            const puntos = delGrupo.reduce((t, x) => t + x.unidades * cuartosTaller(x.pedido), 0) / 4;
+                            return (
+                          <tbody key={grupo.id}>
+                            <tr className="dg-tdia-grupo">
+                              <td colSpan={8}>
+                                <span className="dg-tdia-grupo-tit">{grupo.label}</span>
+                                <span className="dg-tdia-grupo-sub">{espejos} espejo{espejos === 1 ? "" : "s"} · {puntosTaller(puntos)} punto{puntos === 1 ? "" : "s"} · {grupo.detalle}</span>
+                              </td>
+                            </tr>
+                            {delGrupo.map((x) => {
                               const p = x.pedido;
                               const abierta = filaDiaAbierta === p.id;
                               const proc = TALLER_MODELOS.find((item) => item.id === pedidoProcesoTaller(p));
@@ -9539,6 +9558,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               );
                             })}
                           </tbody>
+                            );
+                          })}
                         </table>
                       </div>
                     )}
@@ -9568,9 +9589,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
-                        <span className="dg-dia-taller-mix">{dia.simples} simple{dia.simples === 1 ? "" : "s"} · {dia.especiales} esm./bisel</span>
+                        <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"} · {dia.simples} simple{dia.simples === 1 ? "" : "s"} · {dia.especiales} esm./bisel</span>
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
-                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{dia.total}/{dia.max}</span>
+                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{puntosTaller(dia.total)}/{dia.max}</span>
                       </button>
                       {abierto && (
                         <div className="dg-dia-taller-body">
@@ -13987,6 +14008,9 @@ function Style() {
       .dg-tdia-funcs { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:600; }
       .dg-tdia-tabla td.dg-tdia-grabado { color:var(--dg-text-dim); }
       .dg-tdia-falta { color:var(--dg-text-faint); }
+      .dg-tdia-grupo > td { padding:9px 12px 7px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.035); }
+      .dg-tdia-grupo-tit { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--dg-text); }
+      .dg-tdia-grupo-sub { margin-left:9px; font-size:11px; color:var(--dg-text-dim); }
       .dg-tdia-detalle > td { padding:0 12px 12px; background:rgba(var(--dg-accent-rgb),.08); }
       .dg-tdia-detalle-in { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding-top:9px; border-top:1px solid rgba(var(--dg-line-rgb),.1); font-size:13px; color:var(--dg-text-dim); cursor:default; }
       .dg-tdia-detalle-in b { margin-right:4px; font-weight:600; color:var(--dg-text-faint); font-size:11px; letter-spacing:.3px; text-transform:uppercase; }
@@ -15420,17 +15444,24 @@ function pesoCajaInterior(pedido) {
 // cada cliente, para dársela al de Vía Cargo y que arme los remitos.
 function abrirDatosDespacho(lista) {
   if (!lista || lista.length === 0) return;
-  const filas = lista.map((p) => {
-    const { anchoCaja, altoCaja, espesorCaja } = medidasCajaInterior(p);
-    const { peso } = pesoCajaInterior(p);
+  // Un renglón por envío, no por espejo: si no, el mismo cliente aparece
+  // varias veces y Vía Cargo lo toma como envíos distintos.
+  const envios = enviosInteriorAgrupados(lista);
+  const filas = envios.map((envio) => {
+    const p = envio.principal;
+    const medidas = envio.bultos
+      .map((b) => { const c = medidasCajaInterior(b); return `${c.anchoCaja} × ${c.altoCaja} × ${c.espesorCaja}`; })
+      .map((txt, i, arr) => (arr.length > 1 ? `${i + 1}) ${txt} cm` : `${txt} cm`))
+      .join("<br>");
+    const pesoTotal = Math.round(envio.bultos.reduce((t, b) => t + pesoCajaInterior(b).peso, 0) * 10) / 10;
     return `
         <tr>
           <td>${p.cliente || "—"}</td>
           <td>${p.celular || "—"}</td>
           <td>${p.dniCuit || "—"}</td>
-          <td>${Number(p.cant) > 1 ? p.cant : 1}</td>
-          <td>${anchoCaja} × ${altoCaja} × ${espesorCaja} cm</td>
-          <td>${peso} kg</td>
+          <td>${envio.bultos.length}</td>
+          <td>${medidas}</td>
+          <td>${pesoTotal} kg</td>
           <td>${p.provincia || "—"}</td>
           <td>${p.localidad || "—"}</td>
           <td>${p.codigoPostal || "—"}</td>
@@ -15451,9 +15482,10 @@ function abrirDatosDespacho(lista) {
 <body>
   <h1>DECOGLASS SRL — Lista de envíos al interior</h1>
   <div class="remitente">CUIT: 30-71826423-1 · José Marmol 1660 · Tel: 11 7059-4088 · decoglass@hotmail.com · ${new Date().toLocaleDateString("es-AR")}</div>
+  <div class="remitente">${envios.length} envío${envios.length === 1 ? "" : "s"} · ${envios.reduce((t, e) => t + e.bultos.length, 0)} bulto${envios.reduce((t, e) => t + e.bultos.length, 0) === 1 ? "" : "s"} en total</div>
   <table>
     <thead>
-      <tr><th>Nombre</th><th>Tel</th><th>DNI/CUIT</th><th>Cant</th><th>Medida caja</th><th>Peso</th><th>Provincia</th><th>Localidad</th><th>CP</th></tr>
+      <tr><th>Nombre</th><th>Tel</th><th>DNI/CUIT</th><th>Bultos</th><th>Medida de cada caja</th><th>Peso total</th><th>Provincia</th><th>Localidad</th><th>CP</th></tr>
     </thead>
     <tbody>${filas}</tbody>
   </table>
@@ -15491,16 +15523,45 @@ function abrirTirasContieneEspejo(cantidadEspejos) {
   if (ventana) { ventana.document.write(html); ventana.document.close(); }
 }
 
+// Agrupa los espejos por pedido: cada grupo es un envío a un solo destino,
+// y adentro tiene tantos bultos como cajas haya que despachar.
+function enviosInteriorAgrupados(lista) {
+  const m = new Map();
+  (Array.isArray(lista) ? lista : [lista]).filter(Boolean).forEach((p) => {
+    const k = p.grupoId || p.id;
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(p);
+  });
+  return [...m.values()].map((crudos) => {
+    const items = crudos.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    const bultos = [];
+    items.forEach((p) => {
+      const cajas = Math.max(1, Number(p.cant) || 1);
+      for (let i = 0; i < cajas; i++) bultos.push(p);
+    });
+    return { principal: items[0], items, bultos };
+  });
+}
+function bultosDeEnvios(lista) {
+  return enviosInteriorAgrupados(lista).reduce((t, e) => t + e.bultos.length, 0);
+}
+
 function abrirRotulos(pedidosOPedido) {
   const lista = Array.isArray(pedidosOPedido) ? pedidosOPedido : [pedidosOPedido];
   if (lista.length === 0) return;
 
-  const bloques = lista.map((pedido) => {
+  const envios = enviosInteriorAgrupados(lista);
+  const totalBultos = envios.reduce((t, e) => t + e.bultos.length, 0);
+
+  const bloques = envios.map((envio) => envio.bultos.map((pedido, i) => {
     const { anchoCaja, altoCaja, espesorCaja } = medidasCajaInterior(pedido);
     const { peso } = pesoCajaInterior(pedido);
+    const ordenes = [...new Set(envio.items.map((p) => p.orden))].map((o) => `#${o}`).join(" · ");
+    const varios = envio.bultos.length > 1;
     return `
     <div class="rotulo">
-      <div class="pedido-num">PEDIDO #${pedido.orden}</div>
+      <div class="pedido-num">PEDIDO ${ordenes}</div>
+      ${varios ? `<div class="bulto">BULTO ${i + 1} DE ${envio.bultos.length} — MISMO DESTINO</div>` : ""}
 
       <div class="bloque">
         <div class="titulo">Remitente</div>
@@ -15523,13 +15584,13 @@ function abrirRotulos(pedidosOPedido) {
         <div class="titulo">Paquete</div>
         <div class="medidas"><span>Caja</span><strong>${anchoCaja} × ${altoCaja} × ${espesorCaja} cm</strong></div>
         <div class="medidas"><span>Peso aprox.</span><strong>${peso} kg</strong></div>
-        <div class="medidas"><span>Bultos</span><strong>${Number(pedido.cant) > 1 ? pedido.cant : 1}</strong></div>
+        <div class="medidas"><span>Bultos del envío</span><strong>${envio.bultos.length}</strong></div>
       </div>
     </div>`;
-  }).join("");
+  }).join("")).join("");
 
   const html = `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Rótulos (${lista.length})</title>
+<html lang="es"><head><meta charset="utf-8"><title>Rótulos (${totalBultos})</title>
 <style>
   * { box-sizing:border-box; }
   @page { size:A4; margin:7mm; }
@@ -15544,6 +15605,7 @@ function abrirRotulos(pedidosOPedido) {
   .medidas { display:flex; justify-content:space-between; font-size:15px; margin-top:5px; }
   .medidas strong { font-size:17px; }
   .pedido-num { text-align:center; font-size:22px; font-weight:800; letter-spacing:0.5px; margin-bottom:10px; padding-bottom:8px; border-bottom:2px solid #111; }
+  .bulto { text-align:center; font-size:15px; font-weight:800; letter-spacing:0.5px; margin:-4px 0 10px; padding:4px 6px; border:2px solid #111; border-radius:6px; }
   @media print { body { margin:0; } }
 </style></head>
 <body>
