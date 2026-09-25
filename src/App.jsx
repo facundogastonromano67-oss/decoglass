@@ -4412,19 +4412,18 @@ function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
   ];
 
   const claveIds = (m) => m.pedidos.map((p) => p.id).sort().join(",");
-  // Leída = ya la cerraron hoy y no apareció ningún pedido nuevo en ese motivo.
+  // Leída = la cerraron hoy. Y se acabó: no vuelve aunque después entren más
+  // pedidos en ese mismo motivo. Mañana aparece una vez y listo.
   function yaLeida(m) {
-    const ids = m.pedidos.map((p) => p.id);
-    if (cerradas[m.id] && ids.every((id) => cerradas[m.id].includes(id))) return true;
+    if (cerradas[m.id]) return true;
     try {
       const g = JSON.parse(localStorage.getItem(`dg_fab_aviso_${m.id}`) || "null");
-      return !!g && g.fecha === hoy && ids.every((id) => g.ids.includes(id));
+      return !!g && g.fecha === hoy;
     } catch (e) { return false; }
   }
   function marcarLeida(m) {
-    const ids = m.pedidos.map((p) => p.id);
-    try { localStorage.setItem(`dg_fab_aviso_${m.id}`, JSON.stringify({ fecha: hoy, ids })); } catch (e) {}
-    setCerradas((c) => ({ ...c, [m.id]: ids }));
+    try { localStorage.setItem(`dg_fab_aviso_${m.id}`, JSON.stringify({ fecha: hoy })); } catch (e) {}
+    setCerradas((c) => ({ ...c, [m.id]: true }));
   }
 
   const pendientes = motivos.filter((m) => m.pedidos.length > 0 && !yaLeida(m));
@@ -4630,6 +4629,14 @@ const GRUPOS_TABLA_DIA = [
 const TALLER_MAX_DIA = 10;
 // Lo máximo que se lleva un pedido grande en un solo día, para no frenar al resto.
 const TALLER_PARTE_DIA = 5;
+// Lo atrasado se suma encima del día de hoy, pero nunca más de un día extra:
+// una lista de 30 puntos no la hace nadie y deja de servir como plan.
+const TALLER_MAX_ARRASTRE = 10;
+// Ya tendría que estar terminado: su fecha objetivo quedó atrás.
+function estaAtrasadoTaller(pedido, hoyIso) {
+  const objetivo = fechaObjetivoFabrica(pedido);
+  return !!objetivo && objetivo < hoyIso;
+}
 // El sábado se trabaja medio día.
 const TALLER_MAX_SIMPLES_SABADO = 3;
 const TALLER_MAX_SABADO = 5; // medio día
@@ -4728,6 +4735,12 @@ function planTaller(pedidos, hoyIso) {
     })
     .filter((x) => x.unidades > 0)
     .sort((a, b) => compararPrioridadTaller(a.pedido, b.pedido));
+  // Penalización: todo lo que ya pasó su fecha objetivo se suma al día de hoy.
+  const cuartosAtrasados = pool
+    .filter((x) => estaAtrasadoTaller(x.pedido, hoyIso))
+    .reduce((t, x) => t + x.restantes * x.cuartos, 0);
+  const arrastreCuartos = Math.min(TALLER_MAX_ARRASTRE * 4, cuartosAtrasados);
+
   const hechosHoy = primero === hoyIso
     ? (pedidos || []).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p), cuartos: cuartosTaller(p) })).filter((x) => x.unidades > 0)
     : [];
@@ -4745,7 +4758,8 @@ function planTaller(pedidos, hoyIso) {
     const hechos = fecha === hoyIso ? hechosHoy : [];
     const items = [];
     const sabado = new Date(`${fecha}T12:00:00`).getDay() === 6;
-    const maxDia = sabado ? TALLER_MAX_SABADO : TALLER_MAX_DIA;
+    const arrastre = fecha === primero ? arrastreCuartos : 0;
+    const maxDia = (sabado ? TALLER_MAX_SABADO : TALLER_MAX_DIA) + arrastre / 4;
     const maxCuartos = maxDia * 4;
     // El sábado se trabaja medio día: además del tope de puntos, no más de 3 simples.
     const maxSimples = sabado ? TALLER_MAX_SIMPLES_SABADO : Infinity;
@@ -4800,6 +4814,8 @@ function planTaller(pedidos, hoyIso) {
     dias.push({
       fecha, items, hechos, sabado,
       max: maxDia,
+      arrastre: arrastre / 4,
+      base: sabado ? TALLER_MAX_SABADO : TALLER_MAX_DIA,
       total: usados / 4,
       espejos: items.reduce((t, i) => t + i.unidades, 0) + hechos.reduce((t, h) => t + h.unidades, 0),
       simples: items.filter((i) => i.clase === "simple").reduce((t, i) => t + i.unidades, 0) + hechos.filter((h) => h.clase === "simple").reduce((t, h) => t + h.unidades, 0),
@@ -9458,7 +9474,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           return (
             <>
               <p className="dg-dias-ayuda">
-                El día se llena por trabajo, no por cantidad: {TALLER_MAX_DIA} puntos. Un simple de cero vale 1, un esmerilado que volvió del grabado 0,5 y uno que solo hay que cortar 0,25. El sábado, medio día: {TALLER_MAX_SABADO} puntos, como mucho {TALLER_MAX_SIMPLES_SABADO} simples y no se cortan esmerilados. Se reparte solo por urgencia y fecha de entrega.
+                El día se llena por trabajo, no por cantidad: {TALLER_MAX_DIA} puntos. Un simple de cero vale 1, un esmerilado que volvió del grabado 0,5 y uno que solo hay que cortar 0,25. El sábado, medio día: {TALLER_MAX_SABADO} puntos, como mucho {TALLER_MAX_SIMPLES_SABADO} simples y no se cortan esmerilados. Lo que quedó sin terminar se suma encima del día de hoy (hasta {TALLER_MAX_ARRASTRE} puntos extra) hasta ponerse al día. Se reparte solo por urgencia y fecha de entrega.
                 {canEdit ? " Para cambiar un espejo de día usá «Pasar a otro día»." : ""}{puedeArrastrar ? " También podés arrastrarlo." : ""}
               </p>
               {(() => {
@@ -9486,8 +9502,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                       <span className="dg-tdia-tit">
                         <strong><ClipboardList size={14} /> Para hacer {nombreDiaTaller(hoyPlan.fecha, hoyTaller).toLowerCase()}</strong>
                         <small>
-                          {hoyPlan.espejos} espejo{hoyPlan.espejos === 1 ? "" : "s"} · {puntosTaller(hoyPlan.total)} de {hoyPlan.max} puntos de trabajo
+                          {hoyPlan.espejos} espejo{hoyPlan.espejos === 1 ? "" : "s"} · {puntosTaller(hoyPlan.total)} de {puntosTaller(hoyPlan.max)} puntos de trabajo
                           {hoyPlan.sabado ? " · medio día" : ""}
+                          {hoyPlan.arrastre > 0 ? ` · ${puntosTaller(hoyPlan.base)} del día + ${puntosTaller(hoyPlan.arrastre)} que quedaron atrasados` : ""}
                         </small>
                       </span>
                       <ChevronRight size={16} className={tablaDiaAbierta ? "dg-presu-chevron-on" : ""} />
@@ -9530,6 +9547,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                     <td className="dg-tdia-orden">
                                       <button type="button" className="dg-tdia-orden-btn" onClick={(ev) => irATarjeta(ev, x)} title="Ir a la tarjeta de este espejo">#{p.orden}</button>
                                       {esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}
+                                      {estaAtrasadoTaller(p, hoyTaller) && <span className="dg-tdia-atrasado" title="Ya tendría que estar terminado">ATRASADO</span>}
                                     </td>
                                     <td className="dg-num">{x.unidades > 1 ? `${x.unidades}${x.partes > 1 ? ` de ${x.total}` : ""}` : "1"}</td>
                                     <td className="dg-num dg-tdia-medida">{p.ancho} × {p.alto}</td>
@@ -9590,8 +9608,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
                         <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"} · {dia.simples} simple{dia.simples === 1 ? "" : "s"} · {dia.especiales} esm./bisel</span>
+                        {dia.arrastre > 0 && <span className="dg-dia-taller-arrastre" title="Trabajo que ya tendría que estar terminado">+{puntosTaller(dia.arrastre)} atrasado</span>}
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
-                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{puntosTaller(dia.total)}/{dia.max}</span>
+                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{puntosTaller(dia.total)}/{puntosTaller(dia.max)}</span>
                       </button>
                       {abierto && (
                         <div className="dg-dia-taller-body">
@@ -14008,6 +14027,7 @@ function Style() {
       .dg-tdia-funcs { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:600; }
       .dg-tdia-tabla td.dg-tdia-grabado { color:var(--dg-text-dim); }
       .dg-tdia-falta { color:var(--dg-text-faint); }
+      .dg-tdia-atrasado { flex:none; padding:1px 5px; border:1px solid var(--dg-danger); border-radius:5px; font-family:'JetBrains Mono', monospace; font-size:9px; font-weight:700; letter-spacing:.3px; color:var(--dg-danger); }
       .dg-tdia-grupo > td { padding:9px 12px 7px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.035); }
       .dg-tdia-grupo-tit { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--dg-text); }
       .dg-tdia-grupo-sub { margin-left:9px; font-size:11px; color:var(--dg-text-dim); }
@@ -14025,6 +14045,7 @@ function Style() {
       .dg-dia-taller-abierto > .dg-dia-taller-head .dg-fab-grupo-chevron { transform:rotate(90deg); }
       .dg-dia-taller-nombre { font-size:15px; font-weight:600; color:var(--dg-text); }
       .dg-dia-taller-hoy .dg-dia-taller-nombre { color:var(--dg-accent-2); }
+      .dg-dia-taller-arrastre { font-size:11px; font-weight:700; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-danger-rgb),.16); color:var(--dg-text); }
       .dg-dia-taller-medio { font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-warning-rgb),.16); color:var(--dg-text); }
       .dg-dia-taller-mix { font-size:12px; color:var(--dg-text-dim); }
       .dg-dia-taller-hechos { display:inline-flex; align-items:center; gap:3px; font-size:12px; font-weight:600; color:var(--dg-success); }
