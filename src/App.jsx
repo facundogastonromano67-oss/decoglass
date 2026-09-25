@@ -243,27 +243,7 @@ function determineCuentaPedido(pedido) {
   return "ingresos_bancarios";
 }
 
-// Canales de venta. Es UNA sola lista para todo: el CRM (de dónde vino el
-// lead) y el pedido (por dónde entró la venta). Antes Mercado Libre no estaba
-// acá, así que el canal que mueve la mayor parte de la facturación era
-// invisible para el sistema y no se podía medir su rentabilidad.
-// Las claves viejas (whatsapp, instagram, local, otro) siguen valiendo igual,
-// así que los leads ya cargados se siguen viendo bien.
-const CANALES_VENTA = {
-  mercadolibre: "Mercado Libre",
-  whatsapp: "WhatsApp",
-  instagram: "Instagram",
-  local: "Local / Showroom",
-  constructora: "Constructora / Arquitecto",
-  otro: "Otro",
-};
-const LEAD_CHANNELS = CANALES_VENTA;
-// Un pedido viejo no tiene canal cargado. En vez de contarlo como si fuera
-// "Otro" y ensuciar los números, se muestra aparte como "Sin canal".
-const CANAL_SIN_DATO = "sin_canal";
-function canalLabel(canal) {
-  return CANALES_VENTA[canal] || "Sin canal";
-}
+const LEAD_CHANNELS = { whatsapp: "WhatsApp", instagram: "Instagram", local: "Local / Showroom", otro: "Otro" };
 const LEAD_STATES = {
   mensaje_enviado: { label: "Mensaje enviado", color: "var(--dg-text-dim)" },
   respondio: { label: "Respondió", color: "var(--dg-accent)" },
@@ -839,22 +819,6 @@ const DEFAULT_QUOTE_CONFIG = {
     esmerilado: { Recto: 61000, Circular: 80430, "Pastilla/Oval": 99500 },
   },
   cargaOperativa: { "Simple / Touch": 48000, Esmerilado: 53000, embalajeInteriorAdicional: 15000, panelAdicional: 2500 },
-  // Lo que cuesta VENDER por cada canal. Esto no estaba y era el agujero más
-  // grande del presupuestador: cotizaba igual un espejo que sale por el local
-  // que uno que sale por Mercado Libre, cuando ML se lleva la comisión y, si
-  // el envío es gratis, también el flete. El margen "real" que mostraba era
-  // entonces el margen ANTES de pagarle al canal.
-  //   comision       : % sobre el precio final que se queda el canal (0.15 = 15%)
-  //   envioAbsorbido : $ de flete que paga la empresa, no el cliente
-  //   publicidad     : % sobre el precio final que se gasta en pauta del canal
-  canales: {
-    mercadolibre: { nombre: "Mercado Libre", comision: 0.15, envioAbsorbido: 30000, publicidad: 0.02 },
-    whatsapp:     { nombre: "WhatsApp", comision: 0, envioAbsorbido: 0, publicidad: 0.02 },
-    instagram:    { nombre: "Instagram", comision: 0, envioAbsorbido: 0, publicidad: 0.02 },
-    local:        { nombre: "Local / Showroom", comision: 0, envioAbsorbido: 0, publicidad: 0 },
-    constructora: { nombre: "Constructora / Arquitecto", comision: 0, envioAbsorbido: 0, publicidad: 0 },
-    otro:         { nombre: "Otro", comision: 0, envioAbsorbido: 0, publicidad: 0 },
-  },
   reglas: {
     iva: 0.21, factor3cuotas: 1.20407, limiteMedidaEstandar: 0.81,
     margenMinorista: 0.4, margenRevendedor: 0.3, margenConstructora10: 0.25, margenConstructora20: 0.2,
@@ -876,7 +840,7 @@ function roundTo1000(n) { return Math.round(n / 1000) * 1000; }
 function fmtMoney(n) { return "$" + Math.round(n).toLocaleString("es-AR"); }
 
 function computeQuote(inputs, cfg) {
-  const { tipoProducto, ancho, alto, touch, desemp, desempTipo, horaTemp, bluetoothSel, panelesAdicionales, envioInterior, tipoCliente, cantidad, capillaCurva, canal } = inputs;
+  const { tipoProducto, ancho, alto, touch, desemp, desempTipo, horaTemp, bluetoothSel, panelesAdicionales, envioInterior, tipoCliente, cantidad, capillaCurva } = inputs;
   const { materiales: M, embalaje: E, opcionales: O, cargaOperativa: C, reglas: R } = cfg;
 
   const tipoRow = TIPO_PRODUCTO_TABLE[tipoProducto] || TIPO_PRODUCTO_TABLE["Rectangular Simple"];
@@ -1001,37 +965,6 @@ function computeQuote(inputs, cfg) {
   const totalPedidoTransferencia = precioTransferencia * cantidad;
   const margenReal = precioEfectivoSinIva ? (precioEfectivoSinIva - costoTotalEstimado) / precioEfectivoSinIva : 0;
 
-  // ---- Lo que queda DESPUÉS de pagarle al canal ----
-  // margenReal es el margen de fábrica: precio menos lo que cuesta hacerlo.
-  // margenNetoCanal es el que importa para decidir: precio menos lo que cuesta
-  // hacerlo Y menos lo que cuesta venderlo por ese canal.
-  const canalCfg = (cfg.canales && cfg.canales[canal]) || null;
-  const comisionCanal = canalCfg ? (Number(canalCfg.comision) || 0) : 0;
-  const envioAbsorbido = canalCfg ? (Number(canalCfg.envioAbsorbido) || 0) : 0;
-  const publicidadCanal = canalCfg ? (Number(canalCfg.publicidad) || 0) : 0;
-  const retencionCanal = comisionCanal + publicidadCanal;
-
-  const costoCanal = precioTransferencia ? precioTransferencia * retencionCanal + envioAbsorbido : 0;
-  const ingresoNetoSinIva = precioTransferencia ? (precioTransferencia - costoCanal) / (1 + R.iva) : 0;
-  const gananciaNetaCanal = precioTransferencia ? ingresoNetoSinIva - costoTotalEstimado : 0;
-  const margenNetoCanal = ingresoNetoSinIva ? gananciaNetaCanal / ingresoNetoSinIva : 0;
-
-  // Cuánto habría que cobrar en este canal para que quede el mismo margen que
-  // se pretendía. Es una referencia para decidir el precio de publicación, no
-  // se aplica sola: el precio que se cotiza sigue siendo el de siempre.
-  const ingresoNetoObjetivo = margenAplicado < 1 ? costoTotalEstimado / (1 - margenAplicado) : 0;
-  const precioSugeridoCanal = retencionCanal < 1 && precioTransferencia
-    ? (ingresoNetoObjetivo * (1 + R.iva) + envioAbsorbido) / (1 - retencionCanal)
-    : 0;
-
-  const alertaCanal = !canalCfg || !precioTransferencia
-    ? "OK"
-    : margenNetoCanal <= 0
-    ? `PIERDE PLATA por ${canalCfg.nombre}: después de comisión y envío quedan ${fmtMoney(gananciaNetaCanal)}. Habría que cobrar ${fmtMoney(roundTo1000(precioSugeridoCanal))}.`
-    : margenNetoCanal < 0.15
-    ? `Margen flaco por ${canalCfg.nombre}: ${Math.round(margenNetoCanal * 100)}% neto. Para sostener el ${Math.round(margenAplicado * 100)}% habría que cobrar ${fmtMoney(roundTo1000(precioSugeridoCanal))}.`
-    : "OK";
-
   const esEsmeriladoOBiselado = tipoRow.esmerilado !== "Ninguno" || tipoProducto === "Biselado";
   const tiempoFabricacion = esEsmeriladoOBiselado ? "25 días hábiles" : (desempActivo || bluetoothSel !== "Sin Bluetooth") ? "10 a 12 días hábiles" : "5 a 7 días hábiles";
 
@@ -1044,10 +977,8 @@ function computeQuote(inputs, cfg) {
     + (tipoProducto === "Capilla" && capillaCurva ? ` · ${capillaCurva.toLowerCase()}` : "");
 
   return {
-    area, perimetro, estandar, factorTamaño, alertaMedidaMaxima, alertaPaneles, alertaComercial, alertaCanal,
+    area, perimetro, estandar, factorTamaño, alertaMedidaMaxima, alertaPaneles, alertaComercial,
     costoTotalEstimado, escalaComercial, margenAplicado, margenReal,
-    canal, canalNombre: canalCfg ? canalCfg.nombre : "", costoCanal, ingresoNetoSinIva,
-    gananciaNetaCanal, margenNetoCanal, precioSugeridoCanal,
     panelSize, cantidadTotalPaneles,
     precioMinorista, precioRevendedor, precioConstructora10, precioConstructora20,
     precioTransferencia, precio3Cuotas, precioEfectivoSinIva, totalPedidoTransferencia,
@@ -1434,11 +1365,11 @@ function App() {
   // Sincronización de pedidos: como cada uno vive en su propia fila, refrescar
   // siempre trae la versión real de todos — nunca puede "perder" el cambio de
   // otra persona, porque nadie reescribe el conjunto entero al guardar.
-  async function refreshPedidos() {
+  async function refreshPedidos(forzar = false) {
     if (pedidosRefreshingRef.current) return;
     pedidosRefreshingRef.current = true;
     try {
-      if (!(await tablaCambio("pedidos", pedidosStore))) return;
+      if (!forzar && !(await tablaCambio("pedidos", pedidosStore))) return;
       const frescos = normalizarOrdenesPorGrupo(await pedidosStore.getAll());
       setPedidos(frescos);
     } catch (e) {
@@ -1449,11 +1380,11 @@ function App() {
   }
 
   function crearRefrescador(store, setter, refreshingRef, nombre) {
-    return async function refrescar() {
+    return async function refrescar(forzar = false) {
       if (refreshingRef.current) return;
       refreshingRef.current = true;
       try {
-        if (!(await tablaCambio(nombre, store))) return;
+        if (!forzar && !(await tablaCambio(nombre, store))) return;
         setter(await store.getAll());
       } catch (e) {
         // sin conexión: se mantiene lo que ya está visible
@@ -1472,13 +1403,20 @@ function App() {
   useEffect(() => {
     if (loading) return undefined;
     let active = true;
-    const unsubPedidos = pedidosStore.subscribeRealtime(() => { if (active) refreshPedidos(); });
-    const unsubReclamos = reclamosStore.subscribeRealtime(() => { if (active) refreshReclamos(); });
-    const unsubStockEspejos = stockEspejosStore.subscribeRealtime(() => { if (active) refreshStockEspejos(); });
-    const unsubStockMateriales = stockMaterialesStore.subscribeRealtime(() => { if (active) refreshStockMateriales(); });
+    // El aviso en vivo solo llega cuando algo cambió de verdad, así que baja
+    // directo: no depende de la hora que tenga el celular que guardó.
+    const unsubPedidos = pedidosStore.subscribeRealtime(() => { if (active) refreshPedidos(true); });
+    const unsubReclamos = reclamosStore.subscribeRealtime(() => { if (active) refreshReclamos(true); });
+    const unsubStockEspejos = stockEspejosStore.subscribeRealtime(() => { if (active) refreshStockEspejos(true); });
+    const unsubStockMateriales = stockMaterialesStore.subscribeRealtime(() => { if (active) refreshStockMateriales(true); });
+    // Cada 75 vueltas (5 minutos) se baja todo sin mirar la huella, por si el
+    // aviso en vivo se cayó y algún celular guardó con la hora corrida.
+    let vuelta = 0;
     const refrescarTodo = () => {
       if (!active || !pestanaVisible()) return;
-      refreshPedidos(); refreshReclamos(); refreshStockEspejos(); refreshStockMateriales();
+      vuelta += 1;
+      const aFondo = vuelta % 75 === 0;
+      refreshPedidos(aFondo); refreshReclamos(aFondo); refreshStockEspejos(aFondo); refreshStockMateriales(aFondo);
     };
     const interval = window.setInterval(refrescarTodo, 4000);
     const refreshWhenVisible = () => { if (active && document.visibilityState === "visible") refrescarTodo(); };
@@ -1637,20 +1575,7 @@ function App() {
       // Si la config guardada es vieja y le falta alguna regla, se completa con
       // la del código en vez de quedar a medias.
       setQuoteConfig(guardada
-        ? {
-            ...DEFAULT_QUOTE_CONFIG,
-            ...guardada,
-            reglas: { ...DEFAULT_QUOTE_CONFIG.reglas, ...guardada.reglas, margenMinDesempCm: DEFAULT_QUOTE_CONFIG.reglas.margenMinDesempCm },
-            // Las configuraciones guardadas de antes no tienen "canales". Se
-            // completa canal por canal para que una config vieja no deje el
-            // costo de canal en cero sin avisar.
-            canales: Object.fromEntries(
-              Object.keys(DEFAULT_QUOTE_CONFIG.canales).map((k) => [
-                k,
-                { ...DEFAULT_QUOTE_CONFIG.canales[k], ...((guardada.canales || {})[k] || {}) },
-              ])
-            ),
-          }
+        ? { ...DEFAULT_QUOTE_CONFIG, ...guardada, reglas: { ...DEFAULT_QUOTE_CONFIG.reglas, ...guardada.reglas, margenMinDesempCm: DEFAULT_QUOTE_CONFIG.reglas.margenMinDesempCm } }
         : DEFAULT_QUOTE_CONFIG);
     } catch (e) { setQuoteConfig(DEFAULT_QUOTE_CONFIG); }
     try {
@@ -2459,41 +2384,6 @@ function PanelControlAdmin({ pedidos, incomes, purchases = [], reclamos, stockMa
   const margenMes = ventaEntregadosMes - costoEntregadosMes;
   const margenPorcentaje = ventaEntregadosMes > 0 ? (margenMes / ventaEntregadosMes) * 100 : null;
 
-  // Rentabilidad por canal. Hasta ahora no se podía calcular porque el pedido
-  // no guardaba el canal; con el campo nuevo, cada entrega del mes se agrupa
-  // por dónde entró y se le descuenta lo que cuesta vender por ahí.
-  // Los pedidos viejos caen en "Sin canal" — eso mismo muestra cuánto falta
-  // cargar antes de que el número sirva para decidir.
-  const rentabilidadPorCanal = (() => {
-    if (!quoteConfig) return [];
-    const acc = new Map();
-    for (const p of entregadosMesParaMargen) {
-      const key = p.canal || CANAL_SIN_DATO;
-      const venta = Number(p.monto) || 0;
-      const costo = estimarCostoPedido(p, quoteConfig);
-      const cfgCanal = (quoteConfig.canales || {})[key];
-      const retencion = cfgCanal ? (Number(cfgCanal.comision) || 0) + (Number(cfgCanal.publicidad) || 0) : 0;
-      const envio = cfgCanal ? Number(cfgCanal.envioAbsorbido) || 0 : 0;
-      const costoCanal = venta > 0 ? venta * retencion + envio : 0;
-      const prev = acc.get(key) || { canal: key, pedidos: 0, venta: 0, costo: 0, costoCanal: 0 };
-      acc.set(key, {
-        canal: key,
-        pedidos: prev.pedidos + 1,
-        venta: prev.venta + venta,
-        costo: prev.costo + costo,
-        costoCanal: prev.costoCanal + costoCanal,
-      });
-    }
-    return [...acc.values()]
-      .map((r) => {
-        const neto = r.venta - r.costoCanal;
-        const ganancia = neto - r.costo;
-        return { ...r, ganancia, margen: neto > 0 ? (ganancia / neto) * 100 : null };
-      })
-      .sort((a, b) => b.venta - a.venta);
-  })();
-  const pedidosSinCanal = entregadosMesParaMargen.filter((p) => !p.canal).length;
-
   const delMes = (x) => (x.fecha || "").slice(0, 7) === mesActual;
 
   // Saldos cobrados: los ingresos que la app registra al cobrar el saldo de un pedido.
@@ -2597,39 +2487,6 @@ function PanelControlAdmin({ pedidos, incomes, purchases = [], reclamos, stockMa
         <Ayuda titulo="Qué tan exacto es el margen" style={{ marginTop: -10, marginBottom: 18 }}>
           Es una estimación con los precios de materiales de hoy, no el costo exacto de cada pedido en su momento — sirve para ver la tendencia, no como número contable exacto.
         </Ayuda>
-      )}
-
-      {quoteConfig && rentabilidadPorCanal.length > 0 && (
-        <div className="dg-section-card">
-          <div className="dg-section-header"><BarChart3 size={14} /> Rentabilidad por canal — {labelMes(mesActual)}</div>
-          <div className="dg-canal-tabla-scroll">
-            <table className="dg-canal-tabla">
-              <thead>
-                <tr><th>Canal</th><th>Pedidos</th><th>Venta</th><th>Costo fábrica</th><th>Se lleva el canal</th><th>Ganancia</th><th>Margen</th></tr>
-              </thead>
-              <tbody>
-                {rentabilidadPorCanal.map((r) => (
-                  <tr key={r.canal}>
-                    <td>{canalLabel(r.canal)}</td>
-                    <td>{r.pedidos}</td>
-                    <td>{money(r.venta)}</td>
-                    <td>{money(r.costo)}</td>
-                    <td>{r.costoCanal > 0 ? money(r.costoCanal) : "—"}</td>
-                    <td style={{ color: r.ganancia >= 0 ? "var(--dg-success)" : "var(--dg-danger)" }}>{money(r.ganancia)}</td>
-                    <td style={{ color: r.margen === null ? undefined : r.margen <= 0 ? "var(--dg-danger)" : r.margen < 15 ? "var(--dg-warning)" : "var(--dg-success)" }}>
-                      {r.margen === null ? "—" : `${r.margen.toFixed(0)}%`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {pedidosSinCanal > 0 && (
-            <Ayuda titulo="Por qué hay pedidos en «Sin canal»" style={{ marginTop: 12 }}>
-              {pedidosSinCanal} de {entregadosMesParaMargen.length} entregas del mes no tienen canal cargado, así que a ésas no se les descuenta comisión ni envío y su margen sale inflado. El campo «Canal de venta» está en la ficha del pedido, al lado de «Vendedor». Hasta que se cargue en todos, este cuadro sirve para ver la tendencia, no para decidir precios.
-            </Ayuda>
-          )}
-        </div>
       )}
 
       <div className="dg-section-card">
@@ -4361,7 +4218,7 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
 function emptyPedido(prefill) {
   return {
     id: uid(), orden: prefill?.orden || null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
-    vendedor: prefill?.vendedor || "", canal: prefill?.canal || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
+    vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
     provincia: prefill?.provincia || "", localidad: prefill?.localidad || "", codigoPostal: prefill?.codigoPostal || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
     touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
@@ -4454,7 +4311,6 @@ function pedidoAInputsCosteo(pedido) {
     envioInterior: pedido?.metodo === "Interior" ? "Sí" : "No",
     tipoCliente: "Consumidor Final",
     cantidad: 1,
-    canal: pedido?.canal || "",
   };
 }
 
@@ -5896,7 +5752,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const [quickView, setQuickView] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [filtroVendedor, setFiltroVendedor] = useState("todos");
-  const [filtroCanal, setFiltroCanal] = useState("todos");
   const [busqueda, setBusqueda] = useState("");
   const [openPedido, setOpenPedido] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -5925,7 +5780,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     .filter((p) => !fechaDesde || (p.fecha && p.fecha >= fechaDesde))
     .filter((p) => !fechaHasta || (p.fecha && p.fecha <= fechaHasta))
     .filter((p) => filtroVendedor === "todos" || p.vendedor === filtroVendedor)
-    .filter((p) => filtroCanal === "todos" || (filtroCanal === CANAL_SIN_DATO ? !p.canal : p.canal === filtroCanal))
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => {
       if (!a.listo && !b.listo) return (b.orden || 0) - (a.orden || 0);
@@ -6028,7 +5882,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       setAvisoEspejo({ guardados: yaGuardados, cliente: toSave.cliente || "", orden: toSave.orden });
       setNextDraft(emptyPedido({
         orden: toSave.orden, grupoId: toSave.grupoId, cliente: toSave.cliente, celular: toSave.celular, dniCuit: toSave.dniCuit,
-        vendedor: toSave.vendedor, canal: toSave.canal, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, barrio: toSave.barrio, detalleEntrega: toSave.detalleEntrega, piso: toSave.piso,
+        vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, barrio: toSave.barrio, detalleEntrega: toSave.detalleEntrega, piso: toSave.piso,
         tipoPedido: toSave.tipoPedido, urgente: toSave.urgente, reclamoId: toSave.reclamoId, sinCargo: toSave.sinCargo,
       }));
     } else {
@@ -6217,11 +6071,6 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         <select value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
           <option value="todos">Todos los vendedores</option>
           {vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}
-        </select>
-        <select value={filtroCanal} onChange={(e) => setFiltroCanal(e.target.value)}>
-          <option value="todos">Todos los canales</option>
-          {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
-          <option value={CANAL_SIN_DATO}>Sin canal cargado</option>
         </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
         <div className="dg-periodo-toggle">
@@ -6998,12 +6847,6 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Cliente" error={err("cliente")}><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
             <Field label="Fecha de compra"><input type="date" disabled={!canEditFull} value={draft.fecha || ""} onChange={(e) => set("fecha", e.target.value)} /></Field>
             <Field label="Vendedor" error={err("vendedor")}><select disabled={!canEditFull} value={draft.vendedor} onChange={(e) => set("vendedor", e.target.value)}><option value="">—</option>{vendedores.map((v) => (<option key={v}>{v}</option>))}</select></Field>
-            <Field label="Canal de venta" error={err("canal")}>
-              <select disabled={!canEditFull} value={draft.canal || ""} onChange={(e) => set("canal", e.target.value)}>
-                <option value="">— Elegir canal —</option>
-                {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
-              </select>
-            </Field>
             <Field label="Celular" error={err("celular")}><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
             <Field label="DNI/CUIT"><input disabled={!canEditFull} value={draft.dniCuit} onChange={(e) => set("dniCuit", e.target.value)} /></Field>
             <Field label="Tipo factura" error={err("tipoFactura")}><select disabled={!canEditFull} value={draft.tipoFactura} onChange={(e) => set("tipoFactura", e.target.value)}>{TIPOFACTURA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
@@ -8928,6 +8771,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     if (dia) setDiasAbiertos((prev) => new Set(prev).add(dia));
     if (onRegistrar) onRegistrar("Movió un espejo de día", `#${p.orden} — ${p.cliente} — ${dia ? nombreDiaTaller(dia, isoLocal(new Date())) : "reparto automático"}`);
   }
+  // Tabla del día: abierta de entrada, porque es lo primero que mira el taller.
+  const [tablaDiaAbierta, setTablaDiaAbierta] = useState(true);
+  const [filaDiaAbierta, setFilaDiaAbierta] = useState(null);
   const [multiAbierto, setMultiAbierto] = useState(() => new Set());
   function toggleMulti(id) {
     setMultiAbierto((prev) => {
@@ -9608,6 +9454,98 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 Hasta {TALLER_MAX_DIA} espejos por día y nunca más esmerilados/biselados que simples. El sábado, medio día: hasta {TALLER_MAX_SIMPLES_SABADO} simples y {TALLER_MAX_ESP_SABADO} esmerilados para armar. Se reparte solo por urgencia y fecha de entrega.
                 {canEdit ? " Para cambiar un espejo de día usá «Pasar a otro día»." : ""}{puedeArrastrar ? " También podés arrastrarlo." : ""}
               </p>
+              {(() => {
+                const hoyPlan = plan[0];
+                if (!hoyPlan) return null;
+                const filas = hoyPlan.items.filter((x) => coincide(x.pedido));
+                if (filas.length === 0) return null;
+                const irATarjeta = (ev, x) => {
+                  ev.stopPropagation();
+                  setDiasAbiertos((prev) => new Set(prev).add(hoyPlan.fecha));
+                  const id = `taller-${hoyPlan.fecha}-${x.pedido.id}`;
+                  const centrar = () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  // El día puede estar cerrado: se espera a que aparezca, y se
+                  // vuelve a centrar cuando el acomodo de la página terminó.
+                  let intentos = 0;
+                  const buscar = () => {
+                    if (document.getElementById(id)) { centrar(); window.setTimeout(centrar, 400); return; }
+                    if (intentos++ < 12) window.setTimeout(buscar, 60);
+                  };
+                  window.setTimeout(buscar, 60);
+                };
+                return (
+                  <div className={`dg-section-card dg-tdia-card ${tablaDiaAbierta ? "dg-tdia-abierta" : ""}`}>
+                    <button type="button" className="dg-tdia-head" onClick={() => setTablaDiaAbierta((v) => !v)} aria-expanded={tablaDiaAbierta}>
+                      <span className="dg-tdia-tit">
+                        <strong><ClipboardList size={14} /> Para hacer {nombreDiaTaller(hoyPlan.fecha, hoyTaller).toLowerCase()}</strong>
+                        <small>
+                          {hoyPlan.total} espejo{hoyPlan.total === 1 ? "" : "s"} · {hoyPlan.simples} simple{hoyPlan.simples === 1 ? "" : "s"} · {hoyPlan.especiales} esm./bisel
+                          {hoyPlan.sabado ? " · medio día" : ""}
+                        </small>
+                      </span>
+                      <ChevronRight size={16} className={tablaDiaAbierta ? "dg-presu-chevron-on" : ""} />
+                    </button>
+                    {tablaDiaAbierta && (
+                      <div className="dg-tdia-scroll">
+                        <table className="dg-tdia-tabla">
+                          <thead>
+                            <tr>
+                              <th>Orden</th><th className="dg-num">Cant.</th><th className="dg-num">Medida</th>
+                              <th>Forma</th><th>Tono</th><th>Proceso</th><th>Funciones</th><th>Grabado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filas.map((x) => {
+                              const p = x.pedido;
+                              const abierta = filaDiaAbierta === p.id;
+                              const proc = TALLER_MODELOS.find((item) => item.id === pedidoProcesoTaller(p));
+                              const colorProc = proc?.id === "simples" ? "var(--dg-accent-2)" : proc?.color;
+                              const funcs = funcionesPedido(p, true);
+                              const obs = detalleFabrica(p);
+                              return (
+                                <Fragment key={p.id}>
+                                  <tr
+                                    className={`dg-tdia-fila ${abierta ? "dg-tdia-fila-abierta" : ""} ${esUrgente(p) ? "dg-tdia-fila-urgente" : ""}`}
+                                    onClick={() => setFilaDiaAbierta(abierta ? null : p.id)}
+                                    aria-expanded={abierta}>
+                                    <td className="dg-tdia-orden">
+                                      <button type="button" className="dg-tdia-orden-btn" onClick={(ev) => irATarjeta(ev, x)} title="Ir a la tarjeta de este espejo">#{p.orden}</button>
+                                      {esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}
+                                    </td>
+                                    <td className="dg-num">{x.unidades > 1 ? `${x.unidades}${x.partes > 1 ? ` de ${x.total}` : ""}` : "1"}</td>
+                                    <td className="dg-num dg-tdia-medida">{p.ancho} × {p.alto}</td>
+                                    <td>{p.forma || <span className="dg-tdia-falta">—</span>}</td>
+                                    <td>{p.tono || <span className="dg-tdia-falta">—</span>}</td>
+                                    <td className="dg-tdia-proceso" style={{ color: colorProc }}>{(proc?.label || "Simples").replace(/s$/, "")}</td>
+                                    <td className="dg-tdia-funcs">{funcs.length ? funcs.map((f) => f.label).join(" · ") : <span className="dg-tdia-falta">—</span>}</td>
+                                    <td className="dg-tdia-grabado">{medidaGrabado(p)}</td>
+                                  </tr>
+                                  {abierta && (
+                                    <tr className="dg-tdia-detalle">
+                                      <td colSpan={8}>
+                                        <div className="dg-tdia-detalle-in" onClick={(ev) => ev.stopPropagation()}>
+                                          <span><b>Cliente</b> {p.cliente || "Sin nombre"}</span>
+                                          <span><b>Tipo</b> {p.tipo || "—"}</span>
+                                          <span><b>Pulido</b> {p.pulido || "—"}</span>
+                                          <span><b>Sale por</b> {p.metodo || "—"}</span>
+                                          <span><b>Terminar</b> <RelojObjetivoFabrica pedido={p} /></span>
+                                          {obs && <span className="dg-tdia-detalle-obs"><b>Observaciones</b> {obs}</span>}
+                                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(ev) => irATarjeta(ev, x)}><ChevronRight size={13} /> Ir a la tarjeta</button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {plan.map((dia) => {
                 const semana = tituloSemana(dia.fecha);
                 const separador = semana !== semanaAnterior ? <div className="dg-dias-semana" key={`sem-${dia.fecha}`}>{semana}</div> : null;
@@ -9640,6 +9578,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                           {items.map((x) => (
                             <div
                               className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"}`}
+                              id={`taller-${dia.fecha}-${x.pedido.id}`}
                               key={x.pedido.id}
                               draggable={puedeArrastrar}
                               onDragStart={puedeArrastrar ? (e) => { e.dataTransfer.setData("text/plain", x.pedido.id); e.dataTransfer.effectAllowed = "move"; } : undefined}
@@ -12411,7 +12350,6 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const [cliente, setCliente] = useState("");
   const [celular, setCelular] = useState("");
   const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
-  const [canal, setCanal] = useState("local");
   const [envioInterior, setEnvioInterior] = useState("No");
   const [espejos, setEspejos] = useState(() => [nuevoEspejoPresupuesto()]);
   const [abierto, setAbierto] = useState(null);
@@ -12437,7 +12375,6 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
       capillaCurva: curvaCapilla(e),
       envioInterior,
       tipoCliente,
-      canal,
       cantidad: Number(e.cantidad) || 1,
       cliente,
     };
@@ -12456,20 +12393,13 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
   const costoTotal = lineas.reduce((a, l) => a + l.result.costoTotalEstimado * cant(l.espejo), 0);
   const ventaSinIva = lineas.reduce((a, l) => a + l.result.precioEfectivoSinIva * cant(l.espejo), 0);
   const margenRealTotal = ventaSinIva ? (ventaSinIva - costoTotal) / ventaSinIva : 0;
-  // Lo mismo, pero después de pagarle al canal.
-  const costoCanalTotal = lineas.reduce((a, l) => a + (l.result.costoCanal || 0) * cant(l.espejo), 0);
-  const ventaNetaSinIva = lineas.reduce((a, l) => a + (l.result.ingresoNetoSinIva || 0) * cant(l.espejo), 0);
-  const gananciaNetaTotal = ventaNetaSinIva - costoTotal;
-  const margenNetoTotal = ventaNetaSinIva ? gananciaNetaTotal / ventaNetaSinIva : 0;
-  const precioSugeridoTotal = lineas.reduce((a, l) => a + (l.result.precioSugeridoCanal || 0) * cant(l.espejo), 0);
-  const canalTieneCosto = costoCanalTotal > 0;
   const tiempoFabricacion = lineas.reduce((peor, l) => (
     ORDEN_TIEMPOS.indexOf(l.result.tiempoFabricacion) > ORDEN_TIEMPOS.indexOf(peor) ? l.result.tiempoFabricacion : peor
   ), ORDEN_TIEMPOS[0]);
 
   const avisos = [];
   lineas.forEach((l, i) => {
-    ["alertaMedidaMaxima", "alertaPaneles", "alertaComercial", "alertaCanal"].forEach((k) => {
+    ["alertaMedidaMaxima", "alertaPaneles", "alertaComercial"].forEach((k) => {
       if (l.result[k] && l.result[k] !== "OK") avisos.push({ espejo: etiquetaEspejo(l.espejo, i), texto: l.result[k] });
     });
   });
@@ -12527,11 +12457,6 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
               <Field label="Tipo de cliente">
                 <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)}>
                   <option>Consumidor Final</option><option>Revendedor</option>
-                </select>
-              </Field>
-              <Field label="Canal de venta">
-                <select value={canal} onChange={(e) => setCanal(e.target.value)}>
-                  {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
                 </select>
               </Field>
               <Field label="Envío interior"><select value={envioInterior} onChange={(e) => setEnvioInterior(e.target.value)}><option>No</option><option>Sí</option></select></Field>
@@ -12723,30 +12648,10 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
             <summary>Costos y márgenes</summary>
             <div className="dg-quote-meta">
               <div><span>Escala</span><strong>{lineas.length ? lineas[0].result.escalaComercial : "—"}</strong></div>
-              <div><span>Margen de fábrica</span><strong>{Math.round(margenRealTotal * 100)}%</strong></div>
+              <div><span>Margen real estimado</span><strong>{Math.round(margenRealTotal * 100)}%</strong></div>
               <div><span>Costo total estimado</span><strong>{fmtMoney(costoTotal)}</strong></div>
-              <div><span>Ganancia de fábrica</span><strong>{fmtMoney(ventaSinIva - costoTotal)}</strong></div>
+              <div><span>Ganancia estimada</span><strong>{fmtMoney(ventaSinIva - costoTotal)}</strong></div>
             </div>
-
-            {canalTieneCosto && (
-              <>
-                <div className="dg-config-group-title">Después de pagar el canal · {CANALES_VENTA[canal]}</div>
-                <div className="dg-quote-meta">
-                  <div><span>Se lleva el canal</span><strong>{fmtMoney(costoCanalTotal)}</strong></div>
-                  <div>
-                    <span>Margen neto real</span>
-                    <strong style={{ color: margenNetoTotal <= 0 ? "var(--dg-danger)" : margenNetoTotal < 0.15 ? "var(--dg-warning, #d99100)" : "var(--dg-success)" }}>
-                      {Math.round(margenNetoTotal * 100)}%
-                    </strong>
-                  </div>
-                  <div><span>Ganancia neta</span><strong style={{ color: gananciaNetaTotal <= 0 ? "var(--dg-danger)" : undefined }}>{fmtMoney(gananciaNetaTotal)}</strong></div>
-                  <div><span>Precio que sostendría el margen</span><strong>{fmtMoney(roundTo1000(precioSugeridoTotal))}</strong></div>
-                </div>
-                <p className="dg-hint">
-                  El presupuesto se sigue calculando como siempre. Esto es sólo para ver qué queda después de la comisión y el envío del canal — el «precio que sostendría el margen» es una referencia para decidir el precio de publicación, no se aplica solo.
-                </p>
-              </>
-            )}
           </details>
 
           <div className="dg-mensaje-box">
@@ -12853,21 +12758,6 @@ function ConfigEditor({ config, onChange }) {
         <ConfigField label="Hora/Temp — costo" value={O.horaTemp.costo} onChange={(v) => setNested("opcionales", "horaTemp", "costo", v)} />
         <ConfigField label="Hora/Temp — carga" value={O.horaTemp.carga} onChange={(v) => setNested("opcionales", "horaTemp", "carga", v)} />
       </div>
-
-      <div className="dg-config-group-title">Costo de vender por cada canal</div>
-      <p className="dg-hint">
-        Comisión y publicidad se cargan como fracción (0.15 = 15%). «Envío absorbido» son los pesos de flete que paga la empresa y no el cliente — si el envío lo paga siempre el cliente, dejalo en 0.
-      </p>
-      {Object.entries(config.canales || {}).map(([k, c]) => (
-        <div key={k}>
-          <div className="dg-config-group-title" style={{ fontSize: 12, opacity: 0.8 }}>{c.nombre}</div>
-          <div className="dg-config-grid">
-            <ConfigField label="Comisión (0-1)" value={c.comision} onChange={(v) => setNested("canales", k, "comision", v)} />
-            <ConfigField label="Envío absorbido $" value={c.envioAbsorbido} onChange={(v) => setNested("canales", k, "envioAbsorbido", v)} />
-            <ConfigField label="Publicidad (0-1)" value={c.publicidad} onChange={(v) => setNested("canales", k, "publicidad", v)} />
-          </div>
-        </div>
-      ))}
 
       <div className="dg-config-group-title">Carga operativa y reglas comerciales</div>
       <div className="dg-config-grid">
@@ -14073,6 +13963,34 @@ function Style() {
       .dg-fab-grupo-count { font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; color:var(--dg-accent);
         background:rgba(var(--dg-accent-rgb),0.12); border-radius:18px; padding:2px 9px; }
       /* Espejos para armar, por día */
+      /* Tabla del día (Fábrica). Mismo molde que la tabla de envíos. */
+      .dg-tdia-card { padding:0; overflow:hidden; margin-bottom:14px; }
+      .dg-tdia-head { width:100%; display:grid; grid-template-columns:minmax(0,1fr) 16px; align-items:center; gap:10px; padding:13px 14px; border:0; background:transparent; color:inherit; font-family:'Jost',sans-serif; text-align:left; cursor:pointer; }
+      .dg-tdia-head > svg { color:var(--dg-text-faint); transition:transform .18s ease; }
+      .dg-tdia-tit { display:flex; flex-direction:column; gap:2px; min-width:0; }
+      .dg-tdia-tit strong { display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600; color:var(--dg-text); }
+      .dg-tdia-tit small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-tdia-scroll { overflow-x:auto; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-tdia-tabla { width:100%; min-width:720px; border-collapse:collapse; font-size:13px; }
+      .dg-tdia-tabla th { position:sticky; top:0; padding:9px 12px; text-align:left; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
+      .dg-tdia-tabla td { padding:9px 12px; color:var(--dg-text); border-top:1px solid rgba(var(--dg-line-rgb),.08); }
+      .dg-tdia-tabla tbody tr { cursor:pointer; }
+      .dg-tdia-tabla tbody tr:hover { background:rgba(var(--dg-accent-rgb),.06); }
+      .dg-tdia-tabla .dg-num { text-align:right; white-space:nowrap; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+      .dg-tdia-fila > td { height:42px; box-sizing:border-box; vertical-align:middle; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px; }
+      .dg-tdia-fila-abierta > td { white-space:normal; overflow:visible; vertical-align:top; background:rgba(var(--dg-accent-rgb),.08); }
+      .dg-tdia-fila-urgente > td:first-child { box-shadow:inset 3px 0 0 -1px var(--dg-danger); }
+      .dg-tdia-orden { display:flex; align-items:center; gap:6px; }
+      .dg-tdia-orden-btn { border:0; background:transparent; padding:0; font:inherit; font-family:'JetBrains Mono', monospace; font-weight:700; color:var(--dg-accent-2); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+      .dg-tdia-medida { font-weight:700; }
+      .dg-tdia-proceso { font-weight:600; }
+      .dg-tdia-funcs { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:600; }
+      .dg-tdia-tabla td.dg-tdia-grabado { color:var(--dg-text-dim); }
+      .dg-tdia-falta { color:var(--dg-text-faint); }
+      .dg-tdia-detalle > td { padding:0 12px 12px; background:rgba(var(--dg-accent-rgb),.08); }
+      .dg-tdia-detalle-in { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding-top:9px; border-top:1px solid rgba(var(--dg-line-rgb),.1); font-size:13px; color:var(--dg-text-dim); cursor:default; }
+      .dg-tdia-detalle-in b { margin-right:4px; font-weight:600; color:var(--dg-text-faint); font-size:11px; letter-spacing:.3px; text-transform:uppercase; }
+      .dg-tdia-detalle-obs { flex:1 1 100%; color:var(--dg-text); }
       .dg-dias-ayuda { margin:0 0 12px; font-size:12px; line-height:1.45; color:var(--dg-text-dim); }
       .dg-dias-semana { margin:16px 0 8px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--dg-text-dim); }
       .dg-dias-semana:first-of-type { margin-top:4px; }
@@ -14629,12 +14547,6 @@ function Style() {
       .dg-venc-dia-detalle-head strong { font-family:'Jost',sans-serif; color:var(--dg-text); }
       .dg-recorrido { padding:14px 16px; }
       .dg-recorrido-scroll { overflow-x:auto; margin-top:10px; border:1px solid rgba(var(--dg-line-rgb),.1); border-radius:10px; }
-      .dg-canal-tabla-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-      .dg-canal-tabla { width:100%; min-width:520px; border-collapse:collapse; font-size:13px; }
-      .dg-canal-tabla th { padding:8px 10px; text-align:left; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
-      .dg-canal-tabla td { padding:8px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.07); color:var(--dg-text); white-space:nowrap; font-variant-numeric:tabular-nums; }
-      .dg-canal-tabla td:first-child, .dg-canal-tabla th:first-child { font-weight:600; }
-      .dg-canal-tabla th:not(:first-child), .dg-canal-tabla td:not(:first-child) { text-align:right; }
       .dg-recorrido-tabla { width:100%; border-collapse:collapse; font-size:12px; }
       .dg-recorrido-tabla th { position:sticky; top:0; padding:8px 10px; text-align:left; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
       .dg-recorrido-tabla td { padding:7px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.07); color:var(--dg-text); white-space:nowrap; vertical-align:top; }
