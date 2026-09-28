@@ -2517,6 +2517,103 @@ function PanelControlAdmin({ pedidos, incomes, purchases = [], reclamos, stockMa
         </Ayuda>
       )}
 
+      {(() => {
+        const hoyIso = isoLocal(new Date());
+        const semanas = produccionSemanalTaller(pedidos, hoyIso, 8);
+        const pctDe = (x) => (x.totalLista.tenian > 0 ? Math.round((x.totalLista.hechos / x.totalLista.tenian) * 100) : null);
+        const conDatos = semanas.filter((x) => x.totalLista.tenian > 0);
+        const anteriores = semanas.slice(1).filter((x) => x.totalLista.tenian > 0);
+        const promedio = anteriores.length ? Math.round(anteriores.reduce((t, x) => t + pctDe(x), 0) / anteriores.length) : null;
+        const esta = semanas[0];
+        const estaPct = pctDe(esta);
+        const estaFaltan = Math.max(0, esta.totalLista.tenian - esta.totalLista.hechos);
+        const corto = (iso) => { const [, m, d] = iso.split("-").map(Number); return `${d}/${m}`; };
+        return (
+          <div className="dg-section-card">
+            <div className="dg-section-header"><Factory size={14} /> Espejos que hizo el taller, semana por semana</div>
+            {conDatos.length === 0 ? (
+              <div className="dg-empty">Todavía no hay producción registrada.</div>
+            ) : (
+              <>
+                <div className="dg-prod-resumen">
+                  <div>
+                    <small>Esta semana tenían</small>
+                    <strong>{esta.totalLista.tenian}</strong>
+                    <span>
+                      {LISTAS_PRODUCCION.filter((l) => esta.porLista[l.id].tenian > 0)
+                        .map((l) => `${esta.porLista[l.id].tenian} ${l.label.toLowerCase()}`).join(" · ") || "espejos para hacer"}
+                    </span>
+                  </div>
+                  <div>
+                    <small>Terminaron</small>
+                    <strong style={{ color: "var(--dg-success)" }}>{esta.totalLista.hechos}</strong>
+                    <span>{estaPct !== null ? `el ${estaPct}% de lo que tenían` : "sin datos"}</span>
+                  </div>
+                  <div>
+                    <small>Quedaron sin hacer</small>
+                    <strong style={{ color: estaFaltan > 0 ? "var(--dg-danger)" : "var(--dg-text)" }}>{estaFaltan}</strong>
+                    <span>pasan a la semana que viene</span>
+                  </div>
+                  {promedio !== null && (
+                    <div>
+                      <small>Promedio de las anteriores</small>
+                      <strong>{promedio}%</strong>
+                      <span>de lo que tenían</span>
+                    </div>
+                  )}
+                </div>
+                <div className="dg-prod-scroll">
+                  <table className="dg-prod-tabla">
+                    <thead>
+                      <tr>
+                        <th>Semana</th>
+                        {LISTAS_PRODUCCION.map((l) => <th key={l.id} className="dg-num">{l.label}</th>)}
+                        <th className="dg-num">Total</th>
+                        <th className="dg-num">%</th>
+                        <th className="dg-num">Sin hacer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {semanas.map((x) => {
+                        const pct = pctDe(x);
+                        return (
+                          <tr className={x.esActual ? "dg-prod-tr-actual" : ""} key={x.lunes}>
+                            <td>{x.esActual ? "Esta semana" : `${corto(x.lunes)} al ${corto(x.sabado)}`}</td>
+                            {LISTAS_PRODUCCION.map((l) => (
+                              <td className="dg-num" key={l.id}>
+                                {x.porLista[l.id].tenian > 0
+                                  ? <>{x.porLista[l.id].hechos}<em>/{x.porLista[l.id].tenian}</em></>
+                                  : <span className="dg-prod-vacio">—</span>}
+                              </td>
+                            ))}
+                            <td className="dg-num"><strong>{x.totalLista.hechos}<em>/{x.totalLista.tenian}</em></strong></td>
+                            <td className="dg-num">{pct !== null ? `${pct}%` : "—"}</td>
+                            <td className="dg-num">{Math.max(0, x.totalLista.tenian - x.totalLista.hechos) || <span className="dg-prod-vacio">—</span>}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="dg-prod-nota">Cada casilla dice <strong>hechos / que tenían</strong>. Un esmerilado cuenta en «p/cortar» hasta que se corta, y después en «p/armar» cuando vuelve del grabado.</p>
+                <div className="dg-prod-dias">
+                  {esta.porDia.map((d) => {
+                    const [, , dd] = d.dia.split("-").map(Number);
+                    const nombre = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"][esta.porDia.indexOf(d)];
+                    return (
+                      <div className={`dg-prod-dia ${d.dia === hoyIso ? "dg-prod-dia-hoy" : ""} ${d.dia > hoyIso ? "dg-prod-dia-futuro" : ""}`} key={d.dia}>
+                        <small>{nombre} {dd}</small>
+                        <strong>{d.dia > hoyIso ? "—" : d.terminados}</strong>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
       <div className="dg-section-card">
         <div className="dg-section-header"><Bell size={14} /> Alertas activas {totalAlertas > 0 && <span className="dg-badge" style={{ "--bc": "var(--dg-danger)" }}>{totalAlertas}</span>}</div>
         {resumenAlertas === undefined && <div className="dg-loading" style={{ minHeight: 80 }}><Loader2 className="dg-spin" size={20} /></div>}
@@ -4641,11 +4738,19 @@ function prioridadListaArmar(pedido) {
    - Un pedido se puede fijar a mano en un día (campo diaTaller): va a ese día
      aunque se pase del máximo, y el resto se reacomoda.
    =========================================================================== */
-// Lo que cuesta cada espejo, en cuartos de punto.
-const CUARTOS_TALLER = { simples: 4, esmerilados_cortar: 1, esmerilados_armar: 2, biselados_armar: 2 };
-function cuartosTaller(pedido) { return CUARTOS_TALLER[grupoListaArmar(pedido)] || 4; }
-// 7 -> "7"  ·  9.5 -> "9,5"  ·  2.25 -> "2,25"
-function puntosTaller(n) { return String(Math.round(n * 100) / 100).replace(".", ","); }
+// Cuántos espejos por día entran en cada lista. Cada una se reparte sola: un
+// día lleno de simples no le saca lugar a los esmerilados, que son otra cosa.
+// Un simple se hace de cero; cortar un esmerilado o armar uno que ya volvió
+// del grabado es bastante menos trabajo, por eso entran más.
+// «Esmerilados p/armar» va sin tope: son espejos que ya volvieron del grabado
+// y solo hay que armarlos, así que se muestran todos juntos y listo.
+const TOPE_DIA_LISTA = { simples: 10, esm_cortar: 20, esm_armar: Infinity };
+// El sábado se trabaja medio día y no se cortan esmerilados nuevos.
+const TOPE_SABADO_LISTA = { simples: 3, esm_cortar: 0, esm_armar: Infinity };
+const topeDelDia = (listaId, sabado) =>
+  (sabado ? TOPE_SABADO_LISTA : TOPE_DIA_LISTA)[listaId] ?? (sabado ? 5 : 10);
+// Las listas sin tope no se reparten por día: entra todo el primer día.
+const listaSinTope = (listaId) => TOPE_DIA_LISTA[listaId] === Infinity;
 // Los grupos, en el orden en que el taller los hace.
 const GRUPOS_TABLA_DIA = [
   { id: "simples", label: "Simples" },
@@ -4653,22 +4758,112 @@ const GRUPOS_TABLA_DIA = [
   { id: "esmerilados_armar", label: "Esmerilados para armar" },
   { id: "biselados_armar", label: "Biselados para armar" },
 ];
-// Puntos de trabajo por día (10 = diez espejos simples de cero).
-const TALLER_MAX_DIA = 10;
-// Lo máximo que se lleva un pedido grande en un solo día, para no frenar al resto.
-const TALLER_PARTE_DIA = 5;
-// Lo atrasado se suma encima del día de hoy, pero nunca más de un día extra:
-// una lista de 30 puntos no la hace nadie y deja de servir como plan.
-const TALLER_MAX_ARRASTRE = 10;
 // Ya tendría que estar terminado: su fecha objetivo quedó atrás.
 function estaAtrasadoTaller(pedido, hoyIso) {
   const objetivo = fechaObjetivoFabrica(pedido);
   return !!objetivo && objetivo < hoyIso;
 }
-// El sábado se trabaja medio día.
-const TALLER_MAX_SIMPLES_SABADO = 3;
-const TALLER_MAX_SABADO = 5; // medio día
 const DIAS_TALLER = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+
+// Espejos que el taller EMBALÓ ese día: es lo que salió terminado.
+function embaladosTallerEl(pedido, dia) {
+  if (!pedido || pedido.estado === "Cancelado") return 0;
+  if (esPedidoMultiUnidad(pedido)) {
+    return unidadesDePedido(pedido).filter((u) => u.etapa === "embalado" && diaLocalDe(u.produccionEmbaladoFecha) === dia).length;
+  }
+  return diaLocalDe(pedido.produccionEmbaladoFecha) === dia ? Math.max(1, Number(pedido.cant) || 1) : 0;
+}
+// Espejos que cortó ese día (los esmerilados salen a grabado después de cortarse).
+function cortadosTallerEl(pedido, dia) {
+  if (!pedido || pedido.estado === "Cancelado") return 0;
+  if (esPedidoMultiUnidad(pedido)) {
+    return unidadesDePedido(pedido).filter((u) => diaLocalDe(u.produccionCortadoFecha) === dia).length;
+  }
+  return diaLocalDe(pedido.produccionCortadoFecha) === dia ? Math.max(1, Number(pedido.cant) || 1) : 0;
+}
+// El lunes de la semana de una fecha.
+function lunesDeLaSemana(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const f = new Date(y, m - 1, d);
+  return isoLocal(new Date(y, m - 1, d - ((f.getDay() + 6) % 7)));
+}
+// Cuándo entró este espejo al taller. Lo más confiable que hay, en orden:
+// cuándo lo vio Fábrica, cuándo lo verificó PostVenta, o la fecha del pedido.
+function entradaAlTaller(pedido) {
+  return diaLocalDe(pedido?.vistoFabrica) || diaLocalDe(pedido?.pedidoVerificadoFecha) || String(pedido?.fecha || "").slice(0, 10);
+}
+// Cuándo salió terminado (embalado).
+function salidaDelTaller(pedido) { return diaLocalDe(pedido?.produccionEmbaladoFecha); }
+function cuentaParaElTaller(pedido) {
+  return !!pedido && pedido.estado !== "Cancelado" && pedido.estado !== "Sin pasar a fábrica";
+}
+// En qué lista estaba este espejo cuando arrancó la semana. Un esmerilado
+// empieza "para cortar" y, una vez cortado y vuelto del grabado, queda
+// "para armar", así que se mira si ya estaba cortado antes del lunes.
+function tareaDeLaSemana(pedido, lunes) {
+  const proceso = pedidoProcesoTaller(pedido);
+  if (proceso === "simples") return "simples";
+  if (proceso === "biselados") return "esm_armar";
+  const cortado = diaLocalDe(pedido?.produccionCortadoFecha);
+  return cortado && cortado < lunes ? "esm_armar" : "esm_cortar";
+}
+// El trabajo de esa lista: los de cortar se "terminan" cuando se cortan; los
+// demás, cuando salen embalados.
+function hitoDeLaTarea(pedido, tarea) {
+  return tarea === "esm_cortar" ? diaLocalDe(pedido?.produccionCortadoFecha) : diaLocalDe(pedido?.produccionEmbaladoFecha);
+}
+const LISTAS_PRODUCCION = [
+  { id: "simples", label: "Simples" },
+  { id: "esm_cortar", label: "Esm. p/cortar" },
+  { id: "esm_armar", label: "Esm. p/armar" },
+];
+
+// Semana por semana: cuántos espejos tenían para hacer y cuántos terminaron.
+// "Tenían" = los que venían sin terminar de antes + los que entraron esa semana.
+function produccionSemanalTaller(pedidos, hoyIso, cuantas = 8) {
+  const lista = (pedidos || []).filter(cuentaParaElTaller);
+  const filas = [];
+  let lunes = lunesDeLaSemana(hoyIso);
+  for (let i = 0; i < cuantas; i++) {
+    const dias = Array.from({ length: 6 }, (_, k) => isoLocal(sumarDias(new Date(`${lunes}T12:00:00`), k)));
+    const sabado = dias[5];
+    const porDia = dias.map((dia) => ({
+      dia,
+      terminados: lista.reduce((t, p) => t + embaladosTallerEl(p, dia), 0),
+      cortados: lista.reduce((t, p) => t + cortadosTallerEl(p, dia), 0),
+    }));
+    let venian = 0, entraron = 0;
+    const porLista = { simples: { tenian: 0, hechos: 0 }, esm_cortar: { tenian: 0, hechos: 0 }, esm_armar: { tenian: 0, hechos: 0 } };
+    lista.forEach((p) => {
+      const entro = entradaAlTaller(p);
+      if (!entro) return;
+      const salio = salidaDelTaller(p);
+      const cant = Math.max(1, Number(p.cant) || 1);
+      // Seguía sin terminar cuando arrancó la semana.
+      if (entro < lunes && (!salio || salio >= lunes)) venian += cant;
+      if (entro >= lunes && entro <= sabado) entraron += cant;
+      // Lo mismo, abierto por lista: cada una con su propio hito.
+      if (entro > sabado) return;
+      const tarea = tareaDeLaSemana(p, lunes);
+      const hito = hitoDeLaTarea(p, tarea);
+      if (hito && hito < lunes) return;
+      porLista[tarea].tenian += cant;
+      if (hito && hito >= lunes && hito <= sabado) porLista[tarea].hechos += cant;
+    });
+    const terminados = porDia.reduce((t, x) => t + x.terminados, 0);
+    const tenian = venian + entraron;
+    const totalLista = LISTAS_PRODUCCION.reduce((t, l) => ({ tenian: t.tenian + porLista[l.id].tenian, hechos: t.hechos + porLista[l.id].hechos }), { tenian: 0, hechos: 0 });
+    filas.push({
+      lunes, sabado, porDia, venian, entraron, tenian, terminados, porLista, totalLista,
+      quedaron: Math.max(0, tenian - terminados),
+      porcentaje: tenian > 0 ? Math.round((terminados / tenian) * 100) : null,
+      cortados: porDia.reduce((t, x) => t + x.cortados, 0),
+      esActual: i === 0,
+    });
+    lunes = isoLocal(sumarDias(new Date(`${lunes}T12:00:00`), -7));
+  }
+  return filas;
+}
 
 function claseTaller(pedido) {
   return pedidoProcesoTaller(pedido) === "simples" ? "simple" : "especial";
@@ -4753,26 +4948,29 @@ function nombreDiaTaller(iso, hoyIso) {
   return base;
 }
 
-function planTaller(pedidos, hoyIso) {
+// El plan de UNA lista: "simples", "esm_cortar" o "esm_armar".
+function planTaller(pedidos, hoyIso, listaId = "simples") {
   const primero = primerDiaTaller(hoyIso);
+  const tope = topeDelDia(listaId, false);
+  const mitad = Math.max(1, Math.ceil(tope / 2));
+  const deLaLista = (p) => entraEnPlanTaller(p) && esDeLaPestana(p, listaId);
   // Un pedido que no entra entero en un día se reparte en varios.
-  const pool = (pedidos || []).filter(entraEnPlanTaller)
+  const pool = (pedidos || []).filter(deLaLista)
     .map((p) => {
       const unidades = unidadesPendientesTaller(p);
-      const clase = claseTaller(p);
-      const cuartos = cuartosTaller(p);
-      return { pedido: p, unidades, restantes: unidades, clase, cuartos, fijado: diaFijadoValido(p.diaTaller, primero), partible: unidades * cuartos > TALLER_MAX_DIA * 4 };
+      return { pedido: p, unidades, restantes: unidades, clase: claseTaller(p), fijado: listaSinTope(listaId) ? "" : diaFijadoValido(p.diaTaller, primero), partible: unidades > tope };
     })
     .filter((x) => x.unidades > 0)
     .sort((a, b) => compararPrioridadTaller(a.pedido, b.pedido));
-  // Penalización: todo lo que ya pasó su fecha objetivo se suma al día de hoy.
-  const cuartosAtrasados = pool
+  // Penalización: lo que ya tendría que estar terminado se suma al día de hoy,
+  // hasta un día extra, para que la lista siga siendo hacible.
+  const atrasados = pool
     .filter((x) => estaAtrasadoTaller(x.pedido, hoyIso))
-    .reduce((t, x) => t + x.restantes * x.cuartos, 0);
-  const arrastreCuartos = Math.min(TALLER_MAX_ARRASTRE * 4, cuartosAtrasados);
+    .reduce((t, x) => t + x.restantes, 0);
+  const arrastreHoy = Math.min(tope, atrasados);
 
   const hechosHoy = primero === hoyIso
-    ? (pedidos || []).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p), cuartos: cuartosTaller(p) })).filter((x) => x.unidades > 0)
+    ? (pedidos || []).filter((p) => esDeLaPestana(p, listaId)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
     : [];
 
   const ultimoFijado = pool.map((x) => x.fijado).filter(Boolean).sort().pop() || primero;
@@ -4788,39 +4986,29 @@ function planTaller(pedidos, hoyIso) {
     const hechos = fecha === hoyIso ? hechosHoy : [];
     const items = [];
     const sabado = new Date(`${fecha}T12:00:00`).getDay() === 6;
-    const arrastre = fecha === primero ? arrastreCuartos : 0;
-    const maxDia = (sabado ? TALLER_MAX_SABADO : TALLER_MAX_DIA) + arrastre / 4;
-    const maxCuartos = maxDia * 4;
-    // El sábado se trabaja medio día: además del tope de puntos, no más de 3 simples.
-    const maxSimples = sabado ? TALLER_MAX_SIMPLES_SABADO : Infinity;
-    let usados = hechos.reduce((t, x) => t + x.unidades * x.cuartos, 0);
-    let especiales = hechos.filter((x) => x.clase === "especial").reduce((t, x) => t + x.unidades, 0);
-    let simplesHoy = hechos.filter((x) => x.clase === "simple").reduce((t, x) => t + x.unidades, 0);
-    const libre = () => maxCuartos - usados;
-    const libreSimples = () => maxSimples - simplesHoy;
+    const base = topeDelDia(listaId, sabado);
+    const arrastre = fecha === primero ? arrastreHoy : 0;
+    const maxDia = base + arrastre;
+    let usados = hechos.reduce((t, x) => t + x.unidades, 0);
+    const libre = () => maxDia - usados;
     const tomar = (x, n, fijadoAca) => {
       n = Math.min(n, x.restantes);
       if (n <= 0) return;
       const previo = items.find((it) => it.x === x);
       if (previo) previo.unidades += n;
       else items.push({ x, pedido: x.pedido, clase: x.clase, desde: x.unidades - x.restantes, unidades: n, total: x.unidades, fijadoAca });
-      x.restantes -= n; usados += n * x.cuartos;
-      if (x.clase === "especial") especiales += n; else simplesHoy += n;
+      x.restantes -= n; usados += n;
     };
-    // Cuántos espejos de este pedido entran hoy, según los puntos que quedan.
-    // Un pedido partible se lleva como mucho media jornada (salvo en el relleno).
+    // Cuántos espejos de este pedido entran hoy. Un pedido grande se lleva como
+    // mucho media jornada, salvo en el relleno del final.
     const intentar = (x, { relleno = false } = {}) => {
       if (x.restantes <= 0) return;
-      // El sábado no se cortan esmerilados nuevos: solo se arman los que volvieron.
-      if (sabado && grupoListaArmar(x.pedido) === "esmerilados_cortar") return;
-      let lim = Math.floor(libre() / x.cuartos);
-      if (x.clase === "simple") lim = Math.min(lim, libreSimples());
+      const lim = libre();
       if (lim <= 0) return;
       if (x.partible) {
         // Su parte del día es una sola; más espejos, solo en el relleno final.
         if (!relleno && items.some((it) => it.x === x)) return;
-        const parte = Math.max(1, Math.floor((TALLER_PARTE_DIA * 4) / x.cuartos));
-        tomar(x, relleno ? lim : Math.min(lim, parte), false);
+        tomar(x, relleno ? lim : Math.min(lim, mitad), false);
       }
       else if (x.restantes <= lim) tomar(x, x.restantes, false);
     };
@@ -4832,26 +5020,19 @@ function planTaller(pedidos, hoyIso) {
       x.fijado = "";
     });
     const candidatos = quedan.filter((x) => !x.fijado && x.restantes > 0).sort(ordenDelDia);
-    // 1) Lo que ya se empezó (también partes de pedidos grandes), lo que volvió
-    //    del grabado y lo urgente.
+    // 1) Lo empezado y lo urgente.
     candidatos.forEach((x) => { if (empezado(x) || rangoTaller(x.pedido) <= 1) intentar(x); });
-    // 2) Los simples primero: es lo que más rinde y lo que menos se traba.
-    candidatos.forEach((x) => { if (x.clase === "simple") intentar(x); });
-    // 3) Después el resto, por urgencia y fecha.
+    // 2) El resto, por urgencia y fecha de entrega.
     candidatos.forEach((x) => intentar(x));
-    // 4) Si todavía sobra lugar, más espejos de los pedidos grandes.
+    // 3) Si todavía sobra lugar, más espejos de los pedidos grandes.
     candidatos.forEach((x) => { if (x.partible) intentar(x, { relleno: true }); });
 
     items.sort((a, b) => (b.fijadoAca ? 1 : 0) - (a.fijadoAca ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido));
     dias.push({
-      fecha, items, hechos, sabado,
+      fecha, items, hechos, sabado, base, arrastre,
       max: maxDia,
-      arrastre: arrastre / 4,
-      base: sabado ? TALLER_MAX_SABADO : TALLER_MAX_DIA,
-      total: usados / 4,
-      espejos: items.reduce((t, i) => t + i.unidades, 0) + hechos.reduce((t, h) => t + h.unidades, 0),
-      simples: items.filter((i) => i.clase === "simple").reduce((t, i) => t + i.unidades, 0) + hechos.filter((h) => h.clase === "simple").reduce((t, h) => t + h.unidades, 0),
-      especiales,
+      total: usados,
+      espejos: usados,
       pendientes: items.reduce((t, i) => t + i.unidades, 0),
     });
     fecha = siguienteDiaTaller(fecha);
@@ -9412,9 +9593,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
-          const plan = planTaller(pedidos, hoyTaller);
-          // Cada pestaña muestra solo su parte del día.
-          const deEstaPestana = (x) => esDeLaPestana(x.pedido, lista);
+          const plan = planTaller(pedidos, hoyTaller, lista);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
           const opcionesDias = plan.slice(0, 12).map((d) => d.fecha);
           while (opcionesDias.length < 12) opcionesDias.push(siguienteDiaTaller(opcionesDias[opcionesDias.length - 1] || primerDiaTaller(hoyTaller)));
@@ -9443,7 +9622,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               {(() => {
                 const hoyPlan = plan[0];
                 if (!hoyPlan) return null;
-                const filas = hoyPlan.items.filter(deEstaPestana).filter((x) => coincide(x.pedido));
+                const filas = hoyPlan.items.filter((x) => coincide(x.pedido));
                 if (filas.length === 0) return null;
                 const irATarjeta = (ev, x) => {
                   ev.stopPropagation();
@@ -9547,11 +9726,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const semana = tituloSemana(dia.fecha);
                 const separador = semana !== semanaAnterior ? <div className="dg-dias-semana" key={`sem-${dia.fecha}`}>{semana}</div> : null;
                 semanaAnterior = semana;
-                const delDia = dia.items.filter(deEstaPestana);
-                const hechosDia = dia.hechos.filter((x) => esDeLaPestana(x.pedido, lista));
-                const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && delDia.some((x) => coincide(x.pedido)));
+                const hechosDia = dia.hechos;
+                const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && dia.items.some((x) => coincide(x.pedido)));
                 const hechosU = contar(hechosDia);
-                const items = delDia.filter((x) => coincide(x.pedido));
+                const items = dia.items.filter((x) => coincide(x.pedido));
                 if (items.length === 0 && hechosDia.length === 0 && !diasAbiertos.has(dia.fecha)) return null;
                 return (
                   <Fragment key={dia.fecha}>
@@ -9566,7 +9744,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
-                        <span className="dg-dia-taller-mix">{contar(delDia)} espejo{contar(delDia) === 1 ? "" : "s"}</span>
+                        <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"}</span>
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
                       </button>
                       {abierto && (
@@ -9702,7 +9880,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Funciones</th><th>Entrega</th><th>Estado</th><th>Entrega estimada</th></tr>
             </thead>
             <tbody>
-              {((esPestanaDeArmar(lista) && filtroEstado === "activos") ? (planTaller(pedidos, hoyTaller)[0]?.items || []).filter((x) => esDeLaPestana(x.pedido, lista)).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
+              {((esPestanaDeArmar(lista) && filtroEstado === "activos") ? (planTaller(pedidos, hoyTaller, lista)[0]?.items || []).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
                 <tr key={p.id}>
                   <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
                   <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
@@ -13398,6 +13576,31 @@ function Style() {
       .dg-overview-head { box-sizing:border-box; display:flex; justify-content:space-between; gap:24px; }
 
       .dg-panel-control { max-width:960px; }
+      .dg-prod-resumen { display:flex; flex-wrap:wrap; gap:10px 28px; margin-bottom:14px; }
+      .dg-prod-resumen > div { display:flex; flex-direction:column; gap:1px; }
+      .dg-prod-resumen small { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-prod-resumen strong { font-family:'JetBrains Mono', monospace; font-size:24px; line-height:1.1; color:var(--dg-text); }
+      .dg-prod-resumen span { font-size:12px; color:var(--dg-text-dim); }
+        font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-prod-scroll { overflow-x:auto; }
+      .dg-prod-tabla { width:100%; min-width:520px; border-collapse:collapse; font-size:13px; }
+      .dg-prod-tabla th { padding:7px 9px; text-align:left; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
+      .dg-prod-tabla td { padding:8px 9px; border-top:1px solid rgba(var(--dg-line-rgb),.08); color:var(--dg-text); white-space:nowrap; }
+      .dg-prod-tabla .dg-num { text-align:right; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+      .dg-prod-tabla em { font-style:normal; color:var(--dg-text-dim); }
+      .dg-prod-tr-actual td { background:rgba(var(--dg-accent-rgb),.08); font-weight:600; }
+      .dg-prod-vacio { color:var(--dg-text-faint); }
+      .dg-prod-nota { margin:9px 0 0; font-size:11px; line-height:1.45; color:var(--dg-text-dim); }
+      .dg-prod-nota strong { color:var(--dg-text); font-weight:700; }
+      .dg-prod-dias { display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-prod-dia { display:flex; flex-direction:column; align-items:center; gap:2px; padding:7px 4px; border:1px solid rgba(var(--dg-line-rgb),.1); border-radius:10px; }
+      .dg-prod-dia small { font-size:11px; color:var(--dg-text-dim); }
+      .dg-prod-dia strong { font-family:'JetBrains Mono', monospace; font-size:17px; color:var(--dg-text); }
+      .dg-prod-dia-hoy { border-color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),.08); }
+      .dg-prod-dia-futuro strong { color:var(--dg-text-faint); }
+      @media (max-width:680px) {
+        .dg-prod-dias { grid-template-columns:repeat(3, minmax(0,1fr)); }
+      }
       .dg-panel-grid { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:12px; margin:18px 0 22px; }
       .dg-panel-card { background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),0.1); border-radius:12px; padding:16px; }
       .dg-panel-card-label { font-size:11px; color:var(--dg-text-dim); font-weight:600; margin-bottom:8px; display:flex; align-items:center; gap:5px; }
