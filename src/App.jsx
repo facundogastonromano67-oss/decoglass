@@ -4350,6 +4350,7 @@ function emptyPedido(prefill) {
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: prefill?.sinCargo ? "0" : "", anticipo: prefill?.sinCargo ? "0" : "", comision: "No aplica", facturado: false, montoRegistrado: 0,
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
+    fletero: "", envioCobro: "", fleteLiquidado: false, fleteLiquidadoMonto: 0, fleteLiquidadoFecha: "",
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
     motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "", destinoLat: null, destinoLng: null, fechaEnvio: "",
     tipoPedido: prefill?.tipoPedido || "venta", urgente: prefill?.urgente || false, reclamoId: prefill?.reclamoId || null,
@@ -5930,6 +5931,22 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
   );
 }
 
+// --- LIQUIDACIÓN DEL FLETE ---
+// Un envío entra a liquidar cuando ya se entregó y tenía costo de flete.
+function fleteElegible(p) {
+  return !!p && p.estado === "Entregado" && esPedidoConEnvio(p) && costoEnvioPedido(p) > 0 && !p.fleteLiquidado;
+}
+// Lo que hay que pagarle: solo lo que cobró la empresa por adelantado. Lo que
+// cobró él en la entrega ya lo tiene en la mano.
+function fleteSeLeDebe(p) {
+  return fleteElegible(p) && p.envioCobro === "anticipado";
+}
+function fleteMonto(p) { return costoEnvioPedido(p) || 0; }
+// Los nombres de fletero que ya se usaron, para sugerirlos.
+function fleterosUsados(pedidos) {
+  return [...new Set((pedidos || []).map((p) => String(p.fletero || "").trim()).filter(Boolean))].sort();
+}
+
 // --- COMISIONES ---
 // Base de cálculo: monto total del pedido MENOS el costo del envío.
 function comisionBase(p) {
@@ -7392,6 +7409,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
         <Filter size={14} />
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
       </div>
+      <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((f) => <option key={f} value={f} />)}</datalist>
 
       {listosParaDespachar.length > 0 && (
         <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-success-rgb),.35)" }}>
@@ -7717,10 +7735,13 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                 )}
               </EnterFlow>
             </details>
-            <div className={`dg-shipping-total-preview ${costoEnvio > 0 ? "" : "dg-shipping-total-missing"}`}>
-              <span>{costoEnvio > 0 ? "Total a confirmar con el cliente" : "Total parcial · falta cargar el envío"}</span>
-              <strong>{money(totalPendiente)}</strong>
-            </div>
+            {/* Con el flete sin cargar y sin saldo, esa fila no dice nada: se esconde. */}
+            {(costoEnvio > 0 || totalPendiente > 0) && (
+              <div className={`dg-shipping-total-preview ${costoEnvio > 0 ? "" : "dg-shipping-total-missing"}`}>
+                <span>{costoEnvio > 0 ? "Total a confirmar con el cliente" : "Total parcial · falta cargar el envío"}</span>
+                <strong>{money(totalPendiente)}</strong>
+              </div>
+            )}
             <div className="dg-quote-actions dg-shipping-copy">
               <button className="dg-btn-ghost" onClick={() => copiar(items)}>{copiedId === clave ? <Check size={14} /> : <Copy size={14} />} {copiedId === clave ? "Copiado" : "Copiar mensaje para el cliente"}</button>
             </div>
@@ -8319,6 +8340,12 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     const ids = new Set(items.map((p) => p.id));
     onChange(pedidos.map((p) => (ids.has(p.id) ? { ...p, envioPagado: pagado } : p)));
   }
+  // Quién lo lleva y quién cobra el flete: se anota antes de entregar, porque
+  // después el pedido sale de esta lista y ya no se puede cargar.
+  function setCampoGrupo(items, patch) {
+    const ids = new Set(items.map((p) => p.id));
+    onChange(pedidos.map((p) => (ids.has(p.id) ? { ...p, ...patch } : p)));
+  }
   function marcarEntregado(pedido) {
     if (!pedido.clienteAvisado || !pedido.envioConfirmado || pedido.estado !== "Espejo listo") {
       window.alert("PostVenta debe confirmar al cliente y el envío antes de habilitar la entrega.");
@@ -8544,6 +8571,23 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                 const enRecorrido = trackingRows.some((t) => ids.includes(t.id));
                 const telDigits = soloDigitos(telefono);
                 return (
+                  <div className="dg-flete-cobro">
+                    <label>
+                      <span>Lo lleva</span>
+                      <input list="dg-fleteros" disabled={!canEdit} placeholder="Nombre del flete"
+                        value={items[0].fletero || ""}
+                        onChange={(e) => setCampoGrupo(items, { fletero: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>El flete lo cobra</span>
+                      <select disabled={!canEdit} value={items[0].envioCobro || ""}
+                        onChange={(e) => setCampoGrupo(items, { envioCobro: e.target.value, envioPagado: e.target.value === "anticipado" })}>
+                        <option value="">— sin definir —</option>
+                        <option value="anticipado">Ya lo cobramos nosotros</option>
+                        <option value="entrega">Lo cobra el flete en la entrega</option>
+                      </select>
+                    </label>
+                  </div>
                   <div className="dg-recorrido-zona">
                     {telDigits.length >= 6 && (
                       <a className="dg-btn-ghost dg-mini-btn" href={`tel:${telDigits}`}><Phone size={13} /> Llamar al cliente</a>
@@ -13633,6 +13677,10 @@ function Style() {
       .dg-recorrido-info { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--dg-text); }
       .dg-recorrido-info small { font-weight:500; color:var(--dg-text-dim); }
       .dg-recorrido-dot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--dg-success); box-shadow:0 0 0 4px color-mix(in srgb, var(--dg-success) 22%, transparent); }
+      .dg-flete-cobro { display:flex; flex-wrap:wrap; gap:8px 14px; margin-top:10px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-flete-cobro label { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1 1 180px; }
+      .dg-flete-cobro span { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-flete-cobro input, .dg-flete-cobro select { min-height:36px; padding:7px 9px; font-size:13px; }
       .dg-recorrido-zona { margin-top:10px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),0.15); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       .dg-recorrido-activo { display:inline-flex; align-items:center; gap:5px; font-size:13px; font-weight:600; color:var(--dg-success); }
       .dg-gps-estado { display:flex; align-items:flex-start; gap:8px; padding:9px 11px; border-radius:8px; font-size:13px; line-height:1.35; }
