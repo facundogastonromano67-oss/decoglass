@@ -7521,7 +7521,6 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
         <Filter size={14} />
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
       </div>
-      <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((f) => <option key={f} value={f} />)}</datalist>
 
       {listosParaDespachar.length > 0 && (
         <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-success-rgb),.35)" }}>
@@ -8480,6 +8479,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   return (
     <div className="dg-page">
       <Ayuda titulo="Qué entra en esta lista" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</Ayuda>
+      <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((f) => <option key={f} value={f} />)}</datalist>
 
       {(() => {
         const miRecorrido = trackingRows.find((t) => String(t.fletero_token || "").toUpperCase() === miCodigo);
