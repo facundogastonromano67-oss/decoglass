@@ -5576,12 +5576,12 @@ function PasoPedido({ numero, titulo, detalle, estado = "pending", children }) {
   const estadoLabel = estado === "done" ? "Completado" : estado === "active" ? "En curso" : "Pendiente";
   return (
     <div className={`dg-order-step dg-order-step-${estado}`}>
-      <div className="dg-order-step-head">
+      {/* El detalle queda como globito: estaba ocupando tres renglones en cada tarjeta. */}
+      <div className="dg-order-step-head" title={detalle || undefined}>
         <span className="dg-order-step-number">{estado === "done" ? <Check size={13} /> : numero}</span>
-        <div><small>Paso {numero}</small><strong>{titulo}</strong></div>
+        <div><strong>{titulo}</strong></div>
         <span className="dg-order-step-state">{estadoLabel}</span>
       </div>
-      <p>{detalle}</p>
       {children && <div className="dg-order-step-actions">{children}</div>}
     </div>
   );
@@ -5737,12 +5737,12 @@ function BotonCompartirSeguimiento({ pedido }) {
   return (
     <span className="dg-seg-botones">
       <button className="dg-btn-ghost dg-mini-btn" onClick={compartir} title="Copiar link para que el cliente vea el estado de su pedido">
-        {copiado ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link de seguimiento</>}
+        {copiado ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link<span className="dg-seg-largo"> de seguimiento</span></>}
       </button>
       {wa && (
         <a className="dg-btn-ghost dg-mini-btn dg-seg-wa" href={`${wa}?text=${encodeURIComponent(texto)}`}
            target="_blank" rel="noopener noreferrer" title={`Mandarle el seguimiento a ${pedido.cliente || "el cliente"} por WhatsApp`}>
-          <MessageCircle size={12} /> Mandar por WhatsApp
+          <MessageCircle size={12} /> <span className="dg-seg-largo">Mandar por </span>WhatsApp
         </a>
       )}
     </span>
@@ -5903,15 +5903,7 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
 
   return (
     <div className={`dg-order-flow ${conEnvio ? "dg-order-flow-five" : "dg-order-flow-four"}`} onClick={(e) => e.stopPropagation()}>
-      <div className="dg-order-flow-title-row">
-        <div className="dg-order-flow-title">Proceso del pedido</div>
-        <BotonCompartirSeguimiento pedido={pedido} />
-      </div>
       <div className="dg-order-flow-nav">
-        <div className="dg-order-flow-label">
-          <span>{conEnvio ? "Envío" : "Retiro"}</span>
-          <strong>Paso {pasoVisible + 1} de {totalPasos}</strong>
-        </div>
         <div className="dg-order-flow-dots" aria-label="Pasos del pedido">
           {pasos.map((_, index) => {
             const completado = entregado ? index <= pasoActual : index < pasoActual;
@@ -5929,10 +5921,7 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
             );
           })}
         </div>
-        <div className="dg-order-flow-arrows">
-          <button type="button" aria-label="Paso anterior" disabled={pasoVisible === 0} onClick={() => setPasoVisible((actual) => Math.max(0, actual - 1))}><ArrowLeft size={14} /></button>
-          <button type="button" aria-label="Paso siguiente" disabled={pasoVisible === totalPasos - 1} onClick={() => setPasoVisible((actual) => Math.min(totalPasos - 1, actual + 1))}><ChevronRight size={14} /></button>
-        </div>
+        <BotonCompartirSeguimiento pedido={pedido} />
       </div>
       <div className="dg-order-flow-slide" key={`${pedido.id}-${pasoVisible}`}>
         {pasos[pasoVisible]}
@@ -15243,16 +15232,14 @@ function Style() {
       .dg-urgente-toggle { display:flex; align-items:center; gap:7px; margin:0 0 12px; padding:8px 11px; border:1px solid rgba(var(--dg-danger-rgb),.3); border-radius:8px; background:rgba(var(--dg-danger-rgb),.05); font-size:13px; font-weight:600; color:var(--dg-text); cursor:pointer; }
       .dg-urgente-toggle input { width:15px; height:15px; flex:none; }
       .dg-banner-reclamo { border-color:var(--dg-danger) !important; background:color-mix(in srgb, var(--dg-danger) 10%, var(--dg-surface)) !important; }
-      .dg-order-flow-title { font-size:11px; font-weight:750; letter-spacing:0.6px; line-height:1; text-transform:uppercase; }
       .dg-order-card .dg-pedido-orden { color:var(--dg-accent); }
       .dg-order-card .dg-lead-name { font-family:'Jost',sans-serif; font-size:15px; font-weight:600; }
       .dg-order-card .dg-pago-monto { color:var(--dg-text); font-size:13px; }
       .dg-order-card .dg-pago-meta { color:var(--dg-text-dim); font-size:11px; }
       .dg-order-card .dg-badge { padding:3px 7px; font-size:11px; }
       .dg-order-flow { width:100%; margin:0; overflow:hidden; padding:7px 10px 8px; border:0; border-top:2px solid rgba(var(--dg-accent-rgb),.42); border-radius:0; background:var(--dg-order-flow); }
-      .dg-order-flow-title { margin:0 0 3px; color:var(--dg-text-dim); }
-      .dg-order-flow-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:3px; }
       .dg-seg-botones { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+      @media (max-width:560px) { .dg-seg-largo { display:none; } }
       .dg-seg-wa { text-decoration:none; }
       /* Borrar el pedido entero: separado del resto y en rojo, para que no se
          toque por error al salir de la tarjeta. */
@@ -15260,21 +15247,13 @@ function Style() {
       .dg-order-borrar { display:flex; justify-content:flex-end; margin-top:12px; padding-top:11px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
       .dg-order-borrar-btn { border-color:rgba(var(--dg-danger-rgb),.35); color:var(--dg-danger); }
       .dg-order-borrar-btn:hover { border-color:var(--dg-danger); background:rgba(var(--dg-danger-rgb),.1); }
-      .dg-order-flow-title-row .dg-order-flow-title { margin:0; }
-      .dg-order-flow-nav { min-height:30px; display:grid; grid-template-columns:minmax(100px,1fr) auto minmax(100px,1fr); gap:8px; align-items:center; padding:2px 0 3px; border:0; background:transparent; }
-      .dg-order-flow-label { min-width:0; display:flex; align-items:baseline; gap:6px; }
-      .dg-order-flow-label span { color:var(--dg-text-faint); font-size:11px; font-weight:750; letter-spacing:.6px; text-transform:uppercase; }
-      .dg-order-flow-label strong { color:var(--dg-text-dim); font-family:'JetBrains Mono',monospace; font-size:11px; white-space:nowrap; }
-      .dg-order-flow-dots { display:flex; align-items:center; justify-content:center; gap:5px; }
+      .dg-order-flow-nav { min-height:30px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:2px 0 3px; border:0; background:transparent; }
+      .dg-order-flow-dots { display:flex; align-items:center; gap:5px; flex:0 0 auto; }
       .dg-flow-dot { width:21px; height:21px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:8px; background:rgba(var(--dg-line-rgb),.045); color:var(--dg-text-dim); font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:750; cursor:pointer; transition:border-color .15s ease,background .15s ease,color .15s ease,transform .15s ease; }
       .dg-flow-dot:hover { border-color:rgba(var(--dg-accent-rgb),.36); color:var(--dg-text); }
       .dg-flow-dot-done { border-color:rgba(var(--dg-success-rgb),.23); background:rgba(var(--dg-success-rgb),.075); color:var(--dg-success); }
       .dg-flow-dot-active { border-color:rgba(var(--dg-accent-rgb),.42); background:rgba(var(--dg-accent-rgb),.1); color:var(--dg-accent-2); }
       .dg-flow-dot-selected { border-color:var(--dg-accent); box-shadow:0 0 0 2px rgba(var(--dg-accent-rgb),.12); transform:translateY(-1px); }
-      .dg-order-flow-arrows { display:flex; justify-content:flex-end; gap:4px; }
-      .dg-order-flow-arrows button { width:25px; height:25px; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:8px; background:rgba(var(--dg-line-rgb),.035); color:var(--dg-text-dim); cursor:pointer; }
-      .dg-order-flow-arrows button:hover:not(:disabled) { border-color:rgba(var(--dg-accent-rgb),.36); color:var(--dg-accent-2); }
-      .dg-order-flow-arrows button:disabled { opacity:.25; cursor:not-allowed; }
       .dg-order-flow-slide { animation:dg-order-step-in .16s ease; }
       .dg-order-step { min-width:0; min-height:0; display:flex; flex-direction:column; padding:5px 0 0; border:0; border-radius:0; background:transparent; }
       .dg-order-step-done { border-color:transparent; background:transparent; }
@@ -15590,13 +15569,9 @@ function Style() {
         .dg-logistics-mirror > summary { grid-template-columns:auto minmax(0,1fr) auto 16px; gap:6px; padding:7px 8px; }
       }
       @media (max-width:520px) {
-        .dg-order-flow-nav { grid-template-columns:minmax(68px,1fr) auto auto; gap:5px; padding:4px 5px 4px 7px; }
-        .dg-order-flow-label { grid-column:auto; }
-        .dg-order-flow-label span { display:none; }
-        .dg-order-flow-arrows { grid-column:auto; grid-row:auto; }
-        .dg-order-flow-dots { grid-column:auto; grid-row:auto; justify-content:center; gap:3px; }
+        .dg-order-flow-nav { gap:5px; padding:4px 5px 4px 7px; }
+        .dg-order-flow-dots { gap:3px; }
         .dg-flow-dot { width:20px; height:20px; }
-        .dg-order-flow-arrows button { width:23px; height:23px; }
         .dg-order-step { min-height:0; }
         .dg-order-step-actions { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:stretch; }
         .dg-step-action, .dg-step-whatsapp { min-width:0; }
