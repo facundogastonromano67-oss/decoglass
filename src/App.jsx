@@ -9566,6 +9566,26 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         nuevos={activos.filter(esperaAcuseFabrica)}
         demoras={[...new Map(activos.filter((p) => estaDemoradoAuto(p) || trabajoAfueraVencido(p)).map((p) => [p.id, p])).values()]}
       />
+      {filtroEstado !== "historial" && (() => {
+        const sem = produccionSemanalTaller(pedidos, hoyTaller, 1)[0];
+        if (!sem || sem.totalLista.tenian === 0) return null;
+        const hechos = sem.totalLista.hechos;
+        const faltan = Math.max(0, sem.totalLista.tenian - hechos);
+        return (
+          <div className="dg-semana-contadores">
+            <div className="dg-semana-caja dg-semana-falta">
+              <span className="dg-semana-tit">Para hacer esta semana</span>
+              <strong>{faltan}</strong>
+              <small>espejo{faltan === 1 ? "" : "s"}</small>
+            </div>
+            <div className="dg-semana-caja dg-semana-hecho">
+              <span className="dg-semana-tit">Ya terminados</span>
+              <strong>{hechos}</strong>
+              <small>de {sem.totalLista.tenian}</small>
+            </div>
+          </div>
+        );
+      })()}
       {filtroEstado !== "historial" ? (
         <>
           <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
@@ -13582,6 +13602,20 @@ function Style() {
       .dg-prod-resumen strong { font-family:'JetBrains Mono', monospace; font-size:24px; line-height:1.1; color:var(--dg-text); }
       .dg-prod-resumen span { font-size:12px; color:var(--dg-text-dim); }
         font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      /* Los dos contadores grandes de Fábrica. */
+      .dg-semana-contadores { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+      .dg-semana-caja { --c:var(--dg-text); display:flex; flex-direction:column; align-items:center; gap:2px; padding:18px 14px; border:2px solid var(--c); border-radius:16px; text-align:center; }
+      .dg-semana-caja strong { font-family:'JetBrains Mono', monospace; font-size:52px; line-height:1; color:var(--c); }
+      .dg-semana-tit { font-family:'Jost', sans-serif; font-size:13px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text); }
+      .dg-semana-caja small { font-size:13px; color:var(--dg-text-dim); }
+      .dg-semana-falta { --c:var(--dg-warning); }
+      .dg-semana-hecho { --c:var(--dg-success); }
+      @media (max-width:680px) {
+        .dg-semana-contadores { gap:9px; margin-bottom:12px; }
+        .dg-semana-caja { padding:13px 9px; border-radius:14px; }
+        .dg-semana-caja strong { font-size:40px; }
+        .dg-semana-tit { font-size:11px; }
+      }
       .dg-prod-scroll { overflow-x:auto; }
       .dg-prod-tabla { width:100%; min-width:520px; border-collapse:collapse; font-size:13px; }
       .dg-prod-tabla th { padding:7px 9px; text-align:left; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
