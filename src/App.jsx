@@ -9583,9 +9583,16 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       />
       {filtroEstado !== "historial" && (() => {
         const sem = produccionSemanalTaller(pedidos, hoyTaller, 1)[0];
-        if (!sem || sem.totalLista.tenian === 0) return null;
+        if (!sem) return null;
         const hechos = sem.totalLista.hechos;
-        const faltan = Math.max(0, sem.totalLista.tenian - hechos);
+        // Lo que falta = lo que el plan repartió de hoy hasta el sábado. Lo que
+        // no entró en la semana queda para la siguiente y no se cuenta acá.
+        const sabadoSemana = sabadoDeLaSemana(primerDiaTaller(hoyTaller));
+        const faltan = ["simples", "esm_cortar", "esm_armar"].reduce((total, id) => total
+          + planTaller(pedidos, hoyTaller, id)
+              .filter((d) => d.fecha <= sabadoSemana)
+              .reduce((t, d) => t + d.items.reduce((u, x) => u + x.unidades, 0), 0), 0);
+        if (faltan === 0 && hechos === 0) return null;
         return (
           <div className="dg-semana-contadores">
             <div className="dg-semana-caja dg-semana-falta">
@@ -9596,7 +9603,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             <div className="dg-semana-caja dg-semana-hecho">
               <span className="dg-semana-tit">Ya terminados</span>
               <strong>{hechos}</strong>
-              <small>de {sem.totalLista.tenian}</small>
+              <small>de {hechos + faltan} esta semana</small>
             </div>
           </div>
         );
