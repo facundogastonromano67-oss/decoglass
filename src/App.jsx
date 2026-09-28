@@ -4800,17 +4800,31 @@ function cuentaParaElTaller(pedido) {
 // En qué lista estaba este espejo cuando arrancó la semana. Un esmerilado
 // empieza "para cortar" y, una vez cortado y vuelto del grabado, queda
 // "para armar", así que se mira si ya estaba cortado antes del lunes.
-function tareaDeLaSemana(pedido, lunes) {
+function tareaDeLaSemana(pedido, lunes, sabado) {
   const proceso = pedidoProcesoTaller(pedido);
   if (proceso === "simples") return "simples";
   if (proceso === "biselados") return "esm_armar";
   const cortado = diaLocalDe(pedido?.produccionCortadoFecha);
-  return cortado && cortado < lunes ? "esm_armar" : "esm_cortar";
+  if (!(cortado && cortado < lunes)) return "esm_cortar";
+  // Ya cortado: solo lo pueden armar si para esa semana ya había vuelto del
+  // grabador. Si todavía está afuera, no es trabajo del taller.
+  const volvio = diaLocalDe(pedido?.grabadoRegresoFecha) || (pedido?.estado === "Para armar" ? cortado : "");
+  return volvio && volvio <= sabado ? "esm_armar" : "afuera";
+}
+// Un pedido ya terminado pero SIN fecha de embalado (los viejos, de antes de
+// que existieran los pasos de producción) no se puede ubicar en el tiempo:
+// no se cuenta en ninguna semana, en vez de quedar pendiente para siempre.
+function sinRastroDeCuandoSeHizo(pedido) {
+  return pedidoEstaListo(pedido) && !diaLocalDe(pedido?.produccionEmbaladoFecha);
 }
 // El trabajo de esa lista: los de cortar se "terminan" cuando se cortan; los
-// demás, cuando salen embalados.
+// demás, cuando salen embalados. Pero si el espejo YA salió terminado, ese es
+// el hito mande lo que mande la lista: si no, un pedido ya entregado al que
+// nunca le marcaron el corte quedaría contado como pendiente para siempre.
 function hitoDeLaTarea(pedido, tarea) {
-  return tarea === "esm_cortar" ? diaLocalDe(pedido?.produccionCortadoFecha) : diaLocalDe(pedido?.produccionEmbaladoFecha);
+  const embalado = diaLocalDe(pedido?.produccionEmbaladoFecha);
+  if (embalado) return embalado;
+  return tarea === "esm_cortar" ? diaLocalDe(pedido?.produccionCortadoFecha) : "";
 }
 const LISTAS_PRODUCCION = [
   { id: "simples", label: "Simples" },
@@ -4821,7 +4835,7 @@ const LISTAS_PRODUCCION = [
 // Semana por semana: cuántos espejos tenían para hacer y cuántos terminaron.
 // "Tenían" = los que venían sin terminar de antes + los que entraron esa semana.
 function produccionSemanalTaller(pedidos, hoyIso, cuantas = 8) {
-  const lista = (pedidos || []).filter(cuentaParaElTaller);
+  const lista = (pedidos || []).filter((p) => cuentaParaElTaller(p) && !sinRastroDeCuandoSeHizo(p));
   const filas = [];
   let lunes = lunesDeLaSemana(hoyIso);
   for (let i = 0; i < cuantas; i++) {
@@ -4844,7 +4858,8 @@ function produccionSemanalTaller(pedidos, hoyIso, cuantas = 8) {
       if (entro >= lunes && entro <= sabado) entraron += cant;
       // Lo mismo, abierto por lista: cada una con su propio hito.
       if (entro > sabado) return;
-      const tarea = tareaDeLaSemana(p, lunes);
+      const tarea = tareaDeLaSemana(p, lunes, sabado);
+      if (tarea === "afuera") return; // en el grabador o la biseladora: no es del taller
       const hito = hitoDeLaTarea(p, tarea);
       if (hito && hito < lunes) return;
       porLista[tarea].tenian += cant;
