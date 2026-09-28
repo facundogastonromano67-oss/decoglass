@@ -5070,6 +5070,40 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   return dias;
 }
 
+// En qué día caería este pedido si entrara al taller ahora, más el colchón.
+// Devuelve "" si no se puede calcular (un biselado sin pedir, por ejemplo).
+function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
+  if (!pedido) return "";
+  // Se lo simula ya pasado a fábrica: recién ahí el plan lo ubica.
+  const simulado = { ...pedido, listo: "", estado: pedido.estado === "Sin pasar a fábrica" ? "Verificado" : pedido.estado };
+  const listaId = pestanaTaller(simulado);
+  if (!["simples", "esm_cortar", "esm_armar"].includes(listaId)) return "";
+  const otros = (pedidos || []).filter((p) => p.id !== simulado.id);
+  let dia = "";
+  try {
+    const plan = planTaller([...otros, simulado], hoyIso, listaId);
+    const encontrado = plan.find((d) => d.items.some((x) => x.pedido.id === simulado.id));
+    dia = encontrado ? encontrado.fecha : (plan.length ? plan[plan.length - 1].fecha : "");
+  } catch (e) { dia = ""; }
+  if (!dia) return "";
+  const d = new Date(`${dia}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() + COLCHON_FABRICA_DIAS);
+  return isoLocal(d);
+}
+
+// Datos del PEDIDO, no de cada espejo: si se cambian, cambian para todos.
+const CAMPOS_DEL_PEDIDO = [
+  "cliente", "celular", "dniCuit", "vendedor", "fecha", "listo",
+  "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
+  "provincia", "localidad", "codigoPostal", "costoEnvio", "destinoLat", "destinoLng",
+];
+function soloCamposDelPedido(pedido) {
+  const patch = {};
+  CAMPOS_DEL_PEDIDO.forEach((c) => { if (pedido && c in pedido) patch[c] = pedido[c]; });
+  return patch;
+}
+
 function estadoProduccionLabel(pedido) {
   if (pedidoEstaListo(pedido)) return "Espejo listo";
   const lista = TALLER_LISTAS.find((item) => item.id === pedidoListaFabrica(pedido));
@@ -6067,6 +6101,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       : null;
     let withOrden = { ...pedido, orden: ordenDelGrupo || pedido.orden || nextOrden() };
     if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
+    // Si nadie le puso fecha de entrega, se la pone la app y queda fija, así
+    // el pedido no se va al fondo de la lista cada vez que entra uno nuevo.
+    if (!withOrden.listo && !pedidoEstaListo(withOrden) && withOrden.estado !== "Cancelado") {
+      const auto = fechaEntregaAutomatica(withOrden, pedidos, isoLocal(new Date()));
+      if (auto) withOrden = { ...withOrden, listo: auto, listoAutomatica: true };
+    }
     if (previous?.estado === "Sin pasar a fábrica" && pedidoFueVerificado(withOrden)) {
       withOrden = { ...withOrden, pedidoVerificadoFecha: withOrden.pedidoVerificadoFecha || new Date().toISOString() };
     }
@@ -6164,6 +6204,17 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString() } : x)));
     if (onRegistrar) onRegistrar("Verificó un pedido", `#${p.orden} — ${p.cliente} — habilitado para fábrica`);
   }
+  // Editar cliente y entrega de un pedido entero (todos sus espejos).
+  const [editandoEntrega, setEditandoEntrega] = useState(null);
+  function guardarEntregaDelGrupo(editado) {
+    const grupo = editandoEntrega || [];
+    const ids = new Set(grupo.map((p) => p.id));
+    const patch = soloCamposDelPedido(editado);
+    onChange(pedidos.map((p) => (ids.has(p.id) ? { ...p, ...patch } : p)));
+    if (onRegistrar && grupo[0]) onRegistrar("Editó los datos de entrega", `#${grupo[0].orden} — ${editado.cliente} — ${grupo.length} espejo(s)`);
+    setEditandoEntrega(null);
+  }
+
   function facturarGrupo(espejosDelGrupo) {
     const idsGrupo = new Set(espejosDelGrupo.map((e) => e.id));
     onChange(pedidos.map((x) => (idsGrupo.has(x.id) ? { ...x, facturado: true } : x)));
@@ -6472,6 +6523,13 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                     </div>
                   );
                 })()}
+                {canEditFull && (
+                  <div className="dg-order-entrega-btn">
+                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoEntrega(espejos)}>
+                      <Pencil size={13} /> Editar cliente y entrega{espejos.length > 1 ? ` (los ${espejos.length} espejos)` : ""}
+                    </button>
+                  </div>
+                )}
                 <div className="dg-order-mirror-list">
                   {espejos.map((espejo, index) => {
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
@@ -6556,6 +6614,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           // cargar el segundo espejo se terminaba pisando el primero.
           key={openPedido?.id || nextDraft?.id || "nuevo"}
           pedido={openPedido || nextDraft || emptyPedido()}
+          modo={openPedido && pedidos.filter((p) => (p.grupoId || p.id) === (openPedido.grupoId || openPedido.id)).length > 1 ? "espejo" : "todo"}
           vendedores={vendedores}
           canEditFull={canEditFull}
           canEditEstadoOnly={canEditEstadoOnly}
@@ -6565,6 +6624,24 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           stockEspejos={stockEspejos}
           esNuevo={!openPedido}
           aviso={openPedido ? null : avisoEspejo}
+        />
+      )}
+
+      {editandoEntrega && (
+        <PedidoModal
+          key={`entrega-${editandoEntrega[0]?.id}`}
+          pedido={editandoEntrega[0]}
+          modo="entrega"
+          cuantosEspejos={editandoEntrega.length}
+          vendedores={vendedores}
+          canEditFull={canEditFull}
+          canEditEstadoOnly={canEditEstadoOnly}
+          onClose={() => setEditandoEntrega(null)}
+          onSave={guardarEntregaDelGrupo}
+          onDelete={null}
+          stockEspejos={stockEspejos}
+          esNuevo={false}
+          aviso={null}
         />
       )}
 
@@ -6900,7 +6977,11 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones 
   );
 }
 
-function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso }) {
+// modo: "todo" (como siempre) · "entrega" (cliente y envío del pedido entero)
+// · "espejo" (solo las medidas y funciones de ese espejo).
+function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1 }) {
+  const verEspejo = modo !== "entrega";
+  const verEntrega = modo !== "espejo";
   const [draft, setDraft] = useState(() => normalizarPedidoFunciones(pedido));
   const cajaModal = useRef(null);
 
@@ -7012,7 +7093,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           <input type="checkbox" disabled={!canEditFull} checked={!!draft.urgente} onChange={(e) => set("urgente", e.target.checked)} />
           <AlertTriangle size={14} /> Pedido urgente — va primero en la cola de fábrica
         </label>
-        <div className="dg-section-card">
+        {verEspejo && <div className="dg-section-card">
           <div className="dg-section-header"><Calculator size={14} /> Medida y producto{draft.stockEspejoId ? <span className="dg-seccion-nota">del stock</span> : null}</div>
           <div className="dg-field-grid">
             <Field label="Ancho (cm)" error={err("ancho")}><input type="number" disabled={!canEditFull} value={draft.ancho} onChange={(e) => set("ancho", e.target.value)} /></Field>
@@ -7027,9 +7108,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Tipo"><select disabled={!canEditFull} value={draft.tipo} onChange={(e) => set("tipo", e.target.value)}>{TIPO_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Grabado / esmerilado"><input disabled={!canEditFull} placeholder="Ej: 15+30" value={draft.grabado} onChange={(e) => set("grabado", e.target.value)} /></Field>
           </div>
-        </div>
+        </div>}
 
-        <div className="dg-section-card">
+        {verEspejo && <div className="dg-section-card">
           <div className="dg-section-header"><Sparkles size={14} /> Funciones{draft.stockEspejoId ? <span className="dg-seccion-nota">del stock</span> : null}</div>
           <div className="dg-field-grid">
             <Field label="Touch"><select disabled={!canEditFull} value={draft.touch} onChange={(e) => set("touch", e.target.value)}>{TOUCH_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
@@ -7046,9 +7127,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Bluetooth"><select disabled={!canEditFull} value={draft.bluetooth} onChange={(e) => set("bluetooth", e.target.value)}>{BLUETOOTH_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Tono de luz"><select disabled={!canEditFull} value={draft.tono} onChange={(e) => set("tono", e.target.value)}>{TONO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
-        </div>
+        </div>}
 
-        {esNuevo && stockEspejos && stockEspejos.length > 0 && (
+        {verEspejo && esNuevo && stockEspejos && stockEspejos.length > 0 && (
           <div className="dg-section-card">
             <div className="dg-section-header"><Package size={14} /> ¿Es un espejo que ya está en stock?</div>
             <div className="dg-field-grid">
@@ -7092,8 +7173,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           </div>
         )}
 
-        <div className="dg-section-card">
-          <div className="dg-section-header"><User size={14} /> Cliente y pago</div>
+        {verEntrega && <div className="dg-section-card">
+          <div className="dg-section-header"><User size={14} /> {modo === "entrega" ? "Cliente" : "Cliente y pago"}</div>
           <div className="dg-field-grid">
             <Field label="Cliente" error={err("cliente")}><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
             <Field label="Fecha de compra"><input type="date" disabled={!canEditFull} value={draft.fecha || ""} onChange={(e) => set("fecha", e.target.value)} /></Field>
@@ -7145,9 +7226,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
               </p>
             );
           })()}
-        </div>
+        </div>}
 
-        <div className="dg-section-card">
+        {verEntrega && <div className="dg-section-card">
           <div className="dg-section-header"><Truck size={14} /> Entrega</div>
           <div className="dg-field-grid">
             <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => {
@@ -7165,9 +7246,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
             <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
           </div>
-        </div>
+        </div>}
 
-        {["Espejo listo", "Entregado", "Despachado"].includes(draft.estado) && (
+        {verEspejo && ["Espejo listo", "Entregado", "Despachado"].includes(draft.estado) && (
           <div className="dg-section-card">
             <div className="dg-section-header"><CheckCircle2 size={14} /> Cierre del pedido</div>
             <div className="dg-cierre-lista">
@@ -7195,7 +7276,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
           </div>
         </details>
 
-        {draft.metodo === "Interior" && (
+        {verEntrega && draft.metodo === "Interior" && (
           <div className="dg-section-card">
             <div className="dg-section-header"><MapPin size={14} /> Dirección para el envío al interior</div>
             <div className="dg-field-grid">
@@ -15175,6 +15256,7 @@ function Style() {
       .dg-seg-wa { text-decoration:none; }
       /* Borrar el pedido entero: separado del resto y en rojo, para que no se
          toque por error al salir de la tarjeta. */
+      .dg-order-entrega-btn { margin:0 0 10px; }
       .dg-order-borrar { display:flex; justify-content:flex-end; margin-top:12px; padding-top:11px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
       .dg-order-borrar-btn { border-color:rgba(var(--dg-danger-rgb),.35); color:var(--dg-danger); }
       .dg-order-borrar-btn:hover { border-color:var(--dg-danger); background:rgba(var(--dg-danger-rgb),.1); }
