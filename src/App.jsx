@@ -605,6 +605,7 @@ const SECTOR_SUBPAGES = {
   administracion: [
     { id: "finanzas", label: "Finanzas" },
     { id: "comisiones", label: "Comisiones" },
+    { id: "fletes", label: "Fletes" },
     { id: "sueldos", label: "Sueldos" },
     { id: "tareas", label: "Tareas" },
   ],
@@ -3065,6 +3066,117 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
         {aviso && <div style={{ marginTop: 8, fontSize: 13, color: "var(--dg-success)" }}>{aviso}</div>}
         <div className="dg-form-actions"><button className="dg-btn-primary" onClick={agregar}><Plus size={16} /> Agregar</button></div>
       </div>
+    </div>
+  );
+}
+
+function FletesPanel({ pedidos, onChangePedidos, onCreatePurchase }) {
+  const [verPagados, setVerPagados] = useState(false);
+  const [aviso, setAviso] = useState(null);
+
+  const entregados = (pedidos || []).filter((p) => p.estado === "Entregado" && esPedidoConEnvio(p) && costoEnvioPedido(p) > 0);
+  const pendientes = entregados.filter((p) => !p.fleteLiquidado);
+  const pagados = entregados.filter((p) => p.fleteLiquidado);
+  const lista = verPagados ? pagados : pendientes;
+
+  const porFletero = {};
+  lista.forEach((p) => {
+    const f = String(p.fletero || "").trim() || "Sin anotar quién lo llevó";
+    (porFletero[f] = porFletero[f] || []).push(p);
+  });
+  const grupos = Object.entries(porFletero).map(([fletero, items]) => ({
+    fletero, items,
+    // Lo que cobró él en la entrega ya es suyo; solo se le debe lo que cobramos nosotros.
+    aPagar: items.reduce((t, p) => t + (verPagados ? Number(p.fleteLiquidadoMonto) || 0 : (p.envioCobro === "anticipado" ? fleteMonto(p) : 0)), 0),
+    yaCobro: items.filter((p) => p.envioCobro === "entrega").reduce((t, p) => t + fleteMonto(p), 0),
+    sinDefinir: items.filter((p) => !p.envioCobro).length,
+  })).sort((a, b) => b.aPagar - a.aPagar);
+
+  const totalAPagar = grupos.reduce((t, g) => t + g.aPagar, 0);
+
+  function liquidar(grupo) {
+    if (grupo.aPagar <= 0) return;
+    const ids = new Set(grupo.items.filter((p) => p.envioCobro === "anticipado").map((p) => p.id));
+    onChangePedidos(pedidos.map((p) => (ids.has(p.id)
+      ? { ...p, fleteLiquidado: true, fleteLiquidadoMonto: fleteMonto(p), fleteLiquidadoFecha: new Date().toISOString().slice(0, 10) }
+      : p)));
+    if (onCreatePurchase) {
+      onCreatePurchase({
+        id: uid(), concepto: `Fletes ${grupo.fletero} — ${ids.size} entrega(s)`,
+        monto: grupo.aPagar, tipo: "logistica", proveedor: grupo.fletero, sectorId: "logistica",
+        fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
+      });
+    }
+    setAviso(`Le liquidaste ${money(grupo.aPagar)} a ${grupo.fletero}. Quedó registrado como gasto en Compras.`);
+    setTimeout(() => setAviso(null), 5000);
+  }
+  function revertir(id) {
+    onChangePedidos(pedidos.map((p) => (p.id === id ? { ...p, fleteLiquidado: false, fleteLiquidadoMonto: 0, fleteLiquidadoFecha: "" } : p)));
+  }
+
+  return (
+    <div className="dg-page">
+      {aviso && <div className="dg-aviso-ok">{aviso}</div>}
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <div className="dg-periodo-toggle">
+          <button type="button" className={verPagados ? "" : "dg-periodo-on"} onClick={() => setVerPagados(false)}>Por liquidar ({pendientes.length})</button>
+          <button type="button" className={verPagados ? "dg-periodo-on" : ""} onClick={() => setVerPagados(true)}>Ya liquidados ({pagados.length})</button>
+        </div>
+      </div>
+
+      {!verPagados && (
+        <div className="dg-panel-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0,1fr))" }}>
+          <div className="dg-panel-card">
+            <div className="dg-panel-card-label">A pagarle al flete</div>
+            <div className="dg-panel-card-valor" style={{ color: "var(--dg-warning)" }}>{money(totalAPagar)}</div>
+            <div className="dg-panel-card-variacion">Son los envíos que cobramos nosotros por adelantado</div>
+          </div>
+          <div className="dg-panel-card">
+            <div className="dg-panel-card-label">Ya cobró él en la entrega</div>
+            <div className="dg-panel-card-valor">{money(grupos.reduce((t, g) => t + g.yaCobro, 0))}</div>
+            <div className="dg-panel-card-variacion">Esa plata ya la tiene, no se le debe</div>
+          </div>
+        </div>
+      )}
+
+      {grupos.length === 0 && <div className="dg-empty">{verPagados ? "Todavía no liquidaste ningún flete." : "No hay entregas con flete para liquidar."}</div>}
+
+      {grupos.map((g) => (
+        <div className="dg-section-card" key={g.fletero}>
+          <div className="dg-section-header"><Truck size={14} /> {g.fletero}</div>
+          <div className="dg-flete-resumen">
+            <span><small>Se le debe</small><strong style={{ color: g.aPagar > 0 ? "var(--dg-warning)" : "var(--dg-text)" }}>{money(g.aPagar)}</strong></span>
+            <span><small>Ya cobró en la entrega</small><strong>{money(g.yaCobro)}</strong></span>
+            <span><small>Entregas</small><strong>{g.items.length}</strong></span>
+            {g.sinDefinir > 0 && <span><small>Sin definir quién cobró</small><strong style={{ color: "var(--dg-danger)" }}>{g.sinDefinir}</strong></span>}
+          </div>
+          <div className="dg-flete-scroll">
+            <table className="dg-flete-tabla">
+              <thead><tr><th>Pedido</th><th>Cliente</th><th>Barrio</th><th className="dg-num">Flete</th><th>Quién cobró</th><th /></tr></thead>
+              <tbody>
+                {g.items.map((p) => (
+                  <tr key={p.id}>
+                    <td>#{p.orden}</td>
+                    <td>{p.cliente || "—"}</td>
+                    <td>{p.barrio || "—"}</td>
+                    <td className="dg-num">{money(verPagados ? Number(p.fleteLiquidadoMonto) || 0 : fleteMonto(p))}</td>
+                    <td>{p.envioCobro === "anticipado" ? "Nosotros, por adelantado" : p.envioCobro === "entrega" ? "Él, en la entrega" : <span className="dg-flete-falta">sin definir</span>}</td>
+                    <td>{verPagados && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => revertir(p.id)}><RotateCcw size={12} /> Deshacer</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!verPagados && g.aPagar > 0 && (
+            <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
+              <button type="button" className="dg-btn-primary" onClick={() => liquidar(g)}>
+                <CircleDollarSign size={14} /> Liquidar {money(g.aPagar)}
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -8571,6 +8683,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                 const enRecorrido = trackingRows.some((t) => ids.includes(t.id));
                 const telDigits = soloDigitos(telefono);
                 return (
+                  <>
                   <div className="dg-flete-cobro">
                     <label>
                       <span>Lo lleva</span>
@@ -8601,6 +8714,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                       <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => comenzarRecorrido(items)}><Truck size={13} /> Comenzar recorrido <small style={{ opacity: 0.7 }}>· desde este celular</small></button>
                     )}
                   </div>
+                  </>
                 );
               })()}
             </article>
@@ -13502,6 +13616,11 @@ function SectorPage({
           : <LockedPage label="Comisiones" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "fletes" && (
+        isAdmin ? <FletesPanel pedidos={pedidos} onChangePedidos={onChangePedidos} onCreatePurchase={onCreatePurchase} />
+          : <LockedPage label="Fletes" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "sueldos" && (
         isAdmin ? <SueldosPanel empleados={empleadosSueldo} onChangeEmpleados={onChangeEmpleadosSueldo} liquidaciones={liquidaciones} onChangeLiquidaciones={onChangeLiquidaciones} pedidos={pedidos} />
           : <LockedPage label="Sueldos" onLogin={onRequestLogin} />
@@ -13677,6 +13796,16 @@ function Style() {
       .dg-recorrido-info { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--dg-text); }
       .dg-recorrido-info small { font-weight:500; color:var(--dg-text-dim); }
       .dg-recorrido-dot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--dg-success); box-shadow:0 0 0 4px color-mix(in srgb, var(--dg-success) 22%, transparent); }
+      .dg-flete-resumen { display:flex; flex-wrap:wrap; gap:10px 26px; margin-bottom:12px; }
+      .dg-flete-resumen > span { display:flex; flex-direction:column; gap:1px; }
+      .dg-flete-resumen small { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-flete-resumen strong { font-family:'JetBrains Mono', monospace; font-size:20px; line-height:1.1; color:var(--dg-text); }
+      .dg-flete-scroll { overflow-x:auto; }
+      .dg-flete-tabla { width:100%; min-width:520px; border-collapse:collapse; font-size:13px; }
+      .dg-flete-tabla th { padding:7px 9px; text-align:left; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
+      .dg-flete-tabla td { padding:8px 9px; border-top:1px solid rgba(var(--dg-line-rgb),.08); color:var(--dg-text); white-space:nowrap; }
+      .dg-flete-tabla .dg-num { text-align:right; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+      .dg-flete-falta { color:var(--dg-danger); }
       .dg-flete-cobro { display:flex; flex-wrap:wrap; gap:8px 14px; margin-top:10px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
       .dg-flete-cobro label { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1 1 180px; }
       .dg-flete-cobro span { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
