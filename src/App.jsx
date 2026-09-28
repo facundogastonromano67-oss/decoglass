@@ -8358,6 +8358,8 @@ function ModalDestinoRecorrido({ direccionTexto, valorInicial, onConfirmar, onCa
 
 function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra, session }) {
   const listaExtra = Array.isArray(extra) ? extra : [];
+  // Arranca en los de mañana: es lo que el flete tiene que preparar hoy.
+  const [cuando, setCuando] = useState("manana");
   const [trackingRows, setTrackingRows] = useState([]);
   useEffect(() => {
     let vivo = true;
@@ -8425,9 +8427,25 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   const extraPend = listaExtra.filter((e) => !e.hecho);
   const extraHechos = listaExtra.filter((e) => e.hecho);
 
-  const confirmados = pedidos
+  const hoyIso = isoLocal(new Date());
+  const mananaIso = isoLocal(sumarDias(new Date(), 1));
+  // Todo lo que ya está confirmado con el cliente y listo para salir.
+  const listosParaSalir = pedidos
     .filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.clienteAvisado && p.envioConfirmado && p.estado === "Espejo listo")
     .sort((a, b) => (fechaEnvioOListo(a) || "9999").localeCompare(fechaEnvioOListo(b) || "9999"));
+  const cuandoSale = (p) => {
+    const f = p.fechaEnvio || "";
+    if (f === mananaIso) return "manana";
+    if (f === hoyIso) return "hoy";
+    if (f && f > mananaIso) return "proximos"; // tiene fecha, pero más adelante
+    return "pendientes"; // se pasó de fecha o todavía no tiene
+  };
+  const cuentaCuando = listosParaSalir.reduce((acc, p) => {
+    const k = cuandoSale(p);
+    acc[k] = (acc[k] || 0) + Math.max(1, Number(p.cant) || 1);
+    return acc;
+  }, {});
+  const confirmados = cuando === "todos" ? listosParaSalir : listosParaSalir.filter((p) => cuandoSale(p) === cuando);
 
   const grupoIdCounts = confirmados.reduce((acc, p) => {
     if (p.grupoId) acc[p.grupoId] = (acc[p.grupoId] || 0) + 1;
@@ -8479,6 +8497,24 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   return (
     <div className="dg-page">
       <Ayuda titulo="Qué entra en esta lista" style={{ marginBottom: 14 }}>Solo lo que lleva nuestro flete. Los envíos al interior van por Vía Cargo y se manejan desde PostVenta.</Ayuda>
+      <div className="dg-cuando-filtro">
+        {[
+          { id: "manana", label: "Mañana" },
+          { id: "hoy", label: "Hoy" },
+          { id: "proximos", label: "Más adelante" },
+          { id: "pendientes", label: "Atrasados o sin fecha" },
+          { id: "todos", label: "Todos" },
+        ].map((f) => {
+          const cuantos = f.id === "todos" ? listosParaSalir.length : (cuentaCuando[f.id] || 0);
+          return (
+            <button type="button" key={f.id}
+              className={`${cuando === f.id ? "dg-cuando-on" : ""} ${f.id === "pendientes" && cuantos > 0 ? "dg-cuando-alerta" : ""}`}
+              onClick={() => setCuando(f.id)}>
+              {f.label} <small>{cuantos}</small>
+            </button>
+          );
+        })}
+      </div>
       <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((f) => <option key={f} value={f} />)}</datalist>
 
       {(() => {
@@ -13796,6 +13832,11 @@ function Style() {
       .dg-recorrido-info { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--dg-text); }
       .dg-recorrido-info small { font-weight:500; color:var(--dg-text-dim); }
       .dg-recorrido-dot { width:9px; height:9px; flex:none; border-radius:50%; background:var(--dg-success); box-shadow:0 0 0 4px color-mix(in srgb, var(--dg-success) 22%, transparent); }
+      .dg-cuando-filtro { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+      .dg-cuando-filtro button { display:inline-flex; align-items:center; gap:6px; min-height:36px; padding:7px 12px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:99px; background:transparent; color:var(--dg-text-dim); font-family:'Jost',sans-serif; font-size:13px; font-weight:600; cursor:pointer; }
+      .dg-cuando-filtro button small { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; padding:1px 6px; border-radius:99px; background:rgba(var(--dg-line-rgb),.1); color:var(--dg-text); }
+      .dg-cuando-filtro .dg-cuando-on { border-color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),.12); color:var(--dg-text); }
+      .dg-cuando-filtro .dg-cuando-alerta small { background:rgba(var(--dg-danger-rgb),.2); color:var(--dg-text); }
       .dg-flete-resumen { display:flex; flex-wrap:wrap; gap:10px 26px; margin-bottom:12px; }
       .dg-flete-resumen > span { display:flex; flex-direction:column; gap:1px; }
       .dg-flete-resumen small { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
