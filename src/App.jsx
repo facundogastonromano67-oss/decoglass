@@ -440,6 +440,34 @@ const TALLER_LISTAS = [
   { id: "bisel_sin_pedir", label: "Biselados sin pedir", shortLabel: "Sin pedir", description: "Biselados que todavía hay que encargar", color: "var(--dg-estado-bisel)" },
   { id: "bisel_pedidos", label: "Biselados pedidos", shortLabel: "En biseladora", description: "Biselados pedidos que todavía no regresaron", color: "var(--dg-estado-biseladora)" },
 ];
+// Lo que ve el taller arriba. La cola "armar" se parte en tres, porque son
+// tres trabajos distintos: cortar de cero, cortar para grabado, y armar lo
+// que volvió. Adentro del código la cola sigue siendo una sola ("armar").
+const TALLER_PESTANAS = [
+  { id: "simples", label: "Pedidos Simples", cola: "armar", grupos: ["simples"], color: "var(--dg-accent)" },
+  { id: "esm_cortar", label: "Esmerilados p/cortar", cola: "armar", grupos: ["esmerilados_cortar"], color: "var(--dg-warning)" },
+  { id: "esm_armar", label: "Esmerilados p/armar", cola: "armar", grupos: ["esmerilados_armar", "biselados_armar"], color: "var(--dg-estado-grabado)" },
+  { id: "mandar_grabar", label: "Para mandar a grabar", cola: "mandar_grabar", color: "var(--dg-warning)" },
+  { id: "en_grabado", label: "En grabado", cola: "en_grabado", color: "var(--dg-estado-grabado)" },
+  { id: "bisel_sin_pedir", label: "Biselados sin pedir", cola: "bisel_sin_pedir", color: "var(--dg-estado-bisel)" },
+  { id: "bisel_pedidos", label: "Biselados pedidos", cola: "bisel_pedidos", color: "var(--dg-estado-biseladora)" },
+];
+const infoPestana = (id) => TALLER_PESTANAS.find((x) => x.id === id);
+const esPestanaDeArmar = (id) => infoPestana(id)?.cola === "armar";
+// En qué pestaña cae cada pedido.
+function pestanaTaller(pedido) {
+  const cola = pedidoListaFabrica(pedido);
+  if (cola !== "armar") return cola;
+  const g = grupoListaArmar(pedido);
+  return g === "simples" ? "simples" : g === "esmerilados_cortar" ? "esm_cortar" : "esm_armar";
+}
+// ¿Este espejo entra en la pestaña que están mirando?
+function esDeLaPestana(pedido, id) {
+  const info = infoPestana(id);
+  if (!info) return false;
+  return info.grupos ? info.grupos.includes(grupoListaArmar(pedido)) && pedidoListaFabrica(pedido) === "armar" : pedidoListaFabrica(pedido) === info.cola;
+}
+
 const PRODUCCION_PASOS = [
   { id: "cortado", label: "Cortado", accion: "Marcar cortado", fechaCampo: "produccionCortadoFecha", responsableCampo: "produccionCortadoPor" },
   { id: "armado", label: "Armado", accion: "Marcar armado", fechaCampo: "produccionArmadoFecha", responsableCampo: "produccionArmadoPor" },
@@ -4620,10 +4648,10 @@ function cuartosTaller(pedido) { return CUARTOS_TALLER[grupoListaArmar(pedido)] 
 function puntosTaller(n) { return String(Math.round(n * 100) / 100).replace(".", ","); }
 // Los grupos, en el orden en que el taller los hace.
 const GRUPOS_TABLA_DIA = [
-  { id: "simples", label: "Simples", detalle: "de cero — 1 punto cada uno" },
-  { id: "esmerilados_cortar", label: "Esmerilados para cortar", detalle: "cortar y mandar a grabar — 0,25" },
-  { id: "esmerilados_armar", label: "Esmerilados para armar", detalle: "volvieron del grabado — 0,5" },
-  { id: "biselados_armar", label: "Biselados para armar", detalle: "0,5" },
+  { id: "simples", label: "Simples" },
+  { id: "esmerilados_cortar", label: "Esmerilados para cortar" },
+  { id: "esmerilados_armar", label: "Esmerilados para armar" },
+  { id: "biselados_armar", label: "Biselados para armar" },
 ];
 // Puntos de trabajo por día (10 = diez espejos simples de cero).
 const TALLER_MAX_DIA = 10;
@@ -4677,7 +4705,9 @@ function unidadesHechasTallerEl(pedido, dia) {
 }
 function rangoTaller(pedido) {
   const empezado = !!pedido.produccionEtapa || (esPedidoMultiUnidad(pedido) && unidadesDePedido(pedido).some((u) => u.etapa));
-  if (empezado || grupoListaArmar(pedido) === "esmerilados_armar") return 0;
+  // Los que volvieron del grabado YA NO se cuelan antes: van cuando no quedan
+  // simples, que es como lo quiere el taller.
+  if (empezado) return 0;
   if (esUrgente(pedido)) return 1;
   return 2;
 }
@@ -4805,9 +4835,11 @@ function planTaller(pedidos, hoyIso) {
     // 1) Lo que ya se empezó (también partes de pedidos grandes), lo que volvió
     //    del grabado y lo urgente.
     candidatos.forEach((x) => { if (empezado(x) || rangoTaller(x.pedido) <= 1) intentar(x); });
-    // 2) El resto, por orden de urgencia y fecha, hasta llenar los puntos del día.
+    // 2) Los simples primero: es lo que más rinde y lo que menos se traba.
+    candidatos.forEach((x) => { if (x.clase === "simple") intentar(x); });
+    // 3) Después el resto, por urgencia y fecha.
     candidatos.forEach((x) => intentar(x));
-    // 3) Si todavía sobra lugar, más espejos de los pedidos grandes.
+    // 4) Si todavía sobra lugar, más espejos de los pedidos grandes.
     candidatos.forEach((x) => { if (x.partible) intentar(x, { relleno: true }); });
 
     items.sort((a, b) => (b.fijadoAca ? 1 : 0) - (a.fijadoAca ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido));
@@ -8761,7 +8793,7 @@ function MultiPasoControl({ max, pasado, onMarcar }) {
 function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar }) {
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
-  const [lista, setLista] = useState("armar");
+  const [lista, setLista] = useState("simples");
   const [menuAbierto, setMenuAbierto] = useState(null);
   const [pedidoParaCancelar, setPedidoParaCancelar] = useState(null);
   const [pedidoParaReabrir, setPedidoParaReabrir] = useState(null);
@@ -8823,16 +8855,16 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           : enFabrica;
   baseVisibles = baseVisibles
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
-  const listaCounts = TALLER_LISTAS.reduce((acc, item) => {
-    acc[item.id] = totalUnidades(baseVisibles.filter((p) => pedidoListaFabrica(p) === item.id));
+  const listaCounts = TALLER_PESTANAS.reduce((acc, item) => {
+    acc[item.id] = totalUnidades(baseVisibles.filter((p) => pestanaTaller(p) === item.id));
     return acc;
   }, {});
-  let visibles = (filtroEstado === "historial" || filtroEstado === "afuera") ? [...baseVisibles] : baseVisibles.filter((p) => pedidoListaFabrica(p) === lista);
+  let visibles = (filtroEstado === "historial" || filtroEstado === "afuera") ? [...baseVisibles] : baseVisibles.filter((p) => pestanaTaller(p) === lista);
   visibles = filtroEstado === "historial"
     ? visibles.sort((a, b) => (b.produccionListaFecha || b.fecha || "").localeCompare(a.produccionListaFecha || a.fecha || ""))
     : filtroEstado === "afuera"
     ? visibles.sort((a, b) => (a[campoPrometidaAfuera(a)] || "9999-99-99").localeCompare(b[campoPrometidaAfuera(b)] || "9999-99-99"))
-    : lista === "armar"
+    : esPestanaDeArmar(lista)
     ? visibles.sort((a, b) => {
         const pa = prioridadListaArmar(a), pb = prioridadListaArmar(b);
         if (pa !== pb) return pa - pb;
@@ -9356,20 +9388,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       {filtroEstado !== "historial" ? (
         <>
           <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
-            {TALLER_LISTAS.map((item) => (
+            {TALLER_PESTANAS.map((item) => (
               <button key={item.id} role="tab" aria-selected={lista === item.id} className={lista === item.id ? "dg-process-tab-on" : ""} style={{ "--pc": item.color }} onClick={() => setLista(item.id)}>
                 <span>{item.label}<small>{listaCounts[item.id] || 0}</small></span>
               </button>
             ))}
           </div>
-          <div className="dg-factory-queue-info" style={{ "--qc": TALLER_LISTAS.find((item) => item.id === lista)?.color }}>
-            <strong>{TALLER_LISTAS.find((item) => item.id === lista)?.label}</strong>
-            <span>{TALLER_LISTAS.find((item) => item.id === lista)?.description}</span>
-          </div>
         </>
-      ) : (
-        <div className="dg-factory-queue-info" style={{ "--qc": "var(--dg-success)" }}><strong>Historial de fabricación</strong><span>Espejos terminados, con el registro de cada etapa.</span></div>
-      )}
+      ) : null}
       <div className="dg-crm-filters">
         <Filter size={14} />
         <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
@@ -9383,72 +9409,13 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
       </div>
 
-      <div className="dg-fab-leyenda">
-        <span style={{ "--ec": "var(--dg-estado-bisel)" }}>Interior</span>
-        <span style={{ "--ec": "var(--dg-warning)" }}>Envío flex</span>
-        <span style={{ "--ec": "var(--dg-accent)" }}>Envío</span>
-        <span style={{ "--ec": "var(--dg-estado-grabado)" }}>Colocación</span>
-        <span style={{ "--ec": "var(--dg-text-dim)" }}>Retira</span>
-      </div>
-
-      {filtroEstado !== "historial" && (() => {
-        const urgentes = activos.filter(esUrgente);
-        if (urgentes.length === 0) return null;
-        const reclamos = urgentes.filter((p) => p.tipoPedido === "reclamo").length;
-        const soloUrgentes = urgentes.length - reclamos;
-        const totalEspejos = totalUnidades(urgentes);
-        const detalle = [
-          reclamos > 0 ? `${reclamos} de reclamo / cambio` : null,
-          soloUrgentes > 0 ? `${soloUrgentes} marcado${soloUrgentes === 1 ? "" : "s"} como urgente` : null,
-        ].filter(Boolean).join(" · ");
-        return (
-          <div className="dg-fab-alerta-urgente">
-            <AlertTriangle size={18} />
-            <div>
-              <strong>{`Hay ${urgentes.length} ${urgentes.length === 1 ? "pedido" : "pedidos"} con prioridad`}{totalEspejos !== urgentes.length ? ` (${totalEspejos} espejos en total)` : ""}</strong>
-              <span>{detalle} — hacelos primero. Van marcados con la etiqueta CAMBIO / URGENTE arriba de cada lista.</span>
-              <span className="dg-fab-alerta-ordenes">{urgentes.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{urgentes.length > 8 ? "  ·  …" : ""}</span>
-            </div>
-          </div>
-        );
-      })()}
-      {filtroEstado !== "historial" && (() => {
-        const nuevos = activos.filter(esperaAcuseFabrica);
-        if (nuevos.length === 0) return null;
-        return (
-          <div className="dg-fab-alerta-nuevos">
-            <PackagePlus size={18} />
-            <div>
-              <strong>{nuevos.length === 1 ? "1 pedido nuevo de Ventas" : `${nuevos.length} pedidos nuevos de Ventas`}</strong>
-              <span>Verificados y esperando que Fábrica los tome — {nuevos.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{nuevos.length > 8 ? "  ·  …" : ""}</span>
-            </div>
-            {canEdit && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={marcarTodosVistosFabrica}>Marcar todos vistos</button>}
-          </div>
-        );
-      })()}
-      {filtroEstado !== "historial" && (() => {
-        const dem = activos.filter(estaDemoradoAuto);
-        const venc = activos.filter(trabajoAfueraVencido);
-        const todos = [...new Map([...dem, ...venc].map((p) => [p.id, p])).values()];
-        if (todos.length === 0) return null;
-        const lineas = [];
-        if (dem.length) lineas.push(`${dem.length} frenado${dem.length === 1 ? "" : "s"} hace varios días en una etapa`);
-        if (venc.length) lineas.push(`${venc.length} pasado${venc.length === 1 ? "" : "s"} de la fecha prometida (grabado / biseladora)`);
-        return (
-          <div className="dg-fab-alerta-demora">
-            <AlertTriangle size={18} />
-            <div>
-              <strong>{`Revisá ${todos.length} pedido${todos.length === 1 ? "" : "s"} que se está${todos.length === 1 ? "" : "n"} atrasando`}</strong>
-              <span>{lineas.join(" · ")}. Miralos con los filtros “Demorados” y “Afuera del taller”.</span>
-              <span className="dg-fab-alerta-ordenes">{todos.slice(0, 8).map((p) => `#${p.orden}`).join("  ·  ")}{todos.length > 8 ? "  ·  …" : ""}</span>
-            </div>
-          </div>
-        );
-      })()}
-      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${TALLER_LISTAS.find((item) => item.id === lista)?.label || "esta lista"}”.`}</div>}
+      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
-        {(lista === "armar" && filtroEstado === "activos") ? (() => {
+        {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller);
+          // Cada pestaña muestra solo su parte del día.
+          const deEstaPestana = (x) => esDeLaPestana(x.pedido, lista);
+          const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
           const opcionesDias = plan.slice(0, 12).map((d) => d.fecha);
           while (opcionesDias.length < 12) opcionesDias.push(siguienteDiaTaller(opcionesDias[opcionesDias.length - 1] || primerDiaTaller(hoyTaller)));
           const coincide = (p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase());
@@ -9473,14 +9440,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           let semanaAnterior = "";
           return (
             <>
-              <p className="dg-dias-ayuda">
-                El día se llena por trabajo, no por cantidad: {TALLER_MAX_DIA} puntos. Un simple de cero vale 1, un esmerilado que volvió del grabado 0,5 y uno que solo hay que cortar 0,25. El sábado, medio día: {TALLER_MAX_SABADO} puntos, como mucho {TALLER_MAX_SIMPLES_SABADO} simples y no se cortan esmerilados. Lo que quedó sin terminar se suma encima del día de hoy (hasta {TALLER_MAX_ARRASTRE} puntos extra) hasta ponerse al día. Se reparte solo por urgencia y fecha de entrega.
-                {canEdit ? " Para cambiar un espejo de día usá «Pasar a otro día»." : ""}{puedeArrastrar ? " También podés arrastrarlo." : ""}
-              </p>
               {(() => {
                 const hoyPlan = plan[0];
                 if (!hoyPlan) return null;
-                const filas = hoyPlan.items.filter((x) => coincide(x.pedido));
+                const filas = hoyPlan.items.filter(deEstaPestana).filter((x) => coincide(x.pedido));
                 if (filas.length === 0) return null;
                 const irATarjeta = (ev, x) => {
                   ev.stopPropagation();
@@ -9501,11 +9464,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                     <button type="button" className="dg-tdia-head" onClick={() => setTablaDiaAbierta((v) => !v)} aria-expanded={tablaDiaAbierta}>
                       <span className="dg-tdia-tit">
                         <strong><ClipboardList size={14} /> Para hacer {nombreDiaTaller(hoyPlan.fecha, hoyTaller).toLowerCase()}</strong>
-                        <small>
-                          {hoyPlan.espejos} espejo{hoyPlan.espejos === 1 ? "" : "s"} · {puntosTaller(hoyPlan.total)} de {puntosTaller(hoyPlan.max)} puntos de trabajo
-                          {hoyPlan.sabado ? " · medio día" : ""}
-                          {hoyPlan.arrastre > 0 ? ` · ${puntosTaller(hoyPlan.base)} del día + ${puntosTaller(hoyPlan.arrastre)} que quedaron atrasados` : ""}
-                        </small>
+                        <small>{contar(filas)} espejo{contar(filas) === 1 ? "" : "s"}</small>
                       </span>
                       <ChevronRight size={16} className={tablaDiaAbierta ? "dg-presu-chevron-on" : ""} />
                     </button>
@@ -9522,13 +9481,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                             const delGrupo = filas.filter((x) => grupoListaArmar(x.pedido) === grupo.id);
                             if (delGrupo.length === 0) return null;
                             const espejos = delGrupo.reduce((t, x) => t + x.unidades, 0);
-                            const puntos = delGrupo.reduce((t, x) => t + x.unidades * cuartosTaller(x.pedido), 0) / 4;
                             return (
                           <tbody key={grupo.id}>
                             <tr className="dg-tdia-grupo">
                               <td colSpan={8}>
                                 <span className="dg-tdia-grupo-tit">{grupo.label}</span>
-                                <span className="dg-tdia-grupo-sub">{espejos} espejo{espejos === 1 ? "" : "s"} · {puntosTaller(puntos)} punto{puntos === 1 ? "" : "s"} · {grupo.detalle}</span>
+                                <span className="dg-tdia-grupo-sub">{espejos} espejo{espejos === 1 ? "" : "s"}</span>
                               </td>
                             </tr>
                             {delGrupo.map((x) => {
@@ -9589,11 +9547,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const semana = tituloSemana(dia.fecha);
                 const separador = semana !== semanaAnterior ? <div className="dg-dias-semana" key={`sem-${dia.fecha}`}>{semana}</div> : null;
                 semanaAnterior = semana;
-                const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && dia.items.some((x) => coincide(x.pedido)));
-                const hechosU = dia.hechos.reduce((t, x) => t + x.unidades, 0);
-                const lleno = dia.total >= dia.max;
-                const pasado = dia.total > dia.max;
-                const items = dia.items.filter((x) => coincide(x.pedido));
+                const delDia = dia.items.filter(deEstaPestana);
+                const hechosDia = dia.hechos.filter((x) => esDeLaPestana(x.pedido, lista));
+                const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && delDia.some((x) => coincide(x.pedido)));
+                const hechosU = contar(hechosDia);
+                const items = delDia.filter((x) => coincide(x.pedido));
+                if (items.length === 0 && hechosDia.length === 0 && !diasAbiertos.has(dia.fecha)) return null;
                 return (
                   <Fragment key={dia.fecha}>
                     {separador}
@@ -9607,14 +9566,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
-                        <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"} · {dia.simples} simple{dia.simples === 1 ? "" : "s"} · {dia.especiales} esm./bisel</span>
-                        {dia.arrastre > 0 && <span className="dg-dia-taller-arrastre" title="Trabajo que ya tendría que estar terminado">+{puntosTaller(dia.arrastre)} atrasado</span>}
+                        <span className="dg-dia-taller-mix">{contar(delDia)} espejo{contar(delDia) === 1 ? "" : "s"}</span>
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
-                        <span className={`dg-dia-taller-cupo ${pasado ? "dg-dia-taller-pasado" : lleno ? "dg-dia-taller-lleno" : ""}`}>{puntosTaller(dia.total)}/{puntosTaller(dia.max)}</span>
                       </button>
                       {abierto && (
                         <div className="dg-dia-taller-body">
-                          {items.length === 0 && dia.hechos.length === 0 && <div className="dg-dia-vacio">{puedeArrastrar ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
+                          {items.length === 0 && hechosDia.length === 0 && <div className="dg-dia-vacio">{puedeArrastrar ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
                           {items.map((x) => (
                             <div
                               className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"}`}
@@ -9658,7 +9615,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               })}
             </>
           );
-        })() : (lista === "armar" && filtroEstado !== "afuera" && filtroEstado !== "historial") ? (() => {
+        })() : (esPestanaDeArmar(lista) && filtroEstado !== "afuera" && filtroEstado !== "historial") ? (() => {
           const mapaGrupos = new Map();
           visibles.forEach((p) => {
             const grupo = grupoListaArmar(p);
@@ -9703,9 +9660,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <div className="dg-print-sub">
             {lista === "mandar_grabar" && filtroEstado !== "historial" && filtroEstado !== "afuera"
               ? `REMITO — Espejos entregados a grabado · ${new Date().toLocaleDateString("es-AR")}`
-              : (lista === "armar" && filtroEstado === "activos")
-              ? `Lista del día — ${nombreDiaTaller(primerDiaTaller(hoyTaller), hoyTaller)} · ${(planTaller(pedidos, hoyTaller)[0]?.pendientes) || 0} espejo(s) por hacer`
-              : `${filtroEstado === "historial" ? "Historial de fabricación" : TALLER_LISTAS.find((t) => t.id === lista)?.label || lista} — ${new Date().toLocaleDateString("es-AR")} · ${totalUnidades(visibles)} espejo(s)`}
+              : (esPestanaDeArmar(lista) && filtroEstado === "activos")
+              ? `${infoPestana(lista)?.label || "Lista del día"} — ${nombreDiaTaller(primerDiaTaller(hoyTaller), hoyTaller)}`
+              : `${filtroEstado === "historial" ? "Historial de fabricación" : infoPestana(lista)?.label || lista} — ${new Date().toLocaleDateString("es-AR")} · ${totalUnidades(visibles)} espejo(s)`}
           </div>
         </div>
         {/* El papel que va al grabador sirve de remito: lo que se entrega,
@@ -9745,7 +9702,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Funciones</th><th>Entrega</th><th>Estado</th><th>Entrega estimada</th></tr>
             </thead>
             <tbody>
-              {((lista === "armar" && filtroEstado === "activos") ? (planTaller(pedidos, hoyTaller)[0]?.items || []).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
+              {((esPestanaDeArmar(lista) && filtroEstado === "activos") ? (planTaller(pedidos, hoyTaller)[0]?.items || []).filter((x) => esDeLaPestana(x.pedido, lista)).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
                 <tr key={p.id}>
                   <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
                   <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
@@ -13859,11 +13816,6 @@ function Style() {
       .dg-save-error span { color:var(--dg-text-dim); font-size:11px; }
       @media (max-width:680px) { .dg-save-toast { left:12px; right:12px; bottom:12px; max-width:none; } }
 
-      .dg-fab-alerta-urgente { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-danger); border-radius:12px; background:color-mix(in srgb, var(--dg-danger) 12%, var(--dg-surface)); }
-      .dg-fab-alerta-urgente > svg { flex:none; margin-top:1px; color:var(--dg-danger); }
-      .dg-fab-alerta-urgente strong { display:block; font-family:'Jost', sans-serif; font-size:15px; color:var(--dg-text); }
-      .dg-fab-alerta-urgente span { display:block; margin-top:3px; font-size:13px; color:var(--dg-text-dim); line-height:1.4; }
-      .dg-fab-alerta-ordenes { font-family:'JetBrains Mono', monospace; font-size:11px !important; color:var(--dg-danger) !important; margin-top:5px !important; }
       .dg-pendientes-head { margin-bottom:16px; }
       .dg-pendientes-head h1 { font-family:'Jost', sans-serif; font-size:24px; margin:6px 0 6px; letter-spacing:-0.2px; }
       .dg-pendientes-head p { color:var(--dg-text-dim); font-size:13px; margin:0; }
@@ -13923,11 +13875,6 @@ function Style() {
       .dg-buscador-fila > svg { flex:none; color:var(--dg-text-faint); }
 
       .dg-flag-nuevo { background:var(--dg-accent) !important; }
-      .dg-fab-alerta-nuevos { display:flex; align-items:center; gap:11px; flex-wrap:wrap; margin:0 0 14px; padding:12px 15px; border:1px solid rgba(var(--dg-accent-rgb),0.4); border-radius:12px; background:color-mix(in srgb, var(--dg-accent) 9%, var(--dg-surface)); }
-      .dg-fab-alerta-nuevos > svg { flex:none; color:var(--dg-accent); }
-      .dg-fab-alerta-nuevos > div { flex:1; min-width:180px; }
-      .dg-fab-alerta-nuevos strong { display:block; font-family:'Jost', sans-serif; font-size:13px; color:var(--dg-text); }
-      .dg-fab-alerta-nuevos span { display:block; margin-top:2px; font-size:11px; color:var(--dg-text-dim); font-family:'JetBrains Mono', monospace; }
 
       .dg-reclamo-ciclo { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:2px 0 9px; }
       .dg-reclamo-estado { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; padding:3px 8px; border-radius:8px; background:rgba(var(--dg-line-rgb),0.08); color:var(--dg-text-dim); }
@@ -13943,11 +13890,6 @@ function Style() {
       .dg-reclamo-editar[open] summary { margin-bottom:4px; color:var(--dg-text); }
       .dg-logistics-extra { border-color:rgba(var(--dg-accent-rgb),0.3); }
       .dg-logistics-extra .dg-logistics-head span { color:var(--dg-accent); }
-      .dg-fab-alerta-demora { display:flex; align-items:flex-start; gap:11px; margin:0 0 14px; padding:13px 15px; border:1px solid var(--dg-warning); border-radius:12px; background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface)); }
-      .dg-fab-alerta-demora > svg { flex:none; margin-top:1px; color:var(--dg-warning); }
-      .dg-fab-alerta-demora strong { display:block; font-family:'Jost', sans-serif; font-size:15px; color:var(--dg-text); }
-      .dg-fab-alerta-demora span { display:block; margin-top:3px; font-size:13px; color:var(--dg-text-dim); line-height:1.4; }
-      .dg-fab-alerta-demora .dg-fab-alerta-ordenes { color:var(--dg-warning) !important; }
       .dg-fab-reloj { font-weight:600; }
       .dg-fab-reloj-ok { color:var(--dg-text-faint); }
       .dg-fab-reloj-alerta { color:var(--dg-warning); }
@@ -13986,8 +13928,6 @@ function Style() {
       .dg-fab-prometido input { min-height:33px; padding:5px 8px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:8px; color:var(--dg-text); font-size:13px; font-family:'Jost',sans-serif; }
       .dg-fab-prometido-vencido { border-color:var(--dg-danger); background:color-mix(in srgb, var(--dg-danger) 8%, var(--dg-surface)); }
       .dg-fab-prometido-vencido > strong { color:var(--dg-danger); }
-      .dg-fab-leyenda { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-      .dg-fab-leyenda span { --ec:var(--dg-text-dim); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px;
         padding:4px 10px; border-radius:100px; border-left:3px solid var(--ec); background: rgba(var(--dg-line-rgb),0.03); color:var(--dg-text-dim); }
 
       /* ---- FICHA DE FABRICA v3: un solo borde, checklist minimalista, menu de acciones ---- */
@@ -14035,7 +13975,6 @@ function Style() {
       .dg-tdia-detalle-in { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding-top:9px; border-top:1px solid rgba(var(--dg-line-rgb),.1); font-size:13px; color:var(--dg-text-dim); cursor:default; }
       .dg-tdia-detalle-in b { margin-right:4px; font-weight:600; color:var(--dg-text-faint); font-size:11px; letter-spacing:.3px; text-transform:uppercase; }
       .dg-tdia-detalle-obs { flex:1 1 100%; color:var(--dg-text); }
-      .dg-dias-ayuda { margin:0 0 12px; font-size:12px; line-height:1.45; color:var(--dg-text-dim); }
       .dg-dias-semana { margin:16px 0 8px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--dg-text-dim); }
       .dg-dias-semana:first-of-type { margin-top:4px; }
       .dg-dia-taller { margin-bottom:8px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:12px; background:var(--dg-surface); transition:border-color .15s ease, box-shadow .15s ease; }
@@ -14045,13 +13984,9 @@ function Style() {
       .dg-dia-taller-abierto > .dg-dia-taller-head .dg-fab-grupo-chevron { transform:rotate(90deg); }
       .dg-dia-taller-nombre { font-size:15px; font-weight:600; color:var(--dg-text); }
       .dg-dia-taller-hoy .dg-dia-taller-nombre { color:var(--dg-accent-2); }
-      .dg-dia-taller-arrastre { font-size:11px; font-weight:700; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-danger-rgb),.16); color:var(--dg-text); }
       .dg-dia-taller-medio { font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-warning-rgb),.16); color:var(--dg-text); }
       .dg-dia-taller-mix { font-size:12px; color:var(--dg-text-dim); }
       .dg-dia-taller-hechos { display:inline-flex; align-items:center; gap:3px; font-size:12px; font-weight:600; color:var(--dg-success); }
-      .dg-dia-taller-cupo { margin-left:auto; min-width:48px; text-align:center; padding:3px 9px; border-radius:99px; font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; background:rgba(var(--dg-line-rgb),.08); color:var(--dg-text); }
-      .dg-dia-taller-lleno { background:rgba(var(--dg-success-rgb),.16); color:var(--dg-success); }
-      .dg-dia-taller-pasado { background:rgba(var(--dg-danger-rgb),.16); color:var(--dg-danger); }
       .dg-dia-taller-body { padding:4px 10px 12px; border-top:1px solid rgba(var(--dg-line-rgb),.1); display:flex; flex-direction:column; gap:10px; }
       .dg-dia-vacio { padding:14px; text-align:center; font-size:13px; color:var(--dg-text-dim); border:1px dashed rgba(var(--dg-line-rgb),.2); border-radius:10px; }
       .dg-dia-item { display:flex; flex-direction:column; gap:6px; }
@@ -15165,9 +15100,6 @@ function Style() {
       .dg-factory-queue-tabs { grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px; margin-bottom:7px; }
       .dg-factory-queue-tabs button { min-height:58px; padding:9px 10px; }
       .dg-factory-queue-tabs button > span { gap:7px; font-size:11px; line-height:1.2; }
-      .dg-factory-queue-info { --qc:var(--dg-accent); display:flex; align-items:center; gap:9px; margin-bottom:10px; padding:7px 10px; border-left:3px solid var(--qc); border-radius:8px; background:color-mix(in srgb,var(--qc) 6%,var(--dg-surface)); }
-      .dg-factory-queue-info strong { color:var(--qc); font-size:11px; white-space:nowrap; }
-      .dg-factory-queue-info span { overflow:hidden; color:var(--dg-text-faint); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
 
       /* Contraste del tema claro: fondo de aplicación, superficies y controles se distinguen con claridad. */
       .dg-app[data-theme="light"] .dg-building-shell,
@@ -15272,8 +15204,6 @@ function Style() {
         .dg-factory-queue-tabs { display:flex; gap:6px; overflow-x:auto; padding-bottom:3px; scrollbar-width:none; }
         .dg-factory-queue-tabs::-webkit-scrollbar { display:none; }
         .dg-factory-queue-tabs button { flex:0 0 145px; min-height:48px; padding:8px 9px; }
-        .dg-factory-queue-info { align-items:flex-start; flex-direction:column; gap:2px; padding:7px 9px; }
-        .dg-factory-queue-info span { width:100%; white-space:normal; }
         .dg-month-items { gap:6px; padding:7px; }
         .dg-month-header { padding:9px 11px; }
         .dg-pedido-card:not(.dg-fabrica-card) { gap:5px; padding:9px 10px; }
