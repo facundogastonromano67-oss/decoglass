@@ -9860,14 +9860,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         return (
           <div className="dg-semana-contadores">
             <div className="dg-semana-caja dg-semana-falta">
-              <span className="dg-semana-tit">Para hacer esta semana</span>
+              <span className="dg-semana-tit">Para hacer</span>
               <strong>{faltan}</strong>
-              <small>espejo{faltan === 1 ? "" : "s"}</small>
+              <small>esta semana</small>
             </div>
             <div className="dg-semana-caja dg-semana-hecho">
               <span className="dg-semana-tit">Ya terminados</span>
               <strong>{hechos}</strong>
-              <small>de {hechos + faltan} esta semana</small>
+              <small>de {hechos + faltan}</small>
             </div>
           </div>
         );
@@ -13911,7 +13911,6 @@ function Style() {
       .dg-prod-resumen small { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
       .dg-prod-resumen strong { font-family:'JetBrains Mono', monospace; font-size:24px; line-height:1.1; color:var(--dg-text); }
       .dg-prod-resumen span { font-size:12px; color:var(--dg-text-dim); }
-        font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
       /* Los dos contadores grandes de Fábrica. */
       .dg-semana-contadores { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; margin-bottom:16px; }
       .dg-semana-caja { --c:var(--dg-text); display:flex; flex-direction:column; align-items:center; gap:2px; padding:18px 14px; border:2px solid var(--c); border-radius:16px; text-align:center; }
@@ -14475,7 +14474,6 @@ function Style() {
       .dg-fab-prometido input { min-height:33px; padding:5px 8px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:8px; color:var(--dg-text); font-size:13px; font-family:'Jost',sans-serif; }
       .dg-fab-prometido-vencido { border-color:var(--dg-danger); background:color-mix(in srgb, var(--dg-danger) 8%, var(--dg-surface)); }
       .dg-fab-prometido-vencido > strong { color:var(--dg-danger); }
-        padding:4px 10px; border-radius:100px; border-left:3px solid var(--ec); background: rgba(var(--dg-line-rgb),0.03); color:var(--dg-text-dim); }
 
       /* ---- FICHA DE FABRICA v3: un solo borde, checklist minimalista, menu de acciones ---- */
       .dg-fab-lista { display:flex; flex-direction:column; gap:10px; }
