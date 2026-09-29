@@ -163,6 +163,32 @@ export const stockMaterialesStore = createRowStore("stock_materiales_rows");
 export const stockEspejosStore = createRowStore("stock_espejos_rows");
 export const reclamosStore = createRowStore("reclamos_rows");
 
+// De una URL pública vieja saca la ruta; si ya es una ruta, la deja igual.
+// Hace falta porque los pedidos viejos tienen guardada la URL entera.
+export function rutaDeArchivo(valor, bucket) {
+  const texto = String(valor || "").trim();
+  if (!texto) return "";
+  const marcador = `/storage/v1/object/public/${bucket}/`;
+  const i = texto.indexOf(marcador);
+  if (i !== -1) return decodeURIComponent(texto.slice(i + marcador.length));
+  // También puede venir firmada de antes.
+  const firmado = `/storage/v1/object/sign/${bucket}/`;
+  const j = texto.indexOf(firmado);
+  if (j !== -1) return decodeURIComponent(texto.slice(j + firmado.length).split("?")[0]);
+  return texto.replace(/^\/+/, "");
+}
+
+// Link temporal para ver o bajar el archivo. Solo funciona con sesión.
+export async function urlFirmada(bucket, valor, segundos = 900) {
+  const ruta = rutaDeArchivo(valor, bucket);
+  if (!ruta) return "";
+  try {
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(ruta, segundos);
+    if (error || !data?.signedUrl) return "";
+    return data.signedUrl;
+  } catch (e) { return ""; }
+}
+
 export const documentosStore = {
   // Sube el PDF de la factura (emitida en otra app, como EcomApp) y devuelve
   // la URL pública para guardarla en el pedido. Requiere el bucket "facturas"
@@ -175,8 +201,7 @@ export const documentosStore = {
       upsert: true,
     });
     if (error) throw error;
-    const { data } = supabase.storage.from("facturas").getPublicUrl(ruta);
-    return data.publicUrl;
+    return ruta;
   },
 
   // Sube la foto/PDF de una factura de COMPRA, organizada por mes (según la
@@ -190,17 +215,13 @@ export const documentosStore = {
       upsert: true,
     });
     if (error) throw error;
-    const { data } = supabase.storage.from("facturas").getPublicUrl(ruta);
-    return data.publicUrl;
+    return ruta;
   },
 
   // Borra el archivo de factura ya subido, por si se cargó por error.
-  async borrarFactura(url) {
-    if (!url) return;
-    const marcador = "/storage/v1/object/public/facturas/";
-    const idx = url.indexOf(marcador);
-    if (idx === -1) return;
-    const ruta = decodeURIComponent(url.slice(idx + marcador.length));
+  async borrarFactura(valor) {
+    const ruta = rutaDeArchivo(valor, "facturas");
+    if (!ruta) return;
     await supabase.storage.from("facturas").remove([ruta]);
   },
 
@@ -214,17 +235,13 @@ export const documentosStore = {
       upsert: true,
     });
     if (error) throw error;
-    const { data } = supabase.storage.from("remitos").getPublicUrl(ruta);
-    return data.publicUrl;
+    return ruta;
   },
 
   // Borra el remito ya subido, por si se cargó por error.
-  async borrarRemito(url) {
-    if (!url) return;
-    const marcador = "/storage/v1/object/public/remitos/";
-    const idx = url.indexOf(marcador);
-    if (idx === -1) return;
-    const ruta = decodeURIComponent(url.slice(idx + marcador.length));
+  async borrarRemito(valor) {
+    const ruta = rutaDeArchivo(valor, "remitos");
+    if (!ruta) return;
     await supabase.storage.from("remitos").remove([ruta]);
   },
 

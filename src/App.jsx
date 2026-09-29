@@ -1,5 +1,5 @@
 import { Component, Fragment, useState, useEffect, useRef } from "react";
-import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore } from "./lib/storage";
+import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore, urlFirmada } from "./lib/storage";
 import { supabase } from "./lib/supabaseClient";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
@@ -4441,7 +4441,7 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
               </span>
             </div>
             {e.facturaUrl && (
-              <a className="dg-icon-btn" href={e.facturaUrl} target="_blank" rel="noopener noreferrer" title="Ver la factura"><FileText size={14} /></a>
+              <BotonArchivo bucket="facturas" valor={e.facturaUrl} className="dg-icon-btn"><FileText size={14} /></BotonArchivo>
             )}
             <span className="dg-pago-monto">{money(e.monto)}</span>
             <button className="dg-icon-btn dg-task-del" onClick={() => removeEntry(e.id)}><Trash2 size={14} /></button>
@@ -5899,6 +5899,29 @@ function FacturarEcomAppBtn({ pedido }) {
   );
 }
 
+// Abre un archivo privado: pide el link firmado en el momento del click, así
+// no queda ninguna URL eterna dando vueltas. Vence a los 15 minutos.
+function BotonArchivo({ bucket, valor, children, className = "dg-factura-actual" }) {
+  const [abriendo, setAbriendo] = useState(false);
+  const [error, setError] = useState("");
+  if (!valor) return null;
+  async function abrir() {
+    setAbriendo(true); setError("");
+    const url = await urlFirmada(bucket, valor);
+    setAbriendo(false);
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+    else setError("No se pudo abrir el archivo.");
+  }
+  return (
+    <>
+      <button type="button" className={className} onClick={abrir} disabled={abriendo}>
+        {abriendo ? <Loader2 size={13} className="dg-spin" /> : null} {children}
+      </button>
+      {error && <span className="dg-error" style={{ marginLeft: 6 }}>{error}</span>}
+    </>
+  );
+}
+
 function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar }) {
   const conEnvio = esPedidoConEnvio(pedido);
   const entregado = pedido.estado === "Entregado";
@@ -6962,11 +6985,9 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
         </Field>
         <Field label="Comprobante (foto o PDF)">
           <div className="dg-factura-campo">
-            {pedido.remitoUrl && (
-              <a href={pedido.remitoUrl} target="_blank" rel="noopener noreferrer" className="dg-factura-actual">
-                <FileText size={13} /> Ver remito
-              </a>
-            )}
+            <BotonArchivo bucket="remitos" valor={pedido.remitoUrl}>
+              <FileText size={13} /> Ver remito
+            </BotonArchivo>
             {canEdit && pedido.remitoUrl && (
               <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={handleBorrar} disabled={borrando}>
                 {borrando ? <Loader2 size={13} className="dg-spin" /> : <Trash2 size={13} />} Quitar
@@ -7039,11 +7060,9 @@ function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
 
   return (
     <div className="dg-factura-campo">
-      {pedido.facturaUrl && (
-        <a href={pedido.facturaUrl} target="_blank" rel="noopener noreferrer" className="dg-factura-actual">
-          <FileText size={13} /> Ver factura cargada
-        </a>
-      )}
+      <BotonArchivo bucket="facturas" valor={pedido.facturaUrl}>
+        <FileText size={13} /> Ver factura cargada
+      </BotonArchivo>
       {canEdit && pedido.facturaUrl && (
         <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={handleBorrar} disabled={borrando}>
           {borrando ? <Loader2 size={13} className="dg-spin" /> : <Trash2 size={13} />} Quitar
@@ -16707,7 +16726,7 @@ function SeguimientoPublico({ pedidoId }) {
           <div className="dg-seguimiento-docs">
             {puedeDescargarFactura && (
               pedido.facturaUrl
-                ? <a className="dg-btn-ghost" href={pedido.facturaUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(pedido.id)}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
                 : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
             )}
             {pedido.metodo === "Interior" && pedido.remitoUrl && (
@@ -16869,7 +16888,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
             <div className="dg-seguimiento-docs">
               {puedeDescargarFactura && (
                 conFacturaUrl
-                  ? <a className="dg-btn-ghost" href={conFacturaUrl.facturaUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                  ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(conFacturaUrl.id)}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
                   : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
               )}
               {conRemito?.remitoUrl && (
