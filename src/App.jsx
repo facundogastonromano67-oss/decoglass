@@ -184,6 +184,22 @@ const INCOME_CHANNELS = {
   local_importados: "Local Importados", local_nuestros: "Local Nuestros",
   mov_entre_cuentas: "Mov. entre cuentas", envios_extras: "Envíos o extras",
 };
+// De dónde vino la venta. Se anota en el pedido y después Finanzas lo cruza
+// con si el espejo es importado o nuestro para armar el canal de la izquierda
+// (INCOME_CHANNELS). Así el vendedor elige UNA cosa y no hay que cargar nada
+// dos veces.
+const CANALES_VENTA = {
+  local: "Local / Showroom",
+  wpp_ig: "WhatsApp o Instagram",
+  meli: "Mercado Libre",
+  tienda_nube: "Tienda Nube",
+};
+// El canal que va al ingreso: de dónde vino + qué se vendió.
+// Ejemplo: vino por Instagram y es un espejo importado -> "Wpp e IG Importados".
+function canalDelPedido(pedido) {
+  const de = CANALES_VENTA[pedido?.canalVenta] ? pedido.canalVenta : "local";
+  return de + (pedido?.tipo === "Importado" ? "_importados" : "_nuestros");
+}
 const PAYMENT_METHODS = {
   santander: "Santander", mercado_pago: "Mercado Pago", mp_efectivo: "Mp_Efectivo",
   icbc_importado: "ICBC Importado", icbc_nuestro: "ICBC Nuestro", credicoop: "Credicoop",
@@ -4460,6 +4476,7 @@ function emptyPedido(prefill) {
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
     touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: prefill?.sinCargo ? "0" : "", anticipo: prefill?.sinCargo ? "0" : "", comision: "No aplica", facturado: false, montoRegistrado: 0,
+    canalVenta: prefill?.canalVenta || "",
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
     fletero: "", envioCobro: "", fleteLiquidado: false, fleteLiquidadoMonto: 0, fleteLiquidadoFecha: "",
@@ -5312,7 +5329,7 @@ function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
 
 // Datos del PEDIDO, no de cada espejo: si se cambian, cambian para todos.
 const CAMPOS_DEL_PEDIDO = [
-  "cliente", "celular", "dniCuit", "vendedor", "fecha", "listo",
+  "cliente", "celular", "dniCuit", "vendedor", "canalVenta", "fecha", "listo",
   "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
   "provincia", "localidad", "codigoPostal", "costoEnvio", "destinoLat", "destinoLng",
 ];
@@ -6259,6 +6276,7 @@ function validarPedido(p) {
   if (falta(p.cliente)) errores.cliente = "Falta el nombre del cliente";
   if (falta(p.celular)) errores.celular = "Falta el celular de contacto";
   if (falta(p.vendedor)) errores.vendedor = "Falta indicar quién vendió";
+  if (falta(p.canalVenta)) errores.canalVenta = "Falta de dónde vino la venta";
   if (falta(p.stockEspejoId)) {
     if (falta(p.ancho) || Number(p.ancho) <= 0) errores.ancho = "Falta el ancho";
     if (falta(p.alto) || Number(p.alto) <= 0) errores.alto = "Falta el alto";
@@ -6395,7 +6413,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         id: uid(),
         concepto: `${etiqueta} pedido #${withOrden.orden || "?"} — ${withOrden.cliente || "Sin nombre"}`,
         monto: delta,
-        canal: withOrden.tipo === "Importado" ? "local_importados" : "local_nuestros",
+        canal: canalDelPedido(withOrden),
         cuenta, cliente: withOrden.cliente || "",
         metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
         sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
@@ -6505,7 +6523,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           id: uid(),
           concepto: `${(Number(e.montoRegistrado) || 0) > 0 ? "Saldo" : "Anticipo"} pedido #${e.orden || "?"} — ${e.cliente || "Sin nombre"}`,
           monto: delta,
-          canal: e.tipo === "Importado" ? "local_importados" : "local_nuestros",
+          canal: canalDelPedido(e),
           cuenta, cliente: e.cliente || "",
           metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
           sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
@@ -7224,7 +7242,10 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones 
 function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1 }) {
   const verEspejo = modo !== "entrega";
   const verEntrega = modo !== "espejo";
-  const [draft, setDraft] = useState(() => normalizarPedidoFunciones(pedido));
+  const [draft, setDraft] = useState(() => {
+    const base = normalizarPedidoFunciones(pedido);
+    return esNuevo ? base : { ...base, canalVenta: base.canalVenta || "local" };
+  });
   const cajaModal = useRef(null);
 
   // Al abrir para cargar otro espejo, arrancar arriba de todo (en las medidas)
@@ -7421,6 +7442,12 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Cliente" error={err("cliente")}><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
             <Field label="Fecha de compra"><input type="date" disabled={!canEditFull} value={draft.fecha || ""} onChange={(e) => set("fecha", e.target.value)} /></Field>
             <Field label="Vendedor" error={err("vendedor")}><select disabled={!canEditFull} value={draft.vendedor} onChange={(e) => set("vendedor", e.target.value)}><option value="">—</option>{vendedores.map((v) => (<option key={v}>{v}</option>))}</select></Field>
+            <Field label="¿De dónde vino?" error={err("canalVenta")}>
+              <select disabled={!canEditFull} value={draft.canalVenta || ""} onChange={(e) => set("canalVenta", e.target.value)}>
+                <option value="">—</option>
+                {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+              </select>
+            </Field>
             <Field label="Celular" error={err("celular")}><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
             <Field label="DNI/CUIT"><input disabled={!canEditFull} value={draft.dniCuit} onChange={(e) => set("dniCuit", e.target.value)} /></Field>
             <Field label="Tipo factura" error={err("tipoFactura")}><select disabled={!canEditFull} value={draft.tipoFactura} onChange={(e) => set("tipoFactura", e.target.value)}>{TIPOFACTURA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
