@@ -5006,6 +5006,32 @@ function unidadesPendientesTaller(pedido) {
   if (esPedidoMultiUnidad(pedido)) return unidadesDePedido(pedido).filter((u) => u.etapa !== "embalado").length;
   return Math.max(1, Number(pedido?.cant) || 1);
 }
+// Un espejo cortado Y armado ya es trabajo hecho: lo único que falta es
+// embalarlo, y eso se hace a la mañana siguiente porque el pegamento tiene que
+// secar toda la noche. Por eso no vuelve al reparto ni le come el cupo al día
+// siguiente: se queda en el día en que lo armaron hasta que lo embalan.
+function esperaElEmbalado(unidad) {
+  if (!unidad || unidad.etapa === "embalado") return false;
+  return unidad.etapa === "armado" || !!unidad.produccionArmadoFecha;
+}
+// El día al que pertenece ese espejo: cuándo terminaron de armarlo. Si lo
+// cortaron un día y lo armaron al otro, cuenta el día del armado, que es
+// cuando el trabajo quedó hecho.
+function diaDeArmado(unidad) {
+  return diaLocalDe(unidad?.produccionArmadoFecha) || diaLocalDe(unidad?.produccionCortadoFecha);
+}
+// Los espejos de este pedido que están armados esperando el embalado,
+// contados por el día en que se armaron.
+function porEmbalarPorDia(pedido) {
+  const dias = new Map();
+  unidadesDePedido(pedido).forEach((u) => {
+    if (!esperaElEmbalado(u)) return;
+    const dia = diaDeArmado(u);
+    if (!dia) return;
+    dias.set(dia, (dias.get(dia) || 0) + 1);
+  });
+  return dias;
+}
 function diaLocalDe(fechaHora) {
   if (!fechaHora) return "";
   const d = new Date(fechaHora);
@@ -5082,10 +5108,26 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   const tope = topeDelDia(listaId, false);
   const mitad = Math.max(1, Math.ceil(tope / 2));
   const deLaLista = (p) => entraEnPlanTaller(p) && esDeLaPestana(p, listaId);
+  const enLista = (pedidos || []).filter(deLaLista);
+
+  // Lo que ya está cortado y armado se queda clavado en su día esperando el
+  // embalado. Sale del reparto: ese trabajo ya lo hicieron, no tiene por qué
+  // sumarse al cupo de mañana.
+  const embalarPorDia = new Map();
+  const armadosDe = new Map();
+  enLista.forEach((p) => {
+    porEmbalarPorDia(p).forEach((n, dia) => {
+      if (!embalarPorDia.has(dia)) embalarPorDia.set(dia, []);
+      embalarPorDia.get(dia).push({ pedido: p, unidades: n, clase: claseTaller(p) });
+      armadosDe.set(p.id, (armadosDe.get(p.id) || 0) + n);
+    });
+  });
+  const embalarDel = (dia) => embalarPorDia.get(dia) || [];
+
   // Un pedido que no entra entero en un día se reparte en varios.
-  const pool = (pedidos || []).filter(deLaLista)
+  const pool = enLista
     .map((p) => {
-      const unidades = unidadesPendientesTaller(p);
+      const unidades = Math.max(0, unidadesPendientesTaller(p) - (armadosDe.get(p.id) || 0));
       return { pedido: p, unidades, restantes: unidades, clase: claseTaller(p), fijado: listaSinTope(listaId) ? "" : diaFijadoValido(p.diaTaller, primero), partible: unidades > tope };
     })
     .filter((x) => x.unidades > 0)
@@ -5117,7 +5159,10 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
     const base = topeDelDia(listaId, sabado);
     const arrastre = fecha === primero ? arrastreHoy : 0;
     const maxDia = base + arrastre;
-    let usados = hechos.reduce((t, x) => t + x.unidades, 0);
+    const porEmbalar = embalarDel(fecha);
+    // Lo armado ese día ya ocupó su lugar en el día: no se vuelve a llenar.
+    let usados = hechos.reduce((t, x) => t + x.unidades, 0)
+               + porEmbalar.reduce((t, x) => t + x.unidades, 0);
     const libre = () => maxDia - usados;
     const tomar = (x, n, fijadoAca) => {
       n = Math.min(n, x.restantes);
@@ -5157,7 +5202,8 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
 
     items.sort((a, b) => (b.fijadoAca ? 1 : 0) - (a.fijadoAca ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido));
     dias.push({
-      fecha, items, hechos, sabado, base, arrastre,
+      fecha, items, hechos, sabado, base, arrastre, porEmbalar,
+      porEmbalarU: porEmbalar.reduce((t, x) => t + x.unidades, 0),
       max: maxDia,
       total: usados,
       espejos: usados,
@@ -5165,6 +5211,21 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
     });
     fecha = siguienteDiaTaller(fecha);
   }
+
+  // Los días ya pasados que todavía tienen espejos sin embalar no desaparecen:
+  // la lista del lunes se va recién cuando embalaron los diez del lunes.
+  const atrasSinCerrar = [...embalarPorDia.keys()].filter((d) => d < primero).sort()
+    .map((fecha) => {
+      const porEmbalar = embalarDel(fecha);
+      const u = porEmbalar.reduce((t, x) => t + x.unidades, 0);
+      return {
+        fecha, items: [], hechos: [], porEmbalar, porEmbalarU: u,
+        sabado: new Date(`${fecha}T12:00:00`).getDay() === 6,
+        base: 0, arrastre: 0, max: 0, total: u, espejos: u, pendientes: 0,
+        soloEmbalar: true,
+      };
+    });
+  dias.unshift(...atrasSinCerrar);
 
   // Para los pedidos repartidos: qué parte es y en qué día sigue.
   const diasDe = new Map();
@@ -5185,6 +5246,10 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
 
 // En qué día caería este pedido si entrara al taller ahora, más el colchón.
 // Devuelve "" si no se puede calcular (un biselado sin pedir, por ejemplo).
+// El día de trabajo de hoy dentro del plan. Los días de atrás que quedaron
+// abiertos (solo les falta embalar) van primero, pero no son el día de hoy.
+const diaDeHoyDelPlan = (plan) => (plan || []).find((d) => !d.soloEmbalar) || null;
+
 function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
   if (!pedido) return "";
   // Se lo simula ya pasado a fábrica: recién ahí el plan lo ubica.
@@ -9874,7 +9939,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         const faltan = ["simples", "esm_cortar", "esm_armar"].reduce((total, id) => total
           + planTaller(pedidos, hoyTaller, id)
               .filter((d) => d.fecha <= sabadoSemana)
-              .reduce((t, d) => t + d.items.reduce((u, x) => u + x.unidades, 0), 0), 0);
+              .reduce((t, d) => t + d.porEmbalarU + d.items.reduce((u, x) => u + x.unidades, 0), 0), 0);
         if (faltan === 0 && hechos === 0) return null;
         return (
           <div className="dg-semana-contadores">
@@ -9920,7 +9985,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller, lista);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
-          const opcionesDias = plan.slice(0, 12).map((d) => d.fecha);
+          const opcionesDias = plan.filter((d) => !d.soloEmbalar).slice(0, 12).map((d) => d.fecha);
           while (opcionesDias.length < 12) opcionesDias.push(siguienteDiaTaller(opcionesDias[opcionesDias.length - 1] || primerDiaTaller(hoyTaller)));
           const coincide = (p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase());
           // Un pedido repartido en varios días muestra en cada día solo sus unidades
@@ -9938,6 +10003,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             const l = lunesDe(iso);
             if (l === lunesHoy) return "Esta semana";
             if (l === lunesDe(isoLocal(sumarDias(new Date(lunesHoy + "T12:00:00"), 7)))) return "Semana que viene";
+            if (l === lunesDe(isoLocal(sumarDias(new Date(lunesHoy + "T12:00:00"), -7)))) return "Semana pasada";
             const [, m, d] = l.split("-").map(Number);
             return `Semana del ${d}/${m}`;
           };
@@ -9945,7 +10011,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           return (
             <>
               {(() => {
-                const hoyPlan = plan[0];
+                const hoyPlan = diaDeHoyDelPlan(plan);
                 if (!hoyPlan) return null;
                 const filas = hoyPlan.items.filter((x) => coincide(x.pedido));
                 if (filas.length === 0) return null;
@@ -10055,7 +10121,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && dia.items.some((x) => coincide(x.pedido)));
                 const hechosU = contar(hechosDia);
                 const items = dia.items.filter((x) => coincide(x.pedido));
-                if (items.length === 0 && hechosDia.length === 0 && !diasAbiertos.has(dia.fecha)) return null;
+                if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && !diasAbiertos.has(dia.fecha)) return null;
                 return (
                   <Fragment key={dia.fecha}>
                     {separador}
@@ -10070,11 +10136,22 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
                         <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"}</span>
+                        {dia.porEmbalarU > 0 && <span className="dg-dia-taller-embalar"><Package size={12} /> falta embalar {dia.porEmbalarU}</span>}
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
                       </button>
                       {abierto && (
                         <div className="dg-dia-taller-body">
-                          {items.length === 0 && hechosDia.length === 0 && <div className="dg-dia-vacio">{puedeArrastrar ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
+                          {items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && <div className="dg-dia-vacio">{puedeArrastrar ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
+                          {dia.porEmbalar.length > 0 && (
+                            <div className="dg-embalar">
+                              <div className="dg-embalar-tit"><Package size={14} /> Falta embalar {dia.porEmbalarU} espejo{dia.porEmbalarU === 1 ? "" : "s"}</div>
+                              <ul>
+                                {dia.porEmbalar.map((x) => (
+                                  <li key={x.pedido.id}>#{x.pedido.orden} {x.pedido.cliente} · {x.pedido.ancho}×{x.pedido.alto}{x.unidades > 1 ? ` · ${x.unidades} u.` : ""}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           {items.map((x) => (
                             <div
                               className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"}`}
@@ -10205,7 +10282,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <tr><th>Orden</th><th>Cliente</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Funciones</th><th>Entrega</th><th>Estado</th><th>Entrega estimada</th></tr>
             </thead>
             <tbody>
-              {((esPestanaDeArmar(lista) && filtroEstado === "activos") ? (planTaller(pedidos, hoyTaller, lista)[0]?.items || []).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
+              {((esPestanaDeArmar(lista) && filtroEstado === "activos") ? (diaDeHoyDelPlan(planTaller(pedidos, hoyTaller, lista))?.items || []).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
                 <tr key={p.id}>
                   <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
                   <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
@@ -13732,7 +13809,7 @@ function Style() {
         --dg-text:#F6ECE0; --dg-text-dim:#B4ACC2; --dg-text-faint:#8B84A0;
         --dg-accent:#60ADD9; --dg-accent-rgb:96,173,217; --dg-accent-2:#83C2E6; --dg-on-accent:#10242F;
         --dg-success:#5FB79B; --dg-success-rgb:95,183,155;
-        --dg-warning:#E7B15A; --dg-warning-rgb:231,177,90;
+        --dg-warning:#E7B15A; --dg-warning-rgb:231,177,90; --dg-warning-2:#E7B15A;
         --dg-danger:#E37B6C; --dg-danger-rgb:227,123,108;
         --dg-estado-grabado:#7FB3D4; --dg-estado-bisel:#A99AD6; --dg-estado-biseladora:#E0A96B;
         --dg-interior:#B98CFF; --dg-interior-rgb:185,140,255; --dg-on-interior:#1E1033;
@@ -13754,7 +13831,7 @@ function Style() {
         --dg-text:#2E2D2D; --dg-text-dim:#585366; --dg-text-faint:#847F92;
         --dg-accent:#2F82B3; --dg-accent-rgb:47,130,179; --dg-accent-2:#256A94; --dg-on-accent:#FFFFFF;
         --dg-success:#3C7A62; --dg-success-rgb:60,122,98;
-        --dg-warning:#96611A; --dg-warning-rgb:150,97,26;
+        --dg-warning:#96611A; --dg-warning-rgb:150,97,26; --dg-warning-2:#7A4E12;
         --dg-danger:#B04A3D; --dg-danger-rgb:176,74,61;
         --dg-estado-grabado:#2F6E93; --dg-estado-bisel:#5B4C86; --dg-estado-biseladora:#8A5A2A;
         --dg-interior:#6A2BD0; --dg-interior-rgb:106,43,208; --dg-on-interior:#FFFFFF;
@@ -14551,6 +14628,7 @@ function Style() {
       .dg-dia-taller-medio { font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; padding:1px 6px; border-radius:6px; background:rgba(var(--dg-warning-rgb),.16); color:var(--dg-text); }
       .dg-dia-taller-mix { font-size:12px; color:var(--dg-text-dim); }
       .dg-dia-taller-hechos { display:inline-flex; align-items:center; gap:3px; font-size:12px; font-weight:600; color:var(--dg-success); }
+      .dg-dia-taller-embalar { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; color:var(--dg-warning-2); background:rgba(var(--dg-warning-rgb),.14); }
       .dg-dia-taller-body { padding:4px 10px 12px; border-top:1px solid rgba(var(--dg-line-rgb),.1); display:flex; flex-direction:column; gap:10px; }
       .dg-dia-vacio { padding:14px; text-align:center; font-size:13px; color:var(--dg-text-dim); border:1px dashed rgba(var(--dg-line-rgb),.2); border-radius:10px; }
       .dg-dia-item { display:flex; flex-direction:column; gap:6px; }
@@ -14565,6 +14643,10 @@ function Style() {
       .dg-dia-hechos { padding:8px 10px; border-radius:9px; background:rgba(var(--dg-success-rgb),.07); font-size:12px; color:var(--dg-text-dim); }
       .dg-dia-hechos summary { cursor:pointer; display:flex; align-items:center; gap:5px; font-weight:600; color:var(--dg-success); }
       .dg-dia-hechos ul { margin:6px 0 0; padding-left:18px; }
+      .dg-embalar { padding:10px 12px; border-radius:10px; background:rgba(var(--dg-warning-rgb),.09); border:1px solid rgba(var(--dg-warning-rgb),.28); font-size:12px; color:var(--dg-text-dim); margin-bottom:10px; }
+      .dg-embalar-tit { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:700; color:var(--dg-warning-2); }
+      .dg-embalar ul { margin:6px 0 0; padding-left:18px; }
+      .dg-embalar li { padding:1px 0; }
       .dg-fab-card { position:relative; background: var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12);
         border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:12px; padding:0; }
       /* Interior: tiene que saltar a la vista desde lejos. */

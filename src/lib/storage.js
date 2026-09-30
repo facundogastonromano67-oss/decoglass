@@ -14,6 +14,15 @@
 import { supabase } from "./supabaseClient";
 
 const TABLE = "kv_store";
+
+// ¿Hay alguien logueado en este navegador? El portal del cliente entra sin
+// login y ya no puede leer las tablas, así que tampoco puede escuchar los
+// cambios en vivo: intentarlo sólo genera reintentos y consumo al divino
+// botón. El portal se actualiza igual con sus sondeos (cada 12-20 segundos).
+let haySesion = false;
+supabase.auth.getSession().then(({ data }) => { haySesion = !!data?.session; }).catch(() => {});
+supabase.auth.onAuthStateChange((_evento, sesion) => { haySesion = !!sesion; });
+const sinEscucha = () => () => {};
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 const SYNC_TOPIC = "decoglass-shared-data-v1";
 const SYNC_EVENT = "kv-change";
@@ -79,23 +88,24 @@ export const pedidosStore = {
     return (data || []).map((r) => r.data);
   },
 
-  // Lectura pública de un solo pedido por id, sin sesión — la usa el portal
-  // de seguimiento del cliente (no requiere login, la base ya es de lectura abierta).
+  // Un solo pedido por id, sin sesión — la usa el portal de seguimiento.
+  // Va por la función seguimiento_pedido y no por la tabla: la tabla está
+  // cerrada, así que el que tiene el link ve SU pedido y nadie puede bajarse
+  // la lista entera. La función además le saca la comisión y el vendedor.
   async getOne(id) {
     if (!id) return null;
-    const { data, error } = await supabase.from("pedidos_rows").select("data").eq("id", id).maybeSingle();
+    const { data, error } = await supabase.rpc("seguimiento_pedido", { p_id: id });
     if (error) throw error;
-    return data ? data.data : null;
+    return data || null;
   },
 
-  // Lectura pública de todos los espejos de un mismo pedido agrupado (varios
-  // espejos, un solo link de seguimiento). Filtra por el campo grupoId
-  // guardado adentro del jsonb de cada fila.
+  // Todos los espejos de un mismo pedido agrupado (varios espejos, un solo
+  // link de seguimiento). Misma idea que getOne: por función, no por tabla.
   async getByGrupoId(grupoId) {
     if (!grupoId) return [];
-    const { data, error } = await supabase.from("pedidos_rows").select("data").eq("data->>grupoId", grupoId);
+    const { data, error } = await supabase.rpc("seguimiento_grupo", { p_grupo: grupoId });
     if (error) throw error;
-    return (data || []).map((r) => r.data);
+    return data || [];
   },
 
   async upsertMany(lista) {
@@ -349,13 +359,12 @@ export const chatStore = {
     return data || [];
   },
 
+  // Los mensajes de UN hilo. Por función: así el cliente (sin login) ve los
+  // suyos sin que la tabla de conversaciones quede abierta para cualquiera.
+  // El staff usa la misma función, le devuelve lo mismo.
   async getMensajes(hiloId) {
     if (!hiloId) return [];
-    const { data, error } = await supabase
-      .from("chat_mensajes").select("*")
-      .eq("hilo_id", hiloId)
-      .order("created_at", { ascending: true })
-      .limit(500);
+    const { data, error } = await supabase.rpc("seguimiento_mensajes", { p_hilo: hiloId });
     if (error) throw error;
     return data || [];
   },
@@ -364,20 +373,18 @@ export const chatStore = {
   async enviarComoCliente(hiloId, cuerpo, meta) {
     const texto = String(cuerpo || "").trim();
     if (!hiloId || !texto) return;
-    const ahora = new Date().toISOString();
-    await supabase.from("chat_hilos").upsert({
-      id: hiloId,
-      pedido_id: meta?.pedidoId || null,
-      grupo_id: meta?.grupoId || null,
-      orden: meta?.orden || null,
-      cliente_nombre: meta?.clienteNombre || null,
-      entregado_at: meta?.entregadoAt || null,
-      ultimo_mensaje: texto.slice(0, 200),
-      ultimo_mensaje_at: ahora,
-      ultimo_autor_tipo: "cliente",
-    }, { onConflict: "id" });
-    const { error } = await supabase.from("chat_mensajes").insert({
-      hilo_id: hiloId, autor_tipo: "cliente", autor_nombre: meta?.clienteNombre || "Cliente", cuerpo: texto,
+    // Una sola llamada: la función arma el hilo si no existía y guarda el
+    // mensaje. El cliente ya no escribe directo en las tablas.
+    const { error } = await supabase.rpc("seguimiento_escribir", {
+      p_hilo: hiloId,
+      p_cuerpo: texto,
+      p_meta: {
+        pedidoId: meta?.pedidoId || null,
+        grupoId: meta?.grupoId || null,
+        orden: meta?.orden || null,
+        clienteNombre: meta?.clienteNombre || null,
+        entregadoAt: meta?.entregadoAt || null,
+      },
     });
     if (error) throw error;
     // Avisar al equipo por push (mejor esfuerzo; si falla, el mensaje ya quedó).
@@ -418,6 +425,7 @@ export const chatStore = {
   },
 
   subscribeRealtime(onChange) {
+    if (!haySesion) return sinEscucha(); // el cliente se entera por el sondeo
     const channel = supabase
       .channel("chat-live-" + Math.random().toString(36).slice(2, 8))
       .on("postgres_changes", { event: "*", schema: "public", table: "chat_mensajes" }, onChange)
@@ -471,9 +479,11 @@ export const chatStore = {
 
 // Seguimiento en vivo de envíos (mapa del flete).
 export const trackingStore = {
+  // El estado de UN envío. Por función: el cliente sigue el suyo sin que
+  // quede abierta la lista de todos los recorridos.
   async get(id) {
     if (!id) return null;
-    const { data, error } = await supabase.from("envio_tracking").select("*").eq("id", id).maybeSingle();
+    const { data, error } = await supabase.rpc("seguimiento_envio", { p_id: id });
     if (error) throw error;
     return data || null;
   },
@@ -532,6 +542,7 @@ export const trackingStore = {
     } catch (e) { return null; }
   },
   subscribe(id, onChange) {
+    if (!haySesion) return sinEscucha(); // el cliente refresca el mapa por sondeo
     const channel = supabase
       .channel("envio-tracking-" + Math.random().toString(36).slice(2, 8))
       .on("postgres_changes", { event: "*", schema: "public", table: "envio_tracking", filter: `id=eq.${id}` }, onChange)
