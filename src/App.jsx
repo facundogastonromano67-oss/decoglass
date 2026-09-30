@@ -4871,6 +4871,15 @@ const GRUPOS_TABLA_DIA = [
   { id: "esmerilados_armar", label: "Esmerilados para armar" },
   { id: "biselados_armar", label: "Biselados para armar" },
 ];
+// El día que este espejo tiene puesto. El que lo movieron a mano (diaTaller)
+// manda sobre el que le repartió la app (diaPlan). Antes el reparto se volvía
+// a calcular cada mañana, así que lo del lunes sin hacer aparecía el martes y
+// la lista del lunes desaparecía; ahora el día se escribe una sola vez y el
+// espejo se queda ahí hasta que lo terminan.
+function diaPuesto(pedido) {
+  const d = pedido?.diaTaller || pedido?.diaPlan || "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
+}
 // Ya tendría que estar terminado: su fecha objetivo quedó atrás.
 function estaAtrasadoTaller(pedido, hoyIso) {
   const objetivo = fechaObjetivoFabrica(pedido);
@@ -5125,19 +5134,33 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   const embalarDel = (dia) => embalarPorDia.get(dia) || [];
 
   // Un pedido que no entra entero en un día se reparte en varios.
-  const pool = enLista
-    .map((p) => {
-      const unidades = Math.max(0, unidadesPendientesTaller(p) - (armadosDe.get(p.id) || 0));
-      return { pedido: p, unidades, restantes: unidades, clase: claseTaller(p), fijado: listaSinTope(listaId) ? "" : diaFijadoValido(p.diaTaller, primero), partible: unidades > tope };
-    })
-    .filter((x) => x.unidades > 0)
-    .sort((a, b) => compararPrioridadTaller(a.pedido, b.pedido));
-  // Penalización: lo que ya tendría que estar terminado se suma al día de hoy,
-  // hasta un día extra, para que la lista siga siendo hacible.
-  const atrasados = pool
-    .filter((x) => estaAtrasadoTaller(x.pedido, hoyIso))
-    .reduce((t, x) => t + x.restantes, 0);
-  const arrastreHoy = Math.min(tope, atrasados);
+  // Y lo que tenía día puesto y no se hizo NO vuelve al reparto: se queda en
+  // su día, a la vista, sin comerle el cupo al día de hoy.
+  const pool = [];
+  const sinHacerPorDia = new Map();
+  enLista.forEach((p) => {
+    const unidades = Math.max(0, unidadesPendientesTaller(p) - (armadosDe.get(p.id) || 0));
+    if (unidades <= 0) return;
+    const puesto = listaSinTope(listaId) ? "" : diaPuesto(p);
+    if (puesto && puesto < primero) {
+      if (!sinHacerPorDia.has(puesto)) sinHacerPorDia.set(puesto, []);
+      sinHacerPorDia.get(puesto).push({
+        pedido: p, clase: claseTaller(p), desde: 0, unidades, total: unidades,
+        fijadoAca: false, sinHacer: true,
+      });
+      return;
+    }
+    pool.push({
+      pedido: p, unidades, restantes: unidades, clase: claseTaller(p),
+      fijado: puesto ? diaFijadoValido(puesto, primero) : "",
+      partible: unidades > tope,
+    });
+  });
+  pool.sort((a, b) => compararPrioridadTaller(a.pedido, b.pedido));
+  // Acá había un castigo: lo atrasado se sumaba arriba del día de hoy. Se
+  // sacó. Era lo que hacía que el lunes sin hacer apareciera entero el martes,
+  // y ahora lo que no se hizo se queda en su día, a la vista. El día es el que
+  // es: 10 simples, 3 el sábado. Sin cuentas raras.
 
   const hechosHoy = primero === hoyIso
     ? (pedidos || []).filter((p) => esDeLaPestana(p, listaId)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
@@ -5157,8 +5180,8 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
     const items = [];
     const sabado = new Date(`${fecha}T12:00:00`).getDay() === 6;
     const base = topeDelDia(listaId, sabado);
-    const arrastre = fecha === primero ? arrastreHoy : 0;
-    const maxDia = base + arrastre;
+    const arrastre = 0;
+    const maxDia = base;
     const porEmbalar = embalarDel(fecha);
     // Lo armado ese día ya ocupó su lugar en el día: no se vuelve a llenar.
     let usados = hechos.reduce((t, x) => t + x.unidades, 0)
@@ -5204,6 +5227,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
     dias.push({
       fecha, items, hechos, sabado, base, arrastre, porEmbalar,
       porEmbalarU: porEmbalar.reduce((t, x) => t + x.unidades, 0),
+      sinHacerU: 0, pasado: false,
       max: maxDia,
       total: usados,
       espejos: usados,
@@ -5212,17 +5236,21 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
     fecha = siguienteDiaTaller(fecha);
   }
 
-  // Los días ya pasados que todavía tienen espejos sin embalar no desaparecen:
-  // la lista del lunes se va recién cuando embalaron los diez del lunes.
-  const atrasSinCerrar = [...embalarPorDia.keys()].filter((d) => d < primero).sort()
+  // Los días ya pasados no desaparecen mientras les quede algo: espejos
+  // armados esperando el embalado, o espejos que directamente no se hicieron.
+  // La lista del lunes se va recién cuando el lunes está cerrado.
+  const clavesAtras = [...new Set([...embalarPorDia.keys(), ...sinHacerPorDia.keys()])];
+  const atrasSinCerrar = clavesAtras.filter((d) => d < primero).sort()
     .map((fecha) => {
       const porEmbalar = embalarDel(fecha);
+      const items = (sinHacerPorDia.get(fecha) || []).sort((a, b) => compararPrioridadTaller(a.pedido, b.pedido));
       const u = porEmbalar.reduce((t, x) => t + x.unidades, 0);
+      const sinHacer = items.reduce((t, x) => t + x.unidades, 0);
       return {
-        fecha, items: [], hechos: [], porEmbalar, porEmbalarU: u,
+        fecha, items, hechos: [], porEmbalar, porEmbalarU: u, sinHacerU: sinHacer,
         sabado: new Date(`${fecha}T12:00:00`).getDay() === 6,
-        base: 0, arrastre: 0, max: 0, total: u, espejos: u, pendientes: 0,
-        soloEmbalar: true,
+        base: 0, arrastre: 0, max: 0, total: u + sinHacer, espejos: u + sinHacer,
+        pendientes: sinHacer, pasado: true,
       };
     });
   dias.unshift(...atrasSinCerrar);
@@ -5248,7 +5276,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
 // Devuelve "" si no se puede calcular (un biselado sin pedir, por ejemplo).
 // El día de trabajo de hoy dentro del plan. Los días de atrás que quedaron
 // abiertos (solo les falta embalar) van primero, pero no son el día de hoy.
-const diaDeHoyDelPlan = (plan) => (plan || []).find((d) => !d.soloEmbalar) || null;
+const diaDeHoyDelPlan = (plan) => (plan || []).find((d) => !d.pasado) || null;
 
 function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
   if (!pedido) return "";
@@ -9366,10 +9394,27 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const p = pedidos.find((x) => x.id === pedidoId);
     if (!p) return;
     const quien = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
-    onChange(pedidos.map((x) => (x.id === pedidoId ? { ...x, diaTaller: dia || "", diaTallerPor: dia ? quien : "" } : x)));
+    onChange(pedidos.map((x) => (x.id === pedidoId ? { ...x, diaTaller: dia || "", diaTallerPor: dia ? quien : "", diaPlan: "" } : x)));
     if (dia) setDiasAbiertos((prev) => new Set(prev).add(dia));
     if (onRegistrar) onRegistrar("Movió un espejo de día", `#${p.orden} — ${p.cliente} — ${dia ? nombreDiaTaller(dia, isoLocal(new Date())) : "reparto automático"}`);
   }
+  // Se le anota a cada espejo el día que le tocó, una sola vez, el día que le
+  // toca. Así la lista de un día no se rearma sola a la mañana siguiente: lo
+  // que no se hizo se queda en su día en vez de volcarse al de hoy.
+  // «Esmerilados p/armar» no entra: esa lista no tiene cupo por día, así que
+  // no hay un "los diez de hoy" que se pueda dejar sin hacer.
+  useEffect(() => {
+    if (!canEdit || !pedidos.length) return;
+    const hoy = primerDiaTaller(hoyTaller);
+    const sinDia = new Set();
+    ["simples", "esm_cortar"].forEach((id) => {
+      const dia = planTaller(pedidos, hoyTaller, id).find((d) => d.fecha === hoy);
+      (dia?.items || []).forEach((x) => { if (!diaPuesto(x.pedido)) sinDia.add(x.pedido.id); });
+    });
+    if (!sinDia.size) return;
+    onChange(pedidos.map((p) => (sinDia.has(p.id) ? { ...p, diaPlan: hoy } : p)));
+  }, [pedidos, canEdit, hoyTaller]);
+
   // Tabla del día: abierta de entrada, porque es lo primero que mira el taller.
   const [tablaDiaAbierta, setTablaDiaAbierta] = useState(true);
   const [filaDiaAbierta, setFilaDiaAbierta] = useState(null);
@@ -9985,7 +10030,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller, lista);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
-          const opcionesDias = plan.filter((d) => !d.soloEmbalar).slice(0, 12).map((d) => d.fecha);
+          const opcionesDias = plan.filter((d) => !d.pasado).slice(0, 12).map((d) => d.fecha);
           while (opcionesDias.length < 12) opcionesDias.push(siguienteDiaTaller(opcionesDias[opcionesDias.length - 1] || primerDiaTaller(hoyTaller)));
           const coincide = (p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase());
           // Un pedido repartido en varios días muestra en cada día solo sus unidades
@@ -10122,20 +10167,23 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const hechosU = contar(hechosDia);
                 const items = dia.items.filter((x) => coincide(x.pedido));
                 if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && !diasAbiertos.has(dia.fecha)) return null;
+                // A un día que ya pasó no se le puede mandar trabajo nuevo.
+                const arrastrable = puedeArrastrar && !dia.pasado;
                 return (
                   <Fragment key={dia.fecha}>
                     {separador}
                     <div
-                      className={`dg-dia-taller ${abierto ? "dg-dia-taller-abierto" : ""} ${dia.fecha === hoyTaller ? "dg-dia-taller-hoy" : ""} ${diaDestino === dia.fecha ? "dg-dia-taller-destino" : ""}`}
-                      onDragOver={puedeArrastrar ? (e) => { e.preventDefault(); if (diaDestino !== dia.fecha) setDiaDestino(dia.fecha); } : undefined}
-                      onDragLeave={puedeArrastrar ? (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDiaDestino(null); } : undefined}
-                      onDrop={puedeArrastrar ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); setDiaDestino(null); if (id) moverADia(id, dia.fecha); } : undefined}
+                      className={`dg-dia-taller ${abierto ? "dg-dia-taller-abierto" : ""} ${dia.fecha === hoyTaller ? "dg-dia-taller-hoy" : ""} ${dia.pasado ? "dg-dia-taller-vencido" : ""} ${diaDestino === dia.fecha ? "dg-dia-taller-destino" : ""}`}
+                      onDragOver={arrastrable ? (e) => { e.preventDefault(); if (diaDestino !== dia.fecha) setDiaDestino(dia.fecha); } : undefined}
+                      onDragLeave={arrastrable ? (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDiaDestino(null); } : undefined}
+                      onDrop={arrastrable ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); setDiaDestino(null); if (id) moverADia(id, dia.fecha); } : undefined}
                     >
                       <button type="button" className="dg-dia-taller-head" onClick={() => toggleDia(dia.fecha)} aria-expanded={abierto}>
                         <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
                         <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"}</span>
+                        {dia.sinHacerU > 0 && <span className="dg-dia-taller-vencido-chip">SIN HACER {dia.sinHacerU}</span>}
                         {dia.porEmbalarU > 0 && <span className="dg-dia-taller-embalar"><Package size={12} /> falta embalar {dia.porEmbalarU}</span>}
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
                       </button>
@@ -14629,6 +14677,9 @@ function Style() {
       .dg-dia-taller-mix { font-size:12px; color:var(--dg-text-dim); }
       .dg-dia-taller-hechos { display:inline-flex; align-items:center; gap:3px; font-size:12px; font-weight:600; color:var(--dg-success); }
       .dg-dia-taller-embalar { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; color:var(--dg-warning-2); background:rgba(var(--dg-warning-rgb),.14); }
+      .dg-dia-taller-vencido-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-accent); background:var(--dg-danger); }
+      .dg-dia-taller-vencido { border-color:rgba(var(--dg-danger-rgb),.45); }
+      .dg-dia-taller-vencido .dg-dia-taller-nombre { color:var(--dg-danger); }
       .dg-dia-taller-body { padding:4px 10px 12px; border-top:1px solid rgba(var(--dg-line-rgb),.1); display:flex; flex-direction:column; gap:10px; }
       .dg-dia-vacio { padding:14px; text-align:center; font-size:13px; color:var(--dg-text-dim); border:1px dashed rgba(var(--dg-line-rgb),.2); border-radius:10px; }
       .dg-dia-item { display:flex; flex-direction:column; gap:6px; }
