@@ -5125,7 +5125,11 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   const embalarPorDia = new Map();
   const armadosDe = new Map();
   enLista.forEach((p) => {
-    porEmbalarPorDia(p).forEach((n, dia) => {
+    const puesto = listaSinTope(listaId) ? "" : diaPuesto(p);
+    porEmbalarPorDia(p).forEach((n, diaArmado) => {
+      // El día que le tocaba manda sobre el día en que lo armaron: si era del
+      // miércoles, se queda en el miércoles aunque lo armen el jueves.
+      const dia = puesto || diaArmado;
       if (!embalarPorDia.has(dia)) embalarPorDia.set(dia, []);
       embalarPorDia.get(dia).push({ pedido: p, unidades: n, clase: claseTaller(p) });
       armadosDe.set(p.id, (armadosDe.get(p.id) || 0) + n);
@@ -5162,8 +5166,16 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   // y ahora lo que no se hizo se queda en su día, a la vista. El día es el que
   // es: 10 simples, 3 el sábado. Sin cuentas raras.
 
+  // Lo que se termina hoy pero era de un día anterior NO ocupa el cupo de hoy:
+  // es trabajo de ayer que se termina de cerrar. Los espejos del miércoles se
+  // embalan el jueves a la mañana porque el pegamento necesita la noche; si
+  // eso contara para el jueves, el taller se quedaba sin lista.
+  const eraDeAntes = (p) => {
+    const d = listaSinTope(listaId) ? "" : diaPuesto(p);
+    return !!d && d < primero;
+  };
   const hechosHoy = primero === hoyIso
-    ? (pedidos || []).filter((p) => esDeLaPestana(p, listaId)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
+    ? (pedidos || []).filter((p) => esDeLaPestana(p, listaId) && !eraDeAntes(p)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
     : [];
 
   const ultimoFijado = pool.map((x) => x.fijado).filter(Boolean).sort().pop() || primero;
@@ -9403,15 +9415,24 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   // que no se hizo se queda en su día en vez de volcarse al de hoy.
   // «Esmerilados p/armar» no entra: esa lista no tiene cupo por día, así que
   // no hay un "los diez de hoy" que se pueda dejar sin hacer.
+  // Freno: a cada espejo se le escribe el día UNA sola vez por sesión. Si por
+  // lo que sea el guardado no quedara (se cortó internet, otro dispositivo lo
+  // pisó), sin este freno la app se quedaría reintentando para siempre y
+  // quemando consumo de la base. Lo peor que puede pasar así es que ese día no
+  // se fije, que es como funcionaba antes.
+  const diasYaEscritos = useRef(new Set());
   useEffect(() => {
     if (!canEdit || !pedidos.length) return;
     const hoy = primerDiaTaller(hoyTaller);
     const sinDia = new Set();
     ["simples", "esm_cortar"].forEach((id) => {
       const dia = planTaller(pedidos, hoyTaller, id).find((d) => d.fecha === hoy);
-      (dia?.items || []).forEach((x) => { if (!diaPuesto(x.pedido)) sinDia.add(x.pedido.id); });
+      (dia?.items || []).forEach((x) => {
+        if (!diaPuesto(x.pedido) && !diasYaEscritos.current.has(x.pedido.id)) sinDia.add(x.pedido.id);
+      });
     });
     if (!sinDia.size) return;
+    sinDia.forEach((id) => diasYaEscritos.current.add(id));
     onChange(pedidos.map((p) => (sinDia.has(p.id) ? { ...p, diaPlan: hoy } : p)));
   }, [pedidos, canEdit, hoyTaller]);
 
