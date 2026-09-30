@@ -5142,15 +5142,21 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   const embalarPorDia = new Map();
   const armadosDe = new Map();
   enLista.forEach((p) => {
-    const puesto = listaSinTope(listaId) ? "" : diaPuesto(p);
-    porEmbalarPorDia(p).forEach((n, diaArmado) => {
-      // El día que le tocaba manda sobre el día en que lo armaron: si era del
-      // miércoles, se queda en el miércoles aunque lo armen el jueves.
-      const dia = puesto || diaArmado;
-      if (!embalarPorDia.has(dia)) embalarPorDia.set(dia, []);
-      embalarPorDia.get(dia).push({ pedido: p, unidades: n, clase: claseTaller(p) });
-      armadosDe.set(p.id, (armadosDe.get(p.id) || 0) + n);
+    const porDia = porEmbalarPorDia(p);
+    if (!porDia.size) return;
+    let total = 0, masViejo = "";
+    porDia.forEach((n, diaArmado) => {
+      total += n;
+      if (!masViejo || diaArmado < masViejo) masViejo = diaArmado;
     });
+    // El día que le tocaba manda sobre el día en que lo armaron: si era del
+    // miércoles, se queda en el miércoles aunque lo armen el jueves. Y todo el
+    // pedido va junto a un solo día, para no mostrar la misma tarjeta dos veces.
+    const puesto = listaSinTope(listaId) ? "" : diaPuesto(p);
+    const dia = puesto || masViejo;
+    if (!embalarPorDia.has(dia)) embalarPorDia.set(dia, []);
+    embalarPorDia.get(dia).push({ pedido: p, unidades: total, clase: claseTaller(p) });
+    armadosDe.set(p.id, total);
   });
   const embalarDel = (dia) => embalarPorDia.get(dia) || [];
 
@@ -6301,6 +6307,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const [quickView, setQuickView] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [filtroVendedor, setFiltroVendedor] = useState("todos");
+  const [filtroCanal, setFiltroCanal] = useState("todos");
   const [busqueda, setBusqueda] = useState("");
   const [openPedido, setOpenPedido] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -6329,6 +6336,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     .filter((p) => !fechaDesde || (p.fecha && p.fecha >= fechaDesde))
     .filter((p) => !fechaHasta || (p.fecha && p.fecha <= fechaHasta))
     .filter((p) => filtroVendedor === "todos" || p.vendedor === filtroVendedor)
+    .filter((p) => filtroCanal === "todos" || (p.canalVenta || "local") === filtroCanal)
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => {
       if (!a.listo && !b.listo) return (b.orden || 0) - (a.orden || 0);
@@ -6638,6 +6646,10 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           <option value="todos">Todos los vendedores</option>
           {vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}
         </select>
+        <select value={filtroCanal} onChange={(e) => setFiltroCanal(e.target.value)}>
+          <option value="todos">Todos los canales</option>
+          {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+        </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
         <div className="dg-periodo-toggle">
           <button className={agrupado === "mes" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("mes")}>Mes</button>
@@ -6913,7 +6925,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         <div className="dg-print-head">
           <div className="dg-print-brand">DECOGLASS</div>
           <div className="dg-print-sub">
-            {activeViewLabel}{filtroVendedor !== "todos" ? ` · Vendedor: ${filtroVendedor}` : ""} — {new Date().toLocaleDateString("es-AR")} · {cantidadPedidosVisibles} pedido(s) · {totalUnidades(visibles)} espejo(s)
+            {activeViewLabel}{filtroVendedor !== "todos" ? ` · Vendedor: ${filtroVendedor}` : ""}{filtroCanal !== "todos" ? ` · Canal: ${CANALES_VENTA[filtroCanal]}` : ""} — {new Date().toLocaleDateString("es-AR")} · {cantidadPedidosVisibles} pedido(s) · {totalUnidades(visibles)} espejo(s)
           </div>
         </div>
         <table className="dg-print-table">
@@ -10238,16 +10250,27 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                       {abierto && (
                         <div className="dg-dia-taller-body">
                           {items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && <div className="dg-dia-vacio">{puedeArrastrar ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
-                          {dia.porEmbalar.length > 0 && (
-                            <div className="dg-embalar">
-                              <div className="dg-embalar-tit"><Package size={14} /> Falta embalar {dia.porEmbalarU} espejo{dia.porEmbalarU === 1 ? "" : "s"}</div>
-                              <ul>
-                                {dia.porEmbalar.map((x) => (
-                                  <li key={x.pedido.id}>#{x.pedido.orden} {x.pedido.cliente} · {x.pedido.ancho}×{x.pedido.alto}{x.unidades > 1 ? ` · ${x.unidades} u.` : ""}</li>
+                          {dia.porEmbalar.length > 0 && (() => {
+                            // Los que ya tienen su tarjeta acá abajo (porque
+                            // además les faltan espejos por hacer) no se
+                            // repiten: desde esa misma tarjeta se embalan.
+                            const conTarjeta = new Set(items.map((x) => x.pedido.id));
+                            const sueltos = dia.porEmbalar.filter((x) => coincide(x.pedido) && !conTarjeta.has(x.pedido.id));
+                            return (
+                              <div className="dg-embalar">
+                                <div className="dg-embalar-tit"><Package size={14} /> Falta embalar {dia.porEmbalarU} espejo{dia.porEmbalarU === 1 ? "" : "s"}</div>
+                                {sueltos.length === 0 && <div className="dg-embalar-nota">Están en las tarjetas de acá abajo.</div>}
+                                {sueltos.map((x) => (
+                                  <div className="dg-dia-item dg-dia-item-embalar" id={`taller-${dia.fecha}-${x.pedido.id}`} key={x.pedido.id}>
+                                    <div className="dg-dia-item-bar">
+                                      <span className="dg-dia-item-tipo">Ya armado · solo falta embalarlo{x.unidades > 1 ? ` · ${x.unidades} u.` : ""}</span>
+                                    </div>
+                                    {cartas({ ...x, desde: 0, total: Math.max(1, Number(x.pedido.cant) || 1) })}
+                                  </div>
                                 ))}
-                              </ul>
-                            </div>
-                          )}
+                              </div>
+                            );
+                          })()}
                           {items.map((x) => (
                             <div
                               className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"}`}
@@ -14745,7 +14768,9 @@ function Style() {
       .dg-embalar { padding:10px 12px; border-radius:10px; background:rgba(var(--dg-warning-rgb),.09); border:1px solid rgba(var(--dg-warning-rgb),.28); font-size:12px; color:var(--dg-text-dim); margin-bottom:10px; }
       .dg-embalar-tit { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:700; color:var(--dg-warning-2); }
       .dg-embalar ul { margin:6px 0 0; padding-left:18px; }
-      .dg-embalar li { padding:1px 0; }
+      .dg-embalar-nota { margin-top:4px; }
+      .dg-embalar .dg-dia-item { margin-top:10px; }
+      .dg-dia-item-embalar { border-left:3px solid var(--dg-warning); padding-left:9px; }
       .dg-fab-card { position:relative; background: var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12);
         border-left:3px solid rgba(var(--dg-line-rgb),0.15); border-radius:12px; padding:0; }
       /* Interior: tiene que saltar a la vista desde lejos. */
