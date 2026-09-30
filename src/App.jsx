@@ -10131,7 +10131,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         {puedoTocarElCandado && (
           <button
             type="button"
-            className={`dg-btn-ghost dg-candado ${listasTrabadas ? "dg-candado-cerrado" : ""}`}
+            className="dg-btn-ghost dg-candado"
+            style={listasTrabadas ? { color: "var(--dg-warning-2)", borderColor: "rgba(var(--dg-warning-rgb),.45)", background: "rgba(var(--dg-warning-rgb),.10)" } : undefined}
             onClick={() => onCambiarBloqueoListas(!listasTrabadas)}
             title={listasTrabadas
               ? "Las listas están trabadas: nadie puede moverlas. Tocá para destrabarlas."
@@ -14837,7 +14838,6 @@ function Style() {
       .dg-dia-taller-vencido-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-accent); background:var(--dg-danger); }
       .dg-dia-taller-extra-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-dia-item-extra { padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; letter-spacing:.4px; color:var(--dg-on-interior); background:var(--dg-interior); }
-      .dg-candado-cerrado { color:var(--dg-warning-2); border-color:rgba(var(--dg-warning-rgb),.45); background:rgba(var(--dg-warning-rgb),.10); }
       .dg-candado-aviso { display:inline-flex; align-items:center; gap:5px; padding:7px 10px; border-radius:8px; font-size:13px; font-weight:600; color:var(--dg-warning-2); background:rgba(var(--dg-warning-rgb),.10); }
       .dg-sumar-extra { margin-bottom:10px; }
       .dg-sumar-extra select { width:100%; background:var(--dg-surface); border:1px dashed rgba(var(--dg-interior-rgb),.5); border-radius:9px; padding:9px 10px; color:var(--dg-interior); font-size:13px; font-weight:600; cursor:pointer; }
