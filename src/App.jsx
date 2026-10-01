@@ -4544,6 +4544,92 @@ function textoComparable(value) {
   return String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+/* ===========================================================================
+   REGISTRO DE CLIENTES
+   No hay tabla aparte: la ficha de un cliente ES su historial de pedidos. Por
+   eso funciona para atrás, con todo lo que ya está cargado, sin migrar nada.
+   Se agrupa por nombre + teléfono: dos personas pueden llamarse igual, y el
+   teléfono las separa.
+   =========================================================================== */
+const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
+// "A confirmar" no es un método de entrega: es que todavía no se sabe.
+const DATOS_QUE_SE_REPITEN = ["celular", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "canalVenta", "tipoFactura"];
+
+function clientesDeLosPedidos(pedidos) {
+  const mapa = new Map();
+  (pedidos || []).forEach((p) => {
+    const nombre = String(p?.cliente || "").trim();
+    if (!nombre || p.estado === "Cancelado") return;
+    const clave = textoComparable(nombre) + "|" + soloNumeros(p.celular);
+    if (!mapa.has(clave)) mapa.set(clave, { clave, pedidos: [] });
+    mapa.get(clave).pedidos.push(p);
+  });
+
+  return [...mapa.values()].map((f) => {
+    // Del más nuevo al más viejo: los datos buenos son los últimos que cargaron.
+    const orden = f.pedidos.slice().sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+    const ultimo = orden[0];
+    const ultimoCon = (campo) => {
+      const p = orden.find((x) => {
+        const v = String(x[campo] ?? "").trim();
+        return v && !(campo === "metodo" && v === "A confirmar");
+      });
+      return p ? p[campo] : "";
+    };
+    const ficha = { clave: f.clave, nombre: String(ultimo.cliente || "").trim() };
+    DATOS_QUE_SE_REPITEN.forEach((campo) => { ficha[campo] = ultimoCon(campo); });
+    ficha.compras = orden.length;
+    ficha.espejos = orden.reduce((t, p) => t + Math.max(1, Number(p.cant) || 1), 0);
+    ficha.ultima = String(ultimo.fecha || "").slice(0, 10);
+    ficha.pedidos = orden;
+    return ficha;
+  }).sort((a, b) => String(b.ultima).localeCompare(String(a.ultima)));
+}
+
+// Busca por nombre o por teléfono. Lo que empieza igual va primero.
+function buscarClientes(clientes, texto, limite = 6) {
+  const q = textoComparable(texto);
+  const nums = soloNumeros(texto);
+  if (q.length < 2 && nums.length < 3) return [];
+  const pega = (c) => {
+    const n = textoComparable(c.nombre);
+    if (q.length >= 2) {
+      if (n.startsWith(q)) return 2;
+      if (n.includes(q)) return 1;
+    }
+    if (nums.length >= 3 && soloNumeros(c.celular).includes(nums)) return 1;
+    return 0;
+  };
+  return clientes.map((c) => ({ c, p: pega(c) })).filter((x) => x.p > 0)
+    .sort((a, b) => b.p - a.p || String(b.c.ultima).localeCompare(String(a.c.ultima)))
+    .slice(0, limite).map((x) => x.c);
+}
+
+// El cliente de un reclamo, buscado entre los que ya compraron. Primero por
+// teléfono, que es lo que no se escribe de dos formas distintas; si no, por
+// nombre. Devuelve null si no hay forma de saber de quién se trata.
+function clienteDelReclamo(clientes, reclamo) {
+  const tel = soloNumeros(reclamo?.celular);
+  if (tel.length >= 6) {
+    const porTel = (clientes || []).find((c) => soloNumeros(c.celular) === tel);
+    if (porTel) return porTel;
+  }
+  const nombre = textoComparable(reclamo?.cliente);
+  if (!nombre) return null;
+  const mismos = (clientes || []).filter((c) => textoComparable(c.nombre) === nombre);
+  // Si hay dos clientes que se llaman igual y el reclamo no trae teléfono, no
+  // se adivina: mejor que lo carguen a mano que mandarle el espejo a otro.
+  return mismos.length === 1 ? mismos[0] : null;
+}
+
+// Lo que se copia al pedido nuevo cuando se elige un cliente conocido.
+function datosDelCliente(ficha) {
+  if (!ficha) return {};
+  const patch = { cliente: ficha.nombre };
+  DATOS_QUE_SE_REPITEN.forEach((campo) => { if (ficha[campo]) patch[campo] = ficha[campo]; });
+  return patch;
+}
+
 // Traduce un pedido real (que usa sus propios nombres de campo) al formato
 // que espera computeQuote (el mismo motor de costos del presupuestador), para
 // poder estimar cuánto costó ese pedido puntual sin duplicar la fórmula.
@@ -6478,6 +6564,8 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [filtroVendedor, setFiltroVendedor] = useState("todos");
   const [filtroCanal, setFiltroCanal] = useState("todos");
+  // Los clientes que ya compraron, sacados de los propios pedidos.
+  const clientesConocidos = clientesDeLosPedidos(pedidos);
   const [busqueda, setBusqueda] = useState("");
   const [openPedido, setOpenPedido] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -7070,6 +7158,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           stockEspejos={stockEspejos}
           esNuevo={!openPedido}
           aviso={openPedido ? null : avisoEspejo}
+          clientes={clientesConocidos}
         />
       )}
 
@@ -7088,6 +7177,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           stockEspejos={stockEspejos}
           esNuevo={false}
           aviso={null}
+          clientes={clientesConocidos}
         />
       )}
 
@@ -7421,7 +7511,7 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones 
 
 // modo: "todo" (como siempre) · "entrega" (cliente y envío del pedido entero)
 // · "espejo" (solo las medidas y funciones de ese espejo).
-function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1 }) {
+function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1, clientes = [] }) {
   const verEspejo = modo !== "entrega";
   const verEntrega = modo !== "espejo";
   const [draft, setDraft] = useState(() => {
@@ -7429,6 +7519,26 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
     return esNuevo ? base : { ...base, canalVenta: base.canalVenta || "local" };
   });
   const cajaModal = useRef(null);
+  // Clientes que ya compraron. Se ofrecen mientras escribe el nombre; nunca se
+  // completa solo: hay que elegirlo, así no pisa nada sin querer.
+  const [buscandoCliente, setBuscandoCliente] = useState(false);
+  const sugerencias = buscandoCliente ? buscarClientes(clientes, draft.cliente || "") : [];
+  const cajaCliente = useRef(null);
+  const listaCliente = useRef(null);
+  // Si el campo "Cliente" quedó abajo de todo, la lista se abría afuera y no
+  // se veía ni una opción. El modal recorta en su propio borde, así que el
+  // límite no es la pantalla sino él. Se corre lo que se pueda y, con lo que
+  // quede de alto, la lista scrollea sola adentro.
+  useEffect(() => {
+    const campo = cajaCliente.current, lista = listaCliente.current, caja = cajaModal.current;
+    if (!sugerencias.length || !campo || !lista) return;
+    const limite = Math.min(window.innerHeight, caja ? caja.getBoundingClientRect().bottom : window.innerHeight);
+    const falta = () => Math.round(campo.getBoundingClientRect().bottom + 270 - limite);
+    const scroller = caja && caja.scrollHeight > caja.clientHeight ? caja : (caja && caja.parentElement);
+    if (scroller && falta() > 0) scroller.scrollTop += falta() + 12;
+    const libre = Math.round(limite - campo.getBoundingClientRect().bottom - 16);
+    lista.style.maxHeight = Math.max(130, Math.min(270, libre)) + "px";
+  }, [sugerencias.length]);
 
   // Al abrir para cargar otro espejo, arrancar arriba de todo (en las medidas)
   // y no donde había quedado la pantalla del espejo anterior.
@@ -7621,7 +7731,28 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         {verEntrega && <div className="dg-section-card">
           <div className="dg-section-header"><User size={14} /> {modo === "entrega" ? "Cliente" : "Cliente y pago"}</div>
           <div className="dg-field-grid">
-            <Field label="Cliente" error={err("cliente")}><input disabled={!canEditFull} value={draft.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+            <Field label="Cliente" error={err("cliente")}>
+              <div className="dg-cliente-busca" ref={cajaCliente}>
+                <input disabled={!canEditFull} value={draft.cliente} autoComplete="off"
+                  onChange={(e) => { set("cliente", e.target.value); setBuscandoCliente(true); }}
+                  onFocus={() => setBuscandoCliente(true)}
+                  onBlur={() => window.setTimeout(() => setBuscandoCliente(false), 150)} />
+                {sugerencias.length > 0 && (
+                  <div className="dg-cliente-lista" ref={listaCliente}>
+                    <div className="dg-cliente-lista-tit">Ya compraron antes — tocá para traer sus datos</div>
+                    {sugerencias.map((c) => (
+                      <button type="button" key={c.clave} className="dg-cliente-opcion"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { setDraft((d) => ({ ...d, ...datosDelCliente(c) })); setBuscandoCliente(false); }}>
+                        <strong>{c.nombre}</strong>
+                        <small>{[c.celular, c.barrio || c.localidad, c.metodo].filter(Boolean).join(" · ")}</small>
+                        <span>{c.compras === 1 ? "1 compra" : `${c.compras} compras`}{c.ultima ? ` · última ${fechaEntregaCorta(c.ultima)}` : ""}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Field>
             <Field label="Fecha de compra"><input type="date" disabled={!canEditFull} value={draft.fecha || ""} onChange={(e) => set("fecha", e.target.value)} /></Field>
             <Field label="Vendedor" error={err("vendedor")}><select disabled={!canEditFull} value={draft.vendedor} onChange={(e) => set("vendedor", e.target.value)}><option value="">—</option>{vendedores.map((v) => (<option key={v}>{v}</option>))}</select></Field>
             <Field label="¿De dónde vino?" error={err("canalVenta")}>
@@ -8294,7 +8425,10 @@ function CampoTextoGuardado({ value, onGuardar, placeholder, className }) {
   );
 }
 
-function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
+function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
+  // Los clientes que ya compraron, para saber qué espejo le hicimos y con qué
+  // datos mandar a hacer el de reemplazo.
+  const clientesConocidos = clientesDeLosPedidos(pedidos);
   const [tipo, setTipo] = useState(null);
   const [cliente, setCliente] = useState("");
   const [celular, setCelular] = useState("");
@@ -8421,14 +8555,46 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido }) {
                 </>
               ) : (
                 <>
-                  {onCrearPedido && (
-                    r.pedidoCreado
-                      ? <div className="dg-pago-meta" style={{ marginBottom: 10, color: "var(--dg-success)" }}>✓ Pedido de cambio creado. Completá las medidas en la pestaña Pedidos.</div>
-                      : <button className="dg-btn-ghost dg-mini-btn" style={{ marginBottom: 12 }} onClick={() => {
-                          onCrearPedido({ tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo", cliente: r.cliente, celular: r.celular, reclamoId: r.id, grabado: r.notas ? `Reclamo (${r.tipo}): ${r.notas}` : `Reclamo: ${r.tipo}` });
-                          onChange(reclamos.map((x) => (x.id === r.id ? { ...x, pedidoCreado: true } : x)));
-                        }}><Plus size={13} /> Mandar a hacer un espejo nuevo</button>
-                  )}
+                  {(() => {
+                    const ficha = clienteDelReclamo(clientesConocidos, r);
+                    const compras = ficha ? ficha.pedidos.slice(0, 4) : [];
+                    return (
+                      <>
+                        {compras.length > 0 && (
+                          <div className="dg-reclamo-compras">
+                            <div className="dg-reclamo-compras-tit"><ClipboardList size={13} /> Qué le hicimos a {ficha.nombre}</div>
+                            <ul>
+                              {compras.map((p) => (
+                                <li key={p.id}>
+                                  <b>#{p.orden}</b> {p.ancho && p.alto ? `${p.ancho}×${p.alto} cm` : "sin medida"}
+                                  {p.forma ? ` · ${p.forma}` : ""}{p.tono ? ` · ${p.tono}` : ""}
+                                  {p.fecha ? <span> · {fechaEntregaCorta(p.fecha)}</span> : null}
+                                </li>
+                              ))}
+                            </ul>
+                            {ficha.pedidos.length > compras.length && <div className="dg-pago-meta">…y {ficha.pedidos.length - compras.length} compra(s) más.</div>}
+                          </div>
+                        )}
+                        {onCrearPedido && (
+                          r.pedidoCreado
+                            ? <div className="dg-pago-meta" style={{ marginBottom: 10, color: "var(--dg-success)" }}>✓ Pedido de cambio creado. Completá las medidas en la pestaña Pedidos.</div>
+                            : <button className="dg-btn-ghost dg-mini-btn" style={{ marginBottom: 12 }} onClick={() => {
+                                // Con la ficha del cliente va todo: DNI, dirección,
+                                // forma de envío. Sin ella, lo que traiga el reclamo.
+                                onCrearPedido({
+                                  ...(ficha ? datosDelCliente(ficha) : {}),
+                                  tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo",
+                                  cliente: r.cliente || (ficha ? ficha.nombre : ""),
+                                  celular: r.celular || (ficha ? ficha.celular : ""),
+                                  reclamoId: r.id,
+                                  grabado: r.notas ? `Reclamo (${r.tipo}): ${r.notas}` : `Reclamo: ${r.tipo}`,
+                                });
+                                onChange(reclamos.map((x) => (x.id === r.id ? { ...x, pedidoCreado: true } : x)));
+                              }}><Plus size={13} /> Mandar a hacer un espejo nuevo{ficha ? " (con sus datos)" : ""}</button>
+                        )}
+                      </>
+                    );
+                  })()}
                   <details className="dg-reclamo-editar" open={!tieneCelular}>
                     <summary><Pencil size={12} /> Datos del reclamo</summary>
                     <div className="dg-field-grid" style={{ marginTop: 8 }}>
@@ -14238,7 +14404,7 @@ function SectorPage({
       )}
 
       {subpage === "reclamos" && (
-        canSeePedidos ? <ReclamosPanel reclamos={reclamos} onChange={onChangeReclamos} onCrearPedido={(prefill) => onChangePedidos(normalizarOrdenesPorGrupo([...pedidos, emptyPedido(prefill)]))} />
+        canSeePedidos ? <ReclamosPanel reclamos={reclamos} onChange={onChangeReclamos} pedidos={pedidos} onCrearPedido={(prefill) => onChangePedidos(normalizarOrdenesPorGrupo([...pedidos, emptyPedido(prefill)]))} />
           : <LockedPage label="Reclamos" onLogin={onRequestLogin} />
       )}
     </div>
@@ -15092,6 +15258,20 @@ function Style() {
       .dg-dia-taller-extra-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-dia-item-extra { padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; letter-spacing:.4px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-candado-aviso { display:inline-flex; align-items:center; gap:5px; padding:7px 10px; border-radius:8px; font-size:13px; font-weight:600; color:var(--dg-warning-2); background:rgba(var(--dg-warning-rgb),.10); }
+      .dg-reclamo-compras { margin-bottom:12px; padding:10px 12px; border-radius:10px; background:rgba(var(--dg-accent-rgb),.07); border:1px solid rgba(var(--dg-accent-rgb),.2); }
+      .dg-reclamo-compras-tit { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--dg-accent-2); margin-bottom:5px; }
+      .dg-reclamo-compras ul { margin:0; padding-left:17px; }
+      .dg-reclamo-compras li { padding:2px 0; font-size:13px; color:var(--dg-text); }
+      .dg-reclamo-compras li span { color:var(--dg-text-dim); }
+      .dg-cliente-busca { position:relative; }
+      .dg-cliente-lista { position:absolute; z-index:40; left:0; right:0; top:calc(100% + 4px); max-height:260px; overflow-y:auto;
+        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:12px; box-shadow:0 18px 40px -12px rgba(0,0,0,.55); padding:6px; }
+      .dg-cliente-lista-tit { padding:5px 8px 7px; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-cliente-opcion { display:flex; flex-direction:column; gap:1px; width:100%; text-align:left; padding:8px 9px; border:0; border-radius:9px; background:transparent; cursor:pointer; color:var(--dg-text); }
+      .dg-cliente-opcion:hover, .dg-cliente-opcion:focus-visible { background:rgba(var(--dg-accent-rgb),.12); }
+      .dg-cliente-opcion strong { font-size:14px; font-weight:600; }
+      .dg-cliente-opcion small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-cliente-opcion span { font-size:11px; color:var(--dg-text-dim); }
       .dg-num-rango { font-size:12px; color:var(--dg-text-dim); }
       .dg-num-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(165px, 1fr)); gap:12px; margin-bottom:16px; }
       .dg-num-caja { display:flex; flex-direction:column; gap:3px; padding:14px; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); }
