@@ -47,6 +47,7 @@ const SUBPAGE_ICONS = {
   crm: Users,
   recursos: FileText,
   tareas: CheckCircle2,
+  numeros: BarChart3,
   finanzas: Wallet,
   comisiones: CircleDollarSign,
   sueldos: Users,
@@ -627,6 +628,7 @@ const SECTOR_SUBPAGES = {
   ],
   fabrica: [
     { id: "pedidos", label: "Pedidos de fábrica" },
+    { id: "numeros", label: "Números", soloAdmin: true },
     { id: "materiales", label: "Stock de materiales" },
     { id: "stock", label: "Stock de espejos" },
     { id: "tareas", label: "Tareas" },
@@ -5027,6 +5029,147 @@ function produccionSemanalTaller(pedidos, hoyIso, cuantas = 8) {
     lunes = isoLocal(sumarDias(new Date(`${lunes}T12:00:00`), -7));
   }
   return filas;
+}
+
+/* ===========================================================================
+   NÚMEROS DE FÁBRICA
+   Solo lectura. No guarda nada nuevo: lee las fechas que la app viene
+   anotando desde hace meses en cada paso de producción y que hasta ahora no
+   se miraban en ningún lado.
+   OJO: un pedido puede traer varios espejos (cant), así que TODO se cuenta en
+   espejos, no en renglones.
+   =========================================================================== */
+// Los saltos entre etapas, para ver dónde se queda parado el espejo.
+const ETAPAS_FABRICA = [
+  { de: "pedidoVerificadoFecha", a: "produccionCortadoFecha", label: "Verificado → Cortado" },
+  { de: "produccionCortadoFecha", a: "grabadoEnviadoFecha", label: "Cortado → Mandado a grabar" },
+  { de: "grabadoEnviadoFecha", a: "grabadoRegresoFecha", label: "En el grabador", afuera: true },
+  { de: "produccionCortadoFecha", a: "biseladoPedidoFecha", label: "Cortado → Pedido el biselado" },
+  { de: "biseladoPedidoFecha", a: "biseladoRegresoFecha", label: "En la biseladora", afuera: true },
+  { de: "grabadoRegresoFecha", a: "produccionArmadoFecha", label: "Volvió del grabador → Armado" },
+  { de: "biseladoRegresoFecha", a: "produccionArmadoFecha", label: "Volvió de la biseladora → Armado" },
+  // Este salto SOLO para los espejos que nunca salieron del taller. Si no, se
+  // comería adentro los días que el espejo estuvo en el grabador o en la
+  // biseladora, y taparía justo el lugar donde se traba.
+  { de: "produccionCortadoFecha", a: "produccionArmadoFecha", label: "Cortado → Armado", soloSinSalir: true },
+  { de: "produccionArmadoFecha", a: "produccionEmbaladoFecha", label: "Armado → Embalado" },
+  { de: "produccionEmbaladoFecha", a: "entregadoFecha", label: "Embalado → Entregado" },
+];
+
+// Días entre dos fechas, redondeando a días enteros. Aguanta las dos formas
+// que conviven en la base: "2026-09-10" y la marca de tiempo completa.
+function diasEntreDias(desde, hasta) {
+  const a = diaLocalDe(desde) || String(desde || "").slice(0, 10);
+  const b = diaLocalDe(hasta) || String(hasta || "").slice(0, 10);
+  const bien = (x) => /^\d{4}-\d{2}-\d{2}$/.test(x);
+  if (!bien(a) || !bien(b)) return null;
+  const d = Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000);
+  return d >= 0 ? d : null;
+}
+const promedioDeDias = (lista) => (lista.length ? Math.round((lista.reduce((t, x) => t + x, 0) / lista.length) * 10) / 10 : null);
+
+function numerosFabrica(pedidos, desde, hasta) {
+  const dentro = (iso) => {
+    const d = diaLocalDe(iso) || String(iso || "").slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= desde && d <= hasta;
+  };
+  const vivos = (pedidos || []).filter((p) => p && p.estado !== "Cancelado");
+  const cuantos = (p) => Math.max(1, Number(p.cant) || 1);
+
+  let terminados = 0, entregados = 0, rehechos = 0;
+  const diasFabrica = [], diasTotales = [];
+  const motivos = new Map();
+  const personas = new Map();
+  const saltos = ETAPAS_FABRICA.map(() => []);
+  // Se agrupa sin mirar mayusculas: en la base conviven "Facundo" y
+  // "facundo", y si no, la misma persona aparece dos veces partida al medio.
+  // Se muestra con la forma mas linda que se haya escrito (la que tiene mayuscula).
+  const sumarPersona = (nombre, campo, n) => {
+    const quien = String(nombre || "").trim();
+    if (!quien) return;
+    const clave = quien.toLowerCase();
+    if (!personas.has(clave)) personas.set(clave, { nombre: quien, armados: 0, embalados: 0 });
+    const fila = personas.get(clave);
+    if (quien[0] === quien[0].toUpperCase() && fila.nombre[0] !== fila.nombre[0].toUpperCase()) fila.nombre = quien;
+    fila[campo] += n;
+  };
+  const sumarMotivo = (texto, n) => {
+    const m = String(texto || "").trim() || "Sin motivo anotado";
+    motivos.set(m, (motivos.get(m) || 0) + n);
+  };
+
+  vivos.forEach((p) => {
+    const n = cuantos(p);
+    const termino = p.produccionListaFecha || p.produccionEmbaladoFecha;
+
+    if (termino && dentro(termino)) {
+      terminados += n;
+      const d = diasEntreDias(p.pedidoVerificadoFecha || p.fecha, termino);
+      if (d !== null) diasFabrica.push(d);
+      sumarPersona(p.produccionArmadoPor, "armados", n);
+      sumarPersona(p.produccionEmbaladoPor, "embalados", n);
+
+      // Los rehechos no tienen fecha propia: se cuentan con el espejo que los
+      // sufrió, en el período en que ese espejo salió terminado.
+      const aNivelPedido = Number(p.cantidadReprocesos) || 0;
+      if (aNivelPedido > 0) { rehechos += aNivelPedido; sumarMotivo(p.motivoReproceso, aNivelPedido); }
+      if (Array.isArray(p.unidades)) {
+        p.unidades.forEach((u) => {
+          const k = Number(u?.reprocesos) || 0;
+          if (k > 0) { rehechos += k; sumarMotivo(u.motivoReproceso, k); }
+        });
+      }
+    }
+
+    if (p.entregadoFecha && dentro(p.entregadoFecha)) {
+      entregados += n;
+      const d = diasEntreDias(p.fecha, p.entregadoFecha);
+      if (d !== null) diasTotales.push(d);
+    }
+
+    ETAPAS_FABRICA.forEach((et, i) => {
+      if (et.soloSinSalir && (p.grabadoEnviadoFecha || p.biseladoPedidoFecha)) return;
+      if (!dentro(p[et.a])) return;
+      const d = diasEntreDias(p[et.de], p[et.a]);
+      if (d !== null) saltos[i].push(d);
+    });
+  });
+
+  return {
+    desde, hasta, terminados, entregados, rehechos,
+    scrap: terminados > 0 ? Math.round((rehechos / terminados) * 1000) / 10 : null,
+    diasFabrica: { promedio: promedioDeDias(diasFabrica), peor: diasFabrica.length ? Math.max(...diasFabrica) : null, n: diasFabrica.length },
+    diasTotales: { promedio: promedioDeDias(diasTotales), peor: diasTotales.length ? Math.max(...diasTotales) : null, n: diasTotales.length },
+    motivos: [...motivos.entries()].map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n),
+    personas: [...personas.values()].sort((a, b) => (b.armados + b.embalados) - (a.armados + a.embalados)),
+    etapas: ETAPAS_FABRICA.map((et, i) => ({ label: et.label, afuera: !!et.afuera, promedio: promedioDeDias(saltos[i]), n: saltos[i].length }))
+      .filter((x) => x.n > 0).sort((a, b) => (b.promedio || 0) - (a.promedio || 0)),
+  };
+}
+
+// Los períodos que se pueden elegir, y el período anterior para comparar.
+const PERIODOS_FABRICA = [
+  { id: "mes", label: "Este mes" },
+  { id: "mes_pasado", label: "Mes pasado" },
+  { id: "90", label: "Últimos 90 días" },
+  { id: "anio", label: "Este año" },
+];
+function rangoPeriodo(id, hoyIso) {
+  const [y, m, d] = hoyIso.split("-").map(Number);
+  const arma = (yy, mm, dd) => `${yy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+  if (id === "mes_pasado") {
+    const mm = m === 1 ? 12 : m - 1, yy = m === 1 ? y - 1 : y;
+    return { desde: arma(yy, mm, 1), hasta: arma(yy, mm, new Date(yy, mm, 0).getDate()) };
+  }
+  if (id === "90") return { desde: isoLocal(new Date(y, m - 1, d - 89)), hasta: hoyIso };
+  if (id === "anio") return { desde: arma(y, 1, 1), hasta: hoyIso };
+  return { desde: arma(y, m, 1), hasta: hoyIso };
+}
+function periodoAnterior(rango) {
+  const largo = (diasEntreDias(rango.desde, rango.hasta) || 0) + 1;
+  const fin = new Date(new Date(rango.desde + "T12:00:00").getTime() - 86400000);
+  const ini = new Date(fin.getTime() - (largo - 1) * 86400000);
+  return { desde: isoLocal(ini), hasta: isoLocal(fin) };
 }
 
 function claseTaller(pedido) {
@@ -9440,6 +9583,114 @@ function MultiPasoControl({ max, pasado, onMarcar }) {
   );
 }
 
+// Una caja con un número grande y, abajo, cuánto cambió contra el período
+// anterior. Para los días y el scrap, bajar es mejor.
+function CajaNumero({ titulo, valor, unidad, pie, antes, mejorSiBaja }) {
+  const hayComparacion = valor !== null && valor !== undefined && antes !== null && antes !== undefined && antes !== 0;
+  const delta = hayComparacion ? Math.round(((valor - antes) / antes) * 100) : null;
+  const bueno = delta === null || delta === 0 ? null : (mejorSiBaja ? delta < 0 : delta > 0);
+  const Flecha = !delta ? null : (delta > 0 ? TrendingUp : TrendingDown);
+  return (
+    <div className="dg-num-caja">
+      <span className="dg-num-tit">{titulo}</span>
+      <strong>{valor === null || valor === undefined ? "—" : valor}{unidad ? <small>{unidad}</small> : null}</strong>
+      <div className="dg-num-pie">
+        {Flecha && <span className={bueno ? "dg-num-bien" : "dg-num-mal"}><Flecha size={12} /> {Math.abs(delta)}%</span>}
+        {pie ? <span>{pie}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+// Los números de fábrica. Esta pantalla SOLO MIRA: no guarda ni cambia nada.
+// Todo sale de fechas que la app ya venía anotando en cada paso.
+function NumerosFabricaPanel({ pedidos }) {
+  const hoy = isoLocal(new Date());
+  const [periodo, setPeriodo] = useState("90");
+  const rango = rangoPeriodo(periodo, hoy);
+  const previo = periodoAnterior(rango);
+  const n = numerosFabrica(pedidos, rango.desde, rango.hasta);
+  const antes = numerosFabrica(pedidos, previo.desde, previo.hasta);
+  const corto = (iso) => { const p = iso.split("-"); return `${Number(p[2])}/${Number(p[1])}`; };
+  const masLargo = n.etapas.length ? Math.max(...n.etapas.map((e) => e.promedio || 0)) : 0;
+  const vacio = n.terminados === 0 && n.entregados === 0 && n.etapas.length === 0;
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        {PERIODOS_FABRICA.map((p) => (
+          <button key={p.id} type="button" className={periodo === p.id ? "dg-btn-primary" : "dg-btn-ghost"} onClick={() => setPeriodo(p.id)}>{p.label}</button>
+        ))}
+        <span className="dg-num-rango">{corto(rango.desde)} al {corto(rango.hasta)}</span>
+        <button className="dg-btn-ghost" style={{ marginLeft: "auto" }} onClick={() => window.print()}><Printer size={14} /> Imprimir</button>
+      </div>
+
+      {vacio ? <div className="dg-empty">No hay nada terminado ni entregado en este período.</div> : (
+        <>
+          <div className="dg-num-grid">
+            <CajaNumero titulo="Espejos terminados" valor={n.terminados} antes={antes.terminados} pie={`antes ${antes.terminados}`} />
+            <CajaNumero titulo="Espejos entregados" valor={n.entregados} antes={antes.entregados} pie={`antes ${antes.entregados}`} />
+            <CajaNumero titulo="Días en fábrica" valor={n.diasFabrica.promedio} unidad=" d" mejorSiBaja
+              antes={antes.diasFabrica.promedio} pie={n.diasFabrica.peor !== null ? `el peor tardó ${n.diasFabrica.peor}` : ""} />
+            <CajaNumero titulo="Días hasta el cliente" valor={n.diasTotales.promedio} unidad=" d" mejorSiBaja
+              antes={antes.diasTotales.promedio} pie={n.diasTotales.peor !== null ? `el peor tardó ${n.diasTotales.peor}` : ""} />
+            <CajaNumero titulo="Espejos rehechos" valor={n.rehechos} antes={antes.rehechos} mejorSiBaja
+              pie={n.scrap === null ? "" : `${n.scrap}% de lo terminado`} />
+          </div>
+
+          {n.etapas.length > 0 && (
+            <div className="dg-section-card">
+              <div className="dg-section-header"><CalendarClock size={14} /> Dónde se queda parado el espejo</div>
+              <table className="dg-num-tabla">
+                <tbody>
+                  {n.etapas.map((e) => (
+                    <tr key={e.label}>
+                      <td className="dg-num-etapa">{e.label}{e.afuera && <span className="dg-num-afuera">afuera del taller</span>}</td>
+                      <td className="dg-num-barra"><span style={{ width: `${masLargo > 0 ? Math.round(((e.promedio || 0) / masLargo) * 100) : 0}%` }} className={e.afuera ? "dg-num-barra-afuera" : ""} /></td>
+                      <td className="dg-num-dias">{e.promedio} d</td>
+                      <td className="dg-num-n">{e.n} esp.</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="dg-num-dos">
+            <div className="dg-section-card">
+              <div className="dg-section-header"><RotateCcw size={14} /> Por qué se rehacen</div>
+              {n.motivos.length === 0 ? <div className="dg-empty">Ninguno rehecho en este período.</div> : (
+                <table className="dg-num-tabla">
+                  <tbody>
+                    {n.motivos.map((m) => (
+                      <tr key={m.motivo}><td>{m.motivo}</td><td className="dg-num-dias">{m.n}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="dg-section-card">
+              <div className="dg-section-header"><Users size={14} /> Quién los hizo</div>
+              {n.personas.length === 0 ? <div className="dg-empty">Sin responsables anotados.</div> : (
+                <table className="dg-num-tabla">
+                  <thead><tr><th>Persona</th><th className="dg-num-dias">Armó</th><th className="dg-num-dias">Embaló</th></tr></thead>
+                  <tbody>
+                    {n.personas.map((p) => (
+                      <tr key={p.nombre}><td>{p.nombre}</td><td className="dg-num-dias">{p.armados}</td><td className="dg-num-dias">{p.embalados}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", listasBloqueadas = false, onCambiarBloqueoListas }) {
   // El "editor único" de las listas: la única persona que puede meter espejos
   // de más en un día cuando surge una urgencia. Se configura por nombre en
@@ -13821,7 +14072,7 @@ function SectorPage({
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
   deudas, onChangeDeudas, notasAnotador, onChangeNotasAnotador,
 }) {
-  const tabs = SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }];
+  const tabs = (SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }]).filter((t) => !t.soloAdmin || isAdmin);
   const [subpage, setSubpage] = useState(tabs[0].id);
   const Icon = ICONS[sector.icon];
   const { key } = getStatus(sector.tasks);
@@ -13926,6 +14177,8 @@ function SectorPage({
         canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} editorListas={editorListas} listasBloqueadas={listasBloqueadas} onCambiarBloqueoListas={onCambiarBloqueoListas} />
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
+
+      {subpage === "numeros" && sector.id === "fabrica" && isAdmin && <NumerosFabricaPanel pedidos={pedidos} />}
 
       {subpage === "materiales" && sector.id === "fabrica" && (
         canSeePedidos ? <StockMaterialesPanel stock={stockMateriales} onChange={onChangeStockMateriales} canEdit={canEditStock} puedeBorrar={puedeBorrar} />
@@ -14839,6 +15092,29 @@ function Style() {
       .dg-dia-taller-extra-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-dia-item-extra { padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; letter-spacing:.4px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-candado-aviso { display:inline-flex; align-items:center; gap:5px; padding:7px 10px; border-radius:8px; font-size:13px; font-weight:600; color:var(--dg-warning-2); background:rgba(var(--dg-warning-rgb),.10); }
+      .dg-num-rango { font-size:12px; color:var(--dg-text-dim); }
+      .dg-num-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(165px, 1fr)); gap:12px; margin-bottom:16px; }
+      .dg-num-caja { display:flex; flex-direction:column; gap:3px; padding:14px; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-num-tit { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-num-caja strong { font-family:'Jost',sans-serif; font-size:30px; font-weight:700; color:var(--dg-text); line-height:1.05; }
+      .dg-num-caja strong small { font-size:15px; font-weight:600; color:var(--dg-text-dim); }
+      .dg-num-pie { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:11px; color:var(--dg-text-dim); }
+      .dg-num-pie span { display:inline-flex; align-items:center; gap:3px; }
+      .dg-num-bien { color:var(--dg-success); font-weight:700; }
+      .dg-num-mal { color:var(--dg-danger); font-weight:700; }
+      .dg-num-dos { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px; }
+      .dg-num-tabla { width:100%; border-collapse:collapse; font-size:13px; }
+      .dg-num-tabla th { text-align:left; font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-faint); padding:0 0 6px; font-weight:700; }
+      .dg-num-tabla td { padding:7px 0; border-top:1px solid rgba(var(--dg-line-rgb),.08); color:var(--dg-text); }
+      .dg-num-tabla tr:first-child td { border-top:0; }
+      .dg-num-etapa { white-space:nowrap; padding-right:12px !important; }
+      .dg-num-afuera { margin-left:7px; padding:1px 6px; border-radius:999px; font-size:10px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-interior); background:var(--dg-interior); }
+      .dg-num-barra { width:45%; }
+      .dg-num-barra span { display:block; height:8px; border-radius:999px; background:var(--dg-accent-2); min-width:3px; }
+      .dg-num-barra span.dg-num-barra-afuera { background:var(--dg-interior); }
+      .dg-num-dias { text-align:right; font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap; padding-left:12px !important; }
+      td.dg-num-n { text-align:right; font-variant-numeric:tabular-nums; color:var(--dg-text-dim); font-size:12px; white-space:nowrap; padding-left:10px !important; }
+      @media (max-width:640px) { .dg-num-barra { display:none; } .dg-num-etapa { white-space:normal; } }
       .dg-sumar-extra { margin-bottom:10px; }
       .dg-sumar-extra select { width:100%; background:var(--dg-surface); border:1px dashed rgba(var(--dg-interior-rgb),.5); border-radius:9px; padding:9px 10px; color:var(--dg-interior); font-size:13px; font-weight:600; cursor:pointer; }
       .dg-dia-taller-vencido { border-color:rgba(var(--dg-danger-rgb),.45); }
