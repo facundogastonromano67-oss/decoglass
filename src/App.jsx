@@ -1283,6 +1283,32 @@ function App() {
     }
   }, []);
 
+  // ¿Se publicó una versión nueva mientras tenían la app abierta?
+  const [hayVersionNueva, setHayVersionNueva] = useState(false);
+  useEffect(() => {
+    const miVersion = versionEnUso();
+    if (!miVersion) return undefined;   // en desarrollo no corre
+    let vivo = true, avisado = false, ultimaMirada = 0;
+    async function mirar() {
+      if (!vivo || avisado) return;
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - ultimaMirada < 60000) return;   // como mucho una por minuto
+      ultimaMirada = Date.now();
+      const publicada = await versionPublicada();
+      if (!vivo || !publicada || publicada === miVersion) return;
+      avisado = true;
+      setHayVersionNueva(true);
+    }
+    const primera = window.setTimeout(mirar, 25000);
+    const cada = window.setInterval(mirar, 5 * 60 * 1000);
+    document.addEventListener("visibilitychange", mirar);
+    return () => {
+      vivo = false;
+      window.clearTimeout(primera); window.clearInterval(cada);
+      document.removeEventListener("visibilitychange", mirar);
+    };
+  }, []);
+
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [activeSectorId]);
@@ -1984,7 +2010,14 @@ function App() {
   return (
     <div style={wrap}>
       <Style />
-      <div className="dg-app" data-theme={theme}>
+      <div className={`dg-app ${hayVersionNueva ? "dg-con-aviso-version" : ""}`} data-theme={theme}>
+        {hayVersionNueva && (
+          <div className="dg-aviso-version" role="status">
+            <Sparkles size={16} />
+            <span><strong>Hay una versión nueva de la app</strong><small>Tocá el botón para traerla. Guardá lo que estés cargando antes.</small></span>
+            <button type="button" onClick={() => window.location.reload()}><RotateCcw size={14} /> Actualizar</button>
+          </div>
+        )}
         <header className="dg-header">
           <div className="dg-brand">
             <div className="dg-brand-mark"><LogoMark /></div>
@@ -5794,6 +5827,37 @@ const QUICK_VIEWS = [
   { id: "verificados", label: "Verificados → listos para fábrica" },
   { id: "facturar", label: "Pendiente de facturar" },
 ];
+
+/* ===========================================================================
+   AVISO DE VERSIÓN NUEVA
+   Cada vez que se publica un cambio, el archivo de la app cambia de nombre
+   (index-XXXX.js, lo arma Vite solo). Se compara el que está corriendo en este
+   celular contra el que dice la página publicada: si no son iguales, hay
+   actualización.
+   Esto NO toca Supabase: le pide el index.html a Vercel, que pesa 7 KB, y solo
+   cuando la pestaña está a la vista.
+   =========================================================================== */
+// El archivo que está corriendo ahora mismo en este dispositivo.
+function versionEnUso() {
+  try {
+    const tags = [...document.querySelectorAll('script[src*="/assets/"]')];
+    for (const t of tags) {
+      const m = String(t.getAttribute("src") || "").match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
+      if (m) return m[0];
+    }
+  } catch (e) { /* noop */ }
+  return "";   // en desarrollo no hay /assets/: el aviso queda apagado
+}
+// El archivo que está publicado en el servidor.
+async function versionPublicada() {
+  try {
+    const r = await fetch("/?v=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) return "";
+    const html = await r.text();
+    const m = html.match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
+    return m ? m[0] : "";
+  } catch (e) { return ""; }
+}
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
 
@@ -15138,6 +15202,25 @@ function Style() {
       .dg-export-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:8px; }
       .dg-export-grid .dg-btn-ghost { justify-content:flex-start; font-size:13px; }
       .dg-export-grid .dg-btn-ghost:disabled { opacity:0.4; cursor:not-allowed; }
+      .dg-aviso-version { position:fixed; z-index:40; left:0; right:0; bottom:0;
+        display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+        padding:12px calc(16px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+        background:var(--dg-accent-2); color:var(--dg-on-accent); box-shadow:0 -10px 30px -10px rgba(0,0,0,.55);
+        animation: dg-toast-in .2s ease-out; }
+      .dg-aviso-version > svg { flex:0 0 auto; }
+      .dg-aviso-version > span { display:flex; flex-direction:column; gap:1px; min-width:0; flex:1 1 180px; }
+      .dg-aviso-version strong { font-family:'Jost',sans-serif; font-size:15px; font-weight:600; }
+      .dg-aviso-version small { font-size:12px; opacity:.92; }
+      .dg-aviso-version > button { flex:0 0 auto; display:inline-flex; align-items:center; gap:6px; margin-left:auto;
+        padding:10px 18px; border:0; border-radius:10px; cursor:pointer;
+        background:var(--dg-on-accent); color:var(--dg-accent-2); font-family:'Jost',sans-serif; font-size:14px; font-weight:700; }
+      .dg-aviso-version > button:hover { filter:brightness(.94); }
+      .dg-con-aviso-version .dg-fab-money, .dg-con-aviso-version .dg-fab-chat { bottom:calc(92px + env(safe-area-inset-bottom, 0px)); }
+      .dg-con-aviso-version .dg-save-toast { bottom:calc(92px + env(safe-area-inset-bottom, 0px)); }
+      @media (max-width:480px) {
+        .dg-aviso-version > button { width:100%; margin-left:0; justify-content:center; }
+        .dg-con-aviso-version .dg-fab-money, .dg-con-aviso-version .dg-fab-chat { bottom:calc(140px + env(safe-area-inset-bottom, 0px)); }
+      }
       .dg-save-toast { position:fixed; bottom:18px; right:18px; z-index:200; display:flex; align-items:center; gap:10px;
         background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:12px; padding:11px 14px; font-size:13px;
         color:var(--dg-text); box-shadow: 0 14px 34px -10px rgba(0,0,0,0.8); animation: dg-toast-in .2s ease-out; max-width:min(92vw, 380px); }
@@ -15331,11 +15414,11 @@ function Style() {
       .dg-reclamo-compras li { padding:2px 0; font-size:13px; color:var(--dg-text); }
       .dg-reclamo-compras li span { color:var(--dg-text-dim); }
       .dg-montos-grupo { display:flex; flex-direction:column; gap:10px; }
-      .dg-montos-total { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; padding:11px 13px; border-radius:11px;
+      .dg-montos-total { display:flex; flex-direction:column; align-items:center; text-align:center; gap:5px; padding:14px 16px; border-radius:11px;
         background:rgba(var(--dg-accent-rgb),.09); border:1px solid rgba(var(--dg-accent-rgb),.22); }
       .dg-montos-total > span { font-size:12px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-accent-2); }
-      .dg-montos-total > strong { font-family:'Jost',sans-serif; font-size:22px; font-weight:700; color:var(--dg-text); margin-left:auto; }
-      .dg-montos-total > small { width:100%; font-size:12px; color:var(--dg-text-dim); }
+      .dg-montos-total > strong { font-family:'Jost',sans-serif; font-size:26px; font-weight:700; line-height:1.1; color:var(--dg-text); }
+      .dg-montos-total > small { font-size:12px; color:var(--dg-text-dim); }
       .dg-monto-fila { display:grid; grid-template-columns:minmax(96px,1fr) repeat(3, minmax(84px,1fr)); gap:10px; align-items:end; }
       .dg-monto-espejo { display:flex; flex-direction:column; gap:1px; padding-bottom:9px; font-size:13px; font-weight:600; color:var(--dg-text); }
       .dg-monto-espejo small { font-size:11px; font-weight:500; color:var(--dg-text-dim); }
