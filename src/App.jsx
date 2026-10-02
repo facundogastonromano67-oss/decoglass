@@ -5797,6 +5797,33 @@ const QUICK_VIEWS = [
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
 
+// Cuánta plata hay que registrar por este espejo y qué ingreso le corresponde.
+// Si ya se entregó se cobró todo; si no, solo el anticipo. Se descuenta lo que
+// ya se había registrado antes, así editar un monto no cuenta la plata dos
+// veces. Devuelve null cuando no cambió nada.
+// Es LA regla: la usan tanto guardar un espejo como editar los montos del
+// pedido entero. Si se toca acá, se toca en los dos lados a la vez.
+function ingresoPorCambioDeMonto(pedido) {
+  const cobrado = pedido?.estado === "Entregado" ? Number(pedido.monto) || 0 : Number(pedido?.anticipo) || 0;
+  const yaRegistrado = Number(pedido?.montoRegistrado) || 0;
+  const delta = cobrado - yaRegistrado;
+  if (delta === 0) return null;
+  const cuenta = determineCuentaPedido(pedido);
+  const etiqueta = delta < 0 ? "Ajuste" : (yaRegistrado > 0 ? "Saldo" : "Anticipo");
+  return {
+    cobrado,
+    ingreso: {
+      id: uid(),
+      concepto: `${etiqueta} pedido #${pedido?.orden || "?"} — ${pedido?.cliente || "Sin nombre"}`,
+      monto: delta,
+      canal: canalDelPedido(pedido),
+      cuenta, cliente: pedido?.cliente || "",
+      metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
+      sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
+    },
+  };
+}
+
 const RECLAMO_CICLO = ["Abierto", "Solución ofrecida", "Cliente aceptó", "Espejo en fábrica", "Resuelto"];
 function estadoReclamo(r) {
   if (reclamoFinalizado(r)) return "Resuelto";
@@ -6663,28 +6690,11 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
 
     // Cuánto plata entró realmente por este pedido:
     // si ya se entregó, se cobró todo; si no, solo el anticipo.
-    const cobradoAhora = withOrden.estado === "Entregado"
-      ? Number(withOrden.monto) || 0
-      : Number(withOrden.anticipo) || 0;
-    const yaRegistrado = Number(withOrden.montoRegistrado) || 0;
-    const delta = cobradoAhora - yaRegistrado;
-
+    const cambio = ingresoPorCambioDeMonto(withOrden);
     let toSave = withOrden;
-    if (delta !== 0 && onCreateIncome) {
-      const cuenta = determineCuentaPedido(withOrden);
-      const esAjuste = delta < 0;
-      const esSaldo = yaRegistrado > 0 && delta > 0;
-      const etiqueta = esAjuste ? "Ajuste" : esSaldo ? "Saldo" : "Anticipo";
-      onCreateIncome({
-        id: uid(),
-        concepto: `${etiqueta} pedido #${withOrden.orden || "?"} — ${withOrden.cliente || "Sin nombre"}`,
-        monto: delta,
-        canal: canalDelPedido(withOrden),
-        cuenta, cliente: withOrden.cliente || "",
-        metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
-        sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
-      });
-      toSave = { ...withOrden, montoRegistrado: cobradoAhora };
+    if (cambio && onCreateIncome) {
+      onCreateIncome(cambio.ingreso);
+      toSave = { ...withOrden, montoRegistrado: cambio.cobrado };
     }
     const pedidosActualizados = exists ? pedidos.map((p) => (p.id === pedido.id ? toSave : p)) : [...pedidos, toSave];
     onChange(normalizarOrdenesPorGrupo(pedidosActualizados));
@@ -6736,12 +6746,35 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   }
   // Editar cliente y entrega de un pedido entero (todos sus espejos).
   const [editandoEntrega, setEditandoEntrega] = useState(null);
-  function guardarEntregaDelGrupo(editado) {
+  // Guarda los datos del cliente y la entrega (iguales para todos los espejos)
+  // y, por separado, el monto y el anticipo de CADA espejo. Antes los montos
+  // se mostraban en esta pantalla pero al guardar se tiraban: soloCamposDelPedido
+  // no los incluye. Ahora se guardan y se registra la plata que entró, espejo
+  // por espejo, con la misma regla que usa guardar un espejo suelto.
+  function guardarEntregaDelGrupo(editado, _opts, montosPorEspejo) {
     const grupo = editandoEntrega || [];
     const ids = new Set(grupo.map((p) => p.id));
     const patch = soloCamposDelPedido(editado);
-    onChange(pedidos.map((p) => (ids.has(p.id) ? { ...p, ...patch } : p)));
-    if (onRegistrar && grupo[0]) onRegistrar("Editó los datos de entrega", `#${grupo[0].orden} — ${editado.cliente} — ${grupo.length} espejo(s)`);
+    const montos = montosPorEspejo || {};
+    const ingresos = [];
+    const actualizados = pedidos.map((p) => {
+      if (!ids.has(p.id)) return p;
+      const m = montos[p.id];
+      let nuevo = { ...p, ...patch };
+      if (m) nuevo = { ...nuevo, monto: m.monto, anticipo: m.anticipo };
+      const cambio = ingresoPorCambioDeMonto(nuevo);
+      if (cambio && onCreateIncome) {
+        ingresos.push(cambio.ingreso);
+        nuevo = { ...nuevo, montoRegistrado: cambio.cobrado };
+      }
+      return nuevo;
+    });
+    onChange(actualizados);
+    if (ingresos.length && onCreateIncome) onCreateIncome(ingresos);
+    if (onRegistrar && grupo[0]) {
+      onRegistrar("Editó los datos de entrega",
+        `#${grupo[0].orden} — ${editado.cliente} — ${grupo.length} espejo(s)${ingresos.length ? ` — ${ingresos.length} movimiento(s) de plata` : ""}`);
+    }
     setEditandoEntrega(null);
   }
 
@@ -7167,6 +7200,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           key={`entrega-${editandoEntrega[0]?.id}`}
           pedido={editandoEntrega[0]}
           modo="entrega"
+          grupo={editandoEntrega}
           cuantosEspejos={editandoEntrega.length}
           vendedores={vendedores}
           canEditFull={canEditFull}
@@ -7511,7 +7545,7 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones 
 
 // modo: "todo" (como siempre) · "entrega" (cliente y envío del pedido entero)
 // · "espejo" (solo las medidas y funciones de ese espejo).
-function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1, clientes = [] }) {
+function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1, clientes = [], grupo = [] }) {
   const verEspejo = modo !== "entrega";
   const verEntrega = modo !== "espejo";
   const [draft, setDraft] = useState(() => {
@@ -7556,6 +7590,17 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
   const [intentoGuardar, setIntentoGuardar] = useState(false);
   const readOnly = !canEditFull && !canEditEstadoOnly;
   const saldo = (Number(draft.monto) || 0) - (Number(draft.anticipo) || 0);
+  // Con varios espejos, cada uno tiene su monto y su anticipo. Se editan todos
+  // acá, en vez de mostrar el del primero y descartar el cambio al guardar.
+  const porEspejo = modo === "entrega" && grupo.length > 1;
+  const [montos, setMontos] = useState(() => {
+    const m = {};
+    (grupo || []).forEach((p) => { m[p.id] = { monto: p.monto ?? "", anticipo: p.anticipo ?? "" }; });
+    return m;
+  });
+  const setMonto = (id, campo, valor) => setMontos((m) => ({ ...m, [id]: { ...m[id], [campo]: valor } }));
+  const totalGrupo = (grupo || []).reduce((t, p) => t + (Number(montos[p.id]?.monto) || 0), 0);
+  const anticipoGrupo = (grupo || []).reduce((t, p) => t + (Number(montos[p.id]?.anticipo) || 0), 0);
   const puedeMarcarEntregado = draft.estado === "Entregado" || (pedido.estado === "Espejo listo" && draft.clienteAvisado && (!esPedidoConEnvio(draft) || draft.envioConfirmado));
   const estadoOptions = ESTADO_PEDIDO_OPTIONS.filter((estado) => estado !== "Entregado" || puedeMarcarEntregado);
 
@@ -7584,7 +7629,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
       );
       if (!ok) return;
     }
-    onSave(draft, opts);
+    onSave(draft, opts, porEspejo ? montos : null);
   }
   function ref_scrollTop() {
     try {
@@ -7792,11 +7837,33 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
               <span><strong>Sin cargo</strong> — el cambio no se cobra. No pide monto y no suma a los ingresos.</span>
             </label>
           )}
-          <div className={`dg-field-grid dg-money-row ${reclamoSinCargo(draft) ? "dg-money-row-off" : ""}`}>
-            <Field label="Monto" error={err("monto")}><input type="number" disabled={!canEditFull || reclamoSinCargo(draft)} value={draft.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
-            <Field label="Anticipo" error={err("anticipo")}><input type="number" disabled={!canEditFull || reclamoSinCargo(draft)} value={draft.anticipo} onChange={(e) => set("anticipo", e.target.value)} /></Field>
-            <Field label="Saldo" computed><input disabled value={money(saldo)} /></Field>
-          </div>
+          {porEspejo ? (
+            <div className="dg-montos-grupo">
+              <div className="dg-montos-total">
+                <span>Total del pedido · {grupo.length} espejos</span>
+                <strong>{money(totalGrupo)}</strong>
+                <small>anticipado {money(anticipoGrupo)} · <b>saldo {money(totalGrupo - anticipoGrupo)}</b></small>
+              </div>
+              {grupo.map((p, i) => {
+                const m = montos[p.id] || { monto: "", anticipo: "" };
+                const sal = (Number(m.monto) || 0) - (Number(m.anticipo) || 0);
+                return (
+                  <div className="dg-monto-fila" key={p.id}>
+                    <span className="dg-monto-espejo">Espejo {i + 1}<small>{p.ancho && p.alto ? `${p.ancho}×${p.alto} cm` : "sin medida"}</small></span>
+                    <Field label="Monto"><input type="number" disabled={!canEditFull} value={m.monto} onChange={(e) => setMonto(p.id, "monto", e.target.value)} /></Field>
+                    <Field label="Anticipo"><input type="number" disabled={!canEditFull} value={m.anticipo} onChange={(e) => setMonto(p.id, "anticipo", e.target.value)} /></Field>
+                    <Field label="Saldo" computed><input disabled value={money(sal)} /></Field>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className={`dg-field-grid dg-money-row ${reclamoSinCargo(draft) ? "dg-money-row-off" : ""}`}>
+              <Field label="Monto" error={err("monto")}><input type="number" disabled={!canEditFull || reclamoSinCargo(draft)} value={draft.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
+              <Field label="Anticipo" error={err("anticipo")}><input type="number" disabled={!canEditFull || reclamoSinCargo(draft)} value={draft.anticipo} onChange={(e) => set("anticipo", e.target.value)} /></Field>
+              <Field label="Saldo" computed><input disabled value={money(saldo)} /></Field>
+            </div>
+          )}
           {canEditFull && (() => {
             const cobrado = draft.estado === "Entregado" ? Number(draft.monto) || 0 : Number(draft.anticipo) || 0;
             const delta = cobrado - (Number(draft.montoRegistrado) || 0);
@@ -15263,6 +15330,19 @@ function Style() {
       .dg-reclamo-compras ul { margin:0; padding-left:17px; }
       .dg-reclamo-compras li { padding:2px 0; font-size:13px; color:var(--dg-text); }
       .dg-reclamo-compras li span { color:var(--dg-text-dim); }
+      .dg-montos-grupo { display:flex; flex-direction:column; gap:10px; }
+      .dg-montos-total { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; padding:11px 13px; border-radius:11px;
+        background:rgba(var(--dg-accent-rgb),.09); border:1px solid rgba(var(--dg-accent-rgb),.22); }
+      .dg-montos-total > span { font-size:12px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-accent-2); }
+      .dg-montos-total > strong { font-family:'Jost',sans-serif; font-size:22px; font-weight:700; color:var(--dg-text); margin-left:auto; }
+      .dg-montos-total > small { width:100%; font-size:12px; color:var(--dg-text-dim); }
+      .dg-monto-fila { display:grid; grid-template-columns:minmax(96px,1fr) repeat(3, minmax(84px,1fr)); gap:10px; align-items:end; }
+      .dg-monto-espejo { display:flex; flex-direction:column; gap:1px; padding-bottom:9px; font-size:13px; font-weight:600; color:var(--dg-text); }
+      .dg-monto-espejo small { font-size:11px; font-weight:500; color:var(--dg-text-dim); }
+      @media (max-width:640px) {
+        .dg-monto-fila { grid-template-columns:repeat(3, minmax(0,1fr)); }
+        .dg-monto-espejo { grid-column:1 / -1; padding-bottom:0; }
+      }
       .dg-cliente-busca { position:relative; }
       .dg-cliente-lista { position:absolute; z-index:40; left:0; right:0; top:calc(100% + 4px); max-height:260px; overflow-y:auto;
         background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:12px; box-shadow:0 18px 40px -12px rgba(0,0,0,.55); padding:6px; }
