@@ -48,6 +48,7 @@ const SUBPAGE_ICONS = {
   recursos: FileText,
   tareas: CheckCircle2,
   numeros: BarChart3,
+  guia: ClipboardList,
   finanzas: Wallet,
   comisiones: CircleDollarSign,
   sueldos: Users,
@@ -162,6 +163,43 @@ const SUGGESTED_TASKS = {
     "Controlar stock de producto terminado listo para despacho",
     "Coordinar agenda de despachos con fábrica y ventas",
     "Hacer seguimiento de envíos hasta la entrega",
+  ],
+};
+
+/* ===========================================================================
+   GUÍA DE TRABAJO POR SECTOR
+   Los pasos del día a día, escritos para que alguien nuevo pueda arrancar sin
+   preguntar. Arranca con este contenido, pero el administrador lo edita desde
+   la misma pantalla: lo que quede guardado pisa a esto.
+   =========================================================================== */
+const GUIA_POR_DEFECTO = {
+  ventas: [
+    { id: "v1", titulo: "Cargar el pedido",
+      detalle: "Pedidos → Nuevo pedido → Venta normal. Si el cliente ya compró antes, escribí el nombre y elegilo de la lista que aparece: trae el teléfono, el DNI y la dirección sin tener que preguntárselos de nuevo. No te olvides de marcar DE DÓNDE VINO la venta (local, WhatsApp/Instagram, Mercado Libre o Tienda Nube): de eso sale después el reporte de por dónde entra la plata." },
+    { id: "v2", titulo: "Anotar el monto y el anticipo",
+      detalle: "Cada espejo lleva su monto y su anticipo; el saldo se calcula solo. Lo que anotes acá entra derecho a Finanzas, así que ponelo bien de una. Si el pedido tiene varios espejos, cargá lo de cada uno por separado." },
+    { id: "v3", titulo: "Revisar con el cliente ANTES de pasarlo a fábrica",
+      detalle: "Repasá medida, forma, tono y funciones (touch, desempañante, pulido). Una medida mal cargada se paga haciendo el espejo dos veces. Recién cuando está todo confirmado tocá «Verificar y pasar a fábrica»: hasta ese momento fábrica no lo ve." },
+    { id: "v4", titulo: "Mandarle el link de seguimiento",
+      detalle: "Con el botón «Link de seguimiento» le mandás por WhatsApp una página donde ve en qué paso está su espejo, sin tener que preguntar. Desde ahí también te puede escribir, y los mensajes te llegan a la app." },
+    { id: "v5", titulo: "Si el cliente cambia algo",
+      detalle: "«Editar cliente y entrega» cambia los datos para TODOS los espejos del pedido (dirección, teléfono, forma de envío). Las medidas y las funciones se cambian entrando a cada espejo por separado." },
+    { id: "v6", titulo: "Marcar urgente solo cuando de verdad lo es",
+      detalle: "Un pedido marcado urgente se le pone primero a fábrica, arriba de todo lo demás. Si se marca todo como urgente, deja de significar nada." },
+  ],
+  postventa: [
+    { id: "p1", titulo: "Avisarle al cliente que está listo",
+      detalle: "Cuando fábrica lo marca «Espejo listo», aparece en Envíos. Avisale al cliente y dejá marcado que ya lo contactaste, así el resto del equipo sabe cómo viene." },
+    { id: "p2", titulo: "Confirmar el envío",
+      detalle: "Cerrá con el cliente la fecha, la dirección y el costo del envío. Hasta que no esté confirmado, Logística no lo ve en su lista, así que un envío sin confirmar no sale." },
+    { id: "p3", titulo: "Facturar",
+      detalle: "En «Facturas pendientes» están los que ya se entregaron y les falta la factura. Subí el comprobante y queda guardado: el cliente lo puede bajar solo desde su link de seguimiento." },
+    { id: "p4", titulo: "Cargar un reclamo",
+      detalle: "Elegí el tipo (LED que no enciende, rotura en transporte, medida equivocada, etc.), el cliente y el teléfono. Si ese cliente ya compró, abajo te muestra QUÉ ESPEJO le hicimos: medida, forma y tono. Eso es lo que hay que mirar antes de prometer nada." },
+    { id: "p5", titulo: "Mandar a hacer el reemplazo",
+      detalle: "Con el botón «Mandar a hacer un espejo nuevo (con sus datos)» se arma el pedido de cambio con el DNI, la dirección y la forma de envío que ya teníamos. Entra a fábrica como urgente. Completale las medidas en Pedidos." },
+    { id: "p6", titulo: "Cerrar el reclamo",
+      detalle: "Escribí qué solución se le dio y marcá que el cliente la aceptó. Recién ahí finalizalo. Un reclamo que queda abierto sin cerrar no sirve para saber qué está fallando." },
   ],
 };
 
@@ -617,6 +655,7 @@ const SECTOR_SUBPAGES = {
     { id: "pedidos", label: "Pedidos" },
     { id: "crm", label: "CRM (Kommo)" },
     { id: "recursos", label: "Catálogos y precios" },
+    { id: "guia", label: "Guía de trabajo" },
     { id: "tareas", label: "Tareas" },
   ],
   administracion: [
@@ -638,6 +677,7 @@ const SECTOR_SUBPAGES = {
     { id: "interior", label: "Envíos al interior" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "reclamos", label: "Reclamos" },
+    { id: "guia", label: "Guía de trabajo" },
     { id: "tareas", label: "Tareas" },
   ],
   logistica: [
@@ -1161,7 +1201,7 @@ function breakdownBy(entries, field, labels) {
 
 const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
-  "vendedores", "recursos-venta", "facturas-manuales", "envios-logistica",
+  "vendedores", "recursos-venta", "guias-trabajo", "facturas-manuales", "envios-logistica",
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
   "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas",
@@ -1183,6 +1223,7 @@ function App() {
   const [notasAnotador, setNotasAnotador] = useState(null);
   const [pedidos, setPedidos] = useState(null);
   const [recursos, setRecursos] = useState(null);
+  const [guias, setGuias] = useState(null);
   const [facturas, setFacturas] = useState(null);
   const [enviosLogistica, setEnviosLogistica] = useState(null);
   const [reclamos, setReclamos] = useState(null);
@@ -1342,6 +1383,7 @@ function App() {
       leads: setLeads,
       vendedores: setVendedores,
       "recursos-venta": setRecursos,
+      "guias-trabajo": setGuias,
       "facturas-manuales": setFacturas,
       "envios-logistica": setEnviosLogistica,
       "empleados-sueldo": setEmpleadosSueldo,
@@ -1725,6 +1767,11 @@ function App() {
       setRecursos(r ? JSON.parse(r.value) : []);
     } catch (e) { setRecursos([]); }
     try {
+      const g = await storage.get("guias-trabajo", true);
+      const guardado = g ? JSON.parse(g.value) : null;
+      setGuias(guardado && typeof guardado === "object" ? { ...GUIA_POR_DEFECTO, ...guardado } : GUIA_POR_DEFECTO);
+    } catch (e) { setGuias(GUIA_POR_DEFECTO); }
+    try {
       const f = await storage.get("facturas-manuales", true);
       setFacturas(f ? JSON.parse(f.value) : []);
     } catch (e) { setFacturas([]); }
@@ -1900,6 +1947,7 @@ function App() {
     }
   }
   async function persistRecursos(next) { guardar("recursos-venta", next, () => setRecursos(next)); }
+  async function persistGuias(next) { guardar("guias-trabajo", next, () => setGuias(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistEnviosLogistica(next) { guardar("envios-logistica", next, () => setEnviosLogistica(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
@@ -1972,7 +2020,7 @@ function App() {
       </div>
     );
   }
-  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !facturas || !enviosLogistica || !reclamos || !stockEspejos || !stockMateriales || !empleadosSueldo || !liquidaciones) {
+  if (loading || !sectors || !purchases || !incomes || !quoteConfig || !quotes || !leads || !vendedores || !pedidos || !recursos || !guias || !facturas || !enviosLogistica || !reclamos || !stockEspejos || !stockMateriales || !empleadosSueldo || !liquidaciones) {
     return (<div style={wrap}><Style /><div className="dg-app dg-loading" data-theme={theme}><Loader2 className="dg-spin" size={28} /><span>Cargando DECOGLASS...</span></div></div>);
   }
 
@@ -2165,6 +2213,7 @@ function App() {
             driveFacturasUrl={integraciones?.driveFacturasUrl || ""}
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
+            guias={guias} onChangeGuias={persistGuias}
             facturas={facturas} onChangeFacturas={persistFacturas}
             enviosLogistica={enviosLogistica} onChangeEnviosLogistica={persistEnviosLogistica}
             reclamos={reclamos} onChangeReclamos={persistReclamos}
@@ -4113,6 +4162,67 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
 
 const RECURSO_TIPOS = { precios: "Lista de precios", catalogo: "Catálogo", reglamento: "Reglamento de ventas", garantia: "Garantía", imagenes: "Imágenes de muestra", otro: "Otro" };
 
+// La guía de un sector. Cualquiera la lee; solo el administrador la edita.
+function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
+  const lista = Array.isArray(pasos) ? pasos : [];
+  const guardar = (next) => onChange(next);
+  const editar = (id, campo, valor) => guardar(lista.map((p) => (p.id === id ? { ...p, [campo]: valor } : p)));
+  const borrar = (id) => { if (window.confirm("¿Borrar este paso de la guía?")) guardar(lista.filter((p) => p.id !== id)); };
+  const mover = (i, hacia) => {
+    const j = i + hacia;
+    if (j < 0 || j >= lista.length) return;
+    const next = lista.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    guardar(next);
+  };
+  const agregar = () => guardar([...lista, { id: uid(), titulo: "", detalle: "" }]);
+
+  return (
+    <div className="dg-page">
+      <div className="dg-section-card">
+        <div className="dg-section-header"><ClipboardList size={14} /> Cómo se trabaja en {sector}</div>
+        <p className="dg-pago-meta" style={{ marginTop: 0 }}>
+          Los pasos del día a día. {isAdmin ? "Podés cambiarlos, reordenarlos o agregar los que falten." : "Si algo no coincide con cómo lo hacen, decíselo al encargado."}
+        </p>
+      </div>
+
+      {lista.length === 0 && <div className="dg-empty">Todavía no hay pasos cargados.</div>}
+
+      <ol className="dg-guia">
+        {lista.map((p, i) => (
+          <li className="dg-guia-paso" key={p.id}>
+            <span className="dg-guia-num">{i + 1}</span>
+            <div className="dg-guia-cuerpo">
+              {isAdmin ? (
+                <>
+                  <input className="dg-guia-titulo-edit" value={p.titulo} placeholder="Título del paso"
+                    onChange={(e) => editar(p.id, "titulo", e.target.value)} />
+                  <textarea className="dg-guia-detalle-edit" value={p.detalle} rows={3} placeholder="Explicá qué hay que hacer"
+                    onChange={(e) => editar(p.id, "detalle", e.target.value)} />
+                  <div className="dg-guia-acciones">
+                    <button type="button" onClick={() => mover(i, -1)} disabled={i === 0} title="Subir">↑</button>
+                    <button type="button" onClick={() => mover(i, 1)} disabled={i === lista.length - 1} title="Bajar">↓</button>
+                    <button type="button" className="dg-guia-borrar" onClick={() => borrar(p.id)} title="Borrar"><Trash2 size={13} /></button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <strong>{p.titulo || "Sin título"}</strong>
+                  {p.detalle ? <p>{p.detalle}</p> : null}
+                </>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      {isAdmin && (
+        <button type="button" className="dg-btn-ghost" onClick={agregar}><Plus size={14} /> Agregar un paso</button>
+      )}
+    </div>
+  );
+}
+
 function RecursosVentaPanel({ recursos, onChange, isAdmin }) {
   const [tipo, setTipo] = useState("catalogo");
   const [titulo, setTitulo] = useState("");
@@ -4773,78 +4883,60 @@ function FranjaInterior() {
 
 function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
   const hoy = new Date().toISOString().slice(0, 10);
-  // Si el navegador no deja guardar, igual se pueden cerrar mientras dure la sesión.
-  const [cerradas, setCerradas] = useState({});
+  // Si el navegador no deja guardar, igual se puede cerrar mientras dure la sesión.
+  const [cerrado, setCerrado] = useState(false);
 
-  const motivos = [
-    {
-      id: "urgentes", pedidos: urgentes, clase: "dg-aviso-card-urgente", Icono: AlertTriangle,
-      titulo: (k) => (k === 1 ? "1 pedido con prioridad" : `${k} pedidos con prioridad`),
-      bajada: "Van primero, antes que todo lo demás.",
-      extra: (p) => (p.tipoPedido === "reclamo" ? "Reclamo / cambio" : "Marcado urgente"),
-    },
-    {
-      id: "demoras", pedidos: demoras, clase: "dg-aviso-card-demora", Icono: CalendarDays,
-      titulo: (k) => (k === 1 ? "1 pedido atrasándose" : `${k} pedidos atrasándose`),
-      bajada: "Revisá qué los está frenando.",
-      extra: (p) => motivoDemoraFabrica(p),
-    },
-    {
-      id: "nuevos", pedidos: nuevos, clase: "dg-aviso-card-nuevo", Icono: PackagePlus,
-      titulo: (k) => (k === 1 ? "1 pedido nuevo de Ventas" : `${k} pedidos nuevos de Ventas`),
-      bajada: "Recién cargados: miralos y marcá que los viste.",
-      extra: null,
-    },
-  ];
+  // Solo los números. Antes se listaba pedido por pedido y en tres carteles
+  // seguidos: era tan largo que lo cerraban sin leer. El detalle está en las
+  // listas, que es donde lo tienen que mirar igual.
+  const filas = [
+    { id: "urgentes", n: urgentes.length, clase: "dg-aviso-n-urgente", Icono: AlertTriangle,
+      label: urgentes.length === 1 ? "con prioridad" : "con prioridad" },
+    { id: "demoras", n: demoras.length, clase: "dg-aviso-n-demora", Icono: CalendarDays,
+      label: demoras.length === 1 ? "atrasándose" : "atrasándose" },
+    { id: "nuevos", n: nuevos.length, clase: "dg-aviso-n-nuevo", Icono: PackagePlus,
+      label: nuevos.length === 1 ? "nuevo de Ventas" : "nuevos de Ventas" },
+  ].filter((f) => f.n > 0);
 
-  const claveIds = (m) => m.pedidos.map((p) => p.id).sort().join(",");
-  // Leída = la cerraron hoy. Y se acabó: no vuelve aunque después entren más
-  // pedidos en ese mismo motivo. Mañana aparece una vez y listo.
-  function yaLeida(m) {
-    if (cerradas[m.id]) return true;
+  // Cerrado = lo cerraron hoy. Un solo botón para los tres números, así no hay
+  // que ir cerrando carteles de a uno.
+  function yaLeido() {
+    if (cerrado) return true;
     try {
-      const g = JSON.parse(localStorage.getItem(`dg_fab_aviso_${m.id}`) || "null");
+      const g = JSON.parse(localStorage.getItem("dg_fab_aviso_dia") || "null");
       return !!g && g.fecha === hoy;
     } catch (e) { return false; }
   }
-  function marcarLeida(m) {
-    try { localStorage.setItem(`dg_fab_aviso_${m.id}`, JSON.stringify({ fecha: hoy })); } catch (e) {}
-    setCerradas((c) => ({ ...c, [m.id]: true }));
+  function marcarLeido() {
+    try { localStorage.setItem("dg_fab_aviso_dia", JSON.stringify({ fecha: hoy })); } catch (e) {}
+    setCerrado(true);
   }
 
-  const pendientes = motivos.filter((m) => m.pedidos.length > 0 && !yaLeida(m));
-  if (!pendientes.length) return null;
-
-  const m = pendientes[0];
-  const quedan = pendientes.length - 1;
-  const { Icono } = m;
-  const TOPE = 15;
+  if (!filas.length || yaLeido()) return null;
 
   return (
     <div className="dg-avisos-flot-overlay" role="dialog" aria-modal="true" aria-label="Avisos de fábrica">
-      <div className={`dg-aviso-mazo ${quedan > 0 ? "dg-aviso-mazo-mas" : ""} ${quedan > 1 ? "dg-aviso-mazo-mas2" : ""}`}>
-        <div className={`dg-aviso-card ${m.clase}`} key={`${m.id}:${claveIds(m)}`}>
-          <div className="dg-aviso-card-head">
-            <span className="dg-aviso-card-icono"><Icono size={16} /></span>
-            <strong>{m.titulo(m.pedidos.length)}</strong>
-            {pendientes.length > 1 && <span className="dg-aviso-card-cont">1 de {pendientes.length}</span>}
-          </div>
-          <p className="dg-aviso-card-bajada">{m.bajada}</p>
-          <ul className="dg-aviso-card-lista">
-            {m.pedidos.slice(0, TOPE).map((p) => (
-              <li key={p.id}>
-                <span className="dg-aviso-card-cliente"><strong>#{p.orden}</strong> {p.cliente || "Sin nombre"}</span>
-                <span className="dg-aviso-card-que">{descripcionPedidoFabrica(p)}</span>
-                {m.extra && <span className="dg-aviso-card-extra">{m.extra(p)}</span>}
-                {esEnvioInterior(p) && <span className="dg-aviso-card-interior"><Truck size={11} /> Envío al interior · Vía Cargo</span>}
-              </li>
-            ))}
-          </ul>
-          {m.pedidos.length > TOPE && <p className="dg-aviso-card-mas">y {m.pedidos.length - TOPE} más en las listas</p>}
-          <button type="button" className="dg-btn-primary dg-avisos-flot-ok" onClick={() => marcarLeida(m)}>
-            <Check size={15} /> {quedan > 0 ? `Leído — ver ${quedan === 1 ? "el otro aviso" : `los otros ${quedan}`}` : "Leído"}
-          </button>
+      <div className="dg-aviso-card dg-aviso-resumen">
+        <div className="dg-aviso-card-head">
+          <span className="dg-aviso-card-icono"><ClipboardList size={16} /></span>
+          <strong>Para arrancar el día</strong>
         </div>
+        <ul className="dg-aviso-numeros">
+          {filas.map((f) => {
+            const { Icono } = f;
+            return (
+              <li key={f.id} className={f.clase}>
+                <Icono size={18} />
+                <strong>{f.n}</strong>
+                <span>{f.n === 1 ? "espejo " : "espejos "}{f.label}</span>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="dg-aviso-card-bajada">Están marcados en las listas de abajo.</p>
+        <button type="button" className="dg-btn-primary dg-avisos-flot-ok" onClick={marcarLeido}>
+          <Check size={15} /> Entendido
+        </button>
       </div>
     </div>
   );
@@ -14364,6 +14456,7 @@ function SectorPage({
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "",
+  guias = {}, onChangeGuias,
   listasBloqueadas = false, onCambiarBloqueoListas,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
@@ -14463,6 +14556,15 @@ function SectorPage({
       )}
 
       {subpage === "recursos" && <RecursosVentaPanel recursos={recursos} onChange={onChangeRecursos} isAdmin={isAdmin} />}
+
+      {subpage === "guia" && (
+        <GuiaTrabajoPanel
+          sector={sector.name}
+          pasos={guias?.[sector.id] || []}
+          isAdmin={isAdmin}
+          onChange={(next) => onChangeGuias({ ...guias, [sector.id]: next })}
+        />
+      )}
 
       {subpage === "pedidos" && sector.id !== "fabrica" && (
         canSeePedidos ? (
@@ -15317,6 +15419,31 @@ function Style() {
       .dg-aviso-mazo-mas::before, .dg-aviso-mazo-mas2::after { content:""; position:absolute; left:14px; right:14px; bottom:-8px; height:24px; border-radius:0 0 16px 16px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.14); border-top:none; opacity:.8; }
       .dg-aviso-mazo-mas2::after { left:28px; right:28px; bottom:-15px; opacity:.5; }
       .dg-aviso-card { --ac:var(--dg-accent); --ac-rgb:var(--dg-accent-rgb); position:relative; z-index:1; max-height:82vh; overflow-y:auto; background:var(--dg-surface); border:1px solid rgba(var(--ac-rgb),.55); border-top:4px solid var(--ac); border-radius:16px; padding:16px 18px 18px; box-shadow:0 24px 60px -12px rgba(0,0,0,0.6); animation:dg-aviso-entra .22s ease-out; }
+      .dg-guia { list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; gap:12px; }
+      .dg-guia-paso { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border-radius:14px;
+        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-guia-num { flex:0 0 auto; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent-2); font-family:'Jost',sans-serif; font-weight:700; font-size:14px; }
+      .dg-guia-cuerpo { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-guia-cuerpo > strong { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; color:var(--dg-text); }
+      .dg-guia-cuerpo > p { margin:0; font-size:14px; line-height:1.5; color:var(--dg-text-dim); }
+      .dg-guia-titulo-edit { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; }
+      .dg-guia-detalle-edit { font-size:14px; line-height:1.5; resize:vertical; min-height:62px; }
+      .dg-guia-acciones { display:flex; gap:6px; margin-top:2px; }
+      .dg-guia-acciones button { width:32px; height:30px; display:flex; align-items:center; justify-content:center;
+        border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:8px; background:transparent; color:var(--dg-text-dim); cursor:pointer; font-size:14px; }
+      .dg-guia-acciones button:disabled { opacity:.35; cursor:default; }
+      .dg-guia-acciones .dg-guia-borrar { color:var(--dg-danger); border-color:rgba(var(--dg-danger-rgb),.3); }
+      .dg-aviso-resumen { --ac:var(--dg-accent); --ac-rgb:var(--dg-accent-rgb); }
+      .dg-aviso-numeros { list-style:none; margin:14px 0 4px; padding:0; display:flex; flex-direction:column; gap:9px; }
+      .dg-aviso-numeros li { display:flex; align-items:center; gap:11px; padding:11px 13px; border-radius:12px;
+        background:rgba(var(--n-rgb),.10); border:1px solid rgba(var(--n-rgb),.3); color:var(--dg-text); }
+      .dg-aviso-numeros li > svg { color:var(--n); flex:0 0 auto; }
+      .dg-aviso-numeros strong { font-family:'Jost',sans-serif; font-size:30px; font-weight:700; line-height:1; color:var(--n); min-width:42px; text-align:right; font-variant-numeric:tabular-nums; }
+      .dg-aviso-numeros span { font-size:14px; font-weight:600; }
+      .dg-aviso-n-urgente { --n:var(--dg-danger); --n-rgb:var(--dg-danger-rgb); }
+      .dg-aviso-n-demora { --n:var(--dg-warning-2); --n-rgb:var(--dg-warning-rgb); }
+      .dg-aviso-n-nuevo { --n:var(--dg-accent-2); --n-rgb:var(--dg-accent-rgb); }
       .dg-aviso-card-urgente { --ac:var(--dg-danger); --ac-rgb:var(--dg-danger-rgb); }
       .dg-aviso-card-demora { --ac:var(--dg-warning); --ac-rgb:var(--dg-warning-rgb); }
       .dg-aviso-card-head { display:flex; align-items:center; gap:9px; }
@@ -15414,11 +15541,11 @@ function Style() {
       .dg-reclamo-compras li { padding:2px 0; font-size:13px; color:var(--dg-text); }
       .dg-reclamo-compras li span { color:var(--dg-text-dim); }
       .dg-montos-grupo { display:flex; flex-direction:column; gap:10px; }
-      .dg-montos-total { display:flex; flex-direction:column; align-items:center; text-align:center; gap:5px; padding:14px 16px; border-radius:11px;
+      .dg-montos-total { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; margin:16px 0 6px; padding:11px 13px; border-radius:11px;
         background:rgba(var(--dg-accent-rgb),.09); border:1px solid rgba(var(--dg-accent-rgb),.22); }
       .dg-montos-total > span { font-size:12px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-accent-2); }
-      .dg-montos-total > strong { font-family:'Jost',sans-serif; font-size:26px; font-weight:700; line-height:1.1; color:var(--dg-text); }
-      .dg-montos-total > small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-montos-total > strong { width:100%; text-align:center; font-family:'Jost',sans-serif; font-size:24px; font-weight:700; line-height:1.15; color:var(--dg-text); }
+      .dg-montos-total > small { width:100%; font-size:12px; color:var(--dg-text-dim); }
       .dg-monto-fila { display:grid; grid-template-columns:minmax(96px,1fr) repeat(3, minmax(84px,1fr)); gap:10px; align-items:end; }
       .dg-monto-espejo { display:flex; flex-direction:column; gap:1px; padding-bottom:9px; font-size:13px; font-weight:600; color:var(--dg-text); }
       .dg-monto-espejo small { font-size:11px; font-weight:500; color:var(--dg-text-dim); }
