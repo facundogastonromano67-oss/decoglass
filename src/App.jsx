@@ -8,7 +8,7 @@ import {
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
   Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare,
-  Mic, NotebookPen, CalendarClock, Undo2
+  Mic, NotebookPen, CalendarClock, Undo2, Scissors, Ruler
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -48,6 +48,7 @@ const SUBPAGE_ICONS = {
   recursos: FileText,
   tareas: CheckCircle2,
   numeros: BarChart3,
+  corte: Scissors,
   guia: ClipboardList,
   finanzas: Wallet,
   comisiones: CircleDollarSign,
@@ -667,6 +668,7 @@ const SECTOR_SUBPAGES = {
   ],
   fabrica: [
     { id: "pedidos", label: "Pedidos de fábrica" },
+    { id: "corte", label: "Optimizador de corte" },
     { id: "numeros", label: "Números", soloAdmin: true },
     { id: "materiales", label: "Stock de materiales" },
     { id: "stock", label: "Stock de espejos" },
@@ -4881,7 +4883,7 @@ function FranjaInterior() {
   );
 }
 
-function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
+function AvisosFlotantesFabrica({ paraHoy, sinHacer, urgentes, nuevos }) {
   const hoy = new Date().toISOString().slice(0, 10);
   // Si el navegador no deja guardar, igual se puede cerrar mientras dure la sesión.
   const [cerrado, setCerrado] = useState(false);
@@ -4889,13 +4891,12 @@ function AvisosFlotantesFabrica({ urgentes, nuevos, demoras }) {
   // Solo los números. Antes se listaba pedido por pedido y en tres carteles
   // seguidos: era tan largo que lo cerraban sin leer. El detalle está en las
   // listas, que es donde lo tienen que mirar igual.
+  // Lo primero es lo del día: es lo único que tienen que hacer hoy.
   const filas = [
-    { id: "urgentes", n: urgentes.length, clase: "dg-aviso-n-urgente", Icono: AlertTriangle,
-      label: urgentes.length === 1 ? "con prioridad" : "con prioridad" },
-    { id: "demoras", n: demoras.length, clase: "dg-aviso-n-demora", Icono: CalendarDays,
-      label: demoras.length === 1 ? "atrasándose" : "atrasándose" },
-    { id: "nuevos", n: nuevos.length, clase: "dg-aviso-n-nuevo", Icono: PackagePlus,
-      label: nuevos.length === 1 ? "nuevo de Ventas" : "nuevos de Ventas" },
+    { id: "hoy", n: paraHoy, clase: "dg-aviso-n-hoy", Icono: ClipboardList, label: "para hacer HOY" },
+    { id: "sinhacer", n: sinHacer, clase: "dg-aviso-n-sinhacer", Icono: CalendarDays, label: "sin hacer de días anteriores" },
+    { id: "urgentes", n: urgentes, clase: "dg-aviso-n-urgente", Icono: AlertTriangle, label: "con prioridad" },
+    { id: "nuevos", n: nuevos, clase: "dg-aviso-n-nuevo", Icono: PackagePlus, label: nuevos === 1 ? "nuevo de Ventas" : "nuevos de Ventas" },
   ].filter((f) => f.n > 0);
 
   // Cerrado = lo cerraron hoy. Un solo botón para los tres números, así no hay
@@ -5383,6 +5384,123 @@ function periodoAnterior(rango) {
   return { desde: isoLocal(ini), hasta: isoLocal(fin) };
 }
 
+/* ===========================================================================
+   OPTIMIZADOR DE CORTE
+   Acomoda los espejos del día (o de la semana) sobre hojas de espejo crudo,
+   buscando que sobre lo menos posible, y devuelve dónde va cada uno para
+   poder dibujarlo.
+   El método es "MaxRects": se va guardando la lista de rectángulos libres que
+   quedan en la hoja y cada pieza se mete en el hueco donde calza más justo.
+   Se prueban las dos orientaciones, porque el espejo plano no tiene veta.
+   =========================================================================== */
+// ¿El rectángulo b está entero adentro del a?
+function rectAdentro(a, b) {
+  return b.x >= a.x && b.y >= a.y && b.x + b.ancho <= a.x + a.ancho && b.y + b.alto <= a.y + a.alto;
+}
+// Al poner una pieza, los huecos que tocaba se parten en los pedazos que quedan.
+function partirLibres(hoja, p) {
+  const nuevas = [];
+  for (const r of hoja.libres) {
+    const seTocan = !(p.x >= r.x + r.ancho || p.x + p.ancho <= r.x || p.y >= r.y + r.alto || p.y + p.alto <= r.y);
+    if (!seTocan) { nuevas.push(r); continue; }
+    if (p.x > r.x) nuevas.push({ x: r.x, y: r.y, ancho: p.x - r.x, alto: r.alto });
+    if (p.x + p.ancho < r.x + r.ancho) nuevas.push({ x: p.x + p.ancho, y: r.y, ancho: r.x + r.ancho - (p.x + p.ancho), alto: r.alto });
+    if (p.y > r.y) nuevas.push({ x: r.x, y: r.y, ancho: r.ancho, alto: p.y - r.y });
+    if (p.y + p.alto < r.y + r.alto) nuevas.push({ x: r.x, y: p.y + p.alto, ancho: r.ancho, alto: r.y + r.alto - (p.y + p.alto) });
+  }
+  // Se tiran los huecos que ya están adentro de otro, para no repetir trabajo.
+  hoja.libres = nuevas.filter((a, i) => !nuevas.some((b, j) => j !== i && rectAdentro(b, a) && (!rectAdentro(a, b) || j < i)));
+}
+// Mete la pieza en el hueco que mejor calza, según el criterio que se le pase.
+function ubicarPieza(hoja, pieza, w, h, criterio = "corto", rotar = true) {
+  let mejor = null;
+  const mirar = (r, pw, ph, rotada) => {
+    if (pw > r.ancho || ph > r.alto) return;
+    const corto = Math.min(r.ancho - pw, r.alto - ph);
+    const largo = Math.max(r.ancho - pw, r.alto - ph);
+    const sobra = (r.ancho * r.alto) - (pw * ph);
+    const puntaje = criterio === "largo" ? [largo, corto] : criterio === "area" ? [sobra, corto] : [corto, largo];
+    if (!mejor || puntaje[0] < mejor.puntaje[0] || (puntaje[0] === mejor.puntaje[0] && puntaje[1] < mejor.puntaje[1])) {
+      mejor = { r, pw, ph, rotada, puntaje };
+    }
+  };
+  for (const r of hoja.libres) { mirar(r, w, h, false); if (rotar && w !== h) mirar(r, h, w, true); }
+  if (!mejor) return false;
+  const puesta = {
+    x: mejor.r.x, y: mejor.r.y, ancho: mejor.pw, alto: mejor.ph, rotada: mejor.rotada,
+    etiqueta: pieza.etiqueta, anchoReal: mejor.rotada ? pieza.alto : pieza.ancho, altoReal: mejor.rotada ? pieza.ancho : pieza.alto,
+  };
+  hoja.piezas.push(puesta);
+  partirLibres(hoja, puesta);
+  return true;
+}
+
+// Una pasada con una forma concreta de acomodar.
+function acomodarUnaVez(orden, W, H, sep, criterio, rotar) {
+  const hojas = [];
+  const sinUbicar = [];
+  for (const p of orden) {
+    const w = p.ancho + sep, h = p.alto + sep;
+    const entra = (w <= W && h <= H) || (rotar && h <= W && w <= H);
+    if (!entra) { sinUbicar.push(p); continue; }
+    let puesta = false;
+    for (const hoja of hojas) { if (ubicarPieza(hoja, p, w, h, criterio, rotar)) { puesta = true; break; } }
+    if (!puesta) {
+      const hoja = { libres: [{ x: 0, y: 0, ancho: W, alto: H }], piezas: [] };
+      hojas.push(hoja);
+      if (ubicarPieza(hoja, p, w, h, criterio, rotar)) puesta = true;
+      else { hojas.pop(); sinUbicar.push(p); }
+    }
+  }
+  const areaHoja = W * H;
+  hojas.forEach((hoja) => {
+    const usado = hoja.piezas.reduce((t, p) => t + p.anchoReal * p.altoReal, 0);
+    hoja.aprovechado = areaHoja > 0 ? Math.round((usado / areaHoja) * 1000) / 10 : 0;
+  });
+  const usadoTotal = hojas.reduce((t, h) => t + h.piezas.reduce((u, p) => u + p.anchoReal * p.altoReal, 0), 0);
+  return {
+    hojas, sinUbicar,
+    aprovechado: hojas.length ? Math.round((usadoTotal / (areaHoja * hojas.length)) * 1000) / 10 : null,
+  };
+}
+
+// piezas: [{ etiqueta, ancho, alto }], una por espejo físico.
+// separacion: el aire que se deja entre corte y corte.
+function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0) {
+  const W = Number(hojaAncho) || 0, H = Number(hojaAlto) || 0;
+  const sep = Math.max(0, Number(separacion) || 0);
+  if (W <= 0 || H <= 0) return { hojas: [], sinUbicar: [], aprovechado: null };
+
+  const limpias = (piezas || [])
+    .filter((p) => Number(p.ancho) > 0 && Number(p.alto) > 0)
+    .map((p) => ({ ...p, ancho: Number(p.ancho), alto: Number(p.alto) }));
+  if (!limpias.length) return { hojas: [], sinUbicar: [], aprovechado: null };
+
+  // Dos formas de ordenar (las más grandes primero, de una u otra manera) por
+  // tres criterios de encaje, con y sin girar las piezas.
+  const ordenes = [
+    limpias.slice().sort((a, b) => (b.ancho * b.alto) - (a.ancho * a.alto) || Math.max(b.ancho, b.alto) - Math.max(a.ancho, a.alto)),
+    limpias.slice().sort((a, b) => Math.max(b.ancho, b.alto) - Math.max(a.ancho, a.alto) || (b.ancho * b.alto) - (a.ancho * a.alto)),
+  ];
+  let mejor = null;
+  for (const orden of ordenes) {
+    for (const criterio of ["corto", "largo", "area"]) {
+      for (const rotar of [true, false]) {
+        const r = acomodarUnaVez(orden, W, H, sep, criterio, rotar);
+        // Gana el que ubica más piezas; después el que usa menos hojas; después
+        // el que deja menos recorte.
+        const puntaje = [-(r.hojas.reduce((t, h) => t + h.piezas.length, 0)), r.hojas.length, -(r.aprovechado || 0)];
+        if (!mejor || puntaje[0] < mejor.puntaje[0]
+          || (puntaje[0] === mejor.puntaje[0] && puntaje[1] < mejor.puntaje[1])
+          || (puntaje[0] === mejor.puntaje[0] && puntaje[1] === mejor.puntaje[1] && puntaje[2] < mejor.puntaje[2])) {
+          mejor = { r, puntaje };
+        }
+      }
+    }
+  }
+  return mejor.r;
+}
+
 function claseTaller(pedido) {
   return pedidoProcesoTaller(pedido) === "simples" ? "simple" : "especial";
 }
@@ -5417,6 +5535,20 @@ function quedaTrabajoTaller(pedido) {
   porEmbalarPorDia(pedido).forEach((n) => { armados += n; });
   return unidadesPendientesTaller(pedido) - armados > 0;
 }
+// Los números del aviso de la mañana. "Sin hacer" ya NO es la fecha de entrega
+// vencida: ahora es lo que estaba en la lista de un día anterior y no se hizo.
+// Con listas de 10 por día, si cumplen el día no tiene que haber nada acá.
+function numerosDelDiaTaller(pedidos, hoyIso) {
+  let paraHoy = 0, sinHacer = 0;
+  ["simples", "esm_cortar", "esm_armar"].forEach((lista) => {
+    const plan = planTaller(pedidos, hoyIso, lista);
+    const hoy = diaDeHoyDelPlan(plan);
+    if (hoy) paraHoy += hoy.items.reduce((t, x) => t + x.unidades, 0);
+    plan.filter((d) => d.pasado).forEach((d) => { sinHacer += d.sinHacerU || 0; });
+  });
+  return { paraHoy, sinHacer };
+}
+
 // Los espejos de este pedido que están armados esperando el embalado,
 // contados por el día en que se armaron.
 function porEmbalarPorDia(pedido) {
@@ -9993,6 +10125,200 @@ function CajaNumero({ titulo, valor, unidad, pie, antes, mejorSiBaja }) {
 
 // Los números de fábrica. Esta pantalla SOLO MIRA: no guarda ni cambia nada.
 // Todo sale de fechas que la app ya venía anotando en cada paso.
+/* ===========================================================================
+   OPTIMIZADOR DE CORTE — la pantalla
+   Les pide la medida de la hoja cruda y les dibuja dónde va cada espejo.
+   =========================================================================== */
+const HOJA_POR_DEFECTO = { ancho: 250, alto: 180, sep: 0 };
+function leerHojaCruda() {
+  try {
+    const g = JSON.parse(localStorage.getItem("dg_hoja_corte") || "null");
+    if (g && Number(g.ancho) > 0 && Number(g.alto) > 0) {
+      return { ancho: Number(g.ancho), alto: Number(g.alto), sep: Math.max(0, Number(g.sep) || 0) };
+    }
+  } catch (e) {}
+  return HOJA_POR_DEFECTO;
+}
+
+// Los espejos que hay que CORTAR: los de la lista del día (o de la semana) a
+// los que todavía les falta pasar por la mesa de corte. Lo que ya está cortado
+// y armado esperando el embalado no va: esa hoja ya se usó.
+// La lista «Espejos para armar» (esm_armar) tampoco: vienen ya cortados.
+function piezasParaCortar(pedidos, hoyIso, alcance = "dia") {
+  const piezas = [];
+  const sinMedida = [];
+  const hastaSabado = sabadoDeLaSemana(primerDiaTaller(hoyIso));
+  ["simples", "esm_cortar"].forEach((lista) => {
+    const plan = planTaller(pedidos, hoyIso, lista);
+    const dias = alcance === "semana"
+      ? plan.filter((d) => !d.pasado && d.fecha <= hastaSabado)
+      : [diaDeHoyDelPlan(plan)].filter(Boolean);
+    dias.forEach((d) => (d.items || []).forEach((it) => {
+      const p = it.pedido;
+      const ancho = Number(p?.ancho) || 0, alto = Number(p?.alto) || 0;
+      const n = Math.max(0, Number(it.unidades) || 0);
+      if (n <= 0) return;
+      if (ancho <= 0 || alto <= 0) { sinMedida.push(p); return; }
+      for (let i = 0; i < n; i++) {
+        piezas.push({ etiqueta: "#" + (p.orden || "?"), ancho, alto, dia: d.fecha, cliente: p.cliente || "" });
+      }
+    }));
+  });
+  return { piezas, sinMedida: [...new Map(sinMedida.map((p) => [p.id, p])).values()] };
+}
+
+// Una medida de 3 metros no existe: está cargada en milímetros. Pasa en los
+// pedidos viejos (500×850 en vez de 50×85) y conviene decirlo, no mandarlos a
+// comprar una hoja más grande.
+function pareceMilimetros(p) {
+  return Number(p?.ancho) >= 300 || Number(p?.alto) >= 300;
+}
+
+// «4 de 60×80, 2 de 70×90…», para poder cantar la lista en voz alta.
+function resumenDeMedidas(piezas) {
+  const m = new Map();
+  piezas.forEach((p) => {
+    const k = p.ancho + "×" + p.alto;
+    m.set(k, (m.get(k) || 0) + 1);
+  });
+  return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([medida, n]) => ({ medida, n }));
+}
+
+function HojaDibujo({ hoja, W, H, numero }) {
+  const clase = hoja.aprovechado >= 85 ? "dg-hoja-ok" : hoja.aprovechado >= 70 ? "dg-hoja-medio" : "dg-hoja-mal";
+  return (
+    <div className="dg-hoja">
+      <div className="dg-hoja-top">
+        <strong>Hoja {numero}</strong>
+        <span>{hoja.piezas.length} espejo{hoja.piezas.length === 1 ? "" : "s"}</span>
+        <span className={"dg-hoja-pct " + clase}>{hoja.aprovechado}% usado</span>
+      </div>
+      <svg className="dg-hoja-svg" viewBox={"-3 -3 " + (W + 6) + " " + (H + 6)} role="img" aria-label={"Hoja " + numero}>
+        <rect x="0" y="0" width={W} height={H} className="dg-hoja-fondo" />
+        {hoja.piezas.map((p, i) => {
+          const chico = Math.min(p.anchoReal, p.altoReal) < 24;
+          const cx = p.x + p.anchoReal / 2, cy = p.y + p.altoReal / 2;
+          return (
+            <g key={i}>
+              <rect x={p.x} y={p.y} width={p.anchoReal} height={p.altoReal} className="dg-hoja-pieza" />
+              {chico ? (
+                <text x={cx} y={cy + 2.5} className="dg-hoja-ref">{p.etiqueta}</text>
+              ) : (
+                <Fragment>
+                  <text x={cx} y={cy - 1.5} className="dg-hoja-ref">{p.etiqueta}</text>
+                  <text x={cx} y={cy + 8} className="dg-hoja-med">{p.anchoReal}×{p.altoReal}{p.rotada ? " ↻" : ""}</text>
+                </Fragment>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function OptimizadorCortePanel({ pedidos }) {
+  const hoy = isoLocal(new Date());
+  // La medida de la hoja se lee una sola vez, al abrir la pantalla.
+  const [guardada] = useState(leerHojaCruda);
+  const [ancho, setAncho] = useState(String(guardada.ancho));
+  const [alto, setAlto] = useState(String(guardada.alto));
+  const [sep, setSep] = useState(String(guardada.sep));
+  const [alcance, setAlcance] = useState("dia");
+
+  // La medida de la hoja la cargan una vez y queda.
+  useEffect(() => {
+    const W = Number(ancho) || 0, H = Number(alto) || 0;
+    if (W <= 0 || H <= 0) return;
+    try { localStorage.setItem("dg_hoja_corte", JSON.stringify({ ancho: W, alto: H, sep: Math.max(0, Number(sep) || 0) })); } catch (e) {}
+  }, [ancho, alto, sep]);
+
+  const W = Number(ancho) || 0, H = Number(alto) || 0;
+  const { piezas, sinMedida } = piezasParaCortar(pedidos, hoy, alcance);
+  const r = optimizarCortes(piezas, W, H, Math.max(0, Number(sep) || 0));
+  const medidas = resumenDeMedidas(piezas);
+  const ubicadas = r.hojas.reduce((t, h) => t + h.piezas.length, 0);
+  const sobra = r.aprovechado === null ? null : Math.round((100 - r.aprovechado) * 10) / 10;
+
+  return (
+    <div className="dg-page">
+      <div className="dg-corte-barra">
+        <div className="dg-corte-hoja">
+          <label><Ruler size={13} /> Hoja cruda</label>
+          <div className="dg-corte-medidas">
+            <input type="number" inputMode="numeric" value={ancho} onChange={(e) => setAncho(e.target.value)} placeholder="250" aria-label="Ancho de la hoja en cm" />
+            <span>×</span>
+            <input type="number" inputMode="numeric" value={alto} onChange={(e) => setAlto(e.target.value)} placeholder="180" aria-label="Alto de la hoja en cm" />
+            <small>cm</small>
+          </div>
+        </div>
+        <div className="dg-corte-hoja">
+          <label>Separación entre cortes</label>
+          <div className="dg-corte-medidas">
+            <input type="number" inputMode="numeric" value={sep} onChange={(e) => setSep(e.target.value)} placeholder="0" aria-label="Separación entre cortes en cm" />
+            <small>cm</small>
+          </div>
+        </div>
+        <div className="dg-corte-que">
+          <button type="button" className={alcance === "dia" ? "dg-btn-primary" : "dg-btn-ghost"} onClick={() => setAlcance("dia")}>
+            <ClipboardList size={14} /> Cortes de hoy
+          </button>
+          <button type="button" className={alcance === "semana" ? "dg-btn-primary" : "dg-btn-ghost"} onClick={() => setAlcance("semana")}>
+            <CalendarDays size={14} /> Cortes de la semana
+          </button>
+        </div>
+        <button className="dg-btn-ghost dg-corte-print" onClick={() => window.print()}><Printer size={14} /> Imprimir</button>
+      </div>
+
+      {W <= 0 || H <= 0 ? (
+        <div className="dg-empty">Poné la medida de la hoja de espejo crudo para que calcule los cortes.</div>
+      ) : !piezas.length ? (
+        <div className="dg-empty">
+          No hay espejos para cortar {alcance === "dia" ? "en la lista de hoy" : "en lo que queda de la semana"}.
+        </div>
+      ) : (
+        <>
+          <div className="dg-corte-resumen">
+            <div className="dg-corte-dato"><strong>{ubicadas}</strong><span>espejos a cortar</span></div>
+            <div className="dg-corte-dato"><strong>{r.hojas.length}</strong><span>hoja{r.hojas.length === 1 ? "" : "s"} de {W}×{H}</span></div>
+            <div className="dg-corte-dato"><strong>{r.aprovechado}%</strong><span>de la hoja se usa</span></div>
+            <div className="dg-corte-dato dg-corte-dato-sobra"><strong>{sobra}%</strong><span>se tira</span></div>
+          </div>
+
+          <div className="dg-corte-lista">
+            <Scissors size={13} />
+            {medidas.map((m) => <span key={m.medida}><b>{m.n}</b> de {m.medida}</span>)}
+          </div>
+
+          {r.sinUbicar.length > 0 && (
+            <div className="dg-corte-aviso">
+              <AlertTriangle size={14} />
+              <div>
+                <strong>{r.sinUbicar.length} no entra{r.sinUbicar.length === 1 ? "" : "n"} en una hoja de {W}×{H}:</strong>{" "}
+                {[...new Set(r.sinUbicar.map((p) => p.etiqueta + " (" + p.ancho + "×" + p.alto + ")"))].join(", ")}.{" "}
+                {r.sinUbicar.some(pareceMilimetros)
+                  ? "Esas medidas parecen cargadas en milímetros: revisá el pedido antes de cortar."
+                  : "Hay que cortarlos de una hoja más grande."}
+              </div>
+            </div>
+          )}
+
+          {sinMedida.length > 0 && (
+            <div className="dg-corte-aviso">
+              <AlertTriangle size={14} />
+              <div><strong>Sin medida cargada:</strong> {sinMedida.map((p) => "#" + (p.orden || "?")).join(", ")}. Esos no se pueden calcular.</div>
+            </div>
+          )}
+
+          <div className="dg-hojas">
+            {r.hojas.map((hoja, i) => <HojaDibujo key={i} hoja={hoja} W={W} H={H} numero={i + 1} />)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function NumerosFabricaPanel({ pedidos }) {
   const hoy = isoLocal(new Date());
   const [periodo, setPeriodo] = useState("90");
@@ -10190,6 +10516,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           : enFabrica;
   baseVisibles = baseVisibles
     .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
+  // Los números del aviso de la mañana, calculados una vez.
+  const numerosDelDia = numerosDelDiaTaller(pedidos, hoyTaller);
   const listaCounts = TALLER_PESTANAS.reduce((acc, item) => {
     acc[item.id] = totalUnidades(baseVisibles.filter((p) => pestanaTaller(p) === item.id));
     return acc;
@@ -10716,9 +11044,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   return (
     <div className="dg-page">
       <AvisosFlotantesFabrica
-        urgentes={activos.filter(esUrgente)}
-        nuevos={activos.filter(esperaAcuseFabrica)}
-        demoras={[...new Map(activos.filter((p) => estaDemoradoAuto(p) || trabajoAfueraVencido(p)).map((p) => [p.id, p])).values()]}
+        paraHoy={numerosDelDia.paraHoy}
+        sinHacer={numerosDelDia.sinHacer}
+        urgentes={totalUnidades(activos.filter(esUrgente))}
+        nuevos={totalUnidades(activos.filter(esperaAcuseFabrica))}
       />
       {filtroEstado !== "historial" && (() => {
         const sem = produccionSemanalTaller(pedidos, hoyTaller, 1)[0];
@@ -14577,6 +14906,10 @@ function SectorPage({
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "corte" && sector.id === "fabrica" && (
+        canSeePedidos ? <OptimizadorCortePanel pedidos={pedidos} /> : <LockedPage label="Optimizador de corte" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "numeros" && sector.id === "fabrica" && isAdmin && <NumerosFabricaPanel pedidos={pedidos} />}
 
       {subpage === "materiales" && sector.id === "fabrica" && (
@@ -15415,9 +15748,6 @@ function Style() {
       .dg-fab-reloj-critico { color:var(--dg-danger); }
       .dg-avisos-flot-overlay { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,0.5); }
       /* Una tarjeta por motivo. Las que faltan leer asoman atrás, como un mazo. */
-      .dg-aviso-mazo { position:relative; width:100%; max-width:440px; }
-      .dg-aviso-mazo-mas::before, .dg-aviso-mazo-mas2::after { content:""; position:absolute; left:14px; right:14px; bottom:-8px; height:24px; border-radius:0 0 16px 16px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),0.14); border-top:none; opacity:.8; }
-      .dg-aviso-mazo-mas2::after { left:28px; right:28px; bottom:-15px; opacity:.5; }
       .dg-aviso-card { --ac:var(--dg-accent); --ac-rgb:var(--dg-accent-rgb); position:relative; z-index:1; max-height:82vh; overflow-y:auto; background:var(--dg-surface); border:1px solid rgba(var(--ac-rgb),.55); border-top:4px solid var(--ac); border-radius:16px; padding:16px 18px 18px; box-shadow:0 24px 60px -12px rgba(0,0,0,0.6); animation:dg-aviso-entra .22s ease-out; }
       .dg-guia { list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; gap:12px; }
       .dg-guia-paso { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border-radius:14px;
@@ -15441,23 +15771,14 @@ function Style() {
       .dg-aviso-numeros li > svg { color:var(--n); flex:0 0 auto; }
       .dg-aviso-numeros strong { font-family:'Jost',sans-serif; font-size:30px; font-weight:700; line-height:1; color:var(--n); min-width:42px; text-align:right; font-variant-numeric:tabular-nums; }
       .dg-aviso-numeros span { font-size:14px; font-weight:600; }
-      .dg-aviso-n-urgente { --n:var(--dg-danger); --n-rgb:var(--dg-danger-rgb); }
-      .dg-aviso-n-demora { --n:var(--dg-warning-2); --n-rgb:var(--dg-warning-rgb); }
-      .dg-aviso-n-nuevo { --n:var(--dg-accent-2); --n-rgb:var(--dg-accent-rgb); }
-      .dg-aviso-card-urgente { --ac:var(--dg-danger); --ac-rgb:var(--dg-danger-rgb); }
-      .dg-aviso-card-demora { --ac:var(--dg-warning); --ac-rgb:var(--dg-warning-rgb); }
+      .dg-aviso-n-hoy { --n:var(--dg-accent-2); --n-rgb:var(--dg-accent-rgb); }
+      .dg-aviso-n-sinhacer { --n:var(--dg-danger); --n-rgb:var(--dg-danger-rgb); }
+      .dg-aviso-n-urgente { --n:var(--dg-warning-2); --n-rgb:var(--dg-warning-rgb); }
+      .dg-aviso-n-nuevo { --n:var(--dg-interior); --n-rgb:var(--dg-interior-rgb); }
       .dg-aviso-card-head { display:flex; align-items:center; gap:9px; }
       .dg-aviso-card-icono { display:grid; place-items:center; width:30px; height:30px; flex:none; border-radius:50%; background:rgba(var(--ac-rgb),.14); color:var(--ac); }
       .dg-aviso-card-head strong { flex:1; font-family:'Jost', sans-serif; font-size:16px; line-height:1.25; color:var(--dg-text); }
-      .dg-aviso-card-cont { flex:none; font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dg-text-dim); }
       .dg-aviso-card-bajada { margin:6px 0 12px 39px; font-size:13px; color:var(--dg-text-dim); }
-      .dg-aviso-card-lista { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:8px; }
-      .dg-aviso-card-lista li { display:flex; flex-direction:column; gap:2px; padding:8px 10px; border-radius:9px; background:rgba(var(--dg-line-rgb),0.04); border-left:3px solid var(--ac); }
-      .dg-aviso-card-cliente { font-size:14px; color:var(--dg-text); }
-      .dg-aviso-card-que { font-size:12px; line-height:1.35; color:var(--dg-text-dim); }
-      .dg-aviso-card-extra { font-size:11px; font-weight:600; color:var(--ac); }
-      .dg-aviso-card-interior { display:inline-flex; align-self:flex-start; align-items:center; gap:4px; margin-top:3px; padding:1px 7px; border-radius:6px; background:var(--dg-interior); color:var(--dg-on-interior); font-size:11px; font-weight:700; }
-      .dg-aviso-card-mas { margin:8px 0 0; font-size:12px; color:var(--dg-text-dim); text-align:center; }
       .dg-avisos-flot-ok { width:100%; justify-content:center; margin-top:15px; }
       @keyframes dg-aviso-entra { from { opacity:0; transform:translateY(10px) scale(.98); } to { opacity:1; transform:none; } }
       @media (prefers-reduced-motion: reduce) { .dg-aviso-card { animation:none; } }
@@ -15585,6 +15906,39 @@ function Style() {
       .dg-num-dias { text-align:right; font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap; padding-left:12px !important; }
       td.dg-num-n { text-align:right; font-variant-numeric:tabular-nums; color:var(--dg-text-dim); font-size:12px; white-space:nowrap; padding-left:10px !important; }
       @media (max-width:640px) { .dg-num-barra { display:none; } .dg-num-etapa { white-space:normal; } }
+      /* --- Optimizador de corte --- */
+      .dg-corte-barra { display:flex; align-items:flex-end; gap:16px; flex-wrap:wrap; padding:12px 14px; margin-bottom:14px; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-corte-hoja { display:flex; flex-direction:column; gap:5px; }
+      .dg-corte-hoja label { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-corte-medidas { display:flex; align-items:center; gap:6px; }
+      .dg-corte-medidas input { width:76px; background:var(--dg-surface); border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:9px; padding:8px 9px; color:var(--dg-text); font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; text-align:center; }
+      .dg-corte-medidas span { color:var(--dg-text-dim); font-size:14px; }
+      .dg-corte-medidas small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-corte-que { display:flex; gap:8px; flex-wrap:wrap; }
+      .dg-corte-print { margin-left:auto; }
+      .dg-corte-resumen { display:grid; grid-template-columns:repeat(auto-fit, minmax(135px, 1fr)); gap:12px; margin-bottom:12px; }
+      .dg-corte-dato { display:flex; flex-direction:column; gap:2px; padding:13px 14px; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-corte-dato strong { font-family:'Jost',sans-serif; font-size:28px; font-weight:700; line-height:1.05; color:var(--dg-text); font-variant-numeric:tabular-nums; }
+      .dg-corte-dato span { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-corte-dato-sobra strong { color:var(--dg-warning-2); }
+      .dg-corte-lista { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:9px 12px; margin-bottom:12px; border-radius:11px; background:rgba(var(--dg-accent-rgb),.08); color:var(--dg-text); font-size:13px; }
+      .dg-corte-lista b { font-variant-numeric:tabular-nums; }
+      .dg-corte-aviso { display:flex; align-items:flex-start; gap:9px; padding:10px 12px; margin-bottom:12px; border-radius:11px; background:rgba(var(--dg-warning-rgb),.12); border:1px solid rgba(var(--dg-warning-rgb),.3); color:var(--dg-text); font-size:13px; line-height:1.45; }
+      .dg-corte-aviso svg { flex:none; margin-top:2px; color:var(--dg-warning-2); }
+      .dg-hojas { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:14px; }
+      .dg-hoja { padding:12px; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-hoja-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:9px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-hoja-top strong { font-size:14px; font-weight:700; color:var(--dg-text); }
+      .dg-hoja-pct { margin-left:auto; font-size:11px; font-weight:800; letter-spacing:.3px; font-variant-numeric:tabular-nums; }
+      .dg-hoja-ok { color:var(--dg-success); }
+      .dg-hoja-medio { color:var(--dg-warning-2); }
+      .dg-hoja-mal { color:var(--dg-danger); }
+      .dg-hoja-svg { display:block; width:100%; height:auto; }
+      .dg-hoja-fondo { fill:rgba(var(--dg-line-rgb),.08); stroke:rgba(var(--dg-line-rgb),.4); stroke-width:1.2; }
+      .dg-hoja-pieza { fill:rgba(var(--dg-accent-rgb),.22); stroke:var(--dg-accent-2); stroke-width:1; }
+      .dg-hoja-ref { fill:var(--dg-text); font-size:9px; font-weight:800; text-anchor:middle; font-family:'Jost',sans-serif; }
+      .dg-hoja-med { fill:var(--dg-text); opacity:.78; font-size:7.5px; font-weight:600; text-anchor:middle; font-variant-numeric:tabular-nums; }
+      @media (max-width:640px) { .dg-corte-barra { gap:12px; } .dg-corte-print { display:none; } .dg-corte-que button { flex:1; justify-content:center; } }
       .dg-sumar-extra { margin-bottom:10px; }
       .dg-sumar-extra select { width:100%; background:var(--dg-surface); border:1px dashed rgba(var(--dg-interior-rgb),.5); border-radius:9px; padding:9px 10px; color:var(--dg-interior); font-size:13px; font-weight:600; cursor:pointer; }
       .dg-dia-taller-vencido { border-color:rgba(var(--dg-danger-rgb),.45); }
