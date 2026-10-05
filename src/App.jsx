@@ -1,4 +1,4 @@
-import { Component, Fragment, useState, useEffect, useRef } from "react";
+import { Component, Fragment, useState, useEffect, useRef, useMemo } from "react";
 import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore, urlFirmada } from "./lib/storage";
 import { supabase } from "./lib/supabaseClient";
 import {
@@ -1329,21 +1329,21 @@ function App() {
   // ¿Se publicó una versión nueva mientras tenían la app abierta?
   const [hayVersionNueva, setHayVersionNueva] = useState(false);
   useEffect(() => {
-    const miVersion = versionEnUso();
-    if (!miVersion) return undefined;   // en desarrollo no corre
+    if (!VERSION_COMPILADA && !versionEnUso()) return undefined;   // en desarrollo no corre
     let vivo = true, avisado = false, ultimaMirada = 0;
     async function mirar() {
       if (!vivo || avisado) return;
       if (document.visibilityState !== "visible") return;
       if (Date.now() - ultimaMirada < 60000) return;   // como mucho una por minuto
       ultimaMirada = Date.now();
-      const publicada = await versionPublicada();
-      if (!vivo || !publicada || publicada === miVersion) return;
+      const hay = await hayVersionNuevaPublicada();
+      if (!vivo || !hay) return;
       avisado = true;
       setHayVersionNueva(true);
     }
-    const primera = window.setTimeout(mirar, 25000);
-    const cada = window.setInterval(mirar, 5 * 60 * 1000);
+    // Cada 2 minutos y no cada 5: ahora la pregunta pesa 60 bytes.
+    const primera = window.setTimeout(mirar, 20000);
+    const cada = window.setInterval(mirar, 2 * 60 * 1000);
     document.addEventListener("visibilitychange", mirar);
     return () => {
       vivo = false;
@@ -5429,22 +5429,74 @@ function ubicarPieza(hoja, pieza, w, h, criterio = "corto", rotar = true) {
   const puesta = {
     x: mejor.r.x, y: mejor.r.y, ancho: mejor.pw, alto: mejor.ph, rotada: mejor.rotada,
     etiqueta: pieza.etiqueta, anchoReal: mejor.rotada ? pieza.alto : pieza.ancho, altoReal: mejor.rotada ? pieza.ancho : pieza.alto,
+    // Se arrastran para la lista de abajo, la de anotar el nombre atrás.
+    cliente: pieza.cliente || "", dia: pieza.dia || "",
+    fantasma: !!pieza.fantasma,
   };
   hoja.piezas.push(puesta);
   partirLibres(hoja, puesta);
   return true;
 }
 
+// Las medidas que de verdad se repiten en los pedidos. No es una lista fija:
+// sale del historial, así que si el mes que viene se empieza a vender otra
+// medida, el optimizador la aprende solo.
+function medidasQueSeRepiten(pedidos, tope = 8, minimo = 2) {
+  const cuenta = new Map();
+  (pedidos || []).forEach((p) => {
+    const a = Number(p?.ancho) || 0, b = Number(p?.alto) || 0;
+    // Las cargadas en milímetros (500x850) no son una medida, son un error.
+    if (a <= 0 || b <= 0 || a >= 300 || b >= 300) return;
+    const ancho = Math.min(a, b), alto = Math.max(a, b);
+    const k = ancho + "x" + alto;
+    const n = Math.max(1, Number(p?.cant) || 1);
+    const y = cuenta.get(k);
+    if (y) y.veces += n;
+    else cuenta.set(k, { ancho, alto, veces: n });
+  });
+  return [...cuenta.values()]
+    .filter((m) => m.veces >= minimo)
+    .sort((a, b) => b.veces - a.veces || (b.ancho * b.alto) - (a.ancho * a.alto))
+    .slice(0, tope);
+}
+
+// De lo que sobra en la hoja, ¿qué espejos estándar se podrían sacar todavía?
+// No es lo mismo que sobre un pedazo de 120x90 (de ahí sale un espejo entero)
+// que que sobren cuatro tiras de 8 cm, que van a la basura. Esto es lo que
+// separa el "recorte" del "desperdicio".
+function recortesUtiles(libres, medidas, sep = 0) {
+  const falso = { libres: (libres || []).map((r) => ({ ...r })), piezas: [] };
+  if (!medidas || !medidas.length) return { piezas: [], area: 0 };
+  let area = 0;
+  let entroAlguna = true;
+  // Tope de vueltas por si acaso: nunca deberían hacer falta tantas.
+  for (let vuelta = 0; vuelta < 200 && entroAlguna; vuelta++) {
+    entroAlguna = false;
+    for (const m of medidas) {
+      const pieza = { etiqueta: m.ancho + "×" + m.alto, ancho: m.ancho, alto: m.alto };
+      if (ubicarPieza(falso, pieza, m.ancho + sep, m.alto + sep, "corto", true)) {
+        area += m.ancho * m.alto;
+        entroAlguna = true;
+      }
+    }
+  }
+  return { piezas: falso.piezas, area };
+}
+
 // Una pasada con una forma concreta de acomodar.
-function acomodarUnaVez(orden, W, H, sep, criterio, rotar) {
+function acomodarUnaVez(orden, W, H, sep, criterio, rotar, medidas, fantasmaAbreHoja) {
   const hojas = [];
   const sinUbicar = [];
   for (const p of orden) {
     const w = p.ancho + sep, h = p.alto + sep;
     const entra = (w <= W && h <= H) || (rotar && h <= W && w <= H);
-    if (!entra) { sinUbicar.push(p); continue; }
+    if (!entra) { if (!p.fantasma) sinUbicar.push(p); continue; }
     let puesta = false;
     for (const hoja of hojas) { if (ubicarPieza(hoja, p, w, h, criterio, rotar)) { puesta = true; break; } }
+    // Un fantasma no abre hoja: es un pedido de lugar, no un pedido de verdad.
+    // Si no entra en lo que ya hay abierto, se lo saltea y listo. Salvo cuando
+    // se está calculando a propósito qué pasaría gastando una hoja más.
+    if (!puesta && p.fantasma && !fantasmaAbreHoja) continue;
     if (!puesta) {
       const hoja = { libres: [{ x: 0, y: 0, ancho: W, alto: H }], piezas: [] };
       hojas.push(hoja);
@@ -5453,20 +5505,37 @@ function acomodarUnaVez(orden, W, H, sep, criterio, rotar) {
     }
   }
   const areaHoja = W * H;
+  let usadoTotal = 0, recorteTotal = 0;
   hojas.forEach((hoja) => {
+    // El fantasma no es un espejo del pedido: es recorte, pero cortado a una
+    // medida que sirve. Se saca de la lista de cortes y se suma al recorte.
+    const reservados = hoja.piezas.filter((p) => p.fantasma);
+    hoja.piezas = hoja.piezas.filter((p) => !p.fantasma);
     const usado = hoja.piezas.reduce((t, p) => t + p.anchoReal * p.altoReal, 0);
+    const r = recortesUtiles(hoja.libres, medidas, sep);
+    const areaReservada = reservados.reduce((t, p) => t + p.anchoReal * p.altoReal, 0);
     hoja.aprovechado = areaHoja > 0 ? Math.round((usado / areaHoja) * 1000) / 10 : 0;
+    hoja.recortes = [...reservados, ...r.piezas];
+    hoja.recorteUtil = areaHoja > 0 ? Math.round(((r.area + areaReservada) / areaHoja) * 1000) / 10 : 0;
+    hoja.tirado = Math.round((100 - hoja.aprovechado - hoja.recorteUtil) * 10) / 10;
+    usadoTotal += usado;
+    recorteTotal += r.area + areaReservada;
   });
-  const usadoTotal = hojas.reduce((t, h) => t + h.piezas.reduce((u, p) => u + p.anchoReal * p.altoReal, 0), 0);
+  const total = areaHoja * hojas.length;
+  const pct = (v) => (total > 0 ? Math.round((v / total) * 1000) / 10 : 0);
   return {
     hojas, sinUbicar,
-    aprovechado: hojas.length ? Math.round((usadoTotal / (areaHoja * hojas.length)) * 1000) / 10 : null,
+    aprovechado: hojas.length ? pct(usadoTotal) : null,
+    // Lo que sobra pero sirve: de ahí salen espejos de las medidas que más se
+    // venden, así que no es desperdicio, es stock.
+    recorteUtil: hojas.length ? pct(recorteTotal) : null,
+    tirado: hojas.length ? Math.round((100 - pct(usadoTotal) - pct(recorteTotal)) * 10) / 10 : null,
   };
 }
 
 // piezas: [{ etiqueta, ancho, alto }], una por espejo físico.
 // separacion: el aire que se deja entre corte y corte.
-function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0) {
+function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0, medidasUtiles = []) {
   const W = Number(hojaAncho) || 0, H = Number(hojaAlto) || 0;
   const sep = Math.max(0, Number(separacion) || 0);
   if (W <= 0 || H <= 0) return { hojas: [], sinUbicar: [], aprovechado: null };
@@ -5476,25 +5545,52 @@ function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0) {
     .map((p) => ({ ...p, ancho: Number(p.ancho), alto: Number(p.alto) }));
   if (!limpias.length) return { hojas: [], sinUbicar: [], aprovechado: null };
 
-  // Dos formas de ordenar (las más grandes primero, de una u otra manera) por
-  // tres criterios de encaje, con y sin girar las piezas.
-  const ordenes = [
-    limpias.slice().sort((a, b) => (b.ancho * b.alto) - (a.ancho * a.alto) || Math.max(b.ancho, b.alto) - Math.max(a.ancho, a.alto)),
-    limpias.slice().sort((a, b) => Math.max(b.ancho, b.alto) - Math.max(a.ancho, a.alto) || (b.ancho * b.alto) - (a.ancho * a.alto)),
+  // Cuántos recortes a medida se le pide que reserve. El 0 es "apretá todo lo
+  // que puedas"; los otros son "además de los espejos del pedido, dejame un
+  // pedazo sano de la medida que más se vende". El fantasma se acomoda junto
+  // con los espejos de verdad, no después: si entrara al final, el vidrio ya
+  // quedó partido en tiras y reservar no sirve de nada.
+  // Si por meter un fantasma hiciera falta una hoja más, esa variante pierde,
+  // porque la cantidad de hojas pesa más en el puntaje.
+  const masVendida = medidasUtiles[0] || null;
+  const masGrande = medidasUtiles.length
+    ? medidasUtiles.slice().sort((a, b) => (b.ancho * b.alto) - (a.ancho * a.alto))[0]
+    : null;
+  const unFantasma = (m) => ({ ancho: m.ancho, alto: m.alto, etiqueta: m.ancho + "×" + m.alto, fantasma: true });
+  const pedidosDeLugar = !masVendida ? [[]] : [
+    [],
+    [unFantasma(masVendida)],
+    [unFantasma(masVendida), unFantasma(masVendida)],
+    [unFantasma(masVendida), unFantasma(masVendida), unFantasma(masVendida)],
+    [unFantasma(masGrande)],
+    [unFantasma(masGrande), unFantasma(masVendida)],
   ];
+
+  // Las más grandes primero, de dos maneras. Entre dos iguales va primero el
+  // espejo del pedido: el fantasma es el que cede.
+  const porArea = (a, b) => (b.ancho * b.alto) - (a.ancho * a.alto) || Math.max(b.ancho, b.alto) - Math.max(a.ancho, a.alto) || (a.fantasma ? 1 : 0) - (b.fantasma ? 1 : 0);
+  const porLado = (a, b) => Math.max(b.ancho, b.alto) - Math.max(a.ancho, a.alto) || (b.ancho * b.alto) - (a.ancho * a.alto) || (a.fantasma ? 1 : 0) - (b.fantasma ? 1 : 0);
+
   let mejor = null;
-  for (const orden of ordenes) {
-    for (const criterio of ["corto", "largo", "area"]) {
-      for (const rotar of [true, false]) {
-        const r = acomodarUnaVez(orden, W, H, sep, criterio, rotar);
-        // Gana el que ubica más piezas; después el que usa menos hojas; después
-        // el que deja menos recorte.
-        const puntaje = [-(r.hojas.reduce((t, h) => t + h.piezas.length, 0)), r.hojas.length, -(r.aprovechado || 0)];
+  for (const fantasmas of pedidosDeLugar) {
+    const conFantasmas = [...limpias, ...fantasmas];
+    const ordenes = [conFantasmas.slice().sort(porArea), conFantasmas.slice().sort(porLado)];
+    for (const orden of ordenes) {
+      for (const criterio of ["corto", "largo", "area"]) {
+       for (const rotar of [true, false]) {
+        const r = acomodarUnaVez(orden, W, H, sep, criterio, rotar, medidasUtiles);
+        // Gana el que ubica más espejos; después el que usa menos hojas; y
+        // después el que TIRA menos. Ojo: "tirar" no es lo mismo que "sobrar".
+        // Si lo que sobra alcanza para un 60x90, eso no se tira: se guarda y
+        // sale el espejo de la semana que viene. Por eso se ordena por
+        // r.tirado y no por el aprovechado a secas.
+        const puntaje = [-(r.hojas.reduce((t, h) => t + h.piezas.length, 0)), r.hojas.length, r.tirado === null ? 0 : r.tirado];
         if (!mejor || puntaje[0] < mejor.puntaje[0]
           || (puntaje[0] === mejor.puntaje[0] && puntaje[1] < mejor.puntaje[1])
           || (puntaje[0] === mejor.puntaje[0] && puntaje[1] === mejor.puntaje[1] && puntaje[2] < mejor.puntaje[2])) {
           mejor = { r, puntaje };
         }
+       }
       }
     }
   }
@@ -6081,6 +6177,44 @@ async function versionPublicada() {
     const m = html.match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
     return m ? m[0] : "";
   } catch (e) { return ""; }
+}
+
+// El commit con el que se compiló esto. Lo mete vite.config.js desde la
+// variable que pone Vercel en el build. Fuera de Vercel queda vacío.
+const VERSION_COMPILADA = typeof __DG_VERSION__ === "string" ? __DG_VERSION__ : "";
+
+// La versión publicada, preguntándosela a /api/version. Es una función de
+// Vercel, así que sale con `Cache-Control: no-store`: nunca viene de un cache,
+// ni del navegador ni del borde. Pesa ~60 bytes contra los 7 KB del index.html.
+async function versionDelApi() {
+  try {
+    const r = await fetch("/api/version", { cache: "no-store" });
+    if (!r.ok) return "";
+    const d = await r.json();
+    return d && typeof d.version === "string" ? d.version : "";
+  } catch (e) { return ""; }
+}
+
+// Elige UNA sola vez cómo mirar la versión y después no cambia más. Si se
+// mezclaran los dos métodos se compararía un commit contra un nombre de
+// archivo: siempre distintos, cartel para siempre.
+let modoVersion = null;   // null = sin decidir · "commit" · "html"
+async function hayVersionNuevaPublicada() {
+  if (modoVersion !== "html") {
+    const publicada = VERSION_COMPILADA ? await versionDelApi() : "";
+    if (publicada) {
+      modoVersion = "commit";
+      return publicada !== VERSION_COMPILADA;
+    }
+    // Si ya veníamos por el commit y esta vez la API no contestó, no se
+    // inventa nada: mejor callado que un cartel fantasma.
+    if (modoVersion === "commit") return false;
+    modoVersion = "html";
+  }
+  const mia = versionEnUso();
+  if (!mia) return false;
+  const publicada = await versionPublicada();
+  return !!publicada && publicada !== mia;
 }
 
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
@@ -10184,24 +10318,88 @@ function resumenDeMedidas(piezas) {
   return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([medida, n]) => ({ medida, n }));
 }
 
+// A veces conviene gastar UNA hoja más. Con los espejos de hoy puede que no
+// sobre nada aprovechable, pero abriendo una hoja extra entran los pedidos y
+// además salen 8 espejos de las medidas que se venden todas las semanas. Esa
+// hoja no se gastó: quedó guardada en forma de espejos cortados.
+// La app NO lo decide sola: lo calcula, lo muestra y deciden ellos.
+function oportunidadDeStock(piezas, W, H, sep, medidas, hojasBase, recortesBase = 0) {
+  if (!medidas || !medidas.length || !piezas || !piezas.length || !hojasBase) return null;
+  const limpias = piezas
+    .filter((p) => Number(p.ancho) > 0 && Number(p.alto) > 0)
+    .map((p) => ({ ...p, ancho: Number(p.ancho), alto: Number(p.alto) }));
+  if (!limpias.length) return null;
+  const m = medidas[0];
+  const fantasma = () => ({ ancho: m.ancho, alto: m.alto, etiqueta: m.ancho + "×" + m.alto, fantasma: true });
+  const porArea = (a, b) => (b.ancho * b.alto) - (a.ancho * a.alto) || (a.fantasma ? 1 : 0) - (b.fantasma ? 1 : 0);
+  let mejor = null;
+  for (const cuantos of [2, 4, 6, 8, 10]) {
+    const orden = [...limpias, ...Array.from({ length: cuantos }, fantasma)].sort(porArea);
+    for (const criterio of ["corto", "area"]) {
+      const r = acomodarUnaVez(orden, W, H, sep, criterio, true, medidas, true);
+      // Solo sirve si gasta EXACTAMENTE una hoja más y entran todos los pedidos.
+      if (r.hojas.length !== hojasBase + 1 || r.sinUbicar.length) continue;
+      const extra = r.hojas.reduce((t, h) => t + h.recortes.length, 0);
+      if (!mejor || extra > mejor.extra) mejor = { extra, tirado: r.tirado, r };
+    }
+  }
+  // Tiene que dar al menos 3 espejos MÁS de los que ya salen sin gastar la
+  // hoja: si no, no se gana nada y es un cartel al pedo.
+  if (!mejor || mejor.extra < recortesBase + 3) return null;
+  return { hojas: hojasBase + 1, extra: mejor.extra, tirado: mejor.tirado, resultado: mejor.r };
+}
+
+// ¿Conviene cortar toda la semana hoy, en vez de día por día? Cortando día a
+// día cada jornada arranca hojas nuevas y lo que sobró ayer queda tirado.
+// Juntando todo, los espejos de un día llenan los huecos del otro.
+function compararDiaContraSemana(piezasSemana, W, H, sep, medidas) {
+  const porDia = new Map();
+  (piezasSemana || []).forEach((p) => {
+    const d = p.dia || "";
+    if (!porDia.has(d)) porDia.set(d, []);
+    porDia.get(d).push(p);
+  });
+  if (porDia.size < 2) return null;   // un solo día: no hay nada que comparar
+  let hojasSueltas = 0;
+  porDia.forEach((lista) => { hojasSueltas += optimizarCortes(lista, W, H, sep, medidas).hojas.length; });
+  const junto = optimizarCortes(piezasSemana, W, H, sep, medidas);
+  return {
+    dias: porDia.size,
+    hojasSueltas,
+    hojasJuntas: junto.hojas.length,
+    ahorro: hojasSueltas - junto.hojas.length,
+  };
+}
+
 function HojaDibujo({ hoja, W, H, numero }) {
-  const clase = hoja.aprovechado >= 85 ? "dg-hoja-ok" : hoja.aprovechado >= 70 ? "dg-hoja-medio" : "dg-hoja-mal";
+  const clase = hoja.tirado <= 8 ? "dg-hoja-ok" : hoja.tirado <= 20 ? "dg-hoja-medio" : "dg-hoja-mal";
+  const chico = (p) => Math.min(p.anchoReal, p.altoReal) < 24;
   return (
     <div className="dg-hoja">
       <div className="dg-hoja-top">
         <strong>Hoja {numero}</strong>
         <span>{hoja.piezas.length} espejo{hoja.piezas.length === 1 ? "" : "s"}</span>
-        <span className={"dg-hoja-pct " + clase}>{hoja.aprovechado}% usado</span>
+        {hoja.recortes.length > 0 && (
+          <span className="dg-hoja-sobra">+ {hoja.recortes.length} del recorte</span>
+        )}
+        <span className={"dg-hoja-pct " + clase}>{hoja.tirado}% a la basura</span>
       </div>
       <svg className="dg-hoja-svg" viewBox={"-3 -3 " + (W + 6) + " " + (H + 6)} role="img" aria-label={"Hoja " + numero}>
         <rect x="0" y="0" width={W} height={H} className="dg-hoja-fondo" />
+        {/* Lo que se puede sacar del recorte va primero y en punteado: es un
+            extra, no parte del pedido. */}
+        {hoja.recortes.map((p, i) => (
+          <g key={"r" + i}>
+            <rect x={p.x} y={p.y} width={p.anchoReal} height={p.altoReal} className="dg-hoja-recorte" />
+            {!chico(p) && <text x={p.x + p.anchoReal / 2} y={p.y + p.altoReal / 2 + 2.5} className="dg-hoja-recorte-txt">{p.etiqueta}</text>}
+          </g>
+        ))}
         {hoja.piezas.map((p, i) => {
-          const chico = Math.min(p.anchoReal, p.altoReal) < 24;
           const cx = p.x + p.anchoReal / 2, cy = p.y + p.altoReal / 2;
           return (
             <g key={i}>
               <rect x={p.x} y={p.y} width={p.anchoReal} height={p.altoReal} className="dg-hoja-pieza" />
-              {chico ? (
+              {chico(p) ? (
                 <text x={cx} y={cy + 2.5} className="dg-hoja-ref">{p.etiqueta}</text>
               ) : (
                 <Fragment>
@@ -10213,6 +10411,13 @@ function HojaDibujo({ hoja, W, H, numero }) {
           );
         })}
       </svg>
+      {hoja.recortes.length > 0 && (
+        <p className="dg-hoja-pie">
+          <Sparkles size={12} /> De lo que sobra {hoja.recortes.length === 1 ? "sale" : "salen"}{" "}
+          {resumenDeMedidas(hoja.recortes.map((p) => ({ ancho: p.anchoReal, alto: p.altoReal }))).map((m) => m.n + " de " + m.medida).join(", ")}.{" "}
+          {hoja.recortes.length === 1 ? "Cortalo y guardalo." : "Cortalos y guardalos."}
+        </p>
+      )}
     </div>
   );
 }
@@ -10226,7 +10431,6 @@ function OptimizadorCortePanel({ pedidos }) {
   const [sep, setSep] = useState(String(guardada.sep));
   const [alcance, setAlcance] = useState("dia");
 
-  // La medida de la hoja la cargan una vez y queda.
   useEffect(() => {
     const W = Number(ancho) || 0, H = Number(alto) || 0;
     if (W <= 0 || H <= 0) return;
@@ -10234,11 +10438,30 @@ function OptimizadorCortePanel({ pedidos }) {
   }, [ancho, alto, sep]);
 
   const W = Number(ancho) || 0, H = Number(alto) || 0;
-  const { piezas, sinMedida } = piezasParaCortar(pedidos, hoy, alcance);
-  const r = optimizarCortes(piezas, W, H, Math.max(0, Number(sep) || 0));
-  const medidas = resumenDeMedidas(piezas);
-  const ubicadas = r.hojas.reduce((t, h) => t + h.piezas.length, 0);
-  const sobra = r.aprovechado === null ? null : Math.round((100 - r.aprovechado) * 10) / 10;
+  const aire = Math.max(0, Number(sep) || 0);
+  // Toda la cuenta va junta y memorizada: son varias pasadas del optimizador y
+  // si no, se rehace entera con cada tecla que tocan en la medida de la hoja.
+  const cuenta = useMemo(() => {
+    // Qué medidas se repiten en los pedidos: con eso se sabe si lo que sobra
+    // sirve para los espejos que van a entrar, o si va derecho a la basura.
+    const medidas = medidasQueSeRepiten(pedidos);
+    const { piezas, sinMedida } = piezasParaCortar(pedidos, hoy, alcance);
+    const r = optimizarCortes(piezas, W, H, aire, medidas);
+    const semana = piezasParaCortar(pedidos, hoy, "semana").piezas;
+    return {
+      medidas, piezas, sinMedida, r,
+      resumen: resumenDeMedidas(piezas),
+      ubicadas: r.hojas.reduce((t, h) => t + h.piezas.length, 0),
+      delRecorte: r.hojas.reduce((t, h) => t + h.recortes.length, 0),
+      // Gastar una hoja más y llevarse espejos estándar cortados, ¿conviene?
+      stock: W > 0 && H > 0
+        ? oportunidadDeStock(piezas, W, H, aire, medidas, r.hojas.length, r.hojas.reduce((t, h) => t + h.recortes.length, 0))
+        : null,
+      // Comparar día por día contra toda la semana junta.
+      comparacion: W > 0 && H > 0 ? compararDiaContraSemana(semana, W, H, aire, medidas) : null,
+    };
+  }, [pedidos, hoy, alcance, W, H, aire]);
+  const { piezas, sinMedida, r, resumen, ubicadas, delRecorte, stock, comparacion } = cuenta;
 
   return (
     <div className="dg-page">
@@ -10278,17 +10501,60 @@ function OptimizadorCortePanel({ pedidos }) {
         </div>
       ) : (
         <>
+          {alcance === "dia" && comparacion && comparacion.ahorro > 0 && (
+            <div className="dg-corte-tip">
+              <Sparkles size={15} />
+              <div>
+                <strong>Les conviene cortar toda la semana hoy.</strong>
+                <span>
+                  Día por día son {comparacion.hojasSueltas} hojas en {comparacion.dias} jornadas, porque cada día arranca una hoja nueva y lo de ayer queda cortado.
+                  Cortando todo junto son {comparacion.hojasJuntas}: <b>se ahorran {comparacion.ahorro} hoja{comparacion.ahorro === 1 ? "" : "s"}</b>.
+                </span>
+              </div>
+              <button type="button" className="dg-btn-primary" onClick={() => setAlcance("semana")}>Ver la semana</button>
+            </div>
+          )}
+
+          {stock && (
+            <div className="dg-corte-stock">
+              <Sparkles size={15} />
+              <div>
+                <strong>Con una hoja más se llevan {stock.extra} espejos de stock</strong>
+                <span>
+                  Con {r.hojas.length} hoja{r.hojas.length === 1 ? "" : "s"} los pedidos salen y de lo que sobra{" "}
+                  {delRecorte > 0 ? "salen " + delRecorte + " espejos" : "no sale ningún espejo entero"}.
+                  Abriendo {stock.hojas} entran igual y salen <b>{stock.extra} de {cuenta.medidas[0].ancho}×{cuenta.medidas[0].alto}</b>, que es la medida que más venden.
+                  Esa hoja no se gasta: queda guardada en espejos ya cortados.
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="dg-corte-resumen">
             <div className="dg-corte-dato"><strong>{ubicadas}</strong><span>espejos a cortar</span></div>
             <div className="dg-corte-dato"><strong>{r.hojas.length}</strong><span>hoja{r.hojas.length === 1 ? "" : "s"} de {W}×{H}</span></div>
-            <div className="dg-corte-dato"><strong>{r.aprovechado}%</strong><span>de la hoja se usa</span></div>
-            <div className="dg-corte-dato dg-corte-dato-sobra"><strong>{sobra}%</strong><span>se tira</span></div>
+            <div className="dg-corte-dato"><strong>{r.aprovechado}%</strong><span>va a los pedidos</span></div>
+            <div className="dg-corte-dato dg-corte-dato-recorte"><strong>{r.recorteUtil}%</strong><span>recorte que sirve</span></div>
+            <div className="dg-corte-dato dg-corte-dato-sobra"><strong>{r.tirado}%</strong><span>a la basura</span></div>
           </div>
 
           <div className="dg-corte-lista">
             <Scissors size={13} />
-            {medidas.map((m) => <span key={m.medida}><b>{m.n}</b> de {m.medida}</span>)}
+            {resumen.map((m) => <span key={m.medida}><b>{m.n}</b> de {m.medida}</span>)}
           </div>
+
+          {delRecorte > 0 && (
+            <div className="dg-corte-stock">
+              <Sparkles size={14} />
+              <div>
+                <strong>De lo que sobra {delRecorte === 1 ? "sale" : "salen"} {delRecorte} espejo{delRecorte === 1 ? "" : "s"} más</strong>
+                <span>
+                  {resumenDeMedidas(r.hojas.flatMap((h) => h.recortes).map((p) => ({ ancho: p.anchoReal, alto: p.altoReal }))).map((m) => m.n + " de " + m.medida).join(", ")}
+                  {" "}— son medidas que se repiten en los pedidos. Si los cortan ahora y los guardan, los espejos que entren esta semana ya salen de ahí.
+                </span>
+              </div>
+            </div>
+          )}
 
           {r.sinUbicar.length > 0 && (
             <div className="dg-corte-aviso">
@@ -10313,12 +10579,46 @@ function OptimizadorCortePanel({ pedidos }) {
           <div className="dg-hojas">
             {r.hojas.map((hoja, i) => <HojaDibujo key={i} hoja={hoja} W={W} H={H} numero={i + 1} />)}
           </div>
+
+          <ListaParaAnotar hojas={r.hojas} />
         </>
       )}
     </div>
   );
 }
 
+// La planilla que se llevan a la mesa de corte: cada corte con el nombre del
+// cliente, para escribirlo atrás con fibrón apenas lo cortan y dejarlo
+// separado. Sin esto, a la media hora son todos vidrios iguales.
+function ListaParaAnotar({ hojas }) {
+  const filas = [];
+  hojas.forEach((hoja, k) => {
+    hoja.piezas.forEach((p) => filas.push({ hoja: k + 1, ...p }));
+  });
+  if (!filas.length) return null;
+  return (
+    <div className="dg-section-card dg-corte-anotar">
+      <div className="dg-section-header"><NotebookPen size={14} /> Para anotar atrás de cada corte</div>
+      <p className="dg-corte-anotar-txt">Escribile el nombre atrás apenas lo cortás y dejalo aparte. Después tachá la fila.</p>
+      <table className="dg-corte-tabla">
+        <thead>
+          <tr><th>Hoja</th><th>Pedido</th><th>Cliente</th><th>Medida</th><th aria-label="Listo" /></tr>
+        </thead>
+        <tbody>
+          {filas.map((f, i) => (
+            <tr key={i}>
+              <td className="dg-corte-td-hoja">{f.hoja}</td>
+              <td className="dg-corte-td-ped">{f.etiqueta}</td>
+              <td className="dg-corte-td-cli">{f.cliente || "—"}</td>
+              <td className="dg-corte-td-med">{f.anchoReal}×{f.altoReal}{f.rotada ? " ↻" : ""}</td>
+              <td className="dg-corte-td-ok"><span className="dg-corte-casilla" aria-hidden="true" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 function NumerosFabricaPanel({ pedidos }) {
   const hoy = isoLocal(new Date());
   const [periodo, setPeriodo] = useState("90");
@@ -15938,6 +16238,32 @@ function Style() {
       .dg-hoja-pieza { fill:rgba(var(--dg-accent-rgb),.22); stroke:var(--dg-accent-2); stroke-width:1; }
       .dg-hoja-ref { fill:var(--dg-text); font-size:9px; font-weight:800; text-anchor:middle; font-family:'Jost',sans-serif; }
       .dg-hoja-med { fill:var(--dg-text); opacity:.78; font-size:7.5px; font-weight:600; text-anchor:middle; font-variant-numeric:tabular-nums; }
+      .dg-hoja-recorte { fill:rgba(var(--dg-success-rgb),.16); stroke:var(--dg-success); stroke-width:.9; stroke-dasharray:4 3; }
+      .dg-hoja-recorte-txt { fill:var(--dg-text); opacity:.72; font-size:7px; font-weight:700; text-anchor:middle; font-variant-numeric:tabular-nums; }
+      .dg-hoja-sobra { color:var(--dg-success); font-weight:700; }
+      .dg-hoja-pie { display:flex; align-items:flex-start; gap:6px; margin:9px 0 0; font-size:12px; line-height:1.45; color:var(--dg-text-dim); }
+      .dg-hoja-pie svg { flex:none; margin-top:2px; color:var(--dg-success); }
+      .dg-corte-dato-recorte strong { color:var(--dg-success); }
+      .dg-corte-tip, .dg-corte-stock { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 14px; margin-bottom:12px; border-radius:13px; }
+      .dg-corte-tip { background:rgba(var(--dg-accent-rgb),.1); border:1px solid rgba(var(--dg-accent-rgb),.3); }
+      .dg-corte-stock { background:rgba(var(--dg-success-rgb),.1); border:1px solid rgba(var(--dg-success-rgb),.28); }
+      .dg-corte-tip > svg { flex:none; color:var(--dg-accent-2); }
+      .dg-corte-stock > svg { flex:none; color:var(--dg-success); }
+      .dg-corte-tip > div, .dg-corte-stock > div { display:flex; flex-direction:column; gap:3px; flex:1 1 260px; min-width:0; }
+      .dg-corte-tip strong, .dg-corte-stock strong { font-family:'Jost',sans-serif; font-size:15px; font-weight:600; color:var(--dg-text); }
+      .dg-corte-tip span, .dg-corte-stock span { font-size:13px; line-height:1.5; color:var(--dg-text-dim); }
+      .dg-corte-tip > button { flex:none; }
+      .dg-corte-anotar { margin-top:16px; }
+      .dg-corte-anotar-txt { margin:0 0 10px; font-size:13px; color:var(--dg-text-dim); }
+      .dg-corte-tabla { width:100%; border-collapse:collapse; font-size:13px; }
+      .dg-corte-tabla th { text-align:left; font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); padding:0 10px 6px 0; font-weight:700; }
+      .dg-corte-tabla td { padding:9px 10px 9px 0; border-top:1px solid rgba(var(--dg-line-rgb),.09); color:var(--dg-text); }
+      .dg-corte-td-hoja { width:1%; white-space:nowrap; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; }
+      .dg-corte-td-ped { width:1%; white-space:nowrap; font-weight:700; font-variant-numeric:tabular-nums; }
+      .dg-corte-td-cli { font-weight:600; }
+      .dg-corte-td-med { width:1%; white-space:nowrap; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; }
+      .dg-corte-td-ok { width:1%; padding-right:0 !important; }
+      .dg-corte-casilla { display:block; width:19px; height:19px; border-radius:5px; border:1.5px solid rgba(var(--dg-line-rgb),.28); }
       @media (max-width:640px) { .dg-corte-barra { gap:12px; } .dg-corte-print { display:none; } .dg-corte-que button { flex:1; justify-content:center; } }
       .dg-sumar-extra { margin-bottom:10px; }
       .dg-sumar-extra select { width:100%; background:var(--dg-surface); border:1px dashed rgba(var(--dg-interior-rgb),.5); border-radius:9px; padding:9px 10px; color:var(--dg-interior); font-size:13px; font-weight:600; cursor:pointer; }
