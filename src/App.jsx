@@ -5431,7 +5431,7 @@ function ubicarPieza(hoja, pieza, w, h, criterio = "corto", rotar = true) {
     etiqueta: pieza.etiqueta, anchoReal: mejor.rotada ? pieza.alto : pieza.ancho, altoReal: mejor.rotada ? pieza.ancho : pieza.alto,
     // Se arrastran para la lista de abajo, la de anotar el nombre atrás.
     cliente: pieza.cliente || "", dia: pieza.dia || "",
-    fantasma: !!pieza.fantasma,
+    fantasma: !!pieza.fantasma, adelantado: !!pieza.adelantado,
   };
   hoja.piezas.push(puesta);
   partirLibres(hoja, puesta);
@@ -5507,10 +5507,12 @@ function acomodarUnaVez(orden, W, H, sep, criterio, rotar, medidas, fantasmaAbre
   const areaHoja = W * H;
   let usadoTotal = 0, recorteTotal = 0;
   hojas.forEach((hoja) => {
-    // El fantasma no es un espejo del pedido: es recorte, pero cortado a una
-    // medida que sirve. Se saca de la lista de cortes y se suma al recorte.
-    const reservados = hoja.piezas.filter((p) => p.fantasma);
-    hoja.piezas = hoja.piezas.filter((p) => !p.fantasma);
+    // Un espejo adelantado SÍ es un corte de verdad: se queda en la lista para
+    // que lo corten y lo anoten, solo marcado para no confundirlo con los de hoy.
+    // El fantasma, en cambio, no es un pedido: es recorte cortado a una medida
+    // que sirve, así que sale de la lista de cortes y se suma al recorte.
+    const reservados = hoja.piezas.filter((p) => p.fantasma && !p.adelantado);
+    hoja.piezas = hoja.piezas.filter((p) => !p.fantasma || p.adelantado);
     const usado = hoja.piezas.reduce((t, p) => t + p.anchoReal * p.altoReal, 0);
     const r = recortesUtiles(hoja.libres, medidas, sep);
     const areaReservada = reservados.reduce((t, p) => t + p.anchoReal * p.altoReal, 0);
@@ -5535,7 +5537,7 @@ function acomodarUnaVez(orden, W, H, sep, criterio, rotar, medidas, fantasmaAbre
 
 // piezas: [{ etiqueta, ancho, alto }], una por espejo físico.
 // separacion: el aire que se deja entre corte y corte.
-function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0, medidasUtiles = []) {
+function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0, medidasUtiles = [], adelantables = []) {
   const W = Number(hojaAncho) || 0, H = Number(hojaAlto) || 0;
   const sep = Math.max(0, Number(separacion) || 0);
   if (W <= 0 || H <= 0) return { hojas: [], sinUbicar: [], aprovechado: null };
@@ -5545,26 +5547,47 @@ function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0, medidasUti
     .map((p) => ({ ...p, ancho: Number(p.ancho), alto: Number(p.alto) }));
   if (!limpias.length) return { hojas: [], sinUbicar: [], aprovechado: null };
 
-  // Cuántos recortes a medida se le pide que reserve. El 0 es "apretá todo lo
-  // que puedas"; los otros son "además de los espejos del pedido, dejame un
-  // pedazo sano de la medida que más se vende". El fantasma se acomoda junto
-  // con los espejos de verdad, no después: si entrara al final, el vidrio ya
-  // quedó partido en tiras y reservar no sirve de nada.
-  // Si por meter un fantasma hiciera falta una hoja más, esa variante pierde,
-  // porque la cantidad de hojas pesa más en el puntaje.
+  // CON QUÉ SE LLENA EL HUECO QUE SOBRA EN LA HOJA
+  //
+  // Lo mejor es llenarlo con espejos de verdad de los próximos días: no hay
+  // nada que adivinar, es trabajo que igual hay que hacer, y adelantan. Se
+  // cortan hoy y el armado sigue en su día.
+  //
+  // Solo cuando no queda nada para adelantar (por ejemplo un viernes con la
+  // semana vacía) se prueba reservando recortes de las medidas que más se
+  // venden. Eso sí es una apuesta, así que va último.
+  //
+  // En los dos casos el relleno se acomoda JUNTO con los espejos de hoy, no
+  // después: si entrara al final, el vidrio ya quedó partido en tiras. Y nunca
+  // abre una hoja nueva: si por meterlo hiciera falta otra hoja, esa variante
+  // pierde, porque la cantidad de hojas pesa más en el puntaje.
+  const paraAdelantar = (adelantables || [])
+    .filter((p) => Number(p.ancho) > 0 && Number(p.alto) > 0)
+    .map((p) => ({ ...p, ancho: Number(p.ancho), alto: Number(p.alto), fantasma: true, adelantado: true }));
+
   const masVendida = medidasUtiles[0] || null;
   const masGrande = medidasUtiles.length
     ? medidasUtiles.slice().sort((a, b) => (b.ancho * b.alto) - (a.ancho * a.alto))[0]
     : null;
   const unFantasma = (m) => ({ ancho: m.ancho, alto: m.alto, etiqueta: m.ancho + "×" + m.alto, fantasma: true });
-  const pedidosDeLugar = !masVendida ? [[]] : [
-    [],
-    [unFantasma(masVendida)],
-    [unFantasma(masVendida), unFantasma(masVendida)],
-    [unFantasma(masVendida), unFantasma(masVendida), unFantasma(masVendida)],
-    [unFantasma(masGrande)],
-    [unFantasma(masGrande), unFantasma(masVendida)],
-  ];
+  const pedidosDeLugar = paraAdelantar.length
+    ? [
+      { relleno: [], alFinal: false },
+      // Mezclado con los espejos de hoy: acomoda mejor, pero puede pasar que
+      // una pieza adelantada se quede con el lugar bueno.
+      { relleno: paraAdelantar, alFinal: false },
+      // Al final de todo: los de hoy se acomodan exactamente igual que sin
+      // relleno, y lo adelantado entra solo en lo que haya quedado libre.
+      { relleno: paraAdelantar, alFinal: true },
+    ]
+    : !masVendida ? [{ relleno: [], alFinal: false }] : [
+      { relleno: [], alFinal: false },
+      { relleno: [unFantasma(masVendida)], alFinal: false },
+      { relleno: [unFantasma(masVendida), unFantasma(masVendida)], alFinal: false },
+      { relleno: [unFantasma(masVendida), unFantasma(masVendida), unFantasma(masVendida)], alFinal: false },
+      { relleno: [unFantasma(masGrande)], alFinal: false },
+      { relleno: [unFantasma(masGrande), unFantasma(masVendida)], alFinal: false },
+    ];
 
   // Las más grandes primero, de dos maneras. Entre dos iguales va primero el
   // espejo del pedido: el fantasma es el que cede.
@@ -5572,9 +5595,12 @@ function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0, medidasUti
   const porLado = (a, b) => Math.max(b.ancho, b.alto) - Math.max(a.ancho, a.alto) || (b.ancho * b.alto) - (a.ancho * a.alto) || (a.fantasma ? 1 : 0) - (b.fantasma ? 1 : 0);
 
   let mejor = null;
-  for (const fantasmas of pedidosDeLugar) {
-    const conFantasmas = [...limpias, ...fantasmas];
-    const ordenes = [conFantasmas.slice().sort(porArea), conFantasmas.slice().sort(porLado)];
+  for (const { relleno, alFinal } of pedidosDeLugar) {
+    const ordenes = alFinal
+      // Lo adelantado conserva el orden en que vino (los días más cercanos
+      // primero) y adentro de eso van las piezas más grandes.
+      ? [[...limpias.slice().sort(porArea), ...relleno], [...limpias.slice().sort(porLado), ...relleno]]
+      : [[...limpias, ...relleno].sort(porArea), [...limpias, ...relleno].sort(porLado)];
     for (const orden of ordenes) {
       for (const criterio of ["corto", "largo", "area"]) {
        for (const rotar of [true, false]) {
@@ -5584,12 +5610,25 @@ function optimizarCortes(piezas, hojaAncho, hojaAlto, separacion = 0, medidasUti
         // Si lo que sobra alcanza para un 60x90, eso no se tira: se guarda y
         // sale el espejo de la semana que viene. Por eso se ordena por
         // r.tirado y no por el aprovechado a secas.
-        const puntaje = [-(r.hojas.reduce((t, h) => t + h.piezas.length, 0)), r.hojas.length, r.tirado === null ? 0 : r.tirado];
-        if (!mejor || puntaje[0] < mejor.puntaje[0]
-          || (puntaje[0] === mejor.puntaje[0] && puntaje[1] < mejor.puntaje[1])
-          || (puntaje[0] === mejor.puntaje[0] && puntaje[1] === mejor.puntaje[1] && puntaje[2] < mejor.puntaje[2])) {
-          mejor = { r, puntaje };
-        }
+        // El orden en que se decide, de más importante a menos:
+        //   1. que entren TODOS los espejos de hoy;
+        //   2. la menor cantidad de hojas;
+        //   3. la mayor cantidad de espejos adelantados;
+        //   4. y recién ahí, el menor desperdicio.
+        // El 3 va antes que el 4 a propósito: un espejo adelantado es trabajo
+        // real que ya queda hecho, y un "recorte que sirve" es una apuesta a
+        // que esa medida se venda. Entre cortar 8 espejos de verdad y guardar
+        // un pedazo lindo por las dudas, gana cortar los 8.
+        const deHoy = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => !p.adelantado).length, 0);
+        const adelantados = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => p.adelantado).length, 0);
+        const puntaje = [-deHoy, r.hojas.length, -adelantados, r.tirado === null ? 0 : r.tirado];
+        const gana = () => {
+          for (let i = 0; i < puntaje.length; i++) {
+            if (puntaje[i] !== mejor.puntaje[i]) return puntaje[i] < mejor.puntaje[i];
+          }
+          return false;
+        };
+        if (!mejor || gana()) mejor = { r, puntaje };
        }
       }
     }
@@ -10323,30 +10362,59 @@ function resumenDeMedidas(piezas) {
 // además salen 8 espejos de las medidas que se venden todas las semanas. Esa
 // hoja no se gastó: quedó guardada en forma de espejos cortados.
 // La app NO lo decide sola: lo calcula, lo muestra y deciden ellos.
-function oportunidadDeStock(piezas, W, H, sep, medidas, hojasBase, recortesBase = 0) {
-  if (!medidas || !medidas.length || !piezas || !piezas.length || !hojasBase) return null;
+function oportunidadDeHojaExtra(piezas, W, H, sep, medidas, adelantables, hojasBase, recortesBase = 0) {
+  if (!piezas || !piezas.length || !hojasBase) return null;
   const limpias = piezas
     .filter((p) => Number(p.ancho) > 0 && Number(p.alto) > 0)
     .map((p) => ({ ...p, ancho: Number(p.ancho), alto: Number(p.alto) }));
   if (!limpias.length) return null;
-  const m = medidas[0];
+
+  // Lo mejor que se puede meter en esa hoja extra es trabajo de verdad de los
+  // próximos días. Solo si no queda nada para adelantar tiene sentido cortar
+  // medidas estándar por las dudas.
+  const reales = (adelantables || [])
+    .filter((p) => Number(p.ancho) > 0 && Number(p.alto) > 0)
+    .map((p) => ({ ...p, ancho: Number(p.ancho), alto: Number(p.alto), fantasma: true, adelantado: true }));
+  const esReal = reales.length > 0;
+  if (!esReal && (!medidas || !medidas.length)) return null;
+
+  const m = medidas && medidas[0];
   const fantasma = () => ({ ancho: m.ancho, alto: m.alto, etiqueta: m.ancho + "×" + m.alto, fantasma: true });
   const porArea = (a, b) => (b.ancho * b.alto) - (a.ancho * a.alto) || (a.fantasma ? 1 : 0) - (b.fantasma ? 1 : 0);
+  const rellenos = esReal
+    ? [...new Set([3, 6, 9, 12, 16, 20, reales.length])]
+        .filter((n) => n > 0 && n <= reales.length)
+        .sort((a, b) => a - b)
+        .map((n) => reales.slice(0, n))
+    : [2, 4, 6, 8, 10].map((n) => Array.from({ length: n }, fantasma));
+
   let mejor = null;
-  for (const cuantos of [2, 4, 6, 8, 10]) {
-    const orden = [...limpias, ...Array.from({ length: cuantos }, fantasma)].sort(porArea);
-    for (const criterio of ["corto", "area"]) {
-      const r = acomodarUnaVez(orden, W, H, sep, criterio, true, medidas, true);
-      // Solo sirve si gasta EXACTAMENTE una hoja más y entran todos los pedidos.
-      if (r.hojas.length !== hojasBase + 1 || r.sinUbicar.length) continue;
-      const extra = r.hojas.reduce((t, h) => t + h.recortes.length, 0);
-      if (!mejor || extra > mejor.extra) mejor = { extra, tirado: r.tirado, r };
+  for (const relleno of rellenos) {
+    // Mezclado y al final, igual que en el acomodo normal.
+    const ordenes = [
+      [...limpias, ...relleno].sort(porArea),
+      [...limpias.slice().sort(porArea), ...relleno],
+    ];
+    for (const orden of ordenes) {
+      for (const criterio of ["corto", "area"]) {
+        const r = acomodarUnaVez(orden, W, H, sep, criterio, true, medidas, true);
+        // Solo sirve si gasta EXACTAMENTE una hoja más y entran todos los pedidos.
+        if (r.hojas.length !== hojasBase + 1 || r.sinUbicar.length) continue;
+        const extra = esReal
+          ? r.hojas.reduce((t, h) => t + h.piezas.filter((p) => p.adelantado).length, 0)
+          : r.hojas.reduce((t, h) => t + h.recortes.length, 0);
+        if (!mejor || extra > mejor.extra) mejor = { extra, tirado: r.tirado, r };
+      }
     }
   }
   // Tiene que dar al menos 3 espejos MÁS de los que ya salen sin gastar la
   // hoja: si no, no se gana nada y es un cartel al pedo.
-  if (!mejor || mejor.extra < recortesBase + 3) return null;
-  return { hojas: hojasBase + 1, extra: mejor.extra, tirado: mejor.tirado, resultado: mejor.r };
+  const piso = esReal ? 3 : recortesBase + 3;
+  if (!mejor || mejor.extra < piso) return null;
+  const dias = esReal
+    ? [...new Set(mejor.r.hojas.flatMap((h) => h.piezas.filter((p) => p.adelantado).map((p) => p.dia)))].sort()
+    : [];
+  return { hojas: hojasBase + 1, extra: mejor.extra, tirado: mejor.tirado, esReal, dias, resultado: mejor.r };
 }
 
 // ¿Conviene cortar toda la semana hoy, en vez de día por día? Cortando día a
@@ -10371,6 +10439,14 @@ function compararDiaContraSemana(piezasSemana, W, H, sep, medidas) {
   };
 }
 
+// "mar 6/10", para que entre en la etiqueta del dibujo.
+function diaCortito(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  const f = new Date(y, m - 1, d);
+  return (DIAS_TALLER[f.getDay()] || "").slice(0, 3).toLowerCase() + " " + d + "/" + m;
+}
+
 function HojaDibujo({ hoja, W, H, numero }) {
   const clase = hoja.tirado <= 8 ? "dg-hoja-ok" : hoja.tirado <= 20 ? "dg-hoja-medio" : "dg-hoja-mal";
   const chico = (p) => Math.min(p.anchoReal, p.altoReal) < 24;
@@ -10378,7 +10454,10 @@ function HojaDibujo({ hoja, W, H, numero }) {
     <div className="dg-hoja">
       <div className="dg-hoja-top">
         <strong>Hoja {numero}</strong>
-        <span>{hoja.piezas.length} espejo{hoja.piezas.length === 1 ? "" : "s"}</span>
+        <span>{hoja.piezas.filter((p) => !p.adelantado).length} de hoy</span>
+        {hoja.piezas.some((p) => p.adelantado) && (
+          <span className="dg-hoja-adelantados">+ {hoja.piezas.filter((p) => p.adelantado).length} adelantados</span>
+        )}
         {hoja.recortes.length > 0 && (
           <span className="dg-hoja-sobra">+ {hoja.recortes.length} del recorte</span>
         )}
@@ -10396,15 +10475,18 @@ function HojaDibujo({ hoja, W, H, numero }) {
         ))}
         {hoja.piezas.map((p, i) => {
           const cx = p.x + p.anchoReal / 2, cy = p.y + p.altoReal / 2;
+          const corrido = p.adelantado ? 4 : 0;
           return (
             <g key={i}>
-              <rect x={p.x} y={p.y} width={p.anchoReal} height={p.altoReal} className="dg-hoja-pieza" />
+              <rect x={p.x} y={p.y} width={p.anchoReal} height={p.altoReal}
+                className={p.adelantado ? "dg-hoja-pieza dg-hoja-pieza-adel" : "dg-hoja-pieza"} />
               {chico(p) ? (
                 <text x={cx} y={cy + 2.5} className="dg-hoja-ref">{p.etiqueta}</text>
               ) : (
                 <Fragment>
-                  <text x={cx} y={cy - 1.5} className="dg-hoja-ref">{p.etiqueta}</text>
-                  <text x={cx} y={cy + 8} className="dg-hoja-med">{p.anchoReal}×{p.altoReal}{p.rotada ? " ↻" : ""}</text>
+                  <text x={cx} y={cy - 1.5 - corrido} className="dg-hoja-ref">{p.etiqueta}</text>
+                  <text x={cx} y={cy + 8 - corrido} className="dg-hoja-med">{p.anchoReal}×{p.altoReal}{p.rotada ? " ↻" : ""}</text>
+                  {p.adelantado && <text x={cx} y={cy + 16} className="dg-hoja-adel">{diaCortito(p.dia)}</text>}
                 </Fragment>
               )}
             </g>
@@ -10430,12 +10512,17 @@ function OptimizadorCortePanel({ pedidos }) {
   const [alto, setAlto] = useState(String(guardada.alto));
   const [sep, setSep] = useState(String(guardada.sep));
   const [alcance, setAlcance] = useState("dia");
+  // Si tocan "Agregar la hoja", se muestra el acomodo con una hoja más.
+  const [hojaExtra, setHojaExtra] = useState(false);
 
   useEffect(() => {
     const W = Number(ancho) || 0, H = Number(alto) || 0;
     if (W <= 0 || H <= 0) return;
     try { localStorage.setItem("dg_hoja_corte", JSON.stringify({ ancho: W, alto: H, sep: Math.max(0, Number(sep) || 0) })); } catch (e) {}
   }, [ancho, alto, sep]);
+
+  // Si cambian de vista o de medida, la hoja extra ya no aplica.
+  useEffect(() => { setHojaExtra(false); }, [alcance, ancho, alto, sep]);
 
   const W = Number(ancho) || 0, H = Number(alto) || 0;
   const aire = Math.max(0, Number(sep) || 0);
@@ -10446,22 +10533,42 @@ function OptimizadorCortePanel({ pedidos }) {
     // sirve para los espejos que van a entrar, o si va derecho a la basura.
     const medidas = medidasQueSeRepiten(pedidos);
     const { piezas, sinMedida } = piezasParaCortar(pedidos, hoy, alcance);
-    const r = optimizarCortes(piezas, W, H, aire, medidas);
     const semana = piezasParaCortar(pedidos, hoy, "semana").piezas;
+    // El hueco que sobra en la hoja se llena con espejos de los próximos días:
+    // es trabajo que igual hay que hacer y se adelanta sin gastar vidrio de más.
+    // Los más cercanos primero, que son los menos arriesgados de cortar antes.
+    const diasDeHoy = new Set(piezas.map((p) => p.dia));
+    const adelantables = alcance === "dia"
+      ? semana.filter((p) => p.dia && !diasDeHoy.has(p.dia))
+              .sort((a, b) => String(a.dia).localeCompare(String(b.dia)))
+      : [];
+    const r = optimizarCortes(piezas, W, H, aire, medidas, adelantables);
+    const adelantados = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => p.adelantado).length, 0);
+    const delRecorte = r.hojas.reduce((t, h) => t + h.recortes.length, 0);
     return {
-      medidas, piezas, sinMedida, r,
+      medidas, piezas, sinMedida, r, adelantados,
       resumen: resumenDeMedidas(piezas),
-      ubicadas: r.hojas.reduce((t, h) => t + h.piezas.length, 0),
-      delRecorte: r.hojas.reduce((t, h) => t + h.recortes.length, 0),
-      // Gastar una hoja más y llevarse espejos estándar cortados, ¿conviene?
+      ubicadas: r.hojas.reduce((t, h) => t + h.piezas.filter((p) => !p.adelantado).length, 0),
+      delRecorte,
+      // Días de los que se adelantó algo, para poder decirlo.
+      diasAdelantados: [...new Set(r.hojas.flatMap((h) => h.piezas.filter((p) => p.adelantado).map((p) => p.dia)))].sort(),
+      // ¿Y si gastaran una hoja más? Si quedan espejos de los próximos días
+      // sin adelantar, esa hoja se llena con trabajo de verdad; si no queda
+      // nada, con medidas estándar por las dudas.
       stock: W > 0 && H > 0
-        ? oportunidadDeStock(piezas, W, H, aire, medidas, r.hojas.length, r.hojas.reduce((t, h) => t + h.recortes.length, 0))
+        ? oportunidadDeHojaExtra(piezas, W, H, aire, medidas, adelantables, r.hojas.length, delRecorte)
         : null,
       // Comparar día por día contra toda la semana junta.
       comparacion: W > 0 && H > 0 ? compararDiaContraSemana(semana, W, H, aire, medidas) : null,
     };
   }, [pedidos, hoy, alcance, W, H, aire]);
-  const { piezas, sinMedida, r, resumen, ubicadas, delRecorte, stock, comparacion } = cuenta;
+  const { piezas, sinMedida, resumen, stock, comparacion } = cuenta;
+  // El acomodo que se muestra: el normal, o el de la hoja extra si lo pidieron.
+  const r = hojaExtra && stock ? stock.resultado : cuenta.r;
+  const ubicadas = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => !p.adelantado).length, 0);
+  const adelantados = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => p.adelantado).length, 0);
+  const delRecorte = r.hojas.reduce((t, h) => t + h.recortes.length, 0);
+  const diasAdelantados = [...new Set(r.hojas.flatMap((h) => h.piezas.filter((p) => p.adelantado).map((p) => p.dia)))].sort();
 
   return (
     <div className="dg-page">
@@ -10519,19 +10626,51 @@ function OptimizadorCortePanel({ pedidos }) {
             <div className="dg-corte-stock">
               <Sparkles size={15} />
               <div>
-                <strong>Con una hoja más se llevan {stock.extra} espejos de stock</strong>
+                <strong>
+                  Con una hoja más {stock.esReal ? "adelantan " + stock.extra + " espejos de los próximos días" : "se llevan " + stock.extra + " espejos de stock"}
+                </strong>
                 <span>
-                  Con {r.hojas.length} hoja{r.hojas.length === 1 ? "" : "s"} los pedidos salen y de lo que sobra{" "}
-                  {delRecorte > 0 ? "salen " + delRecorte + " espejos" : "no sale ningún espejo entero"}.
-                  Abriendo {stock.hojas} entran igual y salen <b>{stock.extra} de {cuenta.medidas[0].ancho}×{cuenta.medidas[0].alto}</b>, que es la medida que más venden.
-                  Esa hoja no se gasta: queda guardada en espejos ya cortados.
+                  Con {r.hojas.length} hoja{r.hojas.length === 1 ? "" : "s"} los pedidos de hoy entran justos y no sobra lugar para nada más.
+                  {stock.esReal ? (
+                    <>
+                      {" "}Abriendo {stock.hojas} salen además <b>{stock.extra} espejos de {stock.dias.map(diaCortito).join(" y ")}</b>.
+                      Es trabajo que igual hay que hacer: se corta hoy y el armado sigue en su día.
+                    </>
+                  ) : (
+                    <>
+                      {" "}Abriendo {stock.hojas} salen <b>{stock.extra} de {cuenta.medidas[0].ancho}×{cuenta.medidas[0].alto}</b>, que es la medida que más venden.
+                      Esa hoja no se gasta: queda guardada en espejos ya cortados.
+                    </>
+                  )}
+                </span>
+              </div>
+              <button type="button" className={hojaExtra ? "dg-btn-ghost" : "dg-btn-primary"} onClick={() => setHojaExtra(!hojaExtra)}>
+                {hojaExtra ? "Volver" : "Agregar la hoja"}
+              </button>
+            </div>
+          )}
+
+          {adelantados > 0 && (
+            <div className="dg-corte-stock">
+              <Sparkles size={15} />
+              <div>
+                <strong>Se adelantaron {adelantados} espejo{adelantados === 1 ? "" : "s"} de los próximos días</strong>
+                <span>
+                  {hojaExtra
+                    ? "Con la hoja que agregaron entran además " + adelantados + " de "
+                    : "En las " + r.hojas.length + " hojas que abren igual sobraba lugar, así que entraron " + adelantados + " de "}
+                  {diasAdelantados.map(diaCortito).join(" y ")}. Van marcados en violeta en el dibujo.{" "}
+                  <b>Se cortan hoy, se anotan y se dejan aparte</b>: el armado sigue en el día que les toca.
                 </span>
               </div>
             </div>
           )}
 
           <div className="dg-corte-resumen">
-            <div className="dg-corte-dato"><strong>{ubicadas}</strong><span>espejos a cortar</span></div>
+            <div className="dg-corte-dato"><strong>{ubicadas}</strong><span>espejos de hoy</span></div>
+            {adelantados > 0 && (
+              <div className="dg-corte-dato dg-corte-dato-adel"><strong>{adelantados}</strong><span>adelantados</span></div>
+            )}
             <div className="dg-corte-dato"><strong>{r.hojas.length}</strong><span>hoja{r.hojas.length === 1 ? "" : "s"} de {W}×{H}</span></div>
             <div className="dg-corte-dato"><strong>{r.aprovechado}%</strong><span>va a los pedidos</span></div>
             <div className="dg-corte-dato dg-corte-dato-recorte"><strong>{r.recorteUtil}%</strong><span>recorte que sirve</span></div>
@@ -10599,10 +10738,14 @@ function ListaParaAnotar({ hojas }) {
   return (
     <div className="dg-section-card dg-corte-anotar">
       <div className="dg-section-header"><NotebookPen size={14} /> Para anotar atrás de cada corte</div>
-      <p className="dg-corte-anotar-txt">Escribile el nombre atrás apenas lo cortás y dejalo aparte. Después tachá la fila.</p>
+      <p className="dg-corte-anotar-txt">
+        Escribile el nombre atrás apenas lo cortás y dejalo aparte. Después tachá la fila.
+        Los que dicen un día en «Día» son adelantados: se cortan hoy pero se arman ese día.
+      </p>
+      <div className="dg-corte-tabla-caja">
       <table className="dg-corte-tabla">
         <thead>
-          <tr><th>Hoja</th><th>Pedido</th><th>Cliente</th><th>Medida</th><th aria-label="Listo" /></tr>
+          <tr><th>Hoja</th><th>Pedido</th><th>Cliente</th><th>Medida</th><th>Día</th><th aria-label="Listo" /></tr>
         </thead>
         <tbody>
           {filas.map((f, i) => (
@@ -10611,14 +10754,19 @@ function ListaParaAnotar({ hojas }) {
               <td className="dg-corte-td-ped">{f.etiqueta}</td>
               <td className="dg-corte-td-cli">{f.cliente || "—"}</td>
               <td className="dg-corte-td-med">{f.anchoReal}×{f.altoReal}{f.rotada ? " ↻" : ""}</td>
+              <td className="dg-corte-td-cuando">
+                {f.adelantado ? <span className="dg-corte-adel">{diaCortito(f.dia)}</span> : "hoy"}
+              </td>
               <td className="dg-corte-td-ok"><span className="dg-corte-casilla" aria-hidden="true" /></td>
             </tr>
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
+
 function NumerosFabricaPanel({ pedidos }) {
   const hoy = isoLocal(new Date());
   const [periodo, setPeriodo] = useState("90");
@@ -16238,6 +16386,12 @@ function Style() {
       .dg-hoja-pieza { fill:rgba(var(--dg-accent-rgb),.22); stroke:var(--dg-accent-2); stroke-width:1; }
       .dg-hoja-ref { fill:var(--dg-text); font-size:9px; font-weight:800; text-anchor:middle; font-family:'Jost',sans-serif; }
       .dg-hoja-med { fill:var(--dg-text); opacity:.78; font-size:7.5px; font-weight:600; text-anchor:middle; font-variant-numeric:tabular-nums; }
+      .dg-hoja-pieza-adel { fill:rgba(var(--dg-interior-rgb),.2); stroke:var(--dg-interior); }
+      .dg-hoja-adel { fill:var(--dg-text); opacity:.85; font-size:6.5px; font-weight:800; text-anchor:middle; letter-spacing:.3px; }
+      .dg-hoja-adelantados { color:var(--dg-interior); font-weight:700; }
+      .dg-corte-dato-adel strong { color:var(--dg-interior); }
+      .dg-corte-td-cuando { width:1%; white-space:nowrap; color:var(--dg-text-dim); font-size:12px; }
+      .dg-corte-adel { padding:2px 7px; border-radius:999px; font-weight:700; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-hoja-recorte { fill:rgba(var(--dg-success-rgb),.16); stroke:var(--dg-success); stroke-width:.9; stroke-dasharray:4 3; }
       .dg-hoja-recorte-txt { fill:var(--dg-text); opacity:.72; font-size:7px; font-weight:700; text-anchor:middle; font-variant-numeric:tabular-nums; }
       .dg-hoja-sobra { color:var(--dg-success); font-weight:700; }
@@ -16252,8 +16406,22 @@ function Style() {
       .dg-corte-tip > div, .dg-corte-stock > div { display:flex; flex-direction:column; gap:3px; flex:1 1 260px; min-width:0; }
       .dg-corte-tip strong, .dg-corte-stock strong { font-family:'Jost',sans-serif; font-size:15px; font-weight:600; color:var(--dg-text); }
       .dg-corte-tip span, .dg-corte-stock span { font-size:13px; line-height:1.5; color:var(--dg-text-dim); }
-      .dg-corte-tip > button { flex:none; }
+      .dg-corte-tip > button, .dg-corte-stock > button { flex:none; }
       .dg-corte-anotar { margin-top:16px; }
+      /* Con la columna "Cuándo" la tabla no entra en un teléfono: que scrollee
+         sola adentro de la tarjeta y no empuje la página entera. */
+      .dg-corte-tabla-caja { overflow-x:auto; }
+      @media (max-width:640px) {
+        .dg-corte-tabla th, .dg-corte-tabla td { padding-right:6px; }
+        .dg-corte-td-med, .dg-corte-td-cuando { font-size:12px; }
+        /* Un nombre largo tipo "Construcciones" fijaba el ancho mínimo de la
+           tabla y empujaba la columna del día afuera de la pantalla. */
+        .dg-corte-td-cli { overflow-wrap:anywhere; }
+        .dg-corte-adel { padding:2px 5px; }
+        /* El casillero es para tachar en el papel: en el teléfono no se puede
+           escribir, y se está comiendo el ancho de la columna del día. */
+        .dg-corte-tabla th:last-child, .dg-corte-tabla td:last-child { display:none; }
+      }
       .dg-corte-anotar-txt { margin:0 0 10px; font-size:13px; color:var(--dg-text-dim); }
       .dg-corte-tabla { width:100%; border-collapse:collapse; font-size:13px; }
       .dg-corte-tabla th { text-align:left; font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); padding:0 10px 6px 0; font-weight:700; }
