@@ -746,6 +746,7 @@ const SECTOR_SUBPAGES = {
   ],
   postventa: [
     { id: "envios", label: "Envíos" },
+    { id: "numeros", label: "Números" },
     { id: "interior", label: "Envíos al interior" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "reclamos", label: "Reclamos" },
@@ -4252,8 +4253,12 @@ function CampoQueCrece({ value, ...resto }) {
   useEffect(() => {
     const el = caja.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
+    const medir = () => { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; };
+    medir();
+    // Si cambia el ancho (girar el teléfono, agrandar la ventana), el texto
+    // ocupa otra cantidad de renglones: hay que volver a medir o queda cortado.
+    window.addEventListener("resize", medir);
+    return () => window.removeEventListener("resize", medir);
   }, [value]);
   return <textarea ref={caja} value={value} {...resto} />;
 }
@@ -4290,8 +4295,9 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
             <div className="dg-guia-cuerpo">
               {isAdmin ? (
                 <>
-                  <input className="dg-guia-titulo-edit" value={p.titulo} placeholder="Título del paso"
-                    onChange={(e) => editar(p.id, "titulo", e.target.value)} />
+                  <CampoQueCrece className="dg-guia-titulo-edit" value={p.titulo} rows={1} placeholder="Título del paso"
+                    onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+                    onChange={(e) => editar(p.id, "titulo", e.target.value.replace(/[\r\n]+/g, " "))} />
                   <CampoQueCrece className="dg-guia-detalle-edit" value={p.detalle} rows={3} placeholder="Explicá qué hay que hacer"
                     onChange={(e) => editar(p.id, "detalle", e.target.value)} />
                   <div className="dg-guia-acciones">
@@ -10958,6 +10964,195 @@ function ListaParaAnotar({ hojas }) {
   );
 }
 
+/* ===========================================================================
+   LOS NÚMEROS DE POSTVENTA
+   Los tres números que pide el manual (pedidos cargados, reclamos nuevos y
+   saldo sin cobrar) más lo que el sector no tenía medido: cuánto tarda un
+   espejo desde que fábrica lo deja listo hasta que el cliente lo tiene, y en
+   qué tramo de ese camino se pierde el tiempo.
+   =========================================================================== */
+// Los tramos del camino de un espejo terminado hasta la casa del cliente.
+const ETAPAS_POSTVENTA = [
+  { label: "De listo a avisarle al cliente", desde: "produccionListaFecha", hasta: "clienteAvisadoFecha" },
+  { label: "De avisarle a confirmar el envío", desde: "clienteAvisadoFecha", hasta: "envioConfirmadoFecha" },
+  { label: "De confirmar el envío a entregarlo", desde: "envioConfirmadoFecha", hasta: "entregadoFecha" },
+];
+
+function numerosPostventa(pedidos, reclamos, desde, hasta) {
+  const dentro = (iso) => {
+    const d = diaLocalDe(iso) || String(iso || "").slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= desde && d <= hasta;
+  };
+  const vivos = (pedidos || []).filter((p) => p && p.estado !== "Cancelado");
+  const cuantos = (p) => Math.max(1, Number(p.cant) || 1);
+
+  let entregados = 0, cargados = 0, sinFacturarDelPeriodo = 0;
+  const diasListoAEntregado = [];
+  const saltos = ETAPAS_POSTVENTA.map(() => []);
+
+  vivos.forEach((p) => {
+    const n = cuantos(p);
+    if (dentro(p.fecha)) cargados += n;
+    if (!p.entregadoFecha || !dentro(p.entregadoFecha)) return;
+    entregados += n;
+    if (!pedidoFacturadoOEfectivo(p)) sinFacturarDelPeriodo += n;
+    const total = diasEntreDias(p.produccionListaFecha, p.entregadoFecha);
+    if (total !== null) diasListoAEntregado.push(total);
+    ETAPAS_POSTVENTA.forEach((e, i) => {
+      const d = diasEntreDias(p[e.desde], p[e.hasta]);
+      if (d !== null) saltos[i].push(d);
+    });
+  });
+
+  // Los reclamos se cuentan por el día en que se cargaron.
+  const delPeriodo = (reclamos || []).filter((r) => dentro(r.fecha));
+  const cerradosEnElPeriodo = (reclamos || []).filter((r) => reclamoFinalizado(r) && dentro(r.finalizadoFecha));
+  const diasCierre = [];
+  cerradosEnElPeriodo.forEach((r) => {
+    const d = diasEntreDias(r.fecha, r.finalizadoFecha);
+    if (d !== null) diasCierre.push(d);
+  });
+  const porTipo = new Map();
+  delPeriodo.forEach((r) => {
+    const t = String(r.tipo || "").trim() || "Sin tipo";
+    porTipo.set(t, (porTipo.get(t) || 0) + 1);
+  });
+
+  return {
+    entregados, cargados,
+    sinFacturarDelPeriodo,
+    diasListoAEntregado: {
+      promedio: promedioDeDias(diasListoAEntregado),
+      peor: diasListoAEntregado.length ? Math.max(...diasListoAEntregado) : null,
+    },
+    etapas: ETAPAS_POSTVENTA.map((e, i) => ({ label: e.label, promedio: promedioDeDias(saltos[i]), n: saltos[i].length }))
+      .filter((e) => e.n > 0),
+    reclamosNuevos: delPeriodo.length,
+    reclamosCerrados: cerradosEnElPeriodo.length,
+    diasCierre: { promedio: promedioDeDias(diasCierre), peor: diasCierre.length ? Math.max(...diasCierre) : null },
+    // Cuántos reclamos por cada 100 espejos entregados. Es el número que dice
+    // si lo que sale del taller está saliendo bien.
+    tasaReclamo: entregados > 0 ? Math.round((delPeriodo.length / entregados) * 1000) / 10 : null,
+    tipos: [...porTipo.entries()].map(([tipo, n]) => ({ tipo, n })).sort((a, b) => b.n - a.n),
+  };
+}
+
+// Lo que está pasando AHORA, que no depende del período elegido.
+function pendientesPostventaHoy(pedidos, reclamos) {
+  const vivos = (pedidos || []).filter((p) => p && p.estado !== "Cancelado");
+  const conSaldo = vivos.filter((p) => pendienteDeCobrarPedido(p) > 0);
+  const entregadoSinFactura = vivos.filter((p) => (p.estado === "Entregado" || p.estado === "Despachado") && !pedidoFacturadoOEfectivo(p));
+  const abiertos = (reclamos || []).filter((r) => !reclamoFinalizado(r));
+  return {
+    saldoSinCobrar: conSaldo.reduce((t, p) => t + pendienteDeCobrarPedido(p), 0),
+    pedidosDebiendo: new Set(conSaldo.map((p) => p.grupoId || p.id)).size,
+    reclamosAbiertos: abiertos.length,
+    reclamosSinSolucion: abiertos.filter((r) => !String(r.solucion || "").trim()).length,
+    sinFacturar: entregadoSinFactura.length,
+  };
+}
+
+function NumerosPostventaPanel({ pedidos, reclamos }) {
+  const hoy = isoLocal(new Date());
+  const [periodo, setPeriodo] = useState("mes");
+  const rango = rangoPeriodo(periodo, hoy);
+  const previo = periodoAnterior(rango);
+  const n = numerosPostventa(pedidos, reclamos, rango.desde, rango.hasta);
+  const antes = numerosPostventa(pedidos, reclamos, previo.desde, previo.hasta);
+  const ahora = pendientesPostventaHoy(pedidos, reclamos);
+  const corto = (iso) => { const p = iso.split("-"); return `${Number(p[2])}/${Number(p[1])}`; };
+  const masLargo = n.etapas.length ? Math.max(...n.etapas.map((e) => e.promedio || 0)) : 0;
+  const masReclamado = n.tipos.length ? n.tipos[0].n : 0;
+  const vacio = n.entregados === 0 && n.cargados === 0 && n.reclamosNuevos === 0;
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        {PERIODOS_FABRICA.map((p) => (
+          <button key={p.id} type="button" className={periodo === p.id ? "dg-btn-primary" : "dg-btn-ghost"} onClick={() => setPeriodo(p.id)}>{p.label}</button>
+        ))}
+        <span className="dg-num-rango">{corto(rango.desde)} al {corto(rango.hasta)}</span>
+        <button className="dg-btn-ghost" style={{ marginLeft: "auto" }} onClick={() => window.print()}><Printer size={14} /> Imprimir</button>
+      </div>
+
+      {/* Esto no depende del período: es cómo está la cosa ahora mismo. */}
+      <div className="dg-section-card dg-pv-ahora">
+        <div className="dg-section-header"><AlertCircle size={14} /> Ahora mismo</div>
+        <div className="dg-pv-ahora-grid">
+          <div className={ahora.saldoSinCobrar > 0 ? "dg-pv-dato dg-pv-dato-ojo" : "dg-pv-dato"}>
+            <strong>{money(ahora.saldoSinCobrar)}</strong>
+            <span>sin cobrar{ahora.pedidosDebiendo > 0 ? ` · ${ahora.pedidosDebiendo} pedido${ahora.pedidosDebiendo === 1 ? "" : "s"}` : ""}</span>
+          </div>
+          <div className={ahora.reclamosSinSolucion > 0 ? "dg-pv-dato dg-pv-dato-ojo" : "dg-pv-dato"}>
+            <strong>{ahora.reclamosAbiertos}</strong>
+            <span>reclamos abiertos{ahora.reclamosSinSolucion > 0 ? ` · ${ahora.reclamosSinSolucion} sin solución` : ""}</span>
+          </div>
+          <div className={ahora.sinFacturar > 0 ? "dg-pv-dato dg-pv-dato-ojo" : "dg-pv-dato"}>
+            <strong>{ahora.sinFacturar}</strong>
+            <span>entregados sin factura</span>
+          </div>
+        </div>
+      </div>
+
+      {vacio ? <div className="dg-empty">No hay nada cargado ni entregado en este período.</div> : (
+        <>
+          <div className="dg-num-grid">
+            <CajaNumero titulo="Pedidos cargados" valor={n.cargados} antes={antes.cargados} pie={`antes ${antes.cargados}`} />
+            <CajaNumero titulo="Espejos entregados" valor={n.entregados} antes={antes.entregados} pie={`antes ${antes.entregados}`} />
+            <CajaNumero titulo="De listo a entregado" valor={n.diasListoAEntregado.promedio} unidad=" d" mejorSiBaja
+              antes={antes.diasListoAEntregado.promedio}
+              pie={n.diasListoAEntregado.peor !== null ? `el peor tardó ${n.diasListoAEntregado.peor}` : ""} />
+            <CajaNumero titulo="Reclamos nuevos" valor={n.reclamosNuevos} antes={antes.reclamosNuevos} mejorSiBaja
+              pie={n.tasaReclamo === null ? "" : `${n.tasaReclamo} cada 100 entregados`} />
+            <CajaNumero titulo="Días en cerrar un reclamo" valor={n.diasCierre.promedio} unidad=" d" mejorSiBaja
+              antes={antes.diasCierre.promedio}
+              pie={n.reclamosCerrados > 0 ? `${n.reclamosCerrados} cerrado${n.reclamosCerrados === 1 ? "" : "s"}` : "ninguno cerrado"} />
+          </div>
+
+          {n.etapas.length > 0 && (
+            <div className="dg-section-card">
+              <div className="dg-section-header"><CalendarClock size={14} /> Dónde se pierde el tiempo hasta la entrega</div>
+              <table className="dg-num-tabla">
+                <tbody>
+                  {n.etapas.map((e) => (
+                    <tr key={e.label}>
+                      <td className="dg-num-etapa">{e.label}</td>
+                      <td className="dg-num-barra"><span style={{ width: `${masLargo > 0 ? Math.round(((e.promedio || 0) / masLargo) * 100) : 0}%` }} /></td>
+                      <td className="dg-num-dias">{e.promedio} d</td>
+                      <td className="dg-num-n">{e.n} esp.</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {n.tipos.length > 0 && (
+            <div className="dg-section-card">
+              <div className="dg-section-header"><AlertTriangle size={14} /> Por qué reclaman</div>
+              <table className="dg-num-tabla">
+                <tbody>
+                  {n.tipos.map((t) => (
+                    <tr key={t.tipo}>
+                      <td className="dg-num-etapa">{t.tipo}</td>
+                      <td className="dg-num-barra"><span style={{ width: `${masReclamado > 0 ? Math.round((t.n / masReclamado) * 100) : 0}%` }} /></td>
+                      <td className="dg-num-dias">{t.n}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="dg-hint" style={{ marginTop: 10 }}>
+                Esto solo sirve si el tipo está bien elegido al cargar el reclamo. Si la mayoría dice «Otro», no se puede arreglar nada con este cuadro.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function NumerosFabricaPanel({ pedidos }) {
   const hoy = isoLocal(new Date());
   const [periodo, setPeriodo] = useState("90");
@@ -15551,6 +15746,11 @@ function SectorPage({
 
       {subpage === "numeros" && sector.id === "fabrica" && isAdmin && <NumerosFabricaPanel pedidos={pedidos} />}
 
+      {subpage === "numeros" && sector.id === "postventa" && (
+        canSeePedidos ? <NumerosPostventaPanel pedidos={pedidos} reclamos={reclamos} />
+          : <LockedPage label="Números" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "materiales" && sector.id === "fabrica" && (
         canSeePedidos ? <StockMaterialesPanel stock={stockMateriales} onChange={onChangeStockMateriales} canEdit={canEditStock} puedeBorrar={puedeBorrar} />
           : <LockedPage label="Stock de materiales" onLogin={onRequestLogin} />
@@ -16388,21 +16588,66 @@ function Style() {
       .dg-avisos-flot-overlay { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,0.5); }
       /* Una tarjeta por motivo. Las que faltan leer asoman atrás, como un mazo. */
       .dg-aviso-card { --ac:var(--dg-accent); --ac-rgb:var(--dg-accent-rgb); position:relative; z-index:1; max-height:82vh; overflow-y:auto; background:var(--dg-surface); border:1px solid rgba(var(--ac-rgb),.55); border-top:4px solid var(--ac); border-radius:16px; padding:16px 18px 18px; box-shadow:0 24px 60px -12px rgba(0,0,0,0.6); animation:dg-aviso-entra .22s ease-out; }
-      .dg-guia { list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; gap:12px; }
-      .dg-guia-paso { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border-radius:14px;
-        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); }
-      .dg-guia-num { flex:0 0 auto; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-        background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent-2); font-family:'Jost',sans-serif; font-weight:700; font-size:14px; }
-      .dg-guia-cuerpo { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:5px; }
-      .dg-guia-cuerpo > strong { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; color:var(--dg-text); }
-      .dg-guia-cuerpo > p { margin:0; font-size:14px; line-height:1.5; color:var(--dg-text-dim); }
-      .dg-guia-titulo-edit { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; }
-      .dg-guia-detalle-edit { font-size:14px; line-height:1.5; resize:vertical; min-height:62px; overflow:hidden; }
-      .dg-guia-acciones { display:flex; gap:6px; margin-top:2px; }
+      /* La guía se lee como un manual, no como una planilla. El admin edita
+         sobre el mismo texto: los campos no se ven hasta que los tocás. */
+      .dg-guia { list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; gap:10px; }
+      .dg-guia-paso { display:flex; gap:14px; align-items:flex-start; padding:16px 18px; border-radius:14px;
+        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.09);
+        box-shadow:inset 3px 0 0 rgba(var(--dg-accent-rgb),.3);
+        transition:box-shadow .15s ease, border-color .15s ease; }
+      .dg-guia-paso:hover { border-color:rgba(var(--dg-line-rgb),.16); box-shadow:inset 3px 0 0 var(--dg-accent); }
+      .dg-guia-paso:focus-within { border-color:rgba(var(--dg-accent-rgb),.4); box-shadow:inset 3px 0 0 var(--dg-accent); }
+      .dg-guia-num { flex:0 0 auto; width:27px; height:27px; margin-top:1px; border-radius:50%;
+        display:flex; align-items:center; justify-content:center;
+        background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent-2);
+        font-family:'Jost',sans-serif; font-weight:700; font-size:14px; font-variant-numeric:tabular-nums; }
+      .dg-guia-cuerpo { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:6px; }
+      .dg-guia-cuerpo > strong { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; color:var(--dg-text); line-height:1.3; }
+      .dg-guia-cuerpo > p { margin:0; font-size:14.5px; line-height:1.62; color:var(--dg-text-dim); max-width:72ch; }
+      /* Los campos del administrador imitan al texto de arriba. El borde y el
+         fondo aparecen al pasar por encima o al entrar a escribir: así la
+         pantalla se lee igual para todos y no parece un formulario. */
+      .dg-guia-paso .dg-guia-titulo-edit,
+      .dg-guia-paso .dg-guia-detalle-edit {
+        width:100%; box-sizing:border-box; margin-left:-8px;
+        background:transparent; border:1px solid transparent; border-radius:9px;
+        padding:4px 8px; color:var(--dg-text); outline:none; box-shadow:none;
+        transition:background .15s ease, border-color .15s ease; }
+      .dg-guia-paso .dg-guia-titulo-edit { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; line-height:1.3;
+        resize:none; min-height:0; overflow:hidden; }
+      .dg-guia-paso .dg-guia-detalle-edit { font-size:14.5px; line-height:1.62; color:var(--dg-text-dim);
+        resize:none; min-height:34px; overflow:hidden; }
+      .dg-guia-paso .dg-guia-titulo-edit::placeholder,
+      .dg-guia-paso .dg-guia-detalle-edit::placeholder { color:var(--dg-text-faint); }
+      .dg-guia-paso .dg-guia-titulo-edit:hover,
+      .dg-guia-paso .dg-guia-detalle-edit:hover { background:rgba(var(--dg-line-rgb),.055); }
+      .dg-guia-paso .dg-guia-titulo-edit:focus,
+      .dg-guia-paso .dg-guia-detalle-edit:focus { background:var(--dg-surface);
+        border-color:rgba(var(--dg-accent-rgb),.5); box-shadow:0 0 0 3px rgba(var(--dg-accent-rgb),.1); }
+      /* Los botones de orden y borrado no compiten con el texto: salen cuando
+         el paso está en foco o abajo del mouse. En pantalla táctil, siempre. */
+      .dg-guia-acciones { display:flex; gap:6px; margin-top:3px; opacity:0; transition:opacity .15s ease; }
+      .dg-guia-paso:hover .dg-guia-acciones,
+      .dg-guia-paso:focus-within .dg-guia-acciones { opacity:1; }
+      @media (hover:none) { .dg-guia-acciones { opacity:1; } }
+      @media (max-width:860px) { .dg-guia-acciones { opacity:1; } }
       .dg-guia-acciones button { width:32px; height:30px; display:flex; align-items:center; justify-content:center;
         border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:8px; background:transparent; color:var(--dg-text-dim); cursor:pointer; font-size:14px; }
-      .dg-guia-acciones button:disabled { opacity:.35; cursor:default; }
+      .dg-guia-acciones button:hover:not(:disabled) { background:rgba(var(--dg-line-rgb),.07); color:var(--dg-text); }
+      .dg-guia-acciones button:disabled { opacity:.3; cursor:default; }
       .dg-guia-acciones .dg-guia-borrar { color:var(--dg-danger); border-color:rgba(var(--dg-danger-rgb),.3); }
+      .dg-guia-acciones .dg-guia-borrar:hover { background:rgba(var(--dg-danger-rgb),.1); color:var(--dg-danger); }
+      @media (max-width:640px) { .dg-guia-paso { padding:14px 14px; gap:11px; } }
+      /* Los números de PostVenta: lo de "ahora mismo" va aparte porque no
+         depende del período que estén mirando. */
+      .dg-pv-ahora { margin-bottom:14px; }
+      .dg-pv-ahora-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:12px; }
+      .dg-pv-dato { display:flex; flex-direction:column; gap:2px; padding:11px 13px; border-radius:11px;
+        background:rgba(var(--dg-line-rgb),.05); border:1px solid transparent; }
+      .dg-pv-dato strong { font-family:'Jost',sans-serif; font-size:22px; font-weight:700; color:var(--dg-text); font-variant-numeric:tabular-nums; }
+      .dg-pv-dato span { font-size:12px; color:var(--dg-text-dim); line-height:1.4; }
+      .dg-pv-dato-ojo { background:rgba(var(--dg-warning-rgb),.1); border-color:rgba(var(--dg-warning-rgb),.28); }
+      .dg-pv-dato-ojo strong { color:var(--dg-warning-2); }
       .dg-aviso-resumen { --ac:var(--dg-accent); --ac-rgb:var(--dg-accent-rgb); }
       .dg-aviso-numeros { list-style:none; margin:14px 0 4px; padding:0; display:flex; flex-direction:column; gap:9px; }
       .dg-aviso-numeros li { display:flex; align-items:center; gap:11px; padding:11px 13px; border-radius:12px;
