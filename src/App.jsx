@@ -5430,7 +5430,7 @@ function ubicarPieza(hoja, pieza, w, h, criterio = "corto", rotar = true) {
     x: mejor.r.x, y: mejor.r.y, ancho: mejor.pw, alto: mejor.ph, rotada: mejor.rotada,
     etiqueta: pieza.etiqueta, anchoReal: mejor.rotada ? pieza.alto : pieza.ancho, altoReal: mejor.rotada ? pieza.ancho : pieza.alto,
     // Se arrastran para la lista de abajo, la de anotar el nombre atrás.
-    cliente: pieza.cliente || "", dia: pieza.dia || "",
+    cliente: pieza.cliente || "", dia: pieza.dia || "", destino: pieza.destino || "",
     fantasma: !!pieza.fantasma, adelantado: !!pieza.adelantado,
   };
   hoja.piezas.push(puesta);
@@ -10317,29 +10317,85 @@ function leerHojaCruda() {
 // los que todavía les falta pasar por la mesa de corte. Lo que ya está cortado
 // y armado esperando el embalado no va: esa hoja ya se usó.
 // La lista «Espejos para armar» (esm_armar) tampoco: vienen ya cortados.
+// Cuántos espejos de este pedido todavía no pasaron por la mesa de corte.
+// Un espejo ya cortado no se vuelve a cortar, por más que le falte el armado.
+function unidadesSinCortar(pedido) {
+  return unidadesDePedido(pedido).filter((u) => unidadPasosCompletados(u) === 0).length;
+}
+
+// Los espejos que hay que CORTAR, del día de hoy en adelante. Nunca de días
+// que ya pasaron: lo que quedó sin hacer el lunes se muestra aparte, en rojo,
+// para que lo vean, pero no entra al acomodo (si entrara, el dibujo de hoy
+// sería el de otro día).
+// Entran tres cosas:
+//   · la lista de hoy (y la de la semana, si eligen esa vista);
+//   · los esmerilados para cortar;
+//   · y los que están esperando para mandar a grabar, que hay que cortarlos
+//     igual y encima son los que frenan todo: el grabador es el cuello de
+//     botella, cuanto antes salgan de acá, mejor.
 function piezasParaCortar(pedidos, hoyIso, alcance = "dia") {
   const piezas = [];
   const sinMedida = [];
   const hastaSabado = sabadoDeLaSemana(primerDiaTaller(hoyIso));
+  // Cuántos le quedan sin cortar a cada pedido. Se va descontando, así un
+  // pedido repartido en varios días no se cuenta dos veces.
+  const saldo = new Map();
+  const quedan = (p) => {
+    if (!saldo.has(p.id)) saldo.set(p.id, unidadesSinCortar(p));
+    return saldo.get(p.id);
+  };
+  const sumar = (p, cuantos, dia, destino) => {
+    const n = Math.min(Math.max(0, cuantos), quedan(p));
+    if (n <= 0) return;
+    const ancho = Number(p?.ancho) || 0, alto = Number(p?.alto) || 0;
+    if (ancho <= 0 || alto <= 0) { sinMedida.push(p); return; }
+    saldo.set(p.id, quedan(p) - n);
+    for (let k = 0; k < n; k++) {
+      piezas.push({ etiqueta: "#" + (p.orden || "?"), ancho, alto, dia, destino, cliente: p.cliente || "" });
+    }
+  };
+
   ["simples", "esm_cortar"].forEach((lista) => {
     const plan = planTaller(pedidos, hoyIso, lista);
     const dias = alcance === "semana"
       ? plan.filter((d) => !d.pasado && d.fecha <= hastaSabado)
       : [diaDeHoyDelPlan(plan)].filter(Boolean);
-    dias.forEach((d) => (d.items || []).forEach((it) => {
-      const p = it.pedido;
-      const ancho = Number(p?.ancho) || 0, alto = Number(p?.alto) || 0;
-      const n = Math.max(0, Number(it.unidades) || 0);
-      if (n <= 0) return;
-      if (ancho <= 0 || alto <= 0) { sinMedida.push(p); return; }
-      for (let i = 0; i < n; i++) {
-        piezas.push({ etiqueta: "#" + (p.orden || "?"), ancho, alto, dia: d.fecha, cliente: p.cliente || "" });
-      }
-    }));
+    dias.forEach((d) => (d.items || []).forEach((it) => sumar(it.pedido, it.unidades, d.fecha, "lista")));
   });
+
+  // Los de grabado no tienen día puesto: están esperando que alguien los
+  // corte y los despache. Van siempre, en las dos vistas.
+  (pedidos || [])
+    .filter((p) => pedidoListaFabrica(p) === "mandar_grabar" && p.estado !== "Cancelado")
+    .sort((a, b) => compararPrioridadTaller(a, b))
+    .forEach((p) => sumar(p, unidadesSinCortar(p), "", "grabado"));
+
   return { piezas, sinMedida: [...new Map(sinMedida.map((p) => [p.id, p])).values()] };
 }
 
+// Lo que quedó sin cortar de días que ya pasaron. NO entra al acomodo: se
+// muestra aparte y en rojo, para que sepan que está colgado.
+function piezasAtrasadasSinCortar(pedidos, hoyIso) {
+  const atrasadas = [];
+  const saldo = new Map();
+  ["simples", "esm_cortar"].forEach((lista) => {
+    planTaller(pedidos, hoyIso, lista).filter((d) => d.pasado).forEach((d) => {
+      (d.items || []).forEach((it) => {
+        const p = it.pedido;
+        if (!saldo.has(p.id)) saldo.set(p.id, unidadesSinCortar(p));
+        const n = Math.min(Math.max(0, Number(it.unidades) || 0), saldo.get(p.id));
+        if (n <= 0) return;
+        saldo.set(p.id, saldo.get(p.id) - n);
+        atrasadas.push({
+          etiqueta: "#" + (p.orden || "?"), cliente: p.cliente || "",
+          ancho: Number(p.ancho) || 0, alto: Number(p.alto) || 0,
+          unidades: n, dia: d.fecha,
+        });
+      });
+    });
+  });
+  return atrasadas.sort((a, b) => String(a.dia).localeCompare(String(b.dia)));
+}
 // Una medida de 3 metros no existe: está cargada en milímetros. Pasa en los
 // pedidos viejos (500×850 en vez de 50×85) y conviene decirlo, no mandarlos a
 // comprar una hoja más grande.
@@ -10454,7 +10510,10 @@ function HojaDibujo({ hoja, W, H, numero }) {
     <div className="dg-hoja">
       <div className="dg-hoja-top">
         <strong>Hoja {numero}</strong>
-        <span>{hoja.piezas.filter((p) => !p.adelantado).length} de hoy</span>
+        <span>{hoja.piezas.filter((p) => !p.adelantado && p.destino !== "grabado").length} de hoy</span>
+        {hoja.piezas.some((p) => p.destino === "grabado") && (
+          <span className="dg-hoja-grabados">+ {hoja.piezas.filter((p) => p.destino === "grabado").length} a grabado</span>
+        )}
         {hoja.piezas.some((p) => p.adelantado) && (
           <span className="dg-hoja-adelantados">+ {hoja.piezas.filter((p) => p.adelantado).length} adelantados</span>
         )}
@@ -10475,18 +10534,23 @@ function HojaDibujo({ hoja, W, H, numero }) {
         ))}
         {hoja.piezas.map((p, i) => {
           const cx = p.x + p.anchoReal / 2, cy = p.y + p.altoReal / 2;
-          const corrido = p.adelantado ? 4 : 0;
+          const aparte = p.adelantado || p.destino === "grabado";
+          const corrido = aparte ? 4 : 0;
+          const extra = p.destino === "grabado" ? " dg-hoja-pieza-grab" : p.adelantado ? " dg-hoja-pieza-adel" : "";
           return (
             <g key={i}>
-              <rect x={p.x} y={p.y} width={p.anchoReal} height={p.altoReal}
-                className={p.adelantado ? "dg-hoja-pieza dg-hoja-pieza-adel" : "dg-hoja-pieza"} />
+              <rect x={p.x} y={p.y} width={p.anchoReal} height={p.altoReal} className={"dg-hoja-pieza" + extra} />
               {chico(p) ? (
                 <text x={cx} y={cy + 2.5} className="dg-hoja-ref">{p.etiqueta}</text>
               ) : (
                 <Fragment>
                   <text x={cx} y={cy - 1.5 - corrido} className="dg-hoja-ref">{p.etiqueta}</text>
                   <text x={cx} y={cy + 8 - corrido} className="dg-hoja-med">{p.anchoReal}×{p.altoReal}{p.rotada ? " ↻" : ""}</text>
-                  {p.adelantado && <text x={cx} y={cy + 16} className="dg-hoja-adel">{diaCortito(p.dia)}</text>}
+                  {aparte && (
+                    <text x={cx} y={cy + 16} className="dg-hoja-adel">
+                      {p.destino === "grabado" ? "A GRABADO" : diaCortito(p.dia)}
+                    </text>
+                  )}
                 </Fragment>
               )}
             </g>
@@ -10534,6 +10598,7 @@ function OptimizadorCortePanel({ pedidos }) {
     const medidas = medidasQueSeRepiten(pedidos);
     const { piezas, sinMedida } = piezasParaCortar(pedidos, hoy, alcance);
     const semana = piezasParaCortar(pedidos, hoy, "semana").piezas;
+    const atrasadas = piezasAtrasadasSinCortar(pedidos, hoy);
     // El hueco que sobra en la hoja se llena con espejos de los próximos días:
     // es trabajo que igual hay que hacer y se adelanta sin gastar vidrio de más.
     // Los más cercanos primero, que son los menos arriesgados de cortar antes.
@@ -10546,7 +10611,7 @@ function OptimizadorCortePanel({ pedidos }) {
     const adelantados = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => p.adelantado).length, 0);
     const delRecorte = r.hojas.reduce((t, h) => t + h.recortes.length, 0);
     return {
-      medidas, piezas, sinMedida, r, adelantados,
+      medidas, piezas, sinMedida, r, adelantados, atrasadas,
       resumen: resumenDeMedidas(piezas),
       ubicadas: r.hojas.reduce((t, h) => t + h.piezas.filter((p) => !p.adelantado).length, 0),
       delRecorte,
@@ -10562,10 +10627,11 @@ function OptimizadorCortePanel({ pedidos }) {
       comparacion: W > 0 && H > 0 ? compararDiaContraSemana(semana, W, H, aire, medidas) : null,
     };
   }, [pedidos, hoy, alcance, W, H, aire]);
-  const { piezas, sinMedida, resumen, stock, comparacion } = cuenta;
+  const { piezas, sinMedida, resumen, stock, comparacion, atrasadas } = cuenta;
   // El acomodo que se muestra: el normal, o el de la hoja extra si lo pidieron.
   const r = hojaExtra && stock ? stock.resultado : cuenta.r;
-  const ubicadas = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => !p.adelantado).length, 0);
+  const ubicadas = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => !p.adelantado && p.destino !== "grabado").length, 0);
+  const aGrabado = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => p.destino === "grabado").length, 0);
   const adelantados = r.hojas.reduce((t, h) => t + h.piezas.filter((p) => p.adelantado).length, 0);
   const delRecorte = r.hojas.reduce((t, h) => t + h.recortes.length, 0);
   const diasAdelantados = [...new Set(r.hojas.flatMap((h) => h.piezas.filter((p) => p.adelantado).map((p) => p.dia)))].sort();
@@ -10608,7 +10674,32 @@ function OptimizadorCortePanel({ pedidos }) {
         </div>
       ) : (
         <>
-          {alcance === "dia" && comparacion && comparacion.ahorro > 0 && (
+          {atrasadas.length > 0 && (
+            <div className="dg-corte-atrasado">
+              <AlertTriangle size={15} />
+              <div>
+                <strong>
+                  Quedaron {atrasadas.reduce((t, x) => t + x.unidades, 0)} espejos sin cortar de días anteriores
+                </strong>
+                <span>
+                  No están en el dibujo a propósito: el acomodo es de hoy en adelante. Hay que cortarlos aparte.
+                </span>
+                <ul className="dg-corte-atrasado-lista">
+                  {atrasadas.map((x, k) => (
+                    <li key={k}>
+                      <b>{x.etiqueta}</b> {x.cliente || "—"} · {x.ancho}×{x.alto}
+                      {x.unidades > 1 ? " · " + x.unidades + " espejos" : ""}
+                      <span>{diaCortito(x.dia)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+          {/* Una sola sugerencia por vez. Antes salían tres carteles seguidos
+              arriba de los números y terminaba pasando lo mismo que con los
+              avisos de fábrica: los saltean sin leer. */}
+          {!stock && alcance === "dia" && comparacion && comparacion.ahorro > 0 && (
             <div className="dg-corte-tip">
               <Sparkles size={15} />
               <div>
@@ -10650,24 +10741,12 @@ function OptimizadorCortePanel({ pedidos }) {
             </div>
           )}
 
-          {adelantados > 0 && (
-            <div className="dg-corte-stock">
-              <Sparkles size={15} />
-              <div>
-                <strong>Se adelantaron {adelantados} espejo{adelantados === 1 ? "" : "s"} de los próximos días</strong>
-                <span>
-                  {hojaExtra
-                    ? "Con la hoja que agregaron entran además " + adelantados + " de "
-                    : "En las " + r.hojas.length + " hojas que abren igual sobraba lugar, así que entraron " + adelantados + " de "}
-                  {diasAdelantados.map(diaCortito).join(" y ")}. Van marcados en violeta en el dibujo.{" "}
-                  <b>Se cortan hoy, se anotan y se dejan aparte</b>: el armado sigue en el día que les toca.
-                </span>
-              </div>
-            </div>
-          )}
 
           <div className="dg-corte-resumen">
             <div className="dg-corte-dato"><strong>{ubicadas}</strong><span>espejos de hoy</span></div>
+            {aGrabado > 0 && (
+              <div className="dg-corte-dato dg-corte-dato-grab"><strong>{aGrabado}</strong><span>para grabado</span></div>
+            )}
             {adelantados > 0 && (
               <div className="dg-corte-dato dg-corte-dato-adel"><strong>{adelantados}</strong><span>adelantados</span></div>
             )}
@@ -10676,6 +10755,20 @@ function OptimizadorCortePanel({ pedidos }) {
             <div className="dg-corte-dato dg-corte-dato-recorte"><strong>{r.recorteUtil}%</strong><span>recorte que sirve</span></div>
             <div className="dg-corte-dato dg-corte-dato-sobra"><strong>{r.tirado}%</strong><span>a la basura</span></div>
           </div>
+
+          {/* Qué es cada color del dibujo, en una línea. Reemplaza al cartel
+              que explicaba lo mismo en un párrafo. */}
+          {(aGrabado > 0 || adelantados > 0) && (
+            <div className="dg-corte-leyenda">
+              <span className="dg-leyenda-hoy">de hoy: se cortan y se arman</span>
+              {aGrabado > 0 && <span className="dg-leyenda-grab">a grabado: se cortan y se despachan al grabador</span>}
+              {adelantados > 0 && (
+                <span className="dg-leyenda-adel">
+                  adelantados de {diasAdelantados.map(diaCortito).join(" y ")}: se cortan hoy, se anotan y se dejan aparte
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="dg-corte-lista">
             <Scissors size={13} />
@@ -10694,6 +10787,7 @@ function OptimizadorCortePanel({ pedidos }) {
               </div>
             </div>
           )}
+
 
           {r.sinUbicar.length > 0 && (
             <div className="dg-corte-aviso">
@@ -10741,6 +10835,7 @@ function ListaParaAnotar({ hojas }) {
       <p className="dg-corte-anotar-txt">
         Escribile el nombre atrás apenas lo cortás y dejalo aparte. Después tachá la fila.
         Los que dicen un día en «Día» son adelantados: se cortan hoy pero se arman ese día.
+        Los que dicen «a grabado» no van al armado: se cortan y se despachan al grabador.
       </p>
       <div className="dg-corte-tabla-caja">
       <table className="dg-corte-tabla">
@@ -10755,7 +10850,9 @@ function ListaParaAnotar({ hojas }) {
               <td className="dg-corte-td-cli">{f.cliente || "—"}</td>
               <td className="dg-corte-td-med">{f.anchoReal}×{f.altoReal}{f.rotada ? " ↻" : ""}</td>
               <td className="dg-corte-td-cuando">
-                {f.adelantado ? <span className="dg-corte-adel">{diaCortito(f.dia)}</span> : "hoy"}
+                {f.destino === "grabado" ? <span className="dg-corte-grab">a grabado</span>
+                  : f.adelantado ? <span className="dg-corte-adel">{diaCortito(f.dia)}</span>
+                  : "hoy"}
               </td>
               <td className="dg-corte-td-ok"><span className="dg-corte-casilla" aria-hidden="true" /></td>
             </tr>
@@ -16371,6 +16468,13 @@ function Style() {
       .dg-corte-dato-sobra strong { color:var(--dg-warning-2); }
       .dg-corte-lista { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:9px 12px; margin-bottom:12px; border-radius:11px; background:rgba(var(--dg-accent-rgb),.08); color:var(--dg-text); font-size:13px; }
       .dg-corte-lista b { font-variant-numeric:tabular-nums; }
+      /* Qué significa cada color del dibujo, en una línea. */
+      .dg-corte-leyenda { display:flex; align-items:center; gap:7px 18px; flex-wrap:wrap; margin-bottom:12px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-corte-leyenda span { display:inline-flex; align-items:center; gap:6px; }
+      .dg-corte-leyenda span::before { content:""; width:11px; height:11px; border-radius:3px; flex:none; border:1px solid; }
+      .dg-leyenda-hoy::before { background:rgba(var(--dg-accent-rgb),.22); border-color:var(--dg-accent-2); }
+      .dg-leyenda-grab::before { background:rgba(var(--dg-warning-rgb),.22); border-color:var(--dg-warning-2); }
+      .dg-leyenda-adel::before { background:rgba(var(--dg-interior-rgb),.2); border-color:var(--dg-interior); }
       .dg-corte-aviso { display:flex; align-items:flex-start; gap:9px; padding:10px 12px; margin-bottom:12px; border-radius:11px; background:rgba(var(--dg-warning-rgb),.12); border:1px solid rgba(var(--dg-warning-rgb),.3); color:var(--dg-text); font-size:13px; line-height:1.45; }
       .dg-corte-aviso svg { flex:none; margin-top:2px; color:var(--dg-warning-2); }
       .dg-hojas { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:14px; }
@@ -16387,6 +16491,22 @@ function Style() {
       .dg-hoja-ref { fill:var(--dg-text); font-size:9px; font-weight:800; text-anchor:middle; font-family:'Jost',sans-serif; }
       .dg-hoja-med { fill:var(--dg-text); opacity:.78; font-size:7.5px; font-weight:600; text-anchor:middle; font-variant-numeric:tabular-nums; }
       .dg-hoja-pieza-adel { fill:rgba(var(--dg-interior-rgb),.2); stroke:var(--dg-interior); }
+      .dg-hoja-pieza-grab { fill:rgba(var(--dg-warning-rgb),.22); stroke:var(--dg-warning-2); }
+      .dg-hoja-grabados { color:var(--dg-warning-2); font-weight:700; }
+      .dg-corte-dato-grab strong { color:var(--dg-warning-2); }
+      .dg-corte-grab { padding:2px 7px; border-radius:999px; font-weight:700; color:var(--dg-on-accent); background:var(--dg-warning-2); }
+      /* Tarjeta sólida con franja roja al costado, no un fondo rojo translúcido:
+         sobre el fondo crema del tema claro el rojo del texto quedaba en 4,06. */
+      .dg-corte-atrasado { display:flex; align-items:flex-start; gap:12px; padding:12px 14px 12px 17px; margin-bottom:12px; border-radius:13px;
+        background:var(--dg-surface-2); border:1px solid rgba(var(--dg-danger-rgb),.38); box-shadow:inset 4px 0 0 var(--dg-danger); }
+      .dg-corte-atrasado > svg { flex:none; margin-top:2px; color:var(--dg-danger); }
+      .dg-corte-atrasado > div { display:flex; flex-direction:column; gap:4px; min-width:0; }
+      .dg-corte-atrasado strong { font-family:'Jost',sans-serif; font-size:15px; font-weight:600; color:var(--dg-danger); }
+      .dg-corte-atrasado > div > span { font-size:13px; line-height:1.5; color:var(--dg-text-dim); }
+      .dg-corte-atrasado-lista { list-style:none; margin:6px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-corte-atrasado-lista li { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; color:var(--dg-text); }
+      .dg-corte-atrasado-lista li span { margin-left:auto; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:700;
+        color:var(--dg-danger); white-space:nowrap; }
       .dg-hoja-adel { fill:var(--dg-text); opacity:.85; font-size:6.5px; font-weight:800; text-anchor:middle; letter-spacing:.3px; }
       .dg-hoja-adelantados { color:var(--dg-interior); font-weight:700; }
       .dg-corte-dato-adel strong { color:var(--dg-interior); }
