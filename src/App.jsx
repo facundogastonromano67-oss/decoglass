@@ -173,34 +173,104 @@ const SUGGESTED_TASKS = {
    preguntar. Arranca con este contenido, pero el administrador lo edita desde
    la misma pantalla: lo que quede guardado pisa a esto.
    =========================================================================== */
+// Los manuales de cada sector, escritos contra las pantallas y los botones
+// que la app tiene de verdad. Son el punto de partida: el administrador los
+// edita desde «Guía de trabajo» y lo que deje ahí manda sobre esto.
+// Si se cambia el contenido de acá, hay que subir GUIA_VERSION, porque si no
+// la guía guardada de antes le gana a la nueva y nadie ve el cambio.
+const GUIA_VERSION = 2;
 const GUIA_POR_DEFECTO = {
   ventas: [
-    { id: "v1", titulo: "Cargar el pedido",
-      detalle: "Pedidos → Nuevo pedido → Venta normal. Si el cliente ya compró antes, escribí el nombre y elegilo de la lista que aparece: trae el teléfono, el DNI y la dirección sin tener que preguntárselos de nuevo. No te olvides de marcar DE DÓNDE VINO la venta (local, WhatsApp/Instagram, Mercado Libre o Tienda Nube): de eso sale después el reporte de por dónde entra la plata." },
-    { id: "v2", titulo: "Anotar el monto y el anticipo",
-      detalle: "Cada espejo lleva su monto y su anticipo; el saldo se calcula solo. Lo que anotes acá entra derecho a Finanzas, así que ponelo bien de una. Si el pedido tiene varios espejos, cargá lo de cada uno por separado." },
-    { id: "v3", titulo: "Revisar con el cliente ANTES de pasarlo a fábrica",
-      detalle: "Repasá medida, forma, tono y funciones (touch, desempañante, pulido). Una medida mal cargada se paga haciendo el espejo dos veces. Recién cuando está todo confirmado tocá «Verificar y pasar a fábrica»: hasta ese momento fábrica no lo ve." },
-    { id: "v4", titulo: "Mandarle el link de seguimiento",
-      detalle: "Con el botón «Link de seguimiento» le mandás por WhatsApp una página donde ve en qué paso está su espejo, sin tener que preguntar. Desde ahí también te puede escribir, y los mensajes te llegan a la app." },
-    { id: "v5", titulo: "Si el cliente cambia algo",
-      detalle: "«Editar cliente y entrega» cambia los datos para TODOS los espejos del pedido (dirección, teléfono, forma de envío). Las medidas y las funciones se cambian entrando a cada espejo por separado." },
-    { id: "v6", titulo: "Marcar urgente solo cuando de verdad lo es",
-      detalle: "Un pedido marcado urgente se le pone primero a fábrica, arriba de todo lo demás. Si se marca todo como urgente, deja de significar nada." },
+    { id: "v1", titulo: "Contestar en el momento",
+      detalle: "Si hay mensajes esperando, eso es lo primero. El cliente puede estar en una obra, con el teléfono en la mano, comparando proveedores. No sabe que estamos ocupados: solo sabe que no le contestamos. Los mensajes que entran por el link de seguimiento te llegan a «Consultas», arriba de todo, con el pedido ya enganchado. Los de WhatsApp e Instagram se contestan desde ahí. Bandeja limpia = clientes atendidos. Nunca «son pocos, después los hago»." },
+    { id: "v2", titulo: "Antes de responder: nombre, consulta y stock",
+      detalle: "Tres cosas en diez segundos. ¿Cómo se llama? ¿Qué me preguntó exactamente? ¿Tengo algo que le resuelva la compra hoy? El stock está en Fábrica › Stock de espejos y los precios en Ventas › Catálogos y precios. Si el nombre está a la vista en WhatsApp o Kommo, usalo en el saludo y en el cierre — no en cada mensaje." },
+    { id: "v3", titulo: "Primero se vende lo que ya está hecho",
+      detalle: "Antes de mandar a fabricar, pensá qué hay disponible: el producto exacto, uno parecido que le sirva igual o mejor, o una alternativa de entrega rápida. Recién si nada sirve, fabricación especial. Stock = cierre hoy. Ejemplo: «El de 70×90 lo podemos fabricar. Igual, antes de hacerlo a pedido tengo un 70×100 disponible para entrega rápida, ¿tenés espacio para esos 10 cm?»" },
+    { id: "v4", titulo: "Si ya sabe lo que quiere, no lo demores",
+      detalle: "Saludo, respuesta, precio, disponibilidad y una pregunta — todo en un solo mensaje. «Hola Marta, el rectangular de 60×80 sale $XXX y justo tenemos uno disponible. ¿Esa medida te sirve?» Lo que hay que evitar es convertir una compra fácil en un interrogatorio." },
+    { id: "v5", titulo: "Si no sabe, asesorá de a una pregunta por vez",
+      detalle: "Nunca un cuestionario. Una pregunta, escuchar, y recién ahí decidir cuál sigue. Sirven: ¿es un baño nuevo o terminado? ¿cuánto mide el vanitory? ¿lo pensabas redondo o rectangular? ¿querés algo decorativo o que ilumine bien el rostro? ¿tenés electricidad detrás del espejo? ¿lo necesitás para estos días? Y nunca tires la lista entera de formas y funciones: demasiadas opciones es más difícil de decidir." },
+    { id: "v6", titulo: "Pedí una foto de frente",
+      detalle: "Una foto reemplaza muchas preguntas: te muestra el vanitory, el espacio, las paredes a los costados, el revestimiento, la grifería, la luz que ya hay y la instalación. «Mandame una foto de frente y te digo qué pondría yo ahí.»" },
+    { id: "v7", titulo: "Medida y paredes laterales",
+      detalle: "No ofrezcas automáticamente el más grande que entre. Con iluminación perimetral la luz necesita salir: conviene dejar unos 5 cm libres a cada lado. La app no deja pasar de 240 cm de ancho ni 170 de alto, que es lo máximo que entra en la hoja." },
+    { id: "v8", titulo: "Touch o tecla de pared",
+      detalle: "«¿Querés prenderlo desde la tecla de pared o manejarlo desde el espejo?» Si busca un frente limpio, sin botón. Si quiere manejarlo desde el espejo, touch. OJO: el mismo botón touch ya regula la intensidad — el touch ES el dimmer. No son dos accesorios y no se cobran como dos." },
+    { id: "v9", titulo: "Tono fijo o tres tonos",
+      detalle: "Con tono fijo elige uno (cálido, neutro o frío) y desde el touch prende, apaga y regula la intensidad. Con tres tonos los tiene los tres en el mismo espejo y cambia entre ellos desde el mismo botón. En la app es el campo «Tono de luz»." },
+    { id: "v10", titulo: "Frontal o perimetral, y el tono según el revestimiento",
+      detalle: "Si se maquilla o se afeita, frontal: ilumina el rostro. Si busca ambientación, perimetral. Y el tono se elige mirando el baño: beige con luz cálida se ve más cálido todavía; beige con luz fría tira a celeste; blanco con luz blanca queda limpio. Preguntá «¿el revestimiento es blanco, beige o gris?» antes de que elija a ciegas." },
+    { id: "v11", titulo: "Desempañador: solo si le sirve, y ojo con la medida",
+      detalle: "No lo ofrezcas de arranque. Preguntá si es un baño con mucho vapor o si la ducha está cerca. Si va, mirá la medida: el espejo tiene que tener al menos 15 cm más de ancho y de alto que el panel. En un 50×70 el panel más grande que entra es 35×45. Si no entra, el presupuestador te avisa «revisá la medida» y el precio sale calculado con el panel más chico — no lo pases así, confirmalo en el taller." },
+    { id: "v12", titulo: "Bluetooth y extras: lo que necesita, no lo que existe",
+      detalle: "«¿Sos de escuchar música mientras te preparás?» Si dice que no, no insistas. Llenar la cotización de funciones no la hace mejor, la hace más cara y más difícil de decidir." },
+    { id: "v13", titulo: "Una recomendada y una alternativa. Nada más",
+      detalle: "Dos opciones: la que recomendás (si se puede, la que está en stock) y una alternativa que también tenga sentido. «Por la foto, yo iría por este de 60×80 que tenemos disponible. También funcionaría el 60×90 si lo querés con más presencia. ¿Cuál te gusta más?»" },
+    { id: "v14", titulo: "Recomendá. El cliente espera criterio",
+      detalle: "«Como quieras» y «cualquiera queda bien» no son respuestas: dejan al cliente donde estaba. Usá «en tu caso…», «por lo que me contaste…», «yo elegiría…». Y cuando pases el precio, decí en una línea por qué esa opción, no mandes el número pelado." },
+    { id: "v15", titulo: "Cotizar en el Presupuestador",
+      detalle: "Ventas › Presupuestador. Podés cargar varios espejos, cada uno con su medida y su ubicación. Antes de mandarla, control de diez segundos: ¿el modelo es el correcto?, ¿la medida está bien?, ¿las funciones son las que hablamos?, ¿revisé stock?, ¿está claro si es stock o fabricación?, ¿dejé una pregunta? Si el cliente cambia algo, actualizá la cotización entera: la última tiene que ser exactamente lo que está evaluando comprar." },
+    { id: "v16", titulo: "Siempre dejá una pregunta",
+      detalle: "Mientras la venta siga abierta, el mensaje termina con un próximo paso. «Sale $250.000» → «Sale $250.000 y lo tenemos disponible, ¿lo necesitás para estos días?». Cotizar no es terminar la conversación." },
+    { id: "v17", titulo: "Cerrar",
+      detalle: "Cuando ya tiene la información suficiente: «¿avanzamos con este?», «¿te reservo el que tenemos disponible?», «¿preferís el 60×80 o el 60×90?». Lo que hay que sacar del vocabulario es «cualquier cosa avisame», «pensalo», «fijate»." },
+    { id: "v18", titulo: "Si dice «lo voy a pensar»",
+      detalle: "No adivines qué lo frena: preguntalo. «¿Hay algo que te genere dudas para avanzar?», «¿la duda viene por el presupuesto, por el modelo, o porque todavía falta para la reforma?». Si dice que está comparando: «¿qué estás comparando: precio, diseño o funciones?» — y nunca hablar mal de la competencia. Si dice que es caro: «¿se te fue del presupuesto o lo estás comparando con otra opción?». No son lo mismo y no se contestan igual." },
+    { id: "v19", titulo: "Cuando dice que sí: cargar el pedido",
+      detalle: "Primero dejá por escrito qué quedó definido (modelo, medida, iluminación, encendido, funciones, tono) y recién ahí pedí los datos. Pedidos › Nuevo pedido › Venta normal. Si el cliente ya compró, escribí el nombre y elegilo de la lista: trae teléfono, DNI y dirección sin preguntar de nuevo. Y marcá DE DÓNDE VINO la venta (local, WhatsApp/Instagram, Mercado Libre o Tienda Nube): de ahí sale el reporte de por dónde entra la plata." },
+    { id: "v20", titulo: "Monto y anticipo",
+      detalle: "Cada espejo lleva su monto y su anticipo; el saldo se calcula solo. Lo que anotes entra derecho a Finanzas, así que ponelo bien de una. Si el pedido tiene varios espejos, cargá lo de cada uno por separado." },
+    { id: "v21", titulo: "Revisar con el cliente ANTES de pasarlo a fábrica",
+      detalle: "Repasá medida, forma, tono y funciones. Una medida mal cargada se paga haciendo el espejo dos veces, y lo paga fábrica. Recién cuando está todo confirmado tocá «Verificar y pasar a fábrica»: hasta ese momento fábrica no lo ve. Y ninguna fecha de entrega se promete sin preguntarle a fábrica." },
+    { id: "v22", titulo: "Mandarle el link de seguimiento",
+      detalle: "Con «Link de seguimiento» le mandás por WhatsApp una página donde ve en qué paso está su espejo, sin preguntar. Desde ahí también te escribe, y te llega a «Consultas»." },
+    { id: "v23", titulo: "Si el cliente cambia algo",
+      detalle: "«Editar cliente y entrega» cambia los datos de TODOS los espejos del pedido (dirección, teléfono, forma de envío, montos). Las medidas y las funciones se cambian entrando a cada espejo por separado, con «Ver o editar este espejo»." },
+    { id: "v24", titulo: "Urgente, solo cuando de verdad lo es",
+      detalle: "Un pedido urgente se le pone primero a fábrica, arriba de todo. Si se marca todo urgente, deja de significar nada." },
+    { id: "v25", titulo: "Antes de irte: mirá Pendientes",
+      detalle: "El tablero «Pendientes», arriba de todo, filtrado en Ventas, te muestra lo que quedó a medias: pedidos cargados hace dos días o más que siguen sin verificar y nunca llegaron a fábrica. Si hay algo ahí, no se va solo." },
   ],
   postventa: [
-    { id: "p1", titulo: "Avisarle al cliente que está listo",
-      detalle: "Cuando fábrica lo marca «Espejo listo», aparece en Envíos. Avisale al cliente y dejá marcado que ya lo contactaste, así el resto del equipo sabe cómo viene." },
-    { id: "p2", titulo: "Confirmar el envío",
-      detalle: "Cerrá con el cliente la fecha, la dirección y el costo del envío. Hasta que no esté confirmado, Logística no lo ve en su lista, así que un envío sin confirmar no sale." },
-    { id: "p3", titulo: "Facturar",
-      detalle: "En «Facturas pendientes» están los que ya se entregaron y les falta la factura. Subí el comprobante y queda guardado: el cliente lo puede bajar solo desde su link de seguimiento." },
-    { id: "p4", titulo: "Cargar un reclamo",
-      detalle: "Elegí el tipo (LED que no enciende, rotura en transporte, medida equivocada, etc.), el cliente y el teléfono. Si ese cliente ya compró, abajo te muestra QUÉ ESPEJO le hicimos: medida, forma y tono. Eso es lo que hay que mirar antes de prometer nada." },
-    { id: "p5", titulo: "Mandar a hacer el reemplazo",
-      detalle: "Con el botón «Mandar a hacer un espejo nuevo (con sus datos)» se arma el pedido de cambio con el DNI, la dirección y la forma de envío que ya teníamos. Entra a fábrica como urgente. Completale las medidas en Pedidos." },
-    { id: "p6", titulo: "Cerrar el reclamo",
-      detalle: "Escribí qué solución se le dio y marcá que el cliente la aceptó. Recién ahí finalizalo. Un reclamo que queda abierto sin cerrar no sirve para saber qué está fallando." },
+    { id: "p1", titulo: "13:00 · Abrir: contestar todo lo que entró",
+      detalle: "Lo primero, antes que cualquier otra cosa. Un mensaje que entró ayer a las 18 ya lleva 19 horas esperando: el cliente no sabe que de 17 a 13 no hay nadie, solo sabe que no le contestan. Se contesta TODO, aunque no haya solución: «lo estoy viendo, te confirmo hoy». Lo que llega por el link de seguimiento está en «Consultas», arriba de todo, con el pedido ya enganchado." },
+    { id: "p2", titulo: "Leer el parte que dejó el otro · jueves y lunes",
+      detalle: "Los jueves Fran arranca leyendo el parte que dejó Dou el miércoles. Los lunes, Dou lee lo que quedó del sábado. Está en el chat del equipo (el botón redondo abajo a la derecha). Si uno retoma una conversación sin saber qué prometió el otro, el cliente tiene que volver a contar todo y la empresa parece desordenada aunque trabaje bien." },
+    { id: "p3", titulo: "Cargar los reclamos nuevos, con su tipo",
+      detalle: "PostVenta › Reclamos. Cada reclamo que aparece se carga en el momento, con número de pedido, tipo y fotos. Elegí bien el tipo (rotura en transporte, LED que no enciende, parpadea, el touch no responde, el desempañante no calienta, medida equivocada, falta una pieza, rayado, otro). Contestar resuelve hoy; el tipo es lo único que después deja saber qué arreglar: si siete de doce dicen «se rompió en el viaje», el problema es el embalaje. Treinta segundos por reclamo. Si ese cliente ya compró, abajo te muestra QUÉ ESPEJO le hicimos — medida, forma y tono. Eso se mira antes de prometer nada." },
+    { id: "p4", titulo: "Mercado Libre y Tienda Nube: preguntas sin responder",
+      detalle: "Fuera de la app, en cada plataforma. Va temprano porque Mercado Libre mide cuánto tardamos en contestar y con eso decide qué tan arriba aparecen nuestras publicaciones. Contestar tarde nos baja en el canal que trae 7 de cada 10 ventas." },
+    { id: "p5", titulo: "13:30 · Bajar las ventas de EcomApp y cargarlas en la app",
+      detalle: "Llegan a EcomApp y desde ahí se cargan a mano en Pedidos › Nuevo pedido › Venta normal. Mientras el pedido no esté en la app, para fábrica no existe. Canal: siempre el que corresponda, nunca vacío ni «otro» para salir del paso. Medidas y tipo: copiados de la publicación y de lo que puso el cliente. Datos del cliente: nombre, teléfono y dirección — si ya compró antes, escribí el nombre y elegilo de la lista y viene todo solo. Es el bloque más importante del día: cada hora que un pedido tarda en entrar es una hora más de demora en la entrega." },
+    { id: "p6", titulo: "Verificar el pedido antes de que pase a fábrica",
+      detalle: "Un error acá lo paga fábrica después. ¿Las medidas están completas y tienen sentido? ¿Si lleva desempañante, el espejo tiene al menos 15 cm más de ancho y de alto que el panel? (en un 50×70, panel máximo 35×45 — si no entra, el presupuestador te avisa). ¿Está el canal? ¿Están los datos de entrega? ¿La fecha comprometida es una que fábrica puede cumplir? Recién ahí «Verificar y pasar a fábrica». Dos minutos evitan un espejo entero." },
+    { id: "p7", titulo: "Hablar con el cliente lo que falte confirmar",
+      detalle: "Medida rara, dirección incompleta, un accesorio que no entra: se le escribe ANTES de mandarlo a fábrica. Y ninguna fecha de entrega se promete sin preguntarle a fábrica." },
+    { id: "p8", titulo: "14:45 · Primero la plata, después el flete",
+      detalle: "El orden es: ver qué está listo para salir → pedir el saldo → recién ahí coordinar el envío. Lo que está listo lo tenés en PostVenta › Envíos, y el tablero «Pendientes» filtrado en PostVenta te marca los que tienen el envío HOY o mañana sin confirmar. Transferencia: acreditada ANTES de que salga, acreditada de verdad, no «ya te transferí» — se mira la cuenta. Efectivo: puede pagar al recibir. Si coordinás el flete y después descubrís que el saldo no entró, perdiste el viaje y hay que sacarlo del camión." },
+    { id: "p9", titulo: "Avisarle al cliente y confirmar el envío",
+      detalle: "Cuando fábrica lo marca «Espejo listo» aparece en Envíos. Avisale y dejá marcado que ya lo contactaste, así el resto sabe cómo viene. Después cerrá fecha, dirección y costo: hasta que el envío no está confirmado, Logística no lo ve en su lista, así que un envío sin confirmar no sale." },
+    { id: "p10", titulo: "Coordinar con Batra / Gastón",
+      detalle: "Por WhatsApp, pedido por pedido: dirección, teléfono del cliente, cuántos bultos y si hay que cobrar algo al entregar. Si cobra en efectivo al recibir, tiene que estar dicho en el mensaje al fletero Y anotado en el pedido: cuánto cobra y de qué pedido. Un envío que sale a cobrar y no queda anotado es plata que depende de que alguien se acuerde." },
+    { id: "p11", titulo: "Anotar el saldo que queda sin cobrar",
+      detalle: "Al cerrar el bloque, cuánto queda pendiente y de qué pedidos. «Pendientes» te marca los entregados con saldo sin cobrar. Es el único número de la operación que es plata directa y hasta ahora no estaba medido en ningún lado." },
+    { id: "p12", titulo: "15:45 · Facturar, el mismo día de la entrega",
+      detalle: "PostVenta › Facturas pendientes tiene los que ya se entregaron y les falta la factura. Subí el comprobante y queda guardado: el cliente lo baja solo desde su link de seguimiento. La regla la fija la FORMA DE PAGO, no el cliente ni el vendedor: Mercado Libre, Tienda Nube y las ventas de la app con transferencia o 3 cuotas van por DECOGLASS SRL. Precio efectivo (el 15% menor) va con factura C de monotributo, se pague en billete o por transferencia a esa cuenta. Si hay duda, se pregunta ANTES de facturar. No se decide en el momento." },
+    { id: "p13", titulo: "Si un cliente pide el precio efectivo",
+      detalle: "No se ofrece de arranque: se aplica cuando el cliente lo pide. Es alrededor de 15% menos que el precio de transferencia, y ese 15% sale entero del margen del pedido — en un espejo que deja poca ganancia lo puede dejar en cero. En una compra grande (varias unidades, una obra, una constructora) se consulta antes de confirmarlo." },
+    { id: "p14", titulo: "Mandar a hacer un reemplazo",
+      detalle: "Desde el reclamo, con «Mandar a hacer un espejo nuevo (con sus datos)» se arma el pedido de cambio con el DNI, la dirección y la forma de envío que ya teníamos. Entra a fábrica como urgente. Completale las medidas en Pedidos." },
+    { id: "p15", titulo: "Cerrar el reclamo",
+      detalle: "Escribí qué solución se le dio y marcá que el cliente la aceptó. Recién ahí finalizalo. Un reclamo que queda abierto sin cerrar no sirve para saber qué está fallando, y a los dos días «Pendientes» te lo marca en rojo." },
+    { id: "p16", titulo: "16:40 · Cerrar el día",
+      detalle: "Dejá escrito qué quedó sin resolver, qué espera respuesta y qué hay que retomar mañana. Va al chat del equipo. Y los tres números del día: pedidos cargados hoy, reclamos nuevos hoy y saldo sin cobrar al cierre. Dos minutos. Sirven para saber si la carga del sector es sostenible, si los reclamos suben o bajan y cuánta plata está sin entrar." },
+    { id: "p17", titulo: "El parte de traspaso · miércoles y viernes",
+      detalle: "Diez minutos antes de irse, en el chat del equipo, con estos seis títulos: 1) clientes esperando respuesta — quién, por qué y QUÉ SE LE PROMETIÓ; 2) reclamos abiertos — pedido, tipo, estado y qué falta; 3) pedidos que no pudieron pasar a fábrica y por qué; 4) envíos comprometidos para los próximos días, con quién y si falta cobrar; 5) saldos sin cobrar — quién, cuánto y qué se acordó; 6) promesas con fecha que caen en los días del otro. Si un punto no tiene nada, se escribe «sin novedades»: un renglón vacío no dice si no pasó nada o si no se llegó a anotar. Lo que importa no es lo que hiciste, es lo que prometiste." },
+    { id: "p18", titulo: "Sábado de 9 a 13, los dos juntos",
+      detalle: "9:00 traspaso leyendo el parte del viernes — cada reclamo abierto sale con un nombre y una fecha, no «lo vemos los dos». 9:30 cerrar los reclamos que dependen solo de nosotros; los que dependen de fábrica o del transporte se anotan para el lunes. 11:00 cargar lo que entró viernes a la tarde y sábado: es el hueco más grande de la semana. 12:00 archivo y orden (facturas, remitos, comprobantes, Drive). 12:40 números de la semana para la reunión." },
+    { id: "p19", titulo: "Si algo de esto no funciona, se dice",
+      detalle: "Si el bloque no alcanza, si el orden no sirve, si una tarea quedó afuera o si uno de los dos no puede hacer algo porque no tiene el acceso o nunca lo hizo, se habla en la reunión semanal. Una tarea que depende de una sola persona frena al sector entero el día que esa persona falta. Esto se corrige con lo que pasa de verdad, no se aguanta en silencio." },
   ],
 };
 
@@ -1771,8 +1841,8 @@ function App() {
     try {
       const g = await storage.get("guias-trabajo", true);
       const guardado = g ? JSON.parse(g.value) : null;
-      setGuias(guardado && typeof guardado === "object" ? { ...GUIA_POR_DEFECTO, ...guardado } : GUIA_POR_DEFECTO);
-    } catch (e) { setGuias(GUIA_POR_DEFECTO); }
+      setGuias(guiasConDefecto(guardado));
+    } catch (e) { setGuias(guiasConDefecto(null)); }
     try {
       const f = await storage.get("facturas-manuales", true);
       setFacturas(f ? JSON.parse(f.value) : []);
@@ -4165,6 +4235,29 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
 const RECURSO_TIPOS = { precios: "Lista de precios", catalogo: "Catálogo", reglamento: "Reglamento de ventas", garantia: "Garantía", imagenes: "Imágenes de muestra", otro: "Otro" };
 
 // La guía de un sector. Cualquiera la lee; solo el administrador la edita.
+// Qué guía se muestra: la guardada si está al día, o el manual nuevo si la
+// guardada quedó de una versión anterior. Al venir de una versión vieja, los
+// sectores que trae el manual se reemplazan por el manual; lo que hubiera
+// guardado de otros sectores se respeta.
+function guiasConDefecto(guardado) {
+  const g = guardado && typeof guardado === "object" ? guardado : null;
+  if (!g) return { ...GUIA_POR_DEFECTO, v: GUIA_VERSION };
+  if (Number(g.v) >= GUIA_VERSION) return { ...GUIA_POR_DEFECTO, ...g };
+  return { ...g, ...GUIA_POR_DEFECTO, v: GUIA_VERSION };
+}
+
+// Un textarea que se estira solo para mostrar todo lo que tiene adentro.
+function CampoQueCrece({ value, ...resto }) {
+  const caja = useRef(null);
+  useEffect(() => {
+    const el = caja.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [value]);
+  return <textarea ref={caja} value={value} {...resto} />;
+}
+
 function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
   const lista = Array.isArray(pasos) ? pasos : [];
   const guardar = (next) => onChange(next);
@@ -4199,7 +4292,7 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
                 <>
                   <input className="dg-guia-titulo-edit" value={p.titulo} placeholder="Título del paso"
                     onChange={(e) => editar(p.id, "titulo", e.target.value)} />
-                  <textarea className="dg-guia-detalle-edit" value={p.detalle} rows={3} placeholder="Explicá qué hay que hacer"
+                  <CampoQueCrece className="dg-guia-detalle-edit" value={p.detalle} rows={3} placeholder="Explicá qué hay que hacer"
                     onChange={(e) => editar(p.id, "detalle", e.target.value)} />
                   <div className="dg-guia-acciones">
                     <button type="button" onClick={() => mover(i, -1)} disabled={i === 0} title="Subir">↑</button>
@@ -15437,7 +15530,7 @@ function SectorPage({
           sector={sector.name}
           pasos={guias?.[sector.id] || []}
           isAdmin={isAdmin}
-          onChange={(next) => onChangeGuias({ ...guias, [sector.id]: next })}
+          onChange={(next) => onChangeGuias({ ...guias, v: GUIA_VERSION, [sector.id]: next })}
         />
       )}
 
@@ -16304,7 +16397,7 @@ function Style() {
       .dg-guia-cuerpo > strong { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; color:var(--dg-text); }
       .dg-guia-cuerpo > p { margin:0; font-size:14px; line-height:1.5; color:var(--dg-text-dim); }
       .dg-guia-titulo-edit { font-family:'Jost',sans-serif; font-size:16px; font-weight:600; }
-      .dg-guia-detalle-edit { font-size:14px; line-height:1.5; resize:vertical; min-height:62px; }
+      .dg-guia-detalle-edit { font-size:14px; line-height:1.5; resize:vertical; min-height:62px; overflow:hidden; }
       .dg-guia-acciones { display:flex; gap:6px; margin-top:2px; }
       .dg-guia-acciones button { width:32px; height:30px; display:flex; align-items:center; justify-content:center;
         border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:8px; background:transparent; color:var(--dg-text-dim); cursor:pointer; font-size:14px; }
