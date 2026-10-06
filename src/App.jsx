@@ -7642,7 +7642,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           // cargar el segundo espejo se terminaba pisando el primero.
           key={openPedido?.id || nextDraft?.id || "nuevo"}
           pedido={openPedido || nextDraft || emptyPedido()}
-          modo={openPedido && pedidos.filter((p) => (p.grupoId || p.id) === (openPedido.grupoId || openPedido.id)).length > 1 ? "espejo" : "todo"}
+          modo={openPedido ? "espejo" : "todo"}
           vendedores={vendedores}
           canEditFull={canEditFull}
           canEditEstadoOnly={canEditEstadoOnly}
@@ -8101,7 +8101,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
 
   // El modal de pedido NO se cierra al tocar afuera (se perdía lo cargado).
   // Solo cierra con la X o con los botones; la X pregunta si hay cambios.
-  const baseline = useRef(JSON.stringify(normalizarPedidoFunciones(pedido)));
+  const baseline = useRef(null);
+  if (baseline.current === null) baseline.current = JSON.stringify(draft);
   const hayCambiosSinGuardar = JSON.stringify(draft) !== baseline.current;
   function pedirCerrar() {
     if (hayCambiosSinGuardar && !window.confirm("Tenés cambios sin guardar en este pedido. ¿Cerrás y descartás lo que cargaste?")) return;
@@ -8235,7 +8236,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
         )}
 
         {verEntrega && <div className="dg-section-card">
-          <div className="dg-section-header"><User size={14} /> {modo === "entrega" ? "Cliente" : "Cliente y pago"}</div>
+          <div className="dg-section-header"><User size={14} /> Cliente y pago</div>
           <div className="dg-field-grid">
             <Field label="Cliente" error={err("cliente")}>
               <div className="dg-cliente-busca" ref={cajaCliente}>
