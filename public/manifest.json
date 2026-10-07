@@ -3,8 +3,8 @@
   "short_name": "DECOGLASS",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#14131D",
-  "theme_color": "#14131D",
+  "background_color": "#191826",
+  "theme_color": "#191826",
   "icons": [
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },

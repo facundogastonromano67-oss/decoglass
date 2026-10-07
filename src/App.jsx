@@ -763,27 +763,25 @@ const RECLAMO_TIPOS = ["Producto dañado", "Demora en entrega", "Falla eléctric
 const RECLAMO_COLORS = ["var(--dg-danger)", "var(--dg-warning)", "var(--dg-accent)", "var(--dg-text-dim)", "var(--dg-estado-bisel)", "var(--dg-estado-grabado)", "var(--dg-success)"];
 
 const ESTADO_PEDIDO_COLOR = {
-  "Sin pasar a fábrica": "var(--dg-text-dim)", "Verificado": "var(--dg-accent)", "Pasado a fábrica": "var(--dg-accent)", "Mandar a grabar": "var(--dg-accent)",
-  "En grabado": "var(--dg-accent)", "Sin pedir": "var(--dg-accent)", "En biseladora": "var(--dg-accent)", "Pedir biselado": "var(--dg-accent)", "Para armar": "var(--dg-accent)", "Espejo listo": "var(--dg-listo)", "Entregado": "var(--dg-success)",
+  "Sin pasar a fábrica": "var(--dg-text-dim)", "Verificado": "var(--dg-warning)", "Pasado a fábrica": "var(--dg-accent)", "Mandar a grabar": "var(--dg-warning)",
+  "En grabado": "var(--dg-estado-grabado)", "Sin pedir": "var(--dg-estado-bisel)", "En biseladora": "var(--dg-estado-biseladora)", "Pedir biselado": "var(--dg-estado-bisel)", "Para armar": "var(--dg-warning)", "Espejo listo": "var(--dg-accent)", "Entregado": "var(--dg-success)",
   "Cancelado": "var(--dg-danger)",
 };
 const COMISION_COLOR = { "No": "var(--dg-text-dim)", "Liquidar": "var(--dg-warning)", "Sí": "var(--dg-success)", "No aplica": "var(--dg-text-faint)" };
 
 const METODO_ICON = { "Retira": "Building2", "Envío": "Truck", "Envío flex": "Truck", "Interior": "Truck", "Colocación": "Wrench", "Otro": "Package" };
 
-// Fuera del taller el pedido se pinta por familia (Por verificar · En taller ·
-// Listo · Entregado · Cancelado). El paso puntual va escrito en "stage".
 const ESTADO_STAGE = {
   "Sin pasar a fábrica": { stage: "Sin verificar", color: "var(--dg-text-dim)" },
-  "Verificado": { stage: "Verificado", color: "var(--dg-accent)" },
-  "Pasado a fábrica": { stage: "Verificado", color: "var(--dg-accent)" },
-  "Mandar a grabar": { stage: "Para mandar a grabar", color: "var(--dg-accent)" },
-  "En grabado": { stage: "En grabado", color: "var(--dg-accent)" },
-  "Sin pedir": { stage: "Biselado sin pedir", color: "var(--dg-accent)" },
-  "En biseladora": { stage: "Biselado pedido · en biseladora", color: "var(--dg-accent)" },
-  "Pedir biselado": { stage: "Biselado sin pedir", color: "var(--dg-accent)" },
-  "Para armar": { stage: "Para armar", color: "var(--dg-accent)" },
-  "Espejo listo": { stage: "Espejo listo", color: "var(--dg-listo)" },
+  "Verificado": { stage: "Verificado", color: "var(--dg-warning)" },
+  "Pasado a fábrica": { stage: "Verificado", color: "var(--dg-warning)" },
+  "Mandar a grabar": { stage: "Para mandar a grabar", color: "var(--dg-warning)" },
+  "En grabado": { stage: "En grabado", color: "var(--dg-estado-grabado)" },
+  "Sin pedir": { stage: "Biselado sin pedir", color: "var(--dg-estado-bisel)" },
+  "En biseladora": { stage: "Biselado pedido · en biseladora", color: "var(--dg-estado-biseladora)" },
+  "Pedir biselado": { stage: "Biselado sin pedir", color: "var(--dg-estado-bisel)" },
+  "Para armar": { stage: "Para armar", color: "var(--dg-warning)" },
+  "Espejo listo": { stage: "Espejo listo", color: "var(--dg-accent)" },
   "Despachado": { stage: "Despachado", color: "var(--dg-success)" },
   "Entregado": { stage: "Entregado", color: "var(--dg-success)" },
   "Cancelado": { stage: "Cancelado", color: "var(--dg-danger)" },
@@ -1330,7 +1328,7 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.dgTheme = theme;
     document.documentElement.style.colorScheme = theme;
-    document.body.style.backgroundColor = theme === "dark" ? "#14131D" : "#F5F0E8";
+    document.body.style.backgroundColor = theme === "dark" ? "#191826" : "#F6ECE0";
   }, [theme]);
   const [loginOpen, setLoginOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
@@ -15628,7 +15626,7 @@ function SectorTasksPanel({ sector, session, isAdmin, onUpdate, onRequestLogin }
 
 function SinAccesoSector({ nombre, motivo, onBack, onLogin }) {
   return (
-    <div style={{ minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, textAlign: "center", padding: "40px 20px", background: "#14131D", color: "#F3ECE2" }}>
+    <div style={{ minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, textAlign: "center", padding: "40px 20px", background: "#191826", color: "#F6ECE0" }}>
       <div style={{ width: 56, height: 56, borderRadius: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(242,98,47,0.12)", border: "1px solid rgba(242,98,47,0.3)", color: "#F2622F" }}>
         <Lock size={26} />
       </div>
@@ -15646,7 +15644,7 @@ function SinAccesoSector({ nombre, motivo, onBack, onLogin }) {
         {onLogin && (
           <button
             onClick={onLogin}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 22px", borderRadius: 12, background: "transparent", color: "#F3ECE2", border: "1px solid rgba(243,236,226,0.3)", fontWeight: 700, fontSize: 15, cursor: "pointer" }}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 22px", borderRadius: 12, background: "transparent", color: "#F6ECE0", border: "1px solid rgba(246,236,224,0.3)", fontWeight: 700, fontSize: 15, cursor: "pointer" }}
           >
             <Lock size={16} /> Ingresar como admin
           </button>
@@ -15879,54 +15877,44 @@ function Style() {
       .dg-app ::-webkit-scrollbar-thumb { background: rgba(var(--dg-line-rgb),0.13); border-radius:100px; }
       .dg-app ::-webkit-scrollbar-thumb:hover { background: rgba(var(--dg-line-rgb),0.22); }
       .dg-app {
-        /* Paleta de 7: fondo, superficie, tinta, una acción (celeste) y tres
-           alertas (al día / atención / urgente). El color no identifica
-           sectores: eso lo hacen el ícono y el nombre. */
-        --dg-bg:#14131D; --dg-surface:#1D1B29; --dg-surface-2:#262338; --dg-surface-3:#34304A;
-        --dg-order-info:#1D1B29; --dg-order-flow:#100F17;
-        --dg-line-rgb:243,236,226;
-        --dg-text:#F3ECE2; --dg-text-dim:#A9A2B8; --dg-text-faint:#8A849A;
-        --dg-accent:#6CB4DE; --dg-accent-rgb:108,180,222; --dg-accent-2:#9ACDEB; --dg-on-accent:#10242F;
+        --dg-bg:#191826; --dg-surface:#221F31; --dg-surface-2:#2B2740; --dg-surface-3:#38334F;
+        --dg-order-info:#211E30; --dg-order-flow:#131220;
+        --dg-line-rgb:246,236,224;
+        --dg-text:#F6ECE0; --dg-text-dim:#B4ACC2; --dg-text-faint:#8B84A0;
+        --dg-accent:#60ADD9; --dg-accent-rgb:96,173,217; --dg-accent-2:#83C2E6; --dg-on-accent:#10242F;
         --dg-success:#5FB79B; --dg-success-rgb:95,183,155;
-        --dg-warning:#E2AE5C; --dg-warning-rgb:226,174,92; --dg-warning-2:#E2AE5C;
-        --dg-danger:#E57C6C; --dg-danger-rgb:229,124,108;
-        /* "Espejo listo": la única familia de estado que no es una alerta. */
-        --dg-listo:#A9A3E6; --dg-listo-rgb:169,163,230;
-        /* Las listas del taller se distinguen entre sí con estos tres; fuera
-           del taller el pedido usa las familias (ESTADO_STAGE). */
+        --dg-warning:#E7B15A; --dg-warning-rgb:231,177,90; --dg-warning-2:#E7B15A;
+        --dg-danger:#E37B6C; --dg-danger-rgb:227,123,108;
         --dg-estado-grabado:#7FB3D4; --dg-estado-bisel:#A99AD6; --dg-estado-biseladora:#E0A96B;
-        /* Interior va en tinta: se ve fuerte sin sumar un color más. */
-        --dg-interior:#F3ECE2; --dg-interior-rgb:243,236,226; --dg-on-interior:#14131D;
-        /* Los sectores ya no tienen color propio: todos siguen al celeste.
-           Los "-foto" van sobre la imagen de la sala (oscura en los dos
-           temas), así que no se redefinen en el claro. */
-        --dg-sec-marketing:var(--dg-accent); --dg-sec-ventas:var(--dg-accent); --dg-sec-administracion:var(--dg-accent);
-        --dg-sec-fabrica:var(--dg-accent); --dg-sec-postventa:var(--dg-accent); --dg-sec-logistica:var(--dg-accent);
-        --dg-sec-marketing-foto:#6CB4DE; --dg-sec-ventas-foto:#6CB4DE; --dg-sec-administracion-foto:#6CB4DE;
-        --dg-sec-fabrica-foto:#6CB4DE; --dg-sec-postventa-foto:#6CB4DE; --dg-sec-logistica-foto:#6CB4DE;
-        --dg-shadow:rgba(8,7,14,.6);
+        --dg-interior:#B98CFF; --dg-interior-rgb:185,140,255; --dg-on-interior:#1E1033;
+        /* Identidad de cada sector. Los "-foto" van sobre la imagen de la sala,
+           que es oscura en los dos temas, así que no se redefinen en el claro. */
+        --dg-sec-marketing:#C97BB0; --dg-sec-ventas:#D2A75A; --dg-sec-administracion:#9189CE;
+        --dg-sec-fabrica:#A89782; --dg-sec-postventa:#CE8A6E; --dg-sec-logistica:#7FA8B8;
+        --dg-sec-marketing-foto:#C97BB0; --dg-sec-ventas-foto:#D2A75A; --dg-sec-administracion-foto:#9189CE;
+        --dg-sec-fabrica-foto:#A89782; --dg-sec-postventa-foto:#CE8A6E; --dg-sec-logistica-foto:#7FA8B8;
+        --dg-shadow:rgba(9,7,20,.6);
         --bg:var(--dg-bg); --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22); --text:var(--dg-text); --text-dim:var(--dg-text-dim);
         font-family:'Jost', sans-serif;
         color-scheme:dark;
         box-sizing:border-box; transition: background .2s ease, color .2s ease; }
       .dg-app[data-theme="light"] {
-        --dg-bg:#F5F0E8; --dg-surface:#FFFDF9; --dg-surface-2:#FFFFFF; --dg-surface-3:#ECE7DF;
-        --dg-order-info:#FFFFFF; --dg-order-flow:#ECE7DF;
-        --dg-line-rgb:35,33,58;
-        --dg-text:#23213A; --dg-text-dim:#5E5A6E; --dg-text-faint:#6F6A80;
-        --dg-accent:#1F6FA0; --dg-accent-rgb:31,111,160; --dg-accent-2:#174F73; --dg-on-accent:#FFFFFF;
-        --dg-success:#2F7A5B; --dg-success-rgb:47,122,91;
-        --dg-warning:#9A5F12; --dg-warning-rgb:154,95,18; --dg-warning-2:#7A4A0E;
-        --dg-danger:#B23E32; --dg-danger-rgb:178,62,50;
-        --dg-listo:#4B4690; --dg-listo-rgb:75,70,144;
+        --dg-bg:#F6ECE0; --dg-surface:#FCF7EF; --dg-surface-2:#FFFFFF; --dg-surface-3:#EDE1D1;
+        --dg-order-info:#FFFFFF; --dg-order-flow:#EDE2D2;
+        --dg-line-rgb:49,43,72;
+        --dg-text:#2E2D2D; --dg-text-dim:#585366; --dg-text-faint:#847F92;
+        --dg-accent:#2F82B3; --dg-accent-rgb:47,130,179; --dg-accent-2:#256A94; --dg-on-accent:#FFFFFF;
+        --dg-success:#3C7A62; --dg-success-rgb:60,122,98;
+        --dg-warning:#96611A; --dg-warning-rgb:150,97,26; --dg-warning-2:#7A4E12;
+        --dg-danger:#B04A3D; --dg-danger-rgb:176,74,61;
         --dg-estado-grabado:#2F6E93; --dg-estado-bisel:#5B4C86; --dg-estado-biseladora:#8A5A2A;
-        --dg-interior:#23213A; --dg-interior-rgb:35,33,58; --dg-on-interior:#F5F0E8;
-        --dg-sec-marketing:var(--dg-accent); --dg-sec-ventas:var(--dg-accent); --dg-sec-administracion:var(--dg-accent);
-        --dg-sec-fabrica:var(--dg-accent); --dg-sec-postventa:var(--dg-accent); --dg-sec-logistica:var(--dg-accent);
-        --dg-shadow:rgba(35,33,58,.16);
+        --dg-interior:#6A2BD0; --dg-interior-rgb:106,43,208; --dg-on-interior:#FFFFFF;
+        --dg-sec-marketing:#8E3C77; --dg-sec-ventas:#8A6420; --dg-sec-administracion:#4E4694;
+        --dg-sec-fabrica:#6B5E4F; --dg-sec-postventa:#9A4B2E; --dg-sec-logistica:#35637E;
+        --dg-shadow:rgba(49,43,72,.16);
         --panel:rgba(var(--dg-line-rgb),.05); --panel-border:rgba(var(--dg-line-rgb),.22);
         color-scheme:light;
-        background:var(--dg-bg);
+        background:radial-gradient(ellipse 75% 42% at 50% -10%,rgba(var(--dg-accent-rgb),.07),transparent),var(--dg-bg);
       }
       .dg-app[data-theme="light"] .dg-room-tile,
       .dg-app[data-theme="light"] .dg-modal,
@@ -16392,7 +16380,7 @@ function Style() {
       .dg-section-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:var(--sc, var(--dg-accent)); font-family:'Jost', sans-serif; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.3px; }
       /* Adentro de un modal el fondo es violeta oscuro en los dos temas: el
          color claro del sector no se leería, así que ahí vuelve el celeste. */
-      .dg-modal { --sc:#6CB4DE; --scf:#6CB4DE; }
+      .dg-modal { --sc:#60ADD9; --scf:#60ADD9; }
       /* align-items:end = los controles se apoyan abajo. Si un título ocupa
          dos renglones, crece hacia arriba y los inputs siguen alineados. */
       .dg-field-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; align-items:end; }
@@ -16460,11 +16448,11 @@ function Style() {
       /* Contraste alto y explícito dentro de modales (login, ajustes): colores
          fijos, no dependen de variables de tema que otra regla pueda pisar. */
       .dg-modal {
-        background: #262338 !important;
+        background: #2A2740 !important;
         border: 1.5px solid rgba(246,236,224,0.18) !important;
       }
       .dg-modal, .dg-modal button, .dg-modal input, .dg-modal select, .dg-modal textarea { font-family: 'Jost', sans-serif; }
-      .dg-modal .dg-modal-title { color: #F3ECE2 !important; font-weight: 700; }
+      .dg-modal .dg-modal-title { color: #F6ECE0 !important; font-weight: 700; }
       .dg-modal .dg-modal-sub { color: #C0B9CE !important; }
       .dg-modal .dg-hint { color: #C9C3D6 !important; }
       .dg-modal .dg-form label {
@@ -16485,15 +16473,15 @@ function Style() {
       .dg-modal .dg-form input::placeholder, .dg-modal .dg-form textarea::placeholder { color: #6B6B74 !important; }
       .dg-modal .dg-form input:focus,
       .dg-modal .dg-form select:focus {
-        border-color: #6CB4DE !important;
-        box-shadow: 0 0 0 3px rgba(108,180,222, 0.35) !important;
+        border-color: #60ADD9 !important;
+        box-shadow: 0 0 0 3px rgba(96,173,217, 0.35) !important;
       }
       .dg-modal .dg-btn-primary {
-        background: #6CB4DE !important;
+        background: #60ADD9 !important;
         color: #10242F !important;
         font-weight: 700 !important;
         border: none !important;
-        box-shadow: 0 4px 16px -4px rgba(108,180,222, 0.55) !important;
+        box-shadow: 0 4px 16px -4px rgba(96,173,217, 0.55) !important;
       }
       .dg-modal .dg-btn-ghost {
         background: rgba(255,255,255,0.09) !important;
@@ -17256,8 +17244,8 @@ function Style() {
       @keyframes dg-espejo-tilde { from { opacity:0; transform:scale(.3); } to { opacity:1; transform:scale(1); } }
       /* Que se note que este botón no es uno más de la fila. Lleva !important
          porque .dg-modal .dg-btn-ghost pisa color y borde de todos. */
-      .dg-modal .dg-btn-otro-espejo { border-color:rgba(108,180,222,.75) !important; background:rgba(108,180,222,.16) !important; color:#9ACDEB !important; }
-      .dg-modal .dg-btn-otro-espejo:hover { border-color:#6CB4DE !important; background:rgba(108,180,222,.28) !important; color:#FFFFFF !important; }
+      .dg-modal .dg-btn-otro-espejo { border-color:rgba(96,173,217,.75) !important; background:rgba(96,173,217,.16) !important; color:#9ACFEC !important; }
+      .dg-modal .dg-btn-otro-espejo:hover { border-color:#60ADD9 !important; background:rgba(96,173,217,.28) !important; color:#FFFFFF !important; }
       @media (prefers-reduced-motion: reduce) {
         .dg-espejo-guardado, .dg-espejo-guardado > svg { animation:none; }
       }
@@ -19353,13 +19341,13 @@ class ErrorApp extends Component {
     let navegador = "";
     try { navegador = navigator.userAgent; } catch (e) {}
     return (
-      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, background: "#14131D", color: "#F3ECE2", textAlign: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
-        <div style={{ fontWeight: 700, letterSpacing: 3, color: "#6CB4DE" }}>DECOGLASS</div>
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, background: "#191826", color: "#F6ECE0", textAlign: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+        <div style={{ fontWeight: 700, letterSpacing: 3, color: "#60ADD9" }}>DECOGLASS</div>
         <div style={{ fontSize: 15, maxWidth: 340 }}>Algo falló al abrir la app en este teléfono.</div>
         <div style={{ fontSize: 12, color: "#B4ACC2", maxWidth: 340, wordBreak: "break-word" }}>
           Error: {String((this.state.error && this.state.error.message) || this.state.error).slice(0, 200)}<br />{navegador}
         </div>
-        <button type="button" onClick={() => window.location.reload()} style={{ marginTop: 6, padding: "12px 20px", borderRadius: 12, border: 0, background: "#6CB4DE", color: "#10242F", fontWeight: 700, fontSize: 15 }}>Recargar</button>
+        <button type="button" onClick={() => window.location.reload()} style={{ marginTop: 6, padding: "12px 20px", borderRadius: 12, border: 0, background: "#60ADD9", color: "#10242F", fontWeight: 700, fontSize: 15 }}>Recargar</button>
       </div>
     );
   }
