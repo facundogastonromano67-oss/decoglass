@@ -48,6 +48,7 @@ const SUBPAGE_ICONS = {
   recursos: FileText,
   tareas: CheckCircle2,
   numeros: BarChart3,
+  turno: CalendarClock,
   corte: Scissors,
   guia: ClipboardList,
   finanzas: Wallet,
@@ -746,6 +747,7 @@ const SECTOR_SUBPAGES = {
   ],
   postventa: [
     { id: "envios", label: "Envíos" },
+    { id: "turno", label: "Mi turno" },
     { id: "numeros", label: "Números" },
     { id: "interior", label: "Envíos al interior" },
     { id: "facturas", label: "Facturas pendientes" },
@@ -1274,7 +1276,7 @@ function breakdownBy(entries, field, labels) {
 
 const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
-  "vendedores", "recursos-venta", "guias-trabajo", "facturas-manuales", "envios-logistica",
+  "vendedores", "recursos-venta", "guias-trabajo", "turnos-postventa", "facturas-manuales", "envios-logistica",
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
   "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas",
@@ -1297,6 +1299,7 @@ function App() {
   const [pedidos, setPedidos] = useState(null);
   const [recursos, setRecursos] = useState(null);
   const [guias, setGuias] = useState(null);
+  const [turnos, setTurnos] = useState(null);
   const [facturas, setFacturas] = useState(null);
   const [enviosLogistica, setEnviosLogistica] = useState(null);
   const [reclamos, setReclamos] = useState(null);
@@ -1341,6 +1344,7 @@ function App() {
   const [chatHilos, setChatHilos] = useState([]);
   const [chatCargando, setChatCargando] = useState(true);
   const [chatEquipoOpen, setChatEquipoOpen] = useState(false);
+  const [tareasTurnoOpen, setTareasTurnoOpen] = useState(false);
   const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
@@ -1457,6 +1461,7 @@ function App() {
       vendedores: setVendedores,
       "recursos-venta": setRecursos,
       "guias-trabajo": setGuias,
+      "turnos-postventa": (v) => setTurnos(Array.isArray(v) ? v : []),
       "facturas-manuales": setFacturas,
       "envios-logistica": setEnviosLogistica,
       "empleados-sueldo": setEmpleadosSueldo,
@@ -1845,6 +1850,11 @@ function App() {
       setGuias(guiasConDefecto(guardado));
     } catch (e) { setGuias(guiasConDefecto(null)); }
     try {
+      const tn = await storage.get("turnos-postventa", true);
+      const guardados = tn ? JSON.parse(tn.value) : [];
+      setTurnos(Array.isArray(guardados) ? guardados : []);
+    } catch (e) { setTurnos([]); }
+    try {
       const f = await storage.get("facturas-manuales", true);
       setFacturas(f ? JSON.parse(f.value) : []);
     } catch (e) { setFacturas([]); }
@@ -2021,6 +2031,7 @@ function App() {
   }
   async function persistRecursos(next) { guardar("recursos-venta", next, () => setRecursos(next)); }
   async function persistGuias(next) { guardar("guias-trabajo", next, () => setGuias(next)); }
+  async function persistTurnos(next) { guardar("turnos-postventa", next, () => setTurnos(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistEnviosLogistica(next) { guardar("envios-logistica", next, () => setEnviosLogistica(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
@@ -2036,8 +2047,12 @@ function App() {
 
   // Registro de actividad: queda quién hizo qué y cuándo.
   async function registrarActividad(accion, detalle) {
+    // Antes el sector quedaba como "PostVenta" a secas y no se sabía si lo
+    // había hecho Fran o Dou. Con dos personas en el mismo sector eso no sirve
+    // ni para el turno ni para saber quién hizo qué.
+    const nombreSector = sectors.find((x) => x.id === session?.sectorId)?.name || "Sector";
     const quien = session?.role === "admin" ? (session.nombre || "Admin")
-      : session?.role === "sector" ? (sectors.find((x) => x.id === session.sectorId)?.name || "Sector")
+      : session?.role === "sector" ? (session.nombre ? `${session.nombre} · ${nombreSector}` : nombreSector)
       : "Sin sesión";
     const entrada = { id: uid(), fecha: new Date().toISOString(), quien, accion, detalle };
     const next = [entrada, ...auditoria].slice(0, 500);
@@ -2287,6 +2302,7 @@ function App() {
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
             guias={guias} onChangeGuias={persistGuias}
+            turnos={turnos || []} onChangeTurnos={persistTurnos}
             facturas={facturas} onChangeFacturas={persistFacturas}
             enviosLogistica={enviosLogistica} onChangeEnviosLogistica={persistEnviosLogistica}
             reclamos={reclamos} onChangeReclamos={persistReclamos}
@@ -2312,6 +2328,36 @@ function App() {
           <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} driveUrl={integraciones?.driveFacturasUrl || ""} />
         )}
 
+        {/* El botón de tareas solo aparece si esta persona tiene el turno
+            abierto: si no, no hay nada que tildar. */}
+        {(() => {
+          const miTurno = turnoAbiertoDe(turnos || [], session?.nombre || "");
+          if (!session || !miTurno) return null;
+          const pasos = (guias && guias.postventa) || [];
+          const hechas = pasos.filter((p) => (miTurno.tareas || {})[p.id]).length;
+          return (
+            <button className="dg-fab-tareas" onClick={() => setTareasTurnoOpen(true)} title="Tareas del turno" aria-label="Tareas del turno">
+              <ClipboardList size={20} />
+              <span className="dg-fab-tareas-badge">{hechas}/{pasos.length}</span>
+            </button>
+          );
+        })()}
+        {tareasTurnoOpen && session && (() => {
+          const miTurno = turnoAbiertoDe(turnos || [], session?.nombre || "");
+          if (!miTurno) return null;
+          return (
+            <TareasDelTurnoPanel
+              pasos={(guias && guias.postventa) || []}
+              turno={miTurno}
+              onClose={() => setTareasTurnoOpen(false)}
+              onToggle={(pasoId) => {
+                const tareas = { ...(miTurno.tareas || {}) };
+                if (tareas[pasoId]) delete tareas[pasoId]; else tareas[pasoId] = true;
+                persistTurnos((turnos || []).map((t) => (t.id === miTurno.id ? { ...t, tareas } : t)));
+              }}
+            />
+          );
+        })()}
         {session && (
           <button className="dg-fab-chat" onClick={() => setChatEquipoOpen(true)} title="Chat del equipo" aria-label="Chat del equipo">
             <MessageSquare size={22} />
@@ -11144,6 +11190,318 @@ function pendientesPostventaHoy(pedidos, reclamos) {
   };
 }
 
+/* ===========================================================================
+   LOS TURNOS DE POSTVENTA
+   Marcan el ingreso, la app va juntando lo que hicieron y al salir arma el
+   resumen para el que entra. Así el traspaso no depende de la memoria.
+   =========================================================================== */
+// Los seis títulos del parte, los mismos del manual.
+const PARTE_TITULOS = [
+  { id: "esperando", label: "Clientes esperando respuesta", pista: "quién, por qué y QUÉ SE LE PROMETIÓ" },
+  { id: "reclamos", label: "Reclamos abiertos", pista: "pedido, tipo, en qué estado quedó y qué falta" },
+  { id: "trabados", label: "Pedidos que no pudieron pasar a fábrica", pista: "y por qué" },
+  { id: "envios", label: "Envíos comprometidos para los próximos días", pista: "con quién y si falta cobrar" },
+  { id: "saldos", label: "Saldos sin cobrar", pista: "quién, cuánto y qué se acordó" },
+  { id: "promesas", label: "Promesas con fecha que caen en los días del otro", pista: "" },
+];
+
+// Las acciones del registro que son trabajo de PostVenta. El resto (fábrica,
+// finanzas) no se cuenta: ensucia el resumen del turno.
+const ACCIONES_POSTVENTA = [
+  "Avisó al cliente", "Confirmó un envío", "Marcó entregado",
+  "Facturó un pedido completo", "Verificó un pedido", "Editó los datos de entrega",
+];
+
+function minutosEntre(desde, hasta) {
+  const a = new Date(desde).getTime(), b = new Date(hasta).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return 0;
+  return Math.floor((b - a) / 60000);
+}
+function horasYminutos(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  return h > 0 ? `${h} h ${m} min` : `${m} min`;
+}
+function horaCorta(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "--:--" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// Qué hizo esta persona mientras estuvo el turno abierto. Sale del registro
+// de actividad, que ya guardaba quién y a qué hora: no hay que anotar nada.
+function loHechoEnElTurno(auditoria, turno) {
+  if (!turno) return [];
+  const desde = new Date(turno.inicio).getTime();
+  const hasta = turno.fin ? new Date(turno.fin).getTime() : Date.now();
+  const mio = (a) => String(a.quien || "").toLowerCase().includes(String(turno.persona || "").toLowerCase());
+  const cuenta = new Map();
+  (auditoria || []).forEach((a) => {
+    const t = new Date(a.fecha).getTime();
+    if (Number.isNaN(t) || t < desde || t > hasta) return;
+    if (!ACCIONES_POSTVENTA.includes(a.accion)) return;
+    if (turno.persona && !mio(a)) return;
+    cuenta.set(a.accion, (cuenta.get(a.accion) || 0) + 1);
+  });
+  return [...cuenta.entries()].map(([accion, n]) => ({ accion, n })).sort((a, b) => b.n - a.n);
+}
+
+// El turno que está abierto ahora para esta persona.
+function turnoAbiertoDe(turnos, persona) {
+  return (turnos || []).find((t) => !t.fin && String(t.persona || "") === String(persona || "")) || null;
+}
+
+// El resumen que se le pasa al compañero, en texto, listo para copiar.
+function textoDelParte(turno, pasos, hecho) {
+  const lineas = [];
+  lineas.push(`PARTE DE TURNO — ${turno.persona || "Sin nombre"}`);
+  lineas.push(`${turno.fecha} · de ${horaCorta(turno.inicio)} a ${turno.fin ? horaCorta(turno.fin) : "ahora"} (${horasYminutos(minutosEntre(turno.inicio, turno.fin || new Date().toISOString()))})`);
+  lineas.push("");
+  if (hecho.length) {
+    lineas.push("LO QUE SE HIZO");
+    hecho.forEach((h) => lineas.push(`· ${h.accion}: ${h.n}`));
+    lineas.push("");
+  }
+  const hechas = (pasos || []).filter((p) => turno.tareas && turno.tareas[p.id]);
+  const faltan = (pasos || []).filter((p) => !(turno.tareas && turno.tareas[p.id]));
+  lineas.push(`TAREAS: ${hechas.length} de ${(pasos || []).length}`);
+  if (faltan.length) {
+    lineas.push("Quedaron sin hacer:");
+    faltan.forEach((p) => lineas.push(`· ${p.titulo}`));
+  }
+  lineas.push("");
+  PARTE_TITULOS.forEach((t, i) => {
+    const txt = String((turno.notas && turno.notas[t.id]) || "").trim();
+    lineas.push(`${i + 1}. ${t.label.toUpperCase()}`);
+    lineas.push(txt || "Sin novedades.");
+    lineas.push("");
+  });
+  return lineas.join("\n").trim();
+}
+// PostVenta no se abre sin marcar el ingreso. Es la única forma de saber a qué
+// hora arrancaron y de que el parte del turno signifique algo. El
+// administrador no pasa por acá: tiene que poder mirar sin fichar.
+function PuertaDeTurno({ persona, onIngreso, onBack }) {
+  return (
+    <div className="dg-page">
+      <div className="dg-section-card dg-puerta-turno">
+        <div className="dg-puerta-icono"><CalendarClock size={26} /></div>
+        <div>
+          <strong>Hola {persona}. Marcá tu ingreso para entrar.</strong>
+          <span>
+            Desde que lo tocás, la app empieza a anotar sola lo que vas haciendo y arma el parte
+            para el que entra después. Sin esto, el turno no queda registrado y tu compañero
+            arranca a ciegas.
+          </span>
+          <div className="dg-puerta-botones">
+            <button type="button" className="dg-btn-primary" onClick={onIngreso}>
+              <CalendarClock size={15} /> Marcar ingreso y entrar
+            </button>
+            <button type="button" className="dg-btn-ghost" onClick={onBack}>Volver al edificio</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// El panel de tareas que se abre desde el botón redondo, igual que el chat.
+// Sirve para ir tildando mientras trabajan en cualquier pantalla, sin tener
+// que volver a «Mi turno».
+function TareasDelTurnoPanel({ pasos, turno, onToggle, onClose }) {
+  const lista = Array.isArray(pasos) ? pasos : [];
+  const hechas = lista.filter((p) => (turno?.tareas || {})[p.id]).length;
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-tareas-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title"><ClipboardList size={15} /> Tareas del turno</div>
+          <button className="dg-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
+        </div>
+        <div className="dg-tareas-progreso">
+          <div className="dg-tareas-barra"><span style={{ width: `${lista.length ? Math.round((hechas / lista.length) * 100) : 0}%` }} /></div>
+          <span>{hechas} de {lista.length}</span>
+        </div>
+        <div className="dg-tareas-scroll">
+          {lista.length === 0 ? (
+            <p className="dg-chat-vacio">No hay pasos cargados en la guía de trabajo.</p>
+          ) : (
+            <ul className="dg-turno-tareas">
+              {lista.map((p) => {
+                const ok = !!(turno?.tareas || {})[p.id];
+                return (
+                  <li key={p.id}>
+                    <label className={ok ? "dg-turno-tarea dg-turno-tarea-ok" : "dg-turno-tarea"}>
+                      <input type="checkbox" checked={ok} onChange={() => onToggle(p.id)} />
+                      <span>{p.titulo}</span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <p className="dg-tareas-pie">El detalle de cada paso está en «Guía de trabajo». Al cerrar el turno, lo que quede sin tildar sale en el parte.</p>
+      </div>
+    </div>
+  );
+}
+function TurnosPostventaPanel({ turnos, onChange, pasos, auditoria, session, isAdmin }) {
+  const lista = Array.isArray(turnos) ? turnos : [];
+  const persona = session?.nombre || (isAdmin ? "Admin" : "");
+  const hoy = isoLocal(new Date());
+  const abierto = turnoAbiertoDe(lista, persona);
+  const [copiado, setCopiado] = useState(false);
+
+  const guardar = (next) => onChange(next);
+  const cambiarAbierto = (patch) => guardar(lista.map((t) => (t.id === abierto.id ? { ...t, ...patch } : t)));
+
+  const marcarIngreso = () => {
+    const ahora = new Date().toISOString();
+    guardar([{ id: uid(), persona, fecha: hoy, inicio: ahora, fin: null, tareas: {}, notas: {} }, ...lista]);
+  };
+  const tildar = (pasoId) => {
+    const tareas = { ...(abierto.tareas || {}) };
+    if (tareas[pasoId]) delete tareas[pasoId]; else tareas[pasoId] = true;
+    cambiarAbierto({ tareas });
+  };
+  const escribir = (campo, valor) => cambiarAbierto({ notas: { ...(abierto.notas || {}), [campo]: valor } });
+  const cerrarTurno = () => {
+    if (!window.confirm("¿Cerrás el turno? Después no se puede seguir tildando tareas.")) return;
+    cambiarAbierto({ fin: new Date().toISOString() });
+  };
+
+  // Los turnos de otros que están abiertos en este momento.
+  const otrosAdentro = lista.filter((t) => !t.fin && String(t.persona || "") !== String(persona || ""));
+  const hecho = loHechoEnElTurno(auditoria, abierto);
+  const tareasHechas = abierto ? (pasos || []).filter((p) => (abierto.tareas || {})[p.id]).length : 0;
+  const cerrados = lista.filter((t) => t.fin).slice(0, 12);
+
+  const copiarParte = (turno) => {
+    const txt = textoDelParte(turno, pasos, loHechoEnElTurno(auditoria, turno));
+    try {
+      navigator.clipboard.writeText(txt);
+      setCopiado(true);
+      window.setTimeout(() => setCopiado(false), 2000);
+    } catch (e) { window.prompt("Copiá el parte:", txt); }
+  };
+
+  if (!persona) {
+    return <div className="dg-page"><div className="dg-empty">Esta pantalla necesita que entres con tu usuario, para saber de quién es el turno.</div></div>;
+  }
+
+  return (
+    <div className="dg-page">
+      {otrosAdentro.length > 0 && (
+        <div className="dg-section-card dg-turno-ahora">
+          <div className="dg-section-header"><User size={14} /> Trabajando ahora</div>
+          <ul>
+            {otrosAdentro.map((t) => {
+              const hechas = (pasos || []).filter((p) => (t.tareas || {})[p.id]).length;
+              return (
+                <li key={t.id}>
+                  <span className="dg-turno-punto" aria-hidden="true" />
+                  <b>{t.persona || "Sin nombre"}</b>
+                  <span>entró a las {horaCorta(t.inicio)} · lleva {horasYminutos(minutosEntre(t.inicio, new Date().toISOString()))}</span>
+                  <span className="dg-turno-cuenta">{hechas} de {(pasos || []).length} tareas</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {!abierto ? (
+        <div className="dg-section-card dg-turno-entrar">
+          <div>
+            <strong>Hola {persona}. Marcá tu ingreso para arrancar.</strong>
+            <span>Desde ese momento la app va anotando sola lo que vas haciendo, y al salir te arma el parte para el que entra después.</span>
+          </div>
+          <button type="button" className="dg-btn-primary" onClick={marcarIngreso}>
+            <CalendarClock size={15} /> Marcar ingreso
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="dg-section-card dg-turno-abierto">
+            <div className="dg-turno-cabeza">
+              <div>
+                <strong>Entraste a las {horaCorta(abierto.inicio)}</strong>
+                <span>Llevás {horasYminutos(minutosEntre(abierto.inicio, new Date().toISOString()))} · {tareasHechas} de {(pasos || []).length} tareas</span>
+              </div>
+              <button type="button" className="dg-btn-primary" onClick={cerrarTurno}>Cerrar turno</button>
+            </div>
+            {hecho.length > 0 ? (
+              <div className="dg-turno-hecho">
+                {hecho.map((h) => <span key={h.accion}><b>{h.n}</b> {h.accion.toLowerCase()}</span>)}
+              </div>
+            ) : (
+              <p className="dg-hint" style={{ margin: "10px 0 0" }}>Todavía no quedó registrada ninguna acción en este turno. Se anotan solas cuando avisás a un cliente, confirmás un envío, facturás o marcás una entrega.</p>
+            )}
+          </div>
+
+          <div className="dg-section-card">
+            <div className="dg-section-header"><ClipboardList size={14} /> Las tareas del día</div>
+            {(pasos || []).length === 0 ? (
+              <p className="dg-hint" style={{ margin: 0 }}>No hay pasos cargados en la guía de trabajo de este sector.</p>
+            ) : (
+              <ul className="dg-turno-tareas">
+                {pasos.map((p) => {
+                  const lista2 = !!(abierto.tareas || {})[p.id];
+                  return (
+                    <li key={p.id}>
+                      <label className={lista2 ? "dg-turno-tarea dg-turno-tarea-ok" : "dg-turno-tarea"}>
+                        <input type="checkbox" checked={lista2} onChange={() => tildar(p.id)} />
+                        <span>{p.titulo}</span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="dg-section-card">
+            <div className="dg-section-header"><NotebookPen size={14} /> Para el que entra después</div>
+            <p className="dg-hint" style={{ marginTop: 0 }}>Lo que importa no es lo que hiciste: es lo que prometiste. Si un punto no tiene nada, dejalo vacío y sale «sin novedades».</p>
+            {PARTE_TITULOS.map((t, i) => (
+              <div className="dg-turno-campo" key={t.id}>
+                <label>{i + 1}. {t.label}{t.pista ? <small> — {t.pista}</small> : null}</label>
+                <CampoQueCrece rows={2} value={(abierto.notas || {})[t.id] || ""} placeholder="Sin novedades"
+                  onChange={(e) => escribir(t.id, e.target.value)} />
+              </div>
+            ))}
+            <button type="button" className="dg-btn-ghost" onClick={() => copiarParte(abierto)}>
+              <Copy size={14} /> {copiado ? "Copiado" : "Copiar el parte"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {cerrados.length > 0 && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><CalendarDays size={14} /> Turnos anteriores</div>
+          <ul className="dg-turno-historial">
+            {cerrados.map((t) => {
+              const hechas = (pasos || []).filter((p) => (t.tareas || {})[p.id]).length;
+              const total = (pasos || []).length;
+              const completo = total > 0 && hechas === total;
+              return (
+                <li key={t.id}>
+                  <div className="dg-turno-fila">
+                    <span className="dg-turno-quien">{t.persona || "Sin nombre"}</span>
+                    <span className="dg-turno-cuando">{t.fecha} · {horaCorta(t.inicio)} a {horaCorta(t.fin)} ({horasYminutos(minutosEntre(t.inicio, t.fin))})</span>
+                    <span className={completo ? "dg-turno-tareas-ok" : "dg-turno-tareas-falta"}>{hechas} de {total} tareas</span>
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarParte(t)}><Copy size={12} /> Copiar</button>
+                  </div>
+                  <pre className="dg-turno-parte">{textoDelParte(t, pasos, loHechoEnElTurno(auditoria, t))}</pre>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 function NumerosPostventaPanel({ pedidos, reclamos }) {
   const hoy = isoLocal(new Date());
   const [periodo, setPeriodo] = useState("mes");
@@ -15708,7 +16066,7 @@ function SectorPage({
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "",
-  guias = {}, onChangeGuias,
+  guias = {}, onChangeGuias, turnos = [], onChangeTurnos,
   listasBloqueadas = false, onCambiarBloqueoListas,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
@@ -15733,6 +16091,22 @@ function SectorPage({
   const restringidoAFabrica = session?.role === "sector" && session.sectorId === "fabrica";
   if (restringidoAFabrica && sector.id !== "fabrica") {
     return <SinAccesoSector nombre={sector.name} motivo="Tu usuario de Fábrica solo puede ver y trabajar dentro de Fábrica." onBack={onBack} />;
+  }
+  // PostVenta pide el ingreso antes de dejar entrar. Solo a la gente del
+  // sector: el administrador mira sin fichar. Y si el usuario no tiene nombre
+  // cargado no se traba, porque no habría a quién atribuirle el turno.
+  const personaTurno = session?.nombre || "";
+  if (sector.id === "postventa" && session?.role === "sector" && personaTurno && !turnoAbiertoDe(turnos, personaTurno)) {
+    return (
+      <PuertaDeTurno
+        persona={personaTurno}
+        onBack={onBack}
+        onIngreso={() => onChangeTurnos([
+          { id: uid(), persona: personaTurno, fecha: isoLocal(new Date()), inicio: new Date().toISOString(), fin: null, tareas: {}, notas: {} },
+          ...(Array.isArray(turnos) ? turnos : []),
+        ])}
+      />
+    );
   }
   // Administración es solo para administradores: nadie más entra, ni a mirar.
   if (sector.id === "administracion" && !isAdmin) {
@@ -15834,6 +16208,15 @@ function SectorPage({
       )}
 
       {subpage === "numeros" && sector.id === "fabrica" && isAdmin && <NumerosFabricaPanel pedidos={pedidos} />}
+
+      {subpage === "turno" && sector.id === "postventa" && (
+        canSeePedidos ? (
+          <TurnosPostventaPanel
+            turnos={turnos} onChange={onChangeTurnos} pasos={guias?.postventa || []}
+            auditoria={auditoria} session={session} isAdmin={isAdmin}
+          />
+        ) : <LockedPage label="Mi turno" onLogin={onRequestLogin} />
+      )}
 
       {subpage === "numeros" && sector.id === "postventa" && (
         canSeePedidos ? <NumerosPostventaPanel pedidos={pedidos} reclamos={reclamos} />
@@ -16684,13 +17067,18 @@ function Style() {
          ya tienen su propio borde de color según el estado, y si no, no se ve. */
       .dg-tarjeta-marcada {
         border-color:var(--dg-success) !important;
-        box-shadow:0 0 0 3px rgba(var(--dg-success-rgb),.3) !important;
+        border-width:2px !important;
+        background:rgba(var(--dg-success-rgb),.1) !important;
         animation:dg-marcar 2s ease-out 1;
       }
+      /* Dos pulsos: uno solo se puede perder si justo estabas mirando otra
+         parte de la pantalla mientras terminaba de bajar el scroll. */
       @keyframes dg-marcar {
-        0% { box-shadow:0 0 0 7px rgba(var(--dg-success-rgb),.45); }
-        70% { box-shadow:0 0 0 3px rgba(var(--dg-success-rgb),.3); }
-        100% { box-shadow:0 0 0 3px rgba(var(--dg-success-rgb),0); }
+        0%   { box-shadow:0 0 0 0 rgba(var(--dg-success-rgb),.75); }
+        18%  { box-shadow:0 0 0 10px rgba(var(--dg-success-rgb),.38); }
+        36%  { box-shadow:0 0 0 0 rgba(var(--dg-success-rgb),.75); }
+        54%  { box-shadow:0 0 0 10px rgba(var(--dg-success-rgb),.3); }
+        100% { box-shadow:0 0 0 4px rgba(var(--dg-success-rgb),0); }
       }
       @media (prefers-reduced-motion:reduce) { .dg-tarjeta-marcada { animation:none; } }
       .dg-guia { list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; gap:10px; }
@@ -16743,6 +17131,78 @@ function Style() {
       @media (max-width:640px) { .dg-guia-paso { padding:14px 14px; gap:11px; } }
       /* Los números de PostVenta: lo de "ahora mismo" va aparte porque no
          depende del período que estén mirando. */
+      /* --- Mi turno (PostVenta) --- */
+      /* La puerta del turno */
+      .dg-puerta-turno { display:flex; align-items:flex-start; gap:18px; max-width:620px; margin:40px auto 0; padding:26px; }
+      .dg-puerta-icono { flex:none; width:54px; height:54px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent-2); }
+      .dg-puerta-turno > div:last-child { display:flex; flex-direction:column; gap:8px; min-width:0; }
+      .dg-puerta-turno strong { font-family:'Jost',sans-serif; font-size:20px; font-weight:600; color:var(--dg-text); }
+      .dg-puerta-turno span { font-size:14px; line-height:1.55; color:var(--dg-text-dim); }
+      .dg-puerta-botones { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
+      /* El botón redondo de tareas, arriba del chat */
+      .dg-fab-tareas { position:fixed; z-index:45;
+        left:calc(18px + env(safe-area-inset-left, 0px)); bottom:calc(82px + env(safe-area-inset-bottom, 0px));
+        width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:var(--dg-surface-2); color:var(--dg-text); border:1px solid rgba(var(--dg-line-rgb),0.2); cursor:pointer;
+        box-shadow:0 12px 30px -8px rgba(0,0,0,0.5); transition:transform .1s ease, filter .15s ease; }
+      .dg-fab-tareas:hover { filter:brightness(1.08); }
+      .dg-fab-tareas:active { transform:scale(0.93); }
+      .dg-fab-tareas-badge { position:absolute; top:-5px; right:-7px; padding:1px 6px; border-radius:12px;
+        background:var(--dg-accent); color:var(--dg-on-accent); font-size:10px; font-weight:800;
+        font-variant-numeric:tabular-nums; border:2px solid var(--dg-bg); white-space:nowrap; }
+      .dg-con-aviso-version .dg-fab-tareas { bottom:calc(156px + env(safe-area-inset-bottom, 0px)); }
+      /* El panel de tareas, con la misma forma que el del chat */
+      .dg-tareas-panel { display:flex; flex-direction:column; max-width:440px; padding:0; overflow:hidden; }
+      .dg-tareas-panel .dg-modal-head { padding:13px 16px; margin:0; border-bottom:1px solid rgba(var(--dg-line-rgb),0.12); }
+      .dg-tareas-panel .dg-modal-title { display:flex; align-items:center; gap:7px; }
+      .dg-tareas-progreso { display:flex; align-items:center; gap:10px; padding:12px 16px 4px; }
+      .dg-tareas-progreso > span { font-size:12px; font-weight:700; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+      .dg-tareas-barra { flex:1; height:7px; border-radius:999px; background:rgba(var(--dg-line-rgb),.12); overflow:hidden; }
+      .dg-tareas-barra span { display:block; height:100%; border-radius:999px; background:var(--dg-success); transition:width .2s ease; }
+      .dg-tareas-scroll { padding:6px 10px 10px; overflow-y:auto; max-height:52vh; }
+      .dg-tareas-pie { margin:0; padding:11px 16px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.1);
+        font-size:12px; line-height:1.5; color:var(--dg-text-dim); }
+      .dg-turno-ahora ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+      .dg-turno-ahora li { display:flex; align-items:center; gap:9px; flex-wrap:wrap; font-size:13px; color:var(--dg-text-dim); }
+      .dg-turno-ahora b { color:var(--dg-text); font-size:14px; }
+      .dg-turno-punto { width:8px; height:8px; border-radius:50%; background:var(--dg-success); flex:none;
+        box-shadow:0 0 0 3px rgba(var(--dg-success-rgb),.22); }
+      .dg-turno-cuenta { margin-left:auto; font-weight:700; color:var(--dg-text); white-space:nowrap; }
+      .dg-turno-entrar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+      .dg-turno-entrar > div { display:flex; flex-direction:column; gap:4px; flex:1 1 280px; min-width:0; }
+      .dg-turno-entrar strong { font-family:'Jost',sans-serif; font-size:17px; font-weight:600; color:var(--dg-text); }
+      .dg-turno-entrar span { font-size:13px; line-height:1.5; color:var(--dg-text-dim); }
+      .dg-turno-entrar > button { flex:none; }
+      .dg-turno-abierto { border-color:rgba(var(--dg-success-rgb),.35); }
+      .dg-turno-cabeza { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+      .dg-turno-cabeza > div { display:flex; flex-direction:column; gap:2px; flex:1 1 240px; min-width:0; }
+      .dg-turno-cabeza strong { font-family:'Jost',sans-serif; font-size:18px; font-weight:600; color:var(--dg-success); }
+      .dg-turno-cabeza span { font-size:13px; color:var(--dg-text-dim); }
+      .dg-turno-cabeza > button { flex:none; }
+      .dg-turno-hecho { display:flex; flex-wrap:wrap; gap:7px 10px; margin-top:12px; }
+      .dg-turno-hecho span { padding:4px 10px; border-radius:999px; font-size:12px; color:var(--dg-text);
+        background:rgba(var(--dg-accent-rgb),.12); }
+      .dg-turno-hecho b { font-variant-numeric:tabular-nums; }
+      .dg-turno-tareas { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-turno-tarea { display:flex; align-items:flex-start; gap:10px; padding:8px 10px; border-radius:9px; cursor:pointer; }
+      .dg-turno-tarea:hover { background:rgba(var(--dg-line-rgb),.05); }
+      .dg-turno-tarea input { margin-top:2px; flex:none; width:17px; height:17px; accent-color:var(--dg-success); }
+      .dg-turno-tarea span { font-size:14px; line-height:1.45; color:var(--dg-text); }
+      .dg-turno-tarea-ok span { color:var(--dg-text-dim); text-decoration:line-through; }
+      .dg-turno-campo { display:flex; flex-direction:column; gap:5px; margin-bottom:12px; }
+      .dg-turno-campo label { font-size:12px; font-weight:700; color:var(--dg-text); }
+      .dg-turno-campo label small { font-weight:400; color:var(--dg-text-dim); }
+      .dg-turno-campo textarea { width:100%; box-sizing:border-box; font-size:14px; line-height:1.5; resize:none; overflow:hidden; min-height:34px; }
+      .dg-turno-historial { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+      .dg-turno-fila { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+      .dg-turno-quien { font-weight:700; color:var(--dg-text); }
+      .dg-turno-cuando { font-size:12px; color:var(--dg-text-dim); }
+      .dg-turno-tareas-ok { margin-left:auto; font-size:12px; font-weight:700; color:var(--dg-success); }
+      .dg-turno-tareas-falta { margin-left:auto; font-size:12px; font-weight:700; color:var(--dg-warning-2); }
+      .dg-turno-parte { margin:6px 0 0; padding:11px 13px; border-radius:10px; background:rgba(var(--dg-line-rgb),.05);
+        font-family:'JetBrains Mono', monospace; font-size:11.5px; line-height:1.6; color:var(--dg-text-dim);
+        white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; }
       .dg-pv-ahora { margin-bottom:14px; }
       .dg-pv-ahora-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:12px; }
       .dg-pv-dato { display:flex; flex-direction:column; gap:2px; padding:11px 13px; border-radius:11px;
