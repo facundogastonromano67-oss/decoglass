@@ -1345,6 +1345,18 @@ function App() {
   const [chatCargando, setChatCargando] = useState(true);
   const [chatEquipoOpen, setChatEquipoOpen] = useState(false);
   const [tareasTurnoOpen, setTareasTurnoOpen] = useState(false);
+  // Cuál de los turnos ajenos está mirando el administrador.
+  const [turnoMirado, setTurnoMirado] = useState(null);
+  // El turno que corresponde mostrar: el propio si lo hay, y si no —solo para
+  // el administrador— el de quien esté trabajando, en modo lectura.
+  function turnoALaVista() {
+    const abiertos = (turnos || []).filter((t) => !t.fin);
+    const propio = turnoAbiertoDe(turnos || [], session?.nombre || "");
+    if (propio) return { turno: propio, soloMirando: false, abiertos: [] };
+    if (!isAdmin) return { turno: null, soloMirando: false, abiertos: [] };
+    const elegido = abiertos.find((t) => t.id === turnoMirado) || abiertos[0] || null;
+    return { turno: elegido, soloMirando: !!elegido, abiertos };
+  }
   const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
@@ -2328,32 +2340,39 @@ function App() {
           <MovimientoRapidoModal onClose={() => setMovMoneyOpen(false)} onGuardar={guardarMovimientoRapido} driveUrl={integraciones?.driveFacturasUrl || ""} />
         )}
 
-        {/* El botón de tareas solo aparece si esta persona tiene el turno
-            abierto: si no, no hay nada que tildar. */}
+        {/* El botón de tareas: con el turno propio abierto es para tildar; al
+            administrador le aparece igual cuando hay alguien trabajando, para
+            ver lo mismo que ve esa persona (sin poder tocarle nada). */}
         {(() => {
-          const miTurno = turnoAbiertoDe(turnos || [], session?.nombre || "");
-          if (!session || !miTurno) return null;
+          const v = turnoALaVista();
+          if (!session || !v.turno) return null;
           const pasos = (guias && guias.postventa) || [];
-          const hechas = pasos.filter((p) => (miTurno.tareas || {})[p.id]).length;
+          const hechas = pasos.filter((p) => (v.turno.tareas || {})[p.id]).length;
           return (
-            <button className="dg-fab-tareas" onClick={() => setTareasTurnoOpen(true)} title="Tareas del turno" aria-label="Tareas del turno">
+            <button className={`dg-fab-tareas ${v.soloMirando ? "dg-fab-tareas-mirando" : ""}`}
+              onClick={() => setTareasTurnoOpen(true)}
+              title={v.soloMirando ? `Ver el turno de ${v.turno.persona || "alguien"}` : "Tareas del turno"}
+              aria-label={v.soloMirando ? "Ver el turno de otra persona" : "Tareas del turno"}>
               <ClipboardList size={20} />
               <span className="dg-fab-tareas-badge">{hechas}/{pasos.length}</span>
             </button>
           );
         })()}
         {tareasTurnoOpen && session && (() => {
-          const miTurno = turnoAbiertoDe(turnos || [], session?.nombre || "");
-          if (!miTurno) return null;
+          const v = turnoALaVista();
+          if (!v.turno) return null;
           return (
             <TareasDelTurnoPanel
               pasos={(guias && guias.postventa) || []}
-              turno={miTurno}
+              turno={v.turno}
+              soloMirando={v.soloMirando}
+              otrosTurnos={v.abiertos}
+              onElegirTurno={(id) => setTurnoMirado(id)}
               onClose={() => setTareasTurnoOpen(false)}
               onToggle={(pasoId) => {
-                const tareas = { ...(miTurno.tareas || {}) };
+                const tareas = { ...(v.turno.tareas || {}) };
                 if (tareas[pasoId]) delete tareas[pasoId]; else tareas[pasoId] = true;
-                persistTurnos((turnos || []).map((t) => (t.id === miTurno.id ? { ...t, tareas } : t)));
+                persistTurnos((turnos || []).map((t) => (t.id === v.turno.id ? { ...t, tareas } : t)));
               }}
             />
           );
@@ -6132,6 +6151,12 @@ const CAMPOS_DEL_PEDIDO = [
   "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
   "provincia", "localidad", "codigoPostal", "costoEnvio", "destinoLat", "destinoLng",
 ];
+// La factura y la comisión son de la venta entera, no de cada espejo: una
+// factura cubre el pedido completo (el link de seguimiento ya la muestra así).
+// Faltaban en la lista de arriba, así que «Editar cliente y entrega» las
+// descartaba al guardar: subían la factura, tocaban Guardar y desaparecía.
+const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "comision"];
+
 function soloCamposDelPedido(pedido) {
   const patch = {};
   CAMPOS_DEL_PEDIDO.forEach((c) => { if (pedido && c in pedido) patch[c] = pedido[c]; });
@@ -7408,6 +7433,18 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     const grupo = editandoEntrega || [];
     const ids = new Set(grupo.map((p) => p.id));
     const patch = soloCamposDelPedido(editado);
+    CAMPOS_DE_LA_VENTA.forEach((c) => { if (c in editado) patch[c] = editado[c]; });
+    // Con UN solo espejo no hay ambigüedad: el monto, el anticipo y el estado
+    // del formulario son los de ese espejo. Con varios, el monto de cada uno
+    // viene aparte (montosPorEspejo) y el estado se maneja espejo por espejo.
+    const unEspejo = grupo.length === 1;
+    if (unEspejo) {
+      ["monto", "anticipo", "estado", "motivoCancelacion"].forEach((c) => { if (c in editado) patch[c] = editado[c]; });
+      // Si acá queda entregado y no tiene fecha, se la ponemos: sin eso el
+      // pedido no cuenta en los números de PostVenta ni en «sin facturar».
+      const cerrado = patch.estado === "Entregado" || patch.estado === "Despachado";
+      if (cerrado && !grupo[0].entregadoFecha) patch.entregadoFecha = new Date().toISOString();
+    }
     const montos = montosPorEspejo || {};
     const ingresos = [];
     const actualizados = pedidos.map((p) => {
@@ -11306,16 +11343,32 @@ function PuertaDeTurno({ persona, onIngreso, onBack }) {
 // El panel de tareas que se abre desde el botón redondo, igual que el chat.
 // Sirve para ir tildando mientras trabajan en cualquier pantalla, sin tener
 // que volver a «Mi turno».
-function TareasDelTurnoPanel({ pasos, turno, onToggle, onClose }) {
+function TareasDelTurnoPanel({ pasos, turno, onToggle, onClose, soloMirando, otrosTurnos = [], onElegirTurno }) {
   const lista = Array.isArray(pasos) ? pasos : [];
   const hechas = lista.filter((p) => (turno?.tareas || {})[p.id]).length;
   return (
     <div className="dg-overlay" onClick={onClose}>
       <div className="dg-modal dg-tareas-panel" onClick={(e) => e.stopPropagation()}>
         <div className="dg-modal-head">
-          <div className="dg-modal-title"><ClipboardList size={15} /> Tareas del turno</div>
+          <div className="dg-modal-title">
+            <ClipboardList size={15} /> {soloMirando ? `Turno de ${turno?.persona || "alguien"}` : "Tareas del turno"}
+          </div>
           <button className="dg-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
         </div>
+        {soloMirando && (
+          <p className="dg-tareas-mirando">
+            Estás viendo lo que ve {turno?.persona || "la persona"} en su panel. Solo lectura: las tareas las tilda quien está en el turno.
+          </p>
+        )}
+        {soloMirando && otrosTurnos.length > 1 && (
+          <div className="dg-tareas-quien">
+            {otrosTurnos.map((t) => (
+              <button key={t.id} type="button"
+                className={t.id === turno?.id ? "dg-btn-primary" : "dg-btn-ghost"}
+                onClick={() => onElegirTurno(t.id)}>{t.persona || "Sin nombre"}</button>
+            ))}
+          </div>
+        )}
         <div className="dg-tareas-progreso">
           <div className="dg-tareas-barra"><span style={{ width: `${lista.length ? Math.round((hechas / lista.length) * 100) : 0}%` }} /></div>
           <span>{hechas} de {lista.length}</span>
@@ -11329,8 +11382,8 @@ function TareasDelTurnoPanel({ pasos, turno, onToggle, onClose }) {
                 const ok = !!(turno?.tareas || {})[p.id];
                 return (
                   <li key={p.id}>
-                    <label className={ok ? "dg-turno-tarea dg-turno-tarea-ok" : "dg-turno-tarea"}>
-                      <input type="checkbox" checked={ok} onChange={() => onToggle(p.id)} />
+                    <label className={`${ok ? "dg-turno-tarea dg-turno-tarea-ok" : "dg-turno-tarea"} ${soloMirando ? "dg-turno-tarea-mirando" : ""}`}>
+                      <input type="checkbox" checked={ok} disabled={soloMirando} onChange={() => !soloMirando && onToggle(p.id)} />
                       <span>{p.titulo}</span>
                     </label>
                   </li>
@@ -11339,7 +11392,11 @@ function TareasDelTurnoPanel({ pasos, turno, onToggle, onClose }) {
             </ul>
           )}
         </div>
-        <p className="dg-tareas-pie">El detalle de cada paso está en «Guía de trabajo». Al cerrar el turno, lo que quede sin tildar sale en el parte.</p>
+        <p className="dg-tareas-pie">
+          {soloMirando
+            ? "Así se ve el panel del lado de ellos. El detalle de cada paso está en «Guía de trabajo»."
+            : "El detalle de cada paso está en «Guía de trabajo». Al cerrar el turno, lo que quede sin tildar sale en el parte."}
+        </p>
       </div>
     </div>
   );
@@ -17161,6 +17218,16 @@ function Style() {
       .dg-tareas-barra { flex:1; height:7px; border-radius:999px; background:rgba(var(--dg-line-rgb),.12); overflow:hidden; }
       .dg-tareas-barra span { display:block; height:100%; border-radius:999px; background:var(--dg-success); transition:width .2s ease; }
       .dg-tareas-scroll { padding:6px 10px 10px; overflow-y:auto; max-height:52vh; }
+      /* Cuando el administrador mira el turno de otro: el panel se ve igual
+         pero nada se puede tocar, y se avisa de quién es. */
+      .dg-tareas-mirando { margin:0; padding:10px 16px; background:rgba(var(--dg-interior-rgb),.1);
+        border-bottom:1px solid rgba(var(--dg-interior-rgb),.25);
+        font-size:12px; line-height:1.5; color:var(--dg-text-dim); }
+      .dg-tareas-quien { display:flex; gap:8px; flex-wrap:wrap; padding:10px 16px 2px; }
+      .dg-turno-tarea-mirando { cursor:default; }
+      .dg-turno-tarea-mirando:hover { background:transparent; }
+      .dg-fab-tareas-mirando { border-color:rgba(var(--dg-interior-rgb),.5); color:var(--dg-interior); }
+      .dg-fab-tareas-mirando .dg-fab-tareas-badge { background:var(--dg-interior); color:var(--dg-on-interior); }
       .dg-tareas-pie { margin:0; padding:11px 16px 14px; border-top:1px solid rgba(var(--dg-line-rgb),0.1);
         font-size:12px; line-height:1.5; color:var(--dg-text-dim); }
       .dg-turno-ahora ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
