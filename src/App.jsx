@@ -6355,6 +6355,53 @@ async function hayVersionNuevaPublicada() {
   return !!publicada && publicada !== mia;
 }
 
+// Cuánto tapa la parte de arriba de la pantalla. El encabezado queda pegado
+// mientras se hace scroll, y en el teléfono la barra de secciones también.
+// Se mide en el momento en vez de poner un número a mano: así sigue andando
+// si cambia el alto del encabezado o si el teléfono tiene muesca.
+function altoPegadoArriba() {
+  let abajo = 0;
+  [".dg-header", ".dg-nav"].forEach((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    const pos = window.getComputedStyle(el).position;
+    if (pos !== "sticky" && pos !== "fixed") return;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > abajo) abajo = r.bottom;
+  });
+  return abajo;
+}
+
+// Lleva una tarjeta a la vista dejándola DEBAJO del encabezado. Con
+// scrollIntoView({block:"start"}) el título quedaba escondido atrás del
+// encabezado pegado y no se veía de quién era el pedido.
+// La tarjeta puede todavía no existir (el día está cerrado y se acaba de
+// abrir), así que se la espera un rato.
+function irAlaTarjeta(id, alMarcar) {
+  let intentos = 0;
+  const ir = () => {
+    const el = document.getElementById(id);
+    if (!el) {
+      if (intentos++ < 12) window.setTimeout(ir, 60);
+      return;
+    }
+    const y = window.scrollY + el.getBoundingClientRect().top - altoPegadoArriba() - 12;
+    window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
+    if (alMarcar) alMarcar();
+  };
+  ir();
+}
+
+// El borde que avisa cuál tarjeta tocaron. Se apaga solo a los 2 segundos.
+function useTarjetaMarcada(milis = 2000) {
+  const [marcada, setMarcada] = useState(null);
+  useEffect(() => {
+    if (!marcada) return undefined;
+    const t = window.setTimeout(() => setMarcada(null), milis);
+    return () => window.clearTimeout(t);
+  }, [marcada, milis]);
+  return [marcada, setMarcada];
+}
 function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) || 0); }
 
 // Cuánta plata hay que registrar por este espejo y qué ingreso le corresponde.
@@ -8725,6 +8772,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
+  const [tarjetaMarcada, marcarTarjeta] = useTarjetaMarcada();
   const [copiedId, setCopiedId] = useState(null);
   const [mapaPedido, setMapaPedido] = useState(null);
 
@@ -8835,7 +8883,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                       const abierta = filaAbierta === f.clave;
                       const irATarjeta = (ev) => {
                         ev.stopPropagation();
-                        document.getElementById(`envio-${f.clave}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        irAlaTarjeta(`envio-${f.clave}`, () => marcarTarjeta(f.clave));
                       };
                       return (
                         <Fragment key={f.clave}>
@@ -8905,7 +8953,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
           const ordenes = [...new Set(items.map((x) => x.orden))].map((o) => `#${o}`).join(" · ");
           const medidas = items.map((x) => `${x.ancho}×${x.alto} cm`).join(" · ");
           return (
-          <div className="dg-section-card dg-shipping-confirm-card" key={clave} id={`envio-${clave}`}>
+          <div className={`dg-section-card dg-shipping-confirm-card ${tarjetaMarcada === clave ? "dg-tarjeta-marcada" : ""}`} key={clave} id={`envio-${clave}`}>
             <div className="dg-section-header"><Truck size={14} /> {ordenes} · {p.cliente} {esperaAcusePostventa(p) && <span className="dg-pedido-flag dg-flag-nuevo" style={{ marginLeft: 8 }}>NUEVO</span>} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
             <div className="dg-pago-meta" style={{ marginBottom: 10 }}>
               {items.length === 1 ? `${p.ancho}×${p.alto} cm · ${p.forma}` : `${items.length} espejos · ${medidas}`} · {p.metodo}
@@ -11317,6 +11365,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   // Lista por día: hoy abierto, el resto cerrado.
   const hoyTaller = isoLocal(new Date());
   const [diasAbiertos, setDiasAbiertos] = useState(() => new Set([primerDiaTaller(isoLocal(new Date()))]));
+  const [tarjetaMarcada, marcarTarjeta] = useTarjetaMarcada();
   function toggleDia(fecha) {
     setDiasAbiertos((prev) => {
       const next = new Set(prev);
@@ -12039,15 +12088,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                   ev.stopPropagation();
                   setDiasAbiertos((prev) => new Set(prev).add(hoyPlan.fecha));
                   const id = `taller-${hoyPlan.fecha}-${x.pedido.id}`;
-                  const centrar = () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
-                  // El día puede estar cerrado: se espera a que aparezca, y se
-                  // vuelve a centrar cuando el acomodo de la página terminó.
-                  let intentos = 0;
-                  const buscar = () => {
-                    if (document.getElementById(id)) { centrar(); window.setTimeout(centrar, 400); return; }
-                    if (intentos++ < 12) window.setTimeout(buscar, 60);
-                  };
-                  window.setTimeout(buscar, 60);
+                  // El día puede estar cerrado: irAlaTarjeta la espera. Y se
+                  // vuelve a acomodar una vez más cuando la página terminó de
+                  // abrir el día, que cambia los altos.
+                  window.setTimeout(() => irAlaTarjeta(id, () => marcarTarjeta(x.pedido.id)), 60);
+                  window.setTimeout(() => irAlaTarjeta(id), 460);
                 };
                 return (
                   <div className={`dg-section-card dg-tdia-card ${tablaDiaAbierta ? "dg-tdia-abierta" : ""}`}>
@@ -12192,7 +12237,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                 <div className="dg-embalar-tit"><Package size={14} /> Falta embalar {dia.porEmbalarU} espejo{dia.porEmbalarU === 1 ? "" : "s"}</div>
                                 {sueltos.length === 0 && <div className="dg-embalar-nota">Están en las tarjetas de acá abajo.</div>}
                                 {sueltos.map((x) => (
-                                  <div className="dg-dia-item dg-dia-item-embalar" id={`taller-${dia.fecha}-${x.pedido.id}`} key={x.pedido.id}>
+                                  <div className={`dg-dia-item dg-dia-item-embalar ${tarjetaMarcada === x.pedido.id ? "dg-tarjeta-marcada" : ""}`} id={`taller-${dia.fecha}-${x.pedido.id}`} key={x.pedido.id}>
                                     <div className="dg-dia-item-bar">
                                       <span className="dg-dia-item-tipo">Ya armado · solo falta embalarlo{x.unidades > 1 ? ` · ${x.unidades} u.` : ""}</span>
                                     </div>
@@ -12204,7 +12249,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                           })()}
                           {items.map((x) => (
                             <div
-                              className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"}`}
+                              className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"} ${tarjetaMarcada === x.pedido.id ? "dg-tarjeta-marcada" : ""}`}
                               id={`taller-${dia.fecha}-${x.pedido.id}`}
                               key={x.pedido.id}
                               draggable={puedeArrastrar}
@@ -16634,6 +16679,20 @@ function Style() {
       .dg-aviso-card { --ac:var(--dg-accent); --ac-rgb:var(--dg-accent-rgb); position:relative; z-index:1; max-height:82vh; overflow-y:auto; background:var(--dg-surface); border:1px solid rgba(var(--ac-rgb),.55); border-top:4px solid var(--ac); border-radius:16px; padding:16px 18px 18px; box-shadow:0 24px 60px -12px rgba(0,0,0,0.6); animation:dg-aviso-entra .22s ease-out; }
       /* La guía se lee como un manual, no como una planilla. El admin edita
          sobre el mismo texto: los campos no se ven hasta que los tocás. */
+      /* El borde verde que avisa a qué tarjeta te mandó la lista. Dura 2
+         segundos y se apaga solo. El !important es a propósito: estas tarjetas
+         ya tienen su propio borde de color según el estado, y si no, no se ve. */
+      .dg-tarjeta-marcada {
+        border-color:var(--dg-success) !important;
+        box-shadow:0 0 0 3px rgba(var(--dg-success-rgb),.3) !important;
+        animation:dg-marcar 2s ease-out 1;
+      }
+      @keyframes dg-marcar {
+        0% { box-shadow:0 0 0 7px rgba(var(--dg-success-rgb),.45); }
+        70% { box-shadow:0 0 0 3px rgba(var(--dg-success-rgb),.3); }
+        100% { box-shadow:0 0 0 3px rgba(var(--dg-success-rgb),0); }
+      }
+      @media (prefers-reduced-motion:reduce) { .dg-tarjeta-marcada { animation:none; } }
       .dg-guia { list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; gap:10px; }
       .dg-guia-paso { display:flex; gap:14px; align-items:flex-start; padding:16px 18px; border-radius:14px;
         background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.09);
