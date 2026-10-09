@@ -390,7 +390,7 @@ const FORMA_OPTIONS = ["Rectangular", "Pastilla", "Circular", "P. Curvas", "Oval
 const TIPO_PEDIDO_OPTIONS = ["Simple", "Importado", "Esm.", "Sin led", "Biselado"];
 const TOUCH_OPTIONS = ["Touch", "Doble touch (frontal + perimetral)", "No"];
 const DESEMP_OPTIONS = ["Desempañante", "No"];
-const DESEMP_TIPO_OPTIONS = ["220", "Touch"];
+const DESEMP_TIPO_OPTIONS = ["Touch", "220"];
 const HORATEMP_OPTIONS = ["Hora y Temperatura", "No"];
 const BLUETOOTH_PEDIDO_OPTIONS = ["No", "Bluetooth 1 parlante", "Bluetooth 2 parlantes"];
 const TONO_OPTIONS = ["3 tonos", "Cálida", "Fría", "Neutra", "Sin led"];
@@ -4776,7 +4776,7 @@ function emptyPedido(prefill) {
     vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
     provincia: prefill?.provincia || "", localidad: prefill?.localidad || "", codigoPostal: prefill?.codigoPostal || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
-    touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
+    touch: "No", desemp: "No", desempTipo: "Touch", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
     tipoFactura: prefill?.tipoFactura || "Cons. Final / B", monto: prefill?.sinCargo ? "0" : "", anticipo: prefill?.sinCargo ? "0" : "", comision: "No aplica", facturado: false, montoRegistrado: 0,
     canalVenta: prefill?.canalVenta || "",
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
@@ -10145,7 +10145,7 @@ function emptyStockEspejo() {
   return {
     id: uid(), modelo: "", descripcion: "", cantidad: 0,
     ancho: "", alto: "", forma: "Rectangular", tipo: "Simple", tono: "3 tonos", grabado: "", pulido: "No",
-    touch: "No", desemp: "No", desempTipo: "220", desempCantidad: 1, horaTemp: "No", bluetooth: "No",
+    touch: "No", desemp: "No", desempTipo: "Touch", desempCantidad: 1, horaTemp: "No", bluetooth: "No",
     precio: "", precio3: "", precioEfectivo: "",
   };
 }
@@ -15336,7 +15336,7 @@ function nuevoEspejoPresupuesto(base) {
     alto: base ? base.alto : 60,
     touch: base ? base.touch : "No",
     desemp: base ? base.desemp : "No",
-    desempTipo: base ? base.desempTipo : "220",
+    desempTipo: base ? base.desempTipo : "Touch",
     horaTemp: base ? base.horaTemp : "No",
     bluetoothSel: base ? base.bluetoothSel : "Sin Bluetooth",
     panelesAdicionales: base ? base.panelesAdicionales : 0,
