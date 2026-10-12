@@ -8,7 +8,8 @@ import {
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
   Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare,
-  Mic, NotebookPen, CalendarClock, Undo2, Scissors, Ruler
+  Mic, NotebookPen, CalendarClock, Undo2, Scissors, Ruler,
+  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -4216,7 +4217,8 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
     <div className="dg-page">
       <div className="dg-quickviews" style={{ marginBottom: 16 }}>
         <button className={`dg-quickview-btn ${tab === "resumen" ? "dg-quickview-on" : ""}`} onClick={() => setTab("resumen")}><Wallet size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Resumen</button>
-        <button className={`dg-quickview-btn ${tab === "vencimientos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("vencimientos")}><CalendarClock size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Deudas{vencidasFin.length > 0 && <span className="dg-venc-tab-badge">{vencidasFin.length}</span>}</button>
+        <button className={`dg-quickview-btn ${tab === "vencimientos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("vencimientos")}><CalendarClock size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Agenda de pagos{vencidasFin.length > 0 && <span className="dg-venc-tab-badge">{vencidasFin.length}</span>}</button>
+        <button className={`dg-quickview-btn ${tab === "gastos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("gastos")}><Receipt size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Gastos del mes</button>
         <button className={`dg-quickview-btn ${tab === "ingresos" ? "dg-quickview-on" : ""}`} onClick={() => setTab("ingresos")}><TrendingUp size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Ingresos</button>
         <button className={`dg-quickview-btn ${tab === "compras" ? "dg-quickview-on" : ""}`} onClick={() => setTab("compras")}><TrendingDown size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Compras</button>
         <button className={`dg-quickview-btn ${tab === "proveedores" ? "dg-quickview-on" : ""}`} onClick={() => setTab("proveedores")}><Truck size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Proveedores</button>
@@ -4290,6 +4292,7 @@ function FinanzasPanel({ incomes, purchases, sectors, onChangeIncomes, onChangeP
       )}
 
       {tab === "vencimientos" && <DeudasPanel deudas={deudas} onChangeDeudas={onChangeDeudas} purchases={purchases} onChangePurchases={onChangePurchases} session={session} onRegistrar={onRegistrar} />}
+      {tab === "gastos" && <GastosEmpresaPanel purchases={purchases} deudas={deudas} proveedores={proveedores} onIrACompras={() => setTab("compras")} />}
       {tab === "ingresos" && <MoneyPage kind="income" entries={incomes} sectors={sectors} onChange={onChangeIncomes} proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl} />}
       {tab === "compras" && <MoneyPage kind="purchase" entries={purchases} sectors={sectors} onChange={onChangePurchases} proveedores={proveedores} onChangeProveedores={onChangeProveedores} driveFacturasUrl={driveFacturasUrl} />}
       {tab === "proveedores" && <ProveedoresPanel proveedores={proveedores} purchases={purchases} onChange={onChangeProveedores} />}
@@ -14634,6 +14637,67 @@ function deudaActiva(d) {
   return d.estado !== "terminada";
 }
 
+// Las categorias de gasto que se miran en «Gastos del mes». Los movimientos
+// entre cuentas NO son gasto: es plata que se pasa de una cuenta a otra.
+const CATEGORIAS_GASTO = ["sueldos", "materiales", "contenedor", "publicidad", "cargos_venta", "impuestos", "deudas", "administracion", "operativos", "combustible_logistica", "extraempresariales", "otros"];
+function esGasto(p) { return p && p.tipo !== "mov_entre_cuentas"; }
+function categoriaGasto(p) { return CATEGORIAS_GASTO.includes(p?.tipo) ? p.tipo : "otros"; }
+
+// La fecha en que se termina de pagar. Para un plan, la ultima cuota; para una
+// tarjeta, el mes «hasta» si lo cargaron; para un pago unico, su fecha.
+function fechaFinDeuda(d) {
+  const tipo = tipoDeuda(d);
+  if (tipo === "unico") return d.fecha || "";
+  if (tipo === "flexible") return "";
+  if (tipo === "tarjeta") {
+    if (!d.hasta) return "";
+    const [y, m] = d.hasta.split("-").map(Number);
+    return isoLocal(new Date(y, m - 1, Math.min(Number(d.dia) || ultimoDiaMes(y, m - 1), ultimoDiaMes(y, m - 1))));
+  }
+  const prog = pagosProgramados(d);
+  return prog.length ? prog[prog.length - 1].fecha : "";
+}
+
+// Lo que ya se abono. OJO: las deudas que vinieron de la planilla se importaron
+// con la cuota ya avanzada y SIN historial de `pagos`, asi que en los planes en
+// cuotas hay que contar por numero de cuota y no por historial, o da cero.
+function yaAbonadoDeuda(d) {
+  const tipo = tipoDeuda(d);
+  if (tipo === "cuotas") {
+    const total = Number(d.cuotasTotal) || 0;
+    const pagadas = Math.max(0, Math.min(total, (Number(d.cuotaProxima) || 1) - 1));
+    const cuota = Number(d.montoCuota) || 0;
+    const ultima = Number(d.montoUltimaCuota) || 0;
+    if (ultima > 0 && total > 0 && pagadas === total) return (total - 1) * cuota + ultima;
+    return pagadas * cuota;
+  }
+  return (d.pagos || []).reduce((t, p) => t + (Number(p.monto) || 0), 0);
+}
+
+// Lo que sale por mes mientras la deuda siga viva. Un pago unico no es mensual.
+function montoMensualDeuda(d) {
+  const tipo = tipoDeuda(d);
+  if (tipo === "cuotas") return Number(d.montoCuota) || 0;
+  if (tipo === "tarjeta") return Number(d.montoEstimado) || 0;
+  return 0;
+}
+
+// «11 de 12» para la columna de cuota.
+function etiquetaCuota(d) {
+  const tipo = tipoDeuda(d);
+  if (tipo !== "cuotas") return tipo === "tarjeta" ? "Mensual" : "Unico";
+  const total = Number(d.cuotasTotal) || 0;
+  const prox = Math.min(Number(d.cuotaProxima) || 1, total || 1);
+  return total ? prox + " de " + total : String(prox);
+}
+
+// El dia del mes en que se paga.
+function diaDePagoDeuda(d) {
+  const tipo = tipoDeuda(d);
+  if (tipo === "unico") return d.fecha ? Number(d.fecha.slice(8, 10)) : 0;
+  if (tipo === "flexible") return 0;
+  return Number(d.dia) || (d.proximoVencimiento ? Number(d.proximoVencimiento.slice(8, 10)) : 0);
+}
 function DeudaForm({ inicial, onGuardar, onCancelar }) {
   const [v, setV] = useState(() => ({
     motivo: "", categoria: "deudas", observaciones: "",
@@ -14740,8 +14804,8 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
   const [editando, setEditando] = useState(null);
   const [pagando, setPagando] = useState(null);   // { id, monto, egreso }
   const [verTerminadas, setVerTerminadas] = useState(false);
-  const [verGastos, setVerGastos] = useState(false);
   const archivoRef = useRef(null);
+  const tablaRef = useRef(null);
 
   const activas = lista.filter(deudaActiva);
   const flexibles = activas.filter((d) => tipoDeuda(d) === "flexible");
@@ -14757,6 +14821,163 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
   const saldoTarjetas = conPagos.filter((d) => tipoDeuda(d) === "tarjeta").reduce((t, d) => t + restaPagarDeuda(d), 0);
 
   function actualizar(id, cambio) { onChangeDeudas(lista.map((d) => (d.id === id ? { ...d, ...cambio } : d))); }
+
+  // ---- Agenda de pagos: la tabla ----
+  // Es la misma información que las fichas, pero en forma de planilla, que es
+  // como la venía mirando en el Excel. Lee las MISMAS deudas: no hay una
+  // segunda lista que se pueda desfasar.
+  const [vista, setVista] = useState("tabla");
+  const [filaEdit, setFilaEdit] = useState(null);
+  const abonadoTotal = conPagos.reduce((t, d) => t + yaAbonadoDeuda(d), 0);
+  const faltaTotal = restaCreditos + saldoTarjetas;
+  const porMes = conPagos.filter((d) => ["cuotas", "tarjeta"].includes(tipoDeuda(d))).reduce((t, d) => t + montoMensualDeuda(d), 0);
+  const prox6 = Array.from({ length: 6 }, (_, k) => fechaMasMeses(`${mesHoy}-01`, k, 1).slice(0, 7))
+    .map((ym) => ({ ym, monto: suma(programados.filter((p) => p.fecha.slice(0, 7) === ym)) }));
+  const filasOrdenadas = conPagos.slice().sort((a, b) => ((pagosProgramados(a)[0]?.fecha || "9999") < (pagosProgramados(b)[0]?.fecha || "9999") ? -1 : 1));
+
+  function empezarEdicionFila(d) {
+    setPagando(null);
+    // Con la fila abierta la tabla pide unos pixeles mas de ancho; si no la
+    // corremos, «Guardar» queda cortado contra el borde derecho.
+    setTimeout(() => { const c = tablaRef.current; if (c) c.scrollLeft = c.scrollWidth; }, 30);
+    setFilaEdit({
+      id: d.id, tipo: tipoDeuda(d), motivo: d.motivo || "",
+      montoCuota: String(d.montoCuota || ""), cuotaProxima: String(d.cuotaProxima || ""),
+      cuotasTotal: String(d.cuotasTotal || ""), proximoVencimiento: d.proximoVencimiento || "",
+      montoEstimado: String(d.montoEstimado || ""), hasta: d.hasta || "",
+      monto: String(d.monto || ""), fecha: d.fecha || "",
+    });
+  }
+  function filaValida(f) {
+    if (!f) return false;
+    const n = (x) => Number(String(x).replace(",", ".")) || 0;
+    if (f.tipo === "cuotas") return n(f.montoCuota) > 0 && n(f.cuotasTotal) >= 1 && n(f.cuotaProxima) >= 1 && !!f.proximoVencimiento;
+    if (f.tipo === "tarjeta") return !!f.proximoVencimiento;
+    if (f.tipo === "unico") return n(f.monto) > 0 && !!f.fecha;
+    return n(f.monto) > 0;
+  }
+  function guardarFila() {
+    const f = filaEdit;
+    if (!filaValida(f)) return;
+    const d = lista.find((x) => x.id === f.id);
+    if (!d) { setFilaEdit(null); return; }
+    const n = (x) => Number(String(x).replace(",", ".")) || 0;
+    const motivo = f.motivo.trim() || nombreDeuda(d);
+    let cambio = { motivo };
+    if (f.tipo === "cuotas") {
+      const total = Math.max(1, Math.round(n(f.cuotasTotal)));
+      const prox = Math.min(Math.max(1, Math.round(n(f.cuotaProxima))), total + 1);
+      cambio = { ...cambio, montoCuota: n(f.montoCuota), cuotasTotal: total, cuotaProxima: prox,
+        proximoVencimiento: f.proximoVencimiento, dia: Number(f.proximoVencimiento.slice(8, 10)),
+        estado: prox > total ? "terminada" : "activa" };
+    } else if (f.tipo === "tarjeta") {
+      cambio = { ...cambio, montoEstimado: n(f.montoEstimado), proximoVencimiento: f.proximoVencimiento,
+        dia: Number(f.proximoVencimiento.slice(8, 10)), hasta: f.hasta || "" };
+    } else if (f.tipo === "unico") {
+      cambio = { ...cambio, monto: n(f.monto), fecha: f.fecha };
+    } else {
+      cambio = { ...cambio, monto: n(f.monto) };
+    }
+    actualizar(f.id, cambio);
+    if (onRegistrar) onRegistrar("Editó una deuda", `${motivo} — desde la agenda de pagos`);
+    setFilaEdit(null);
+  }
+
+  function filaAgenda(d) {
+    const tipo = tipoDeuda(d);
+    const prox = pagosProgramados(d)[0];
+    const vencido = prox && prox.fecha < hoyIso;
+    const fin = fechaFinDeuda(d);
+    const dia = diaDePagoDeuda(d);
+    const estimado = tipo === "tarjeta" || !!d.montoVariable;
+    const faltanDatos = tipo === "tarjeta" && (!d.proximoVencimiento || !(Number(d.montoEstimado) > 0));
+    const editandoFila = filaEdit && filaEdit.id === d.id;
+    const set = (k, x) => setFilaEdit((a) => ({ ...a, [k]: x }));
+
+    if (editandoFila) {
+      const f = filaEdit;
+      return (
+        <tr key={d.id} className="dg-agenda-editando">
+          <td><input className="dg-agenda-input" value={f.motivo} onChange={(e) => set("motivo", e.target.value)} placeholder="Entidad o banco" /></td>
+          <td className="dg-num">
+            {f.tipo === "cuotas" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.montoCuota} onChange={(e) => set("montoCuota", e.target.value)} />}
+            {f.tipo === "tarjeta" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.montoEstimado} onChange={(e) => set("montoEstimado", e.target.value)} />}
+            {(f.tipo === "unico" || f.tipo === "flexible") && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.monto} onChange={(e) => set("monto", e.target.value)} />}
+          </td>
+          <td className="dg-num">
+            {f.tipo === "cuotas" ? (
+              <span className="dg-agenda-cuota-edit">
+                <input className="dg-agenda-input dg-agenda-input-mini" type="number" min="1" value={f.cuotaProxima} onChange={(e) => set("cuotaProxima", e.target.value)} />
+                <small>de</small>
+                <input className="dg-agenda-input dg-agenda-input-mini" type="number" min="1" value={f.cuotasTotal} onChange={(e) => set("cuotasTotal", e.target.value)} />
+              </span>
+            ) : <span className="dg-recorrido-vacio">{TIPOS_DEUDA_CORTO[f.tipo]}</span>}
+          </td>
+          <td>
+            {f.tipo === "unico"
+              ? <input className="dg-agenda-input" type="date" value={f.fecha} onChange={(e) => set("fecha", e.target.value)} />
+              : f.tipo === "flexible"
+                ? <span className="dg-recorrido-vacio">—</span>
+                : <input className="dg-agenda-input" type="date" value={f.proximoVencimiento} onChange={(e) => set("proximoVencimiento", e.target.value)} />}
+          </td>
+          <td>
+            {f.tipo === "tarjeta"
+              ? <input className="dg-agenda-input" type="month" value={f.hasta} onChange={(e) => set("hasta", e.target.value)} />
+              : <span className="dg-recorrido-vacio">{f.tipo === "cuotas" ? "se calcula" : "—"}</span>}
+          </td>
+          <td className="dg-num"><span className="dg-recorrido-vacio">—</span></td>
+          <td className="dg-num"><span className="dg-recorrido-vacio">—</span></td>
+          <td className="dg-agenda-acciones">
+            <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFilaEdit(null)}>Cancelar</button>
+            <button type="button" className="dg-btn-primary dg-mini-btn" onClick={guardarFila} disabled={!filaValida(f)}><Check size={13} /> Guardar</button>
+          </td>
+        </tr>
+      );
+    }
+
+    return (
+      <Fragment key={d.id}>
+        <tr className={vencido ? "dg-agenda-vencida" : ""}>
+          <td>
+            <strong>{nombreDeuda(d)}</strong>
+            <small className={`dg-deuda-chip dg-deuda-chip-${tipo}`}>{TIPOS_DEUDA_CORTO[tipo]}</small>
+            {d.observaciones && <small className="dg-agenda-obs">{d.observaciones}</small>}
+          </td>
+          <td className="dg-num">{faltanDatos ? <span className="dg-recorrido-vacio">Faltan datos</span> : <>{estimado ? "~ " : ""}{money(montoMensualDeuda(d) || Number(d.monto) || 0)}</>}</td>
+          <td className="dg-num">{etiquetaCuota(d)}</td>
+          <td>
+            {dia ? <strong>El {dia}</strong> : <span className="dg-recorrido-vacio">—</span>}
+            {prox && <small className={vencido ? "dg-agenda-roja" : ""}>{vencido ? "venció " : ""}{fechaLargaAnotador(prox.fecha)}</small>}
+          </td>
+          <td>{fin ? fechaLargaAnotador(fin) : <span className="dg-recorrido-vacio">{tipo === "tarjeta" ? "Sin fin" : "—"}</span>}</td>
+          <td className="dg-num dg-recorrido-pagado">{yaAbonadoDeuda(d) > 0 ? money(yaAbonadoDeuda(d)) : <span className="dg-recorrido-vacio">—</span>}</td>
+          <td className="dg-num dg-recorrido-total">{money(restaPagarDeuda(d))}</td>
+          <td className="dg-agenda-acciones">
+            {prox && <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => { setFilaEdit(null); empezarPago(d); }}><Check size={13} /> Pagar</button>}
+            <button type="button" className="dg-icon-btn" onClick={() => empezarEdicionFila(d)} title="Editar esta fila"><Pencil size={14} /></button>
+            <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrar(d)} title="Borrar"><Trash2 size={14} /></button>
+          </td>
+        </tr>
+        {pagando && pagando.id === d.id && prox && (
+          <tr className="dg-agenda-pagando">
+            <td colSpan={8}>
+              <div className="dg-agenda-pago-caja">
+                <span>Pagar <strong>{prox.etiqueta || "el vencimiento"}</strong> de <strong>{nombreDeuda(d)}</strong>, que vence el {fechaLargaAnotador(prox.fecha)}</span>
+                <label className="dg-agenda-pago-monto">Monto
+                  <input type="number" inputMode="decimal" value={pagando.monto} onChange={(e) => setPagando((p) => ({ ...p, monto: e.target.value }))} />
+                </label>
+                <label className="dg-check-inline"><input type="checkbox" checked={pagando.egreso} onChange={(e) => setPagando((p) => ({ ...p, egreso: e.target.checked }))} /> Cargar el egreso en Compras</label>
+                <span className="dg-agenda-acciones">
+                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setPagando(null)}>Cancelar</button>
+                  <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => confirmarPago(d)}><Check size={13} /> Confirmar pago</button>
+                </span>
+              </div>
+            </td>
+          </tr>
+        )}
+      </Fragment>
+    );
+  }
 
   // ---- Pagar la próxima cuota / resumen / pago único ----
   function empezarPago(d) {
@@ -14875,15 +15096,6 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     const total = celdas.reduce((t, c) => t + c.pendiente + c.pagado, 0) + sueltosTotal;
     return { ym, celdas, sueltosTotal, total };
   });
-
-  // ---- Totalidad de pagos mensuales (de Compras) ----
-  const CATS_GASTOS = ["sueldos", "materiales", "contenedor", "publicidad", "cargos_venta", "impuestos", "deudas", "administracion", "operativos", "combustible_logistica", "extraempresariales", "otros"];
-  const meses12Atras = Array.from({ length: 12 }, (_, k) => fechaMasMeses(`${mesHoy}-01`, -k, 1).slice(0, 7));
-  const gastosPorMes = meses12Atras.map((ym) => {
-    const delMesG = purchases.filter((p) => (p.fecha || "").slice(0, 7) === ym && p.tipo !== "mov_entre_cuentas");
-    const porCat = Object.fromEntries(CATS_GASTOS.map((c) => [c, delMesG.filter((p) => (CATS_GASTOS.includes(p.tipo) ? p.tipo : "otros") === c).reduce((t, p) => t + (Number(p.monto) || 0), 0)]));
-    return { ym, porCat, total: Object.values(porCat).reduce((t, x) => t + x, 0) };
-  }).filter((f) => f.total > 0 || f.ym === mesHoy);
 
   const verPagosDia = diaElegido ? programados.filter((p) => p.fecha === diaElegido) : null;
 
@@ -15014,6 +15226,10 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
 
       <div className="dg-venc-lista-head">
         <strong>Deudas activas ({conPagos.length})</strong>
+        <span className="dg-agenda-vistas">
+          <button type="button" className={vista === "tabla" ? "dg-btn-primary dg-mini-btn" : "dg-btn-ghost dg-mini-btn"} onClick={() => { setVista("tabla"); setEditando(null); }}><Landmark size={13} /> Tabla</button>
+          <button type="button" className={vista === "fichas" ? "dg-btn-primary dg-mini-btn" : "dg-btn-ghost dg-mini-btn"} onClick={() => { setVista("fichas"); setFilaEdit(null); }}><LayoutList size={13} /> Fichas</button>
+        </span>
         <span className="dg-deuda-botones-top">
           <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => archivoRef.current && archivoRef.current.click()}><Download size={13} /> Importar</button>
           {!creando && <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => { setCreando(true); setEditando(null); }}><Plus size={13} /> Nueva deuda</button>}
@@ -15028,11 +15244,100 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
         </div>
       )}
 
-      {conPagos.length === 0 && !creando && <div className="dg-empty">No hay deudas cargadas. Usá «Nueva deuda», «Importar» o el anotador de voz.</div>}
-      {conPagos
-        .slice()
-        .sort((a, b) => ((pagosProgramados(a)[0]?.fecha || "9999") < (pagosProgramados(b)[0]?.fecha || "9999") ? -1 : 1))
-        .map(tarjetaDeuda)}
+      {vista === "tabla" && (
+        <>
+          <div className="dg-section-card dg-agenda">
+            <div className="dg-agenda-scroll" ref={tablaRef}>
+              <table className="dg-recorrido-tabla dg-agenda-tabla">
+                <thead>
+                  <tr>
+                    <th>Entidad o banco</th>
+                    <th className="dg-num">Monto / cuota</th>
+                    <th className="dg-num">Cuota nro</th>
+                    <th>Fecha de pago</th>
+                    <th>Fin</th>
+                    <th className="dg-num">Ya abonado</th>
+                    <th className="dg-num">Total restante</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filasOrdenadas.map(filaAgenda)}
+                  {filasOrdenadas.length > 0 && (
+                    <tr className="dg-agenda-pie">
+                      <td>Total de {filasOrdenadas.length} {filasOrdenadas.length === 1 ? "deuda" : "deudas"}</td>
+                      <td className="dg-num">{money(porMes)}</td>
+                      <td className="dg-num" />
+                      <td />
+                      <td />
+                      <td className="dg-num">{money(abonadoTotal)}</td>
+                      <td className="dg-num">{money(faltaTotal)}</td>
+                      <td />
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {filasOrdenadas.length === 0 && !creando && <div className="dg-empty">No hay deudas cargadas. Usá «Nueva deuda», «Importar» o el anotador de voz.</div>}
+            <p className="dg-hint dg-agenda-hint">
+              El lápiz edita la fila ahí mismo. Para lo demás (categoría del egreso, observaciones, última cuota distinta, cuota UVA) usá la vista de fichas.
+              Los montos con ~ son estimados: tarjetas y cuotas que ajustan.
+            </p>
+          </div>
+
+          <div className="dg-section-card dg-agenda-resumen">
+            <div className="dg-section-header"><PiggyBank size={14} /> Resumen de la agenda</div>
+            <div className="dg-panel-grid">
+              <div className="dg-panel-card">
+                <div className="dg-panel-card-label">Ya abonado</div>
+                <div className="dg-panel-card-valor" style={{ color: "var(--dg-success)" }}>{money(abonadoTotal)}</div>
+                <div className="dg-panel-card-variacion">Cuotas que ya se pagaron de los planes cargados</div>
+              </div>
+              <div className="dg-panel-card">
+                <div className="dg-panel-card-label">Falta pagar</div>
+                <div className="dg-panel-card-valor" style={{ color: "var(--dg-danger)" }}>{money(faltaTotal)}</div>
+                <div className="dg-panel-card-variacion">{money(restaCreditos)} en planes{saldoTarjetas > 0 ? ` + ${money(saldoTarjetas)} en tarjetas` : ""}</div>
+              </div>
+              <div className="dg-panel-card">
+                <div className="dg-panel-card-label">Por mes</div>
+                <div className="dg-panel-card-valor" style={{ color: "var(--dg-warning)" }}>{money(porMes)}</div>
+                <div className="dg-panel-card-variacion">Suma de las cuotas fijas y los resúmenes de tarjeta</div>
+              </div>
+              <div className="dg-panel-card">
+                <div className="dg-panel-card-label">Deuda total original</div>
+                <div className="dg-panel-card-valor">{money(abonadoTotal + faltaTotal)}</div>
+                <div className="dg-panel-card-variacion">{abonadoTotal + faltaTotal > 0 ? `${Math.round((abonadoTotal / (abonadoTotal + faltaTotal)) * 100)}% pagado` : "Sin datos"}</div>
+              </div>
+            </div>
+            {abonadoTotal + faltaTotal > 0 && (
+              <div className="dg-agenda-barra" title={`${money(abonadoTotal)} pagado de ${money(abonadoTotal + faltaTotal)}`}>
+                <span style={{ width: `${Math.min(100, Math.round((abonadoTotal / (abonadoTotal + faltaTotal)) * 100))}%` }} />
+              </div>
+            )}
+            <div className="dg-agenda-meses">
+              <strong>Lo que hay que pagar mes por mes</strong>
+              <div className="dg-agenda-meses-fila">
+                {prox6.map((m) => (
+                  <div className={`dg-agenda-mes ${m.ym === mesHoy ? "dg-agenda-mes-hoy" : ""}`} key={m.ym}>
+                    <small>{nombreMesCorto(m.ym)}</small>
+                    <b>{money(m.monto)}</b>
+                  </div>
+                ))}
+              </div>
+              <p className="dg-hint" style={{ marginTop: 4 }}>
+                Baja a medida que se van terminando los planes. Los familiares no suman acá.
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {vista === "fichas" && (
+        <>
+          {filasOrdenadas.length === 0 && !creando && <div className="dg-empty">No hay deudas cargadas. Usá «Nueva deuda», «Importar» o el anotador de voz.</div>}
+          {filasOrdenadas.map(tarjetaDeuda)}
+        </>
+      )}
 
       {terminadas.length > 0 && (
         <div className="dg-venc-pagadas">
@@ -15131,21 +15436,210 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
         </div>
       )}
 
+      <p className="dg-hint dg-agenda-pie-nota">
+        El detalle de todo lo que se pagó cada mes está en la pestaña «Gastos del mes».
+      </p>
+    </div>
+  );
+}
+
+/* ===========================================================================
+   GASTOS DEL MES
+   Acá NO se carga nada: todo sale de lo que ya se cargó en Compras. Sirve para
+   dos cosas: ver en qué se fue la plata este mes, y estimar lo que viene.
+   =========================================================================== */
+function GastosEmpresaPanel({ purchases, deudas, proveedores, onIrACompras }) {
+  const compras = (purchases || []).filter(esGasto);
+  const mesHoy = isoLocal(hoyLocal()).slice(0, 7);
+  const [ym, setYm] = useState(mesHoy);
+  const [abierta, setAbierta] = useState(null);
+  const [verMatriz, setVerMatriz] = useState(false);
+  const nombreProveedor = (id) => (proveedores || []).find((p) => p.id === id)?.nombre || "";
+
+  const delMes = (m) => compras.filter((p) => (p.fecha || "").slice(0, 7) === m);
+  const totalDe = (m) => delMes(m).reduce((t, p) => t + (Number(p.monto) || 0), 0);
+  const mesAnterior = fechaMasMeses(`${ym}-01`, -1, 1).slice(0, 7);
+  const delMesElegido = delMes(ym);
+  const total = totalDe(ym);
+  const totalAnterior = totalDe(mesAnterior);
+  const variacion = totalAnterior > 0 ? Math.round(((total - totalAnterior) / totalAnterior) * 100) : null;
+
+  // El promedio de los 3 meses cerrados antes del mes que se está mirando. No
+  // se incluye el mes mirado: si es el actual todavía está a mitad de camino y
+  // arrastraría el promedio para abajo.
+  const tresAnteriores = [1, 2, 3].map((k) => fechaMasMeses(`${ym}-01`, -k, 1).slice(0, 7));
+  const promedio3 = Math.round(tresAnteriores.reduce((t, m) => t + totalDe(m), 0) / 3);
+
+  const porCategoria = CATEGORIAS_GASTO
+    .map((c) => {
+      const items = delMesElegido.filter((p) => categoriaGasto(p) === c);
+      const monto = items.reduce((t, p) => t + (Number(p.monto) || 0), 0);
+      const antes = delMes(mesAnterior).filter((p) => categoriaGasto(p) === c).reduce((t, p) => t + (Number(p.monto) || 0), 0);
+      return { cat: c, monto, antes, items };
+    })
+    .filter((f) => f.monto > 0 || f.antes > 0)
+    .sort((a, b) => b.monto - a.monto);
+  const tope = porCategoria.reduce((t, f) => Math.max(t, f.monto), 0);
+
+  const masGrandes = delMesElegido.slice().sort((a, b) => (Number(b.monto) || 0) - (Number(a.monto) || 0)).slice(0, 5);
+
+  // ---- Lo que viene: cuotas exactas + el resto a promedio ----
+  // Las cuotas salen de la agenda de pagos, así que son el número real. El
+  // resto del gasto no se puede saber, así que se estima con el promedio de los
+  // 3 meses cerrados, sacando lo que ya se contó como deuda para no duplicar.
+  const activas = (deudas || []).filter((d) => deudaActiva(d) && tipoDeuda(d) !== "flexible");
+  const programadas = activas.flatMap(pagosProgramados);
+  const promedioSinDeudas = Math.round(tresAnteriores.reduce((t, m) =>
+    t + delMes(m).filter((p) => categoriaGasto(p) !== "deudas").reduce((x, p) => x + (Number(p.monto) || 0), 0), 0) / 3);
+  const prox6 = Array.from({ length: 6 }, (_, k) => fechaMasMeses(`${mesHoy}-01`, k, 1).slice(0, 7)).map((m) => {
+    const cuotas = programadas.filter((p) => p.fecha.slice(0, 7) === m).reduce((t, p) => t + p.monto, 0);
+    return { ym: m, cuotas, resto: promedioSinDeudas, total: cuotas + promedioSinDeudas };
+  });
+
+  // ---- La matriz de 12 meses por categoría ----
+  const meses12 = Array.from({ length: 12 }, (_, k) => fechaMasMeses(`${mesHoy}-01`, -k, 1).slice(0, 7));
+  const matriz = meses12.map((m) => {
+    const items = delMes(m);
+    const porCat = Object.fromEntries(CATEGORIAS_GASTO.map((c) => [c, items.filter((p) => categoriaGasto(p) === c).reduce((t, p) => t + (Number(p.monto) || 0), 0)]));
+    return { ym: m, porCat, total: Object.values(porCat).reduce((t, x) => t + x, 0) };
+  }).filter((f) => f.total > 0 || f.ym === mesHoy);
+
+  function moverMes(delta) {
+    setAbierta(null);
+    setYm(fechaMasMeses(`${ym}-01`, delta, 1).slice(0, 7));
+  }
+
+  return (
+    <div className="dg-page dg-gastos">
+      <div className="dg-gastos-head">
+        <button type="button" className="dg-icon-btn" onClick={() => moverMes(-1)} aria-label="Mes anterior"><ArrowLeft size={16} /></button>
+        <div className="dg-gastos-mes">
+          <strong>{nombreMesLargo(ym)}</strong>
+          <small>{delMesElegido.length} {delMesElegido.length === 1 ? "pago cargado" : "pagos cargados"}</small>
+        </div>
+        <button type="button" className="dg-icon-btn" onClick={() => moverMes(1)} disabled={ym >= mesHoy} aria-label="Mes siguiente"><ChevronRight size={16} /></button>
+        {ym !== mesHoy && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => { setYm(mesHoy); setAbierta(null); }}>Volver a este mes</button>}
+      </div>
+
+      <div className="dg-panel-grid">
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">Total pagado en {nombreMesLargo(ym).split(" ")[0].toLowerCase()}</div>
+          <div className="dg-panel-card-valor" style={{ color: "var(--dg-danger)" }}>{money(total)}</div>
+          <div className="dg-panel-card-variacion">
+            {variacion === null ? "Sin mes anterior para comparar"
+              : variacion === 0 ? "Igual que el mes pasado"
+              : `${variacion > 0 ? "+" : ""}${variacion}% contra ${nombreMesCorto(mesAnterior)} (${money(totalAnterior)})`}
+          </div>
+        </div>
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">Promedio de los 3 meses anteriores</div>
+          <div className="dg-panel-card-valor">{money(promedio3)}</div>
+          <div className="dg-panel-card-variacion">{promedio3 > 0 ? (total > promedio3 ? `${money(total - promedio3)} por encima del promedio` : `${money(promedio3 - total)} por debajo del promedio`) : "Faltan meses cargados"}</div>
+        </div>
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">El gasto más grande</div>
+          <div className="dg-panel-card-valor">{masGrandes.length ? money(masGrandes[0].monto) : money(0)}</div>
+          <div className="dg-panel-card-variacion">{masGrandes.length ? masGrandes[0].concepto || PURCHASE_TYPES[categoriaGasto(masGrandes[0])] : "Sin pagos cargados"}</div>
+        </div>
+        <div className="dg-panel-card">
+          <div className="dg-panel-card-label">Deudas y financiamiento</div>
+          <div className="dg-panel-card-valor">{money((porCategoria.find((f) => f.cat === "deudas") || {}).monto || 0)}</div>
+          <div className="dg-panel-card-variacion">{total > 0 ? `${Math.round((((porCategoria.find((f) => f.cat === "deudas") || {}).monto || 0) / total) * 100)}% de todo lo que se pagó` : "—"}</div>
+        </div>
+      </div>
+
+      <div className="dg-section-card">
+        <div className="dg-section-header"><Receipt size={14} /> En qué se fue la plata</div>
+        {porCategoria.length === 0 ? (
+          <div className="dg-empty">No hay gastos cargados en {nombreMesLargo(ym)}.</div>
+        ) : (
+          <div className="dg-gastos-cats">
+            {porCategoria.map((f) => {
+              const pct = total > 0 ? Math.round((f.monto / total) * 100) : 0;
+              const dif = f.monto - f.antes;
+              const abiertaEsta = abierta === f.cat;
+              return (
+                <div className={`dg-gasto-cat ${abiertaEsta ? "dg-gasto-cat-abierta" : ""}`} key={f.cat}>
+                  <button type="button" className="dg-gasto-cat-head" onClick={() => setAbierta(abiertaEsta ? null : f.cat)} aria-expanded={abiertaEsta}>
+                    <ChevronRight size={14} className={abiertaEsta ? "dg-presu-chevron-on" : ""} />
+                    <span className="dg-gasto-cat-nombre">{PURCHASE_TYPES[f.cat]}</span>
+                    <span className="dg-gasto-cat-pct">{pct}%</span>
+                    <span className="dg-gasto-cat-monto">{money(f.monto)}</span>
+                    <span className={`dg-gasto-cat-dif ${dif > 0 ? "dg-gasto-sube" : dif < 0 ? "dg-gasto-baja" : ""}`}>
+                      {f.antes === 0 ? "nuevo" : dif === 0 ? "igual" : `${dif > 0 ? "+" : "−"}${money(Math.abs(dif))}`}
+                    </span>
+                  </button>
+                  <div className="dg-gasto-cat-barra"><span style={{ width: `${tope > 0 ? Math.round((f.monto / tope) * 100) : 0}%` }} /></div>
+                  {abiertaEsta && (
+                    <div className="dg-gasto-cat-items">
+                      {f.items.length === 0 ? (
+                        <p className="dg-hint">Este mes no se cargó nada en esta categoría (el mes pasado fueron {money(f.antes)}).</p>
+                      ) : f.items.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).map((p) => (
+                        <div className="dg-gasto-item" key={p.id}>
+                          <span className="dg-gasto-item-fecha">{(p.fecha || "").slice(8, 10)}/{(p.fecha || "").slice(5, 7)}</span>
+                          <span className="dg-gasto-item-txt">
+                            {p.concepto || "Sin concepto"}
+                            {nombreProveedor(p.proveedorId) && <small> · {nombreProveedor(p.proveedorId)}</small>}
+                            {p.gastoFijo && <small> · fijo</small>}
+                          </span>
+                          <span className="dg-gasto-item-monto">{money(p.monto)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {onIrACompras && (
+          <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 10 }} onClick={onIrACompras}>
+            <TrendingDown size={13} /> Cargar o corregir un gasto en Compras
+          </button>
+        )}
+      </div>
+
+      <div className="dg-section-card">
+        <div className="dg-section-header"><CalendarRange size={14} /> Lo que se viene</div>
+        <p className="dg-hint" style={{ marginTop: 0 }}>
+          Las cuotas son el número exacto que sale de la agenda de pagos. El resto es el promedio
+          de los 3 meses cerrados, sin contar deudas, así que es una estimación para planificar —
+          no un dato cerrado.
+        </p>
+        <div className="dg-recorrido-scroll">
+          <table className="dg-recorrido-tabla">
+            <thead>
+              <tr><th>Mes</th><th className="dg-num">Cuotas y deudas</th><th className="dg-num">Resto estimado</th><th className="dg-num">Total estimado</th></tr>
+            </thead>
+            <tbody>
+              {prox6.map((f) => (
+                <tr key={f.ym} className={f.ym === mesHoy ? "dg-recorrido-actual" : ""}>
+                  <td>{nombreMesCorto(f.ym)}</td>
+                  <td className="dg-num">{f.cuotas > 0 ? money(f.cuotas) : <span className="dg-recorrido-vacio">—</span>}</td>
+                  <td className="dg-num">{f.resto > 0 ? `~ ${money(f.resto)}` : <span className="dg-recorrido-vacio">—</span>}</td>
+                  <td className="dg-num dg-recorrido-total">~ {money(f.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="dg-section-card dg-recorrido">
-        <button type="button" className="dg-anotador-historial-btn" onClick={() => setVerGastos((v) => !v)} aria-expanded={verGastos}>
-          <ChevronRight size={14} className={verGastos ? "dg-presu-chevron-on" : ""} /> Totalidad de pagos mensuales (de Compras)
+        <button type="button" className="dg-anotador-historial-btn" onClick={() => setVerMatriz((v) => !v)} aria-expanded={verMatriz}>
+          <ChevronRight size={14} className={verMatriz ? "dg-presu-chevron-on" : ""} /> Los últimos 12 meses, categoría por categoría
         </button>
-        {verGastos && (
+        {verMatriz && (
           <div className="dg-recorrido-scroll">
             <table className="dg-recorrido-tabla">
               <thead>
-                <tr><th>Mes</th>{CATS_GASTOS.map((c) => (<th key={c} className="dg-num">{PURCHASE_TYPES[c]}</th>))}<th className="dg-num">Total</th></tr>
+                <tr><th>Mes</th>{CATEGORIAS_GASTO.map((c) => (<th key={c} className="dg-num">{PURCHASE_TYPES[c]}</th>))}<th className="dg-num">Total</th></tr>
               </thead>
               <tbody>
-                {gastosPorMes.map((f) => (
-                  <tr key={f.ym} className={f.ym === mesHoy ? "dg-recorrido-actual" : ""}>
+                {matriz.map((f) => (
+                  <tr key={f.ym} className={f.ym === ym ? "dg-recorrido-actual" : ""}>
                     <td>{nombreMesCorto(f.ym)}</td>
-                    {CATS_GASTOS.map((c) => (<td key={c} className="dg-num">{f.porCat[c] ? money(f.porCat[c]) : <span className="dg-recorrido-vacio">—</span>}</td>))}
+                    {CATEGORIAS_GASTO.map((c) => (<td key={c} className="dg-num">{f.porCat[c] ? money(f.porCat[c]) : <span className="dg-recorrido-vacio">—</span>}</td>))}
                     <td className="dg-num dg-recorrido-total">{money(f.total)}</td>
                   </tr>
                 ))}
@@ -15157,6 +15651,7 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     </div>
   );
 }
+
 
 function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   const [tipo, setTipo] = useState("egreso");
@@ -18089,6 +18584,93 @@ function Style() {
       .dg-recorrido-total { font-weight:700; }
       .dg-recorrido-actual td { background:rgba(var(--dg-accent-rgb),.07); }
       .dg-recorrido-actual td:first-child { background:var(--dg-surface); box-shadow:inset 3px 0 0 var(--dg-accent); }
+      /* ---- Agenda de pagos: la tabla ---- */
+      .dg-agenda { padding:0; overflow:hidden; }
+      .dg-agenda-vistas { display:inline-flex; gap:6px; }
+      .dg-agenda-scroll { overflow-x:auto; }
+      .dg-agenda-tabla { font-size:13px; }
+      .dg-agenda-tabla th { background:rgba(var(--dg-line-rgb),.06); }
+      .dg-agenda-tabla td { vertical-align:middle; padding:9px 11px; }
+      .dg-agenda-tabla td:first-child { white-space:normal; min-width:170px; }
+      .dg-agenda-tabla td:first-child strong { display:block; font-size:13px; }
+      .dg-agenda-tabla td:first-child small { display:inline-block; margin-top:3px; }
+      .dg-agenda-tabla td small { display:block; font-size:11px; color:var(--dg-text-dim); font-weight:500; }
+      .dg-agenda-obs { font-style:italic; }
+      .dg-agenda-roja { color:var(--dg-danger) !important; font-weight:600; }
+      .dg-agenda-vencida td:first-child { box-shadow:inset 3px 0 0 var(--dg-danger); }
+      .dg-agenda-acciones { display:flex; gap:5px; align-items:center; justify-content:flex-end; white-space:nowrap; }
+      .dg-agenda-pie td { border-top:2px solid rgba(var(--dg-line-rgb),.18); font-weight:700; background:rgba(var(--dg-line-rgb),.04); }
+      .dg-agenda-hint { padding:0 13px 12px; margin:8px 0 0; }
+      /* La regla ".dg-recorrido-tabla td { color:var(--dg-text) }" le gana por
+         especificidad a ".dg-recorrido-pagado", asi que la columna de lo que ya
+         se abono salia del color normal en vez de verde. */
+      .dg-agenda-tabla td.dg-recorrido-pagado { color:var(--dg-success); }
+      .dg-agenda-tabla tbody tr:hover td { background:rgba(var(--dg-accent-rgb),.05); }
+      .dg-agenda-tabla tbody tr:hover td:first-child { background:var(--dg-surface); }
+
+      /* Edición de la fila ahí mismo */
+      .dg-agenda-editando td { background:rgba(var(--dg-accent-rgb),.09); }
+      .dg-agenda-editando td:first-child { background:rgba(var(--dg-accent-rgb),.09); box-shadow:inset 3px 0 0 var(--dg-accent); }
+      .dg-agenda-input { width:100%; min-width:96px; padding:5px 7px; font-size:12px; border:1px solid var(--dg-accent); border-radius:7px; background:var(--dg-bg); color:var(--dg-text); }
+      .dg-agenda-input-num { text-align:right; font-family:'JetBrains Mono', monospace; }
+      .dg-agenda-input-mini { width:52px; min-width:52px; text-align:center; }
+      .dg-recorrido-tabla td.dg-num span.dg-agenda-cuota-edit { display:inline-flex; gap:5px; align-items:center; flex-wrap:nowrap; }
+      .dg-agenda-cuota-edit small { display:inline; color:var(--dg-text-dim); font-size:11px; }
+      .dg-agenda-editando td:nth-child(2) { min-width:128px; }
+      .dg-agenda-editando td:nth-child(3) { min-width:132px; }
+      .dg-agenda-editando td:nth-child(4), .dg-agenda-editando td:nth-child(5) { min-width:132px; }
+      .dg-agenda-editando .dg-agenda-input[type="date"], .dg-agenda-editando .dg-agenda-input[type="month"] { min-width:0; width:124px; padding:5px 4px; }
+
+      /* La fila que se abre para confirmar un pago */
+      .dg-agenda-pagando td { background:rgba(var(--dg-success-rgb),.08); white-space:normal; }
+      .dg-agenda-pago-caja { display:flex; flex-wrap:wrap; gap:10px; align-items:center; font-size:12.5px; }
+      .dg-agenda-pago-monto { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); }
+      .dg-agenda-pago-monto input { width:120px; padding:5px 7px; font-size:12px; text-align:right; border:1px solid var(--dg-line); border-radius:7px; background:var(--dg-bg); color:var(--dg-text); font-family:'JetBrains Mono', monospace; }
+
+      /* ---- Resumen de la agenda ---- */
+      .dg-agenda-barra { height:9px; border-radius:99px; background:rgba(var(--dg-line-rgb),.14); overflow:hidden; margin:10px 0 2px; }
+      .dg-agenda-barra > span { display:block; height:100%; border-radius:99px; background:var(--dg-success); }
+      .dg-agenda-meses { margin-top:12px; padding-top:11px; border-top:1px dashed rgba(var(--dg-line-rgb),.18); }
+      .dg-agenda-meses > strong { display:block; font-size:12.5px; margin-bottom:8px; }
+      .dg-agenda-meses-fila { display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:7px; }
+      .dg-agenda-mes { border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:9px; padding:7px 6px; text-align:center; background:var(--dg-bg); }
+      .dg-agenda-mes small { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); font-weight:700; }
+      .dg-agenda-mes b { display:block; margin-top:3px; font-size:12px; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+      .dg-agenda-mes-hoy { border-color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 10%, var(--dg-bg)); }
+      .dg-agenda-pie-nota { margin:4px 0 0; }
+
+      /* ---- Gastos del mes ---- */
+      .dg-gastos-head { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+      .dg-gastos-mes { display:flex; flex-direction:column; min-width:150px; }
+      .dg-gastos-mes strong { font-size:15px; }
+      .dg-gastos-mes small { font-size:11.5px; color:var(--dg-text-dim); }
+      .dg-gastos-cats { display:flex; flex-direction:column; gap:7px; }
+      .dg-gasto-cat { border-radius:9px; padding:2px 0 10px; }
+      .dg-gasto-cat-abierta { background:rgba(var(--dg-line-rgb),.04); padding:2px 8px 8px; }
+      .dg-gasto-cat-head { width:100%; display:grid; grid-template-columns:16px 1fr auto auto auto; gap:9px; align-items:center; background:none; border:0; padding:7px 2px 5px; cursor:pointer; text-align:left; color:var(--dg-text); font-family:inherit; }
+      .dg-gasto-cat-head svg { color:var(--dg-text-dim); transition:transform .15s ease; }
+      .dg-gasto-cat-nombre { font-size:13px; font-weight:600; }
+      .dg-gasto-cat-pct { font-size:11px; font-weight:700; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; }
+      .dg-gasto-cat-monto { font-size:13px; font-weight:700; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+      .dg-gasto-cat-dif { font-size:10.5px; font-weight:700; min-width:82px; text-align:right; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; }
+      .dg-gasto-sube { color:var(--dg-danger); }
+      .dg-gasto-baja { color:var(--dg-success); }
+      .dg-gasto-cat-barra { height:5px; border-radius:99px; background:rgba(var(--dg-line-rgb),.1); overflow:hidden; margin:0 2px; }
+      .dg-gasto-cat-barra > span { display:block; height:100%; border-radius:99px; background:var(--dg-accent); }
+      .dg-gasto-cat-items { margin-top:8px; display:flex; flex-direction:column; gap:1px; }
+      .dg-gasto-item { display:grid; grid-template-columns:42px 1fr auto; gap:9px; align-items:baseline; padding:5px 2px; border-top:1px solid rgba(var(--dg-line-rgb),.07); font-size:12.5px; }
+      .dg-gasto-item-fecha { font-size:11px; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; }
+      .dg-gasto-item-txt small { color:var(--dg-text-dim); font-size:11px; }
+      .dg-gasto-item-monto { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-weight:600; }
+
+      @media (max-width: 760px) {
+        .dg-agenda-meses-fila { grid-template-columns:repeat(3, minmax(0,1fr)); }
+        .dg-gasto-cat-head { grid-template-columns:16px 1fr auto; row-gap:2px; }
+        .dg-gasto-cat-pct { display:none; }
+        .dg-gasto-cat-dif { grid-column:2 / span 2; text-align:left; min-width:0; }
+        .dg-gastos-mes { min-width:0; flex:1; }
+      }
+
       .dg-venc-tab-badge { display:inline-block; margin-left:6px; min-width:16px; padding:0 5px; border-radius:8px; background:var(--dg-danger); color:#fff; font-size:10px; font-weight:700; line-height:16px; text-align:center; }
       .dg-venc-totales { grid-template-columns:repeat(3, minmax(0,1fr)); margin-top:0; }
       .dg-venc-cal-head { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:10px; margin-bottom:12px; }
