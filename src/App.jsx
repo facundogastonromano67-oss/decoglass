@@ -14982,17 +14982,19 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     setAlDiaTildadas({});
   }
 
-  function empezarEdicionFila(d) {
+  const setCampo = (k, x) => setFilaEdit((a) => (a ? { ...a, [k]: x } : a));
+
+  function empezarEdicionFila(d, foco) {
     setPagando(null);
-    // Con la fila abierta la tabla pide unos pixeles mas de ancho; si no la
-    // corremos, «Guardar» queda cortado contra el borde derecho.
-    setTimeout(() => { const c = tablaRef.current; if (c) c.scrollLeft = c.scrollWidth; }, 30);
     setFilaEdit({
-      id: d.id, tipo: tipoDeuda(d), motivo: d.motivo || "", titular: titularDeuda(d),
+      id: d.id, tipo: tipoDeuda(d), motivo: d.motivo || "", titular: titularDeuda(d), foco: foco || "motivo",
       montoCuota: String(d.montoCuota || ""), cuotaProxima: String(d.cuotaProxima || ""),
       cuotasTotal: String(d.cuotasTotal || ""), proximoVencimiento: d.proximoVencimiento || "",
-      montoEstimado: String(d.montoEstimado || ""), hasta: d.hasta || "",
+      montoEstimado: String(d.montoEstimado || ""), hasta: d.hasta || "", saldo: String(d.saldo || ""),
       monto: String(d.monto || ""), fecha: d.fecha || "",
+      categoria: d.categoria || "deudas", observaciones: d.observaciones || "",
+      montoUltimaCuota: String(d.montoUltimaCuota || ""), totalDeuda: String(d.totalDeuda || ""),
+      montoVariable: !!d.montoVariable,
     });
   }
   function filaValida(f) {
@@ -15010,16 +15012,19 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     if (!d) { setFilaEdit(null); return; }
     const n = (x) => Number(String(x).replace(",", ".")) || 0;
     const motivo = f.motivo.trim() || nombreDeuda(d);
-    let cambio = { motivo, titular: (f.titular || "").trim() || TITULAR_EMPRESA };
+    let cambio = { motivo, titular: (f.titular || "").trim() || TITULAR_EMPRESA, observaciones: (f.observaciones || "").trim() };
+    if (f.tipo !== "flexible") cambio.categoria = f.categoria || "deudas";
     if (f.tipo === "cuotas") {
       const total = Math.max(1, Math.round(n(f.cuotasTotal)));
       const prox = Math.min(Math.max(1, Math.round(n(f.cuotaProxima))), total + 1);
       cambio = { ...cambio, montoCuota: n(f.montoCuota), cuotasTotal: total, cuotaProxima: prox,
         proximoVencimiento: f.proximoVencimiento, dia: Number(f.proximoVencimiento.slice(8, 10)),
+        montoUltimaCuota: n(f.montoUltimaCuota) || 0, totalDeuda: n(f.totalDeuda) || 0,
+        montoVariable: !!f.montoVariable,
         estado: prox > total ? "terminada" : "activa" };
     } else if (f.tipo === "tarjeta") {
       cambio = { ...cambio, montoEstimado: n(f.montoEstimado), proximoVencimiento: f.proximoVencimiento,
-        dia: Number(f.proximoVencimiento.slice(8, 10)), hasta: f.hasta || "" };
+        dia: Number(f.proximoVencimiento.slice(8, 10)), hasta: f.hasta || "", saldo: n(f.saldo) || 0 };
     } else if (f.tipo === "unico") {
       cambio = { ...cambio, monto: n(f.monto), fecha: f.fecha };
     } else {
@@ -15041,71 +15046,85 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     const estimado = tipo === "tarjeta" || !!d.montoVariable;
     const faltanDatos = tipo === "tarjeta" && (!d.proximoVencimiento || !(Number(d.montoEstimado) > 0));
     const editandoFila = filaEdit && filaEdit.id === d.id;
-    const set = (k, x) => setFilaEdit((a) => ({ ...a, [k]: x }));
+    const set = setCampo;
 
     if (editandoFila) {
       const f = filaEdit;
+      const foco = (campo) => f.foco === campo;
       return (
-        <tr key={d.id} className="dg-agenda-editando">
-          <td>
-            <input className="dg-agenda-input" value={f.motivo} onChange={(e) => set("motivo", e.target.value)} placeholder="Entidad o banco" />
-            <input className="dg-agenda-input dg-agenda-input-titular" list="dg-titulares-lista" value={f.titular}
-              onChange={(e) => set("titular", e.target.value)} placeholder="De quién es" title="De quién es la deuda: de la empresa o de alguien en particular" />
-          </td>
-          <td className="dg-num">
-            {f.tipo === "cuotas" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.montoCuota} onChange={(e) => set("montoCuota", e.target.value)} />}
-            {f.tipo === "tarjeta" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.montoEstimado} onChange={(e) => set("montoEstimado", e.target.value)} />}
-            {(f.tipo === "unico" || f.tipo === "flexible") && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.monto} onChange={(e) => set("monto", e.target.value)} />}
-          </td>
-          <td className="dg-num">
-            {f.tipo === "cuotas" ? (
-              <span className="dg-agenda-cuota-edit">
-                <input className="dg-agenda-input dg-agenda-input-mini" type="number" min="1" value={f.cuotaProxima} onChange={(e) => set("cuotaProxima", e.target.value)} />
-                <small>de</small>
-                <input className="dg-agenda-input dg-agenda-input-mini" type="number" min="1" value={f.cuotasTotal} onChange={(e) => set("cuotasTotal", e.target.value)} />
-              </span>
-            ) : <span className="dg-recorrido-vacio">{TIPOS_DEUDA_CORTO[f.tipo]}</span>}
-          </td>
-          <td>
-            {f.tipo === "unico"
-              ? <input className="dg-agenda-input" type="date" value={f.fecha} onChange={(e) => set("fecha", e.target.value)} />
-              : f.tipo === "flexible"
-                ? <span className="dg-recorrido-vacio">—</span>
-                : <input className="dg-agenda-input" type="date" value={f.proximoVencimiento} onChange={(e) => set("proximoVencimiento", e.target.value)} />}
-          </td>
-          <td>
-            {f.tipo === "tarjeta"
-              ? <input className="dg-agenda-input" type="month" value={f.hasta} onChange={(e) => set("hasta", e.target.value)} />
-              : <span className="dg-recorrido-vacio">{f.tipo === "cuotas" ? "se calcula" : "—"}</span>}
-          </td>
-          <td className="dg-num"><span className="dg-recorrido-vacio">—</span></td>
-          <td className="dg-num"><span className="dg-recorrido-vacio">—</span></td>
-          <td className="dg-agenda-acciones">
-            <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFilaEdit(null)}>Cancelar</button>
-            <button type="button" className="dg-btn-primary dg-mini-btn" onClick={guardarFila} disabled={!filaValida(f)}><Check size={13} /> Guardar</button>
-          </td>
-        </tr>
+        <Fragment key={d.id}>
+          <tr className="dg-agenda-editando">
+            <td>
+              <input className="dg-agenda-input" value={f.motivo} autoFocus={foco("motivo")} onChange={(e) => set("motivo", e.target.value)} placeholder="Entidad o banco" />
+              <input className="dg-agenda-input dg-agenda-input-titular" list="dg-titulares-lista" value={f.titular} autoFocus={foco("titular")}
+                onChange={(e) => set("titular", e.target.value)} placeholder="De quién es" title="De quién es la deuda: de la empresa o de alguien en particular" />
+            </td>
+            <td className="dg-num">
+              {f.tipo === "cuotas" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" autoFocus={foco("monto")} value={f.montoCuota} onChange={(e) => set("montoCuota", e.target.value)} />}
+              {f.tipo === "tarjeta" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" autoFocus={foco("monto")} value={f.montoEstimado} onChange={(e) => set("montoEstimado", e.target.value)} />}
+              {(f.tipo === "unico" || f.tipo === "flexible") && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" autoFocus={foco("monto")} value={f.monto} onChange={(e) => set("monto", e.target.value)} />}
+            </td>
+            <td className="dg-num">
+              {f.tipo === "cuotas" ? (
+                <span className="dg-agenda-cuota-edit">
+                  <input className="dg-agenda-input dg-agenda-input-mini" type="number" min="1" autoFocus={foco("cuota")} value={f.cuotaProxima} onChange={(e) => set("cuotaProxima", e.target.value)} />
+                  <small>de</small>
+                  <input className="dg-agenda-input dg-agenda-input-mini" type="number" min="1" value={f.cuotasTotal} onChange={(e) => set("cuotasTotal", e.target.value)} />
+                </span>
+              ) : <span className="dg-recorrido-vacio">{TIPOS_DEUDA_CORTO[f.tipo]}</span>}
+            </td>
+            <td>
+              {f.tipo === "unico"
+                ? <input className="dg-agenda-input" type="date" autoFocus={foco("fecha")} value={f.fecha} onChange={(e) => set("fecha", e.target.value)} />
+                : f.tipo === "flexible"
+                  ? <span className="dg-recorrido-vacio">—</span>
+                  : <input className="dg-agenda-input" type="date" autoFocus={foco("fecha")} value={f.proximoVencimiento} onChange={(e) => set("proximoVencimiento", e.target.value)} />}
+            </td>
+            <td>
+              {f.tipo === "tarjeta"
+                ? <input className="dg-agenda-input" type="month" autoFocus={foco("fin")} value={f.hasta} onChange={(e) => set("hasta", e.target.value)} placeholder="sin fin" />
+                : <span className="dg-recorrido-vacio">{f.tipo === "cuotas" ? "se calcula" : "—"}</span>}
+            </td>
+            <td className="dg-num"><span className="dg-recorrido-vacio">se calcula</span></td>
+            <td className="dg-num">
+              {/* En una tarjeta, «lo que falta» es un número que se carga a mano:
+                  no hay cuotas de donde sacarlo. En un plan sí sale solo. */}
+              {f.tipo === "tarjeta"
+                ? <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" autoFocus={foco("resta")} value={f.saldo} onChange={(e) => set("saldo", e.target.value)} />
+                : f.tipo === "flexible"
+                  ? <span className="dg-recorrido-vacio">—</span>
+                  : <span className="dg-recorrido-vacio">se calcula</span>}
+            </td>
+            <td className="dg-agenda-acciones">
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFilaEdit(null)}>Cancelar</button>
+              <button type="button" className="dg-btn-primary dg-mini-btn" onClick={guardarFila} disabled={!filaValida(f)}><Check size={13} /> Guardar</button>
+            </td>
+          </tr>
+        </Fragment>
       );
     }
 
+    // Tocar cualquier celda abre la edicion parada en ese campo. Los clics que
+    // salen de un boton (Pagar, borrar, las flechas) no cuentan.
+    const abrir = (campo) => (e) => { if (e.target.closest("button, input, a, select")) return; empezarEdicionFila(d, campo); };
     return (
       <Fragment key={d.id}>
-        <tr className={vencido ? "dg-agenda-vencida" : ""}>
-          <td>
+        <tr className={`dg-agenda-fila ${vencido ? "dg-agenda-vencida" : ""}`} title="Tocá cualquier dato para editarlo">
+          <td onClick={abrir("motivo")}>
             <strong>{nombreDeuda(d)}</strong>
             <small className={`dg-deuda-chip dg-deuda-chip-${tipo}`}>{TIPOS_DEUDA_CORTO[tipo]}</small>
             {!agrupar && titulares.length > 1 && <small className="dg-agenda-titular-chip">{titularDeuda(d)}</small>}
             {d.observaciones && <small className="dg-agenda-obs" title={d.observaciones}>{d.observaciones}</small>}
           </td>
-          <td className="dg-num">{faltanDatos ? <span className="dg-recorrido-vacio">Faltan datos</span> : <>{estimado ? "~ " : ""}{money(montoMensualDeuda(d) || Number(d.monto) || 0)}</>}</td>
-          <td className="dg-num">{etiquetaCuota(d)}</td>
-          <td>
+          <td className="dg-num" onClick={abrir("monto")}>{faltanDatos ? <span className="dg-recorrido-vacio">Faltan datos</span> : <>{estimado ? "~ " : ""}{money(montoMensualDeuda(d) || Number(d.monto) || 0)}</>}</td>
+          <td className="dg-num" onClick={abrir("cuota")}>{etiquetaCuota(d)}</td>
+          <td onClick={abrir("fecha")}>
             {dia ? <strong>El {dia}</strong> : <span className="dg-recorrido-vacio">—</span>}
             {prox && <small className={vencido ? "dg-agenda-roja" : ""}>{vencido ? "venció " : ""}{fechaLargaAnotador(prox.fecha)}</small>}
           </td>
-          <td>{fin ? fechaLargaAnotador(fin) : <span className="dg-recorrido-vacio">{tipo === "tarjeta" ? "Sin fin" : "—"}</span>}</td>
-          <td className="dg-num dg-recorrido-pagado">{yaAbonadoDeuda(d) > 0 ? money(yaAbonadoDeuda(d)) : <span className="dg-recorrido-vacio">—</span>}</td>
-          <td className="dg-num dg-recorrido-total">{money(restaPagarDeuda(d))}</td>
+          <td onClick={abrir("fin")}>{fin ? fechaLargaAnotador(fin) : <span className="dg-recorrido-vacio">{tipo === "tarjeta" ? "Sin fin" : "—"}</span>}</td>
+          <td className="dg-num dg-recorrido-pagado" onClick={abrir("motivo")}>{yaAbonadoDeuda(d) > 0 ? money(yaAbonadoDeuda(d)) : <span className="dg-recorrido-vacio">—</span>}</td>
+          <td className="dg-num dg-recorrido-total" onClick={abrir("resta")}>{money(restaPagarDeuda(d))}</td>
           <td className="dg-agenda-acciones">
             {ordenAgenda === "mano" && (
               <span className="dg-agenda-mover">
@@ -15519,11 +15538,56 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
                 </tbody>
               </table>
             </div>
+            {filaEdit && (() => {
+              const f = filaEdit;
+              const d = lista.find((x) => x.id === f.id);
+              return (
+                <div className="dg-agenda-mas">
+                  <div className="dg-agenda-mas-titulo">
+                    <Pencil size={13} /> Editando <strong>{f.motivo || nombreDeuda(d)}</strong>
+                  </div>
+                  <div className="dg-agenda-mas-campos">
+                    {f.tipo !== "flexible" && (
+                      <label>Categoría del egreso
+                        <select value={f.categoria} onChange={(e) => setCampo("categoria", e.target.value)}>
+                          {Object.entries(PURCHASE_TYPES).map(([k, x]) => (<option key={k} value={k}>{x}</option>))}
+                        </select>
+                      </label>
+                    )}
+                    {f.tipo === "cuotas" && (
+                      <label>Última cuota distinta
+                        <input type="number" inputMode="decimal" value={f.montoUltimaCuota} onChange={(e) => setCampo("montoUltimaCuota", e.target.value)} placeholder="si la última es otro monto" />
+                      </label>
+                    )}
+                    {f.tipo === "cuotas" && (
+                      <label>Total de la deuda
+                        <input type="number" inputMode="decimal" value={f.totalDeuda} onChange={(e) => setCampo("totalDeuda", e.target.value)} placeholder="opcional" />
+                      </label>
+                    )}
+                    <label className="dg-agenda-mas-ancho">Observaciones
+                      <input value={f.observaciones} onChange={(e) => setCampo("observaciones", e.target.value)} placeholder="Ej: se solicitaron $12.000.000" />
+                    </label>
+                    {f.tipo === "cuotas" && (
+                      <label className="dg-check-inline dg-agenda-mas-check">
+                        <input type="checkbox" checked={!!f.montoVariable} onChange={(e) => setCampo("montoVariable", e.target.checked)} />
+                        La cuota cambia (UVA o ajustable)
+                      </label>
+                    )}
+                  </div>
+                  <div className="dg-agenda-mas-botones">
+                    <span className="dg-hint">Es el mismo Guardar que el de la fila.</span>
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFilaEdit(null)}>Cancelar</button>
+                    <button type="button" className="dg-btn-primary dg-mini-btn" onClick={guardarFila} disabled={!filaValida(f)}><Check size={13} /> Guardar los cambios</button>
+                  </div>
+                </div>
+              );
+            })()}
             <datalist id="dg-titulares-lista">{titulares.map((t) => (<option key={t} value={t} />))}</datalist>
             {filasOrdenadas.length === 0 && !creando && <div className="dg-empty">No hay deudas cargadas. Usá «Nueva deuda», «Importar» o el anotador de voz.</div>}
             <p className="dg-hint dg-agenda-hint">
-              El lápiz edita la fila ahí mismo. Para lo demás (categoría del egreso, observaciones, última cuota distinta, cuota UVA) usá la vista de fichas.
-              Los montos con ~ son estimados: tarjetas y cuotas que ajustan.
+              Tocá cualquier dato de la tabla y se edita ahí mismo, incluido lo que no entra en las columnas
+              (categoría, observaciones, última cuota distinta, cuota UVA). Los montos con ~ son estimados:
+              tarjetas y cuotas que ajustan.
             </p>
           </div>
 
@@ -18922,6 +18986,19 @@ function Style() {
       .dg-agenda-mover .dg-icon-btn { padding:1px 3px; min-height:0; }
       .dg-agenda-mover .dg-icon-btn:disabled { opacity:.3; cursor:default; }
       .dg-agenda-input-titular { margin-top:4px; font-size:11px; }
+      /* Tocar una celda para editar, y la segunda linea con el resto */
+      .dg-agenda-fila td:not(.dg-agenda-acciones) { cursor:pointer; }
+      .dg-agenda-mas { margin:0 13px 12px; padding:11px 13px; border:1px solid var(--dg-accent); border-radius:10px; background:color-mix(in srgb, var(--dg-accent) 8%, var(--dg-surface)); }
+      .dg-agenda-mas-titulo { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); margin-bottom:9px; }
+      .dg-agenda-mas-titulo strong { text-transform:none; letter-spacing:0; color:var(--dg-text); font-size:12.5px; }
+      .dg-agenda-mas-campos { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-end; }
+      .dg-agenda-mas-campos > label { display:flex; flex-direction:column; gap:3px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); }
+      .dg-agenda-mas-campos > label input, .dg-agenda-mas-campos > label select { padding:6px 8px; font-size:12px; font-weight:500; text-transform:none; letter-spacing:0; border:1px solid rgba(var(--dg-line-rgb),.22); border-radius:7px; background:var(--dg-bg); color:var(--dg-text); min-width:150px; }
+      .dg-agenda-mas-ancho { flex:1; min-width:200px; }
+      .dg-agenda-mas-ancho input { width:100%; }
+      .dg-agenda-mas-check { flex-direction:row !important; align-items:center; gap:6px; text-transform:none !important; letter-spacing:0 !important; font-size:12px !important; font-weight:600 !important; color:var(--dg-text) !important; padding-bottom:6px; }
+      .dg-agenda-mas-botones { display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:11px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),.18); }
+
 
       .dg-agenda-portitular { margin-top:12px; padding-top:11px; border-top:1px dashed rgba(var(--dg-line-rgb),.18); }
       .dg-agenda-portitular > strong { display:block; font-size:12.5px; margin-bottom:8px; }
