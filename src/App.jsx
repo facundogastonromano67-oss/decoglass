@@ -14835,6 +14835,69 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     .map((ym) => ({ ym, monto: suma(programados.filter((p) => p.fecha.slice(0, 7) === ym)) }));
   const filasOrdenadas = conPagos.slice().sort((a, b) => ((pagosProgramados(a)[0]?.fecha || "9999") < (pagosProgramados(b)[0]?.fecha || "9999") ? -1 : 1));
 
+  // ---- Poner al día las cuotas que ya vencieron ----
+  // Las deudas se cargaron en septiembre. Desde entonces fueron venciendo
+  // cuotas, y la app no tiene cómo saber cuáles se pagaron. En vez de mover las
+  // fechas por mi cuenta —que sería inventar— acá se listan y las tilda quien
+  // sabe. La fecha del pago que queda guardada es la del VENCIMIENTO, no la de
+  // hoy: si no, los números de los meses que ya pasaron salen mal.
+  const [alDiaTildadas, setAlDiaTildadas] = useState({});
+  const [alDiaEgresos, setAlDiaEgresos] = useState(false);
+  const [alDiaCerrado, setAlDiaCerrado] = useState(false);
+  const elegidasAlDia = vencidos.filter((p) => alDiaTildadas[p.clave]);
+
+  // Avanza de una vez las cuotas que se tildaron de una misma deuda.
+  function deudaPuestaAlDia(d, pagosDeEsta) {
+    const tipo = tipoDeuda(d);
+    const nuevos = pagosDeEsta.map((p) => ({
+      id: uid(), fecha: p.fecha, vencimiento: p.fecha, nro: p.nro || null,
+      monto: p.monto, egresoId: p.egresoId || "", quien, alDia: true,
+    }));
+    const pagos = [...(d.pagos || []), ...nuevos];
+    if (tipo === "unico") return { ...d, pagos, estado: "pagada", pagadaFecha: pagosDeEsta[0].fecha };
+    const dia = Number(d.dia) || Number(d.proximoVencimiento.slice(8, 10));
+    const n = pagosDeEsta.length;
+    if (tipo === "cuotas") {
+      const siguiente = (Number(d.cuotaProxima) || 1) + n;
+      return { ...d, pagos, cuotaProxima: siguiente,
+        proximoVencimiento: fechaMasMeses(d.proximoVencimiento, n, dia),
+        estado: siguiente > Number(d.cuotasTotal) ? "terminada" : "activa" };
+    }
+    const siguienteVenc = fechaMasMeses(d.proximoVencimiento, n, dia);
+    return { ...d, pagos, proximoVencimiento: siguienteVenc,
+      saldo: Math.max(0, (Number(d.saldo) || 0) - pagosDeEsta.reduce((t, p) => t + p.monto, 0)),
+      estado: d.hasta && siguienteVenc.slice(0, 7) > d.hasta ? "terminada" : "activa" };
+  }
+
+  function ponerAlDia() {
+    if (!elegidasAlDia.length) return;
+    // Por deuda, y en orden de fecha: avanzar la cuota 7 antes que la 6 dejaría
+    // el número y el vencimiento descolocados.
+    const porDeuda = {};
+    elegidasAlDia.forEach((p) => { (porDeuda[p.deuda.id] = porDeuda[p.deuda.id] || []).push(p); });
+    Object.values(porDeuda).forEach((arr) => arr.sort((a, b) => (a.fecha < b.fecha ? -1 : 1)));
+
+    const egresos = [];
+    if (alDiaEgresos) {
+      elegidasAlDia.forEach((p) => {
+        if (!(p.monto > 0)) return;
+        const egresoId = uid();
+        p.egresoId = egresoId;
+        egresos.push({
+          id: egresoId, concepto: `${nombreDeuda(p.deuda)}${p.etiqueta ? ` — ${p.etiqueta}` : ""}`,
+          monto: p.monto, fecha: p.fecha, estado: "pagado", cuentaBanco: "",
+          detalle: "Pago de deuda cargado al poner la agenda al día", sectorId: "",
+          origen: "deuda", tipo: p.deuda.categoria || "deudas", proveedorId: "",
+          conIva: false, gastoFijo: false, cargadoPor: quien, deudaId: p.deuda.id,
+        });
+      });
+    }
+    if (egresos.length) onChangePurchases([...egresos, ...purchases]);
+    onChangeDeudas(lista.map((d) => (porDeuda[d.id] ? deudaPuestaAlDia(d, porDeuda[d.id]) : d)));
+    if (onRegistrar) onRegistrar("Puso la agenda al día", `${elegidasAlDia.length} cuota(s) marcadas como pagadas${egresos.length ? ` — cargó ${egresos.length} egreso(s)` : ""}`);
+    setAlDiaTildadas({});
+  }
+
   function empezarEdicionFila(d) {
     setPagando(null);
     // Con la fila abierta la tabla pide unos pixeles mas de ancho; si no la
@@ -15180,6 +15243,55 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
 
   return (
     <div className="dg-page dg-venc">
+      {vencidos.length > 0 && !alDiaCerrado && (
+        <div className="dg-section-card dg-aldia">
+          <div className="dg-aldia-head">
+            <div className="dg-section-header" style={{ margin: 0 }}>
+              <AlertTriangle size={14} /> Hay {vencidos.length} {vencidos.length === 1 ? "pago que ya venció" : "pagos que ya vencieron"}
+            </div>
+            <button type="button" className="dg-icon-btn" onClick={() => setAlDiaCerrado(true)} aria-label="Cerrar este aviso"><X size={16} /></button>
+          </div>
+          <p className="dg-hint" style={{ marginTop: 0 }}>
+            Tildá los que ya se pagaron y la agenda queda al día. Cada uno se guarda con la fecha
+            en que vencía, no con la de hoy, así los meses que ya pasaron quedan bien.
+            Los que no tildes siguen figurando como atrasados.
+          </p>
+          <div className="dg-aldia-lista">
+            {vencidos.map((p) => (
+              <label className={`dg-aldia-fila ${alDiaTildadas[p.clave] ? "dg-aldia-fila-on" : ""}`} key={p.clave}>
+                <input type="checkbox" checked={!!alDiaTildadas[p.clave]}
+                  onChange={(e) => setAlDiaTildadas((a) => ({ ...a, [p.clave]: e.target.checked }))} />
+                <span className="dg-aldia-nombre">
+                  <strong>{nombreDeuda(p.deuda)}</strong>
+                  {p.etiqueta && <small>{p.etiqueta}</small>}
+                </span>
+                <span className="dg-aldia-fecha">venció el {fechaLargaAnotador(p.fecha)}</span>
+                <span className="dg-aldia-monto">{p.estimado ? "~ " : ""}{money(p.monto)}</span>
+              </label>
+            ))}
+          </div>
+          <div className="dg-aldia-pie">
+            <button type="button" className="dg-btn-ghost dg-mini-btn"
+              onClick={() => setAlDiaTildadas(elegidasAlDia.length === vencidos.length ? {} : Object.fromEntries(vencidos.map((p) => [p.clave, true])))}>
+              {elegidasAlDia.length === vencidos.length ? "Destildar todos" : "Tildar todos"}
+            </button>
+            <label className="dg-check-inline">
+              <input type="checkbox" checked={alDiaEgresos} onChange={(e) => setAlDiaEgresos(e.target.checked)} />
+              Cargar también los egresos en Compras
+            </label>
+            <button type="button" className="dg-btn-primary dg-mini-btn" onClick={ponerAlDia} disabled={!elegidasAlDia.length}>
+              <Check size={13} /> Poner al día{elegidasAlDia.length ? ` (${elegidasAlDia.length})` : ""}
+            </button>
+          </div>
+          {alDiaEgresos && (
+            <p className="dg-hint dg-aldia-ojo">
+              Ojo: si esos pagos ya los cargaste a mano en Compras, van a quedar repetidos. Dejalo
+              destildado si no estás seguro — el egreso lo podés cargar después.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="dg-panel-grid dg-venc-totales">
         <div className="dg-panel-card">
           <div className="dg-panel-card-label">Resta pagar en créditos y planes</div>
@@ -18638,6 +18750,29 @@ function Style() {
       .dg-agenda-mes b { display:block; margin-top:3px; font-size:12px; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
       .dg-agenda-mes-hoy { border-color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 10%, var(--dg-bg)); }
       .dg-agenda-pie-nota { margin:4px 0 0; }
+      /* ---- Poner la agenda al día ---- */
+      .dg-aldia { border-color:rgba(var(--dg-warning-rgb),.4); background:color-mix(in srgb, var(--dg-warning) 7%, var(--dg-surface)); }
+      .dg-aldia-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .dg-aldia .dg-section-header { color:var(--dg-warning); }
+      .dg-aldia-lista { display:flex; flex-direction:column; gap:4px; margin:10px 0; }
+      .dg-aldia-fila { display:grid; grid-template-columns:auto 1fr auto auto; gap:11px; align-items:center; padding:8px 10px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:9px; background:var(--dg-bg); cursor:pointer; font-size:13px; }
+      .dg-aldia-fila:hover { border-color:rgba(var(--dg-warning-rgb),.45); }
+      .dg-aldia-fila-on { border-color:var(--dg-success); background:color-mix(in srgb, var(--dg-success) 9%, var(--dg-bg)); }
+      .dg-aldia-nombre { display:flex; flex-direction:column; min-width:0; }
+      .dg-aldia-nombre strong { font-size:13px; }
+      .dg-aldia-nombre small { font-size:11px; color:var(--dg-text-dim); }
+      .dg-aldia-fecha { font-size:11.5px; color:var(--dg-danger); font-weight:600; white-space:nowrap; }
+      .dg-aldia-monto { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-weight:700; font-size:13px; white-space:nowrap; }
+      .dg-aldia-pie { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+      .dg-aldia-pie .dg-btn-primary { margin-left:auto; }
+      .dg-aldia-ojo { margin:9px 0 0; color:var(--dg-warning); }
+
+      @media (max-width: 620px) {
+        .dg-aldia-fila { grid-template-columns:auto 1fr auto; row-gap:3px; }
+        .dg-aldia-fecha { grid-column:2 / span 2; }
+        .dg-aldia-pie .dg-btn-primary { margin-left:0; width:100%; justify-content:center; }
+      }
+
 
       /* ---- Gastos del mes ---- */
       .dg-gastos-head { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
