@@ -15491,7 +15491,7 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
               {ordenAgenda === "mano" && <span className="dg-agenda-mano-aviso">Acomodalas con las flechas de cada fila. El orden queda guardado para todos.</span>}
             </div>
             <div className="dg-agenda-scroll" ref={tablaRef}>
-              <table className="dg-recorrido-tabla dg-agenda-tabla">
+              <table className={`dg-recorrido-tabla dg-agenda-tabla ${filaEdit ? "dg-agenda-tabla-editando" : ""}`}>
                 <thead>
                   <tr>
                     <th>Entidad o banco</th>
@@ -18943,6 +18943,12 @@ function Style() {
       .dg-agenda-tabla tbody tr:hover td:first-child { background:var(--dg-surface); }
 
       /* Edición de la fila ahí mismo */
+      /* La primera columna queda fija al desplazar. Con una fila en edicion la
+         tabla es mas ancha, y si estaba corrida esa columna TAPABA los campos
+         de al lado: se veia el monto por detras del recuadro del nombre y no
+         se podia escribir. Mientras se edita, la columna deja de ser fija. */
+      .dg-agenda-tabla-editando td:first-child,
+      .dg-agenda-tabla-editando th:first-child { position:static; }
       .dg-agenda-editando td { background:rgba(var(--dg-accent-rgb),.09); }
       .dg-agenda-editando td:first-child { background:rgba(var(--dg-accent-rgb),.09); box-shadow:inset 3px 0 0 var(--dg-accent); }
       .dg-agenda-input { width:100%; min-width:96px; padding:5px 7px; font-size:12px; border:1px solid var(--dg-accent); border-radius:7px; background:var(--dg-bg); color:var(--dg-text); }
