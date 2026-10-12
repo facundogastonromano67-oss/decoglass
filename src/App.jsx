@@ -9,7 +9,7 @@ import {
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
   Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare,
   Mic, NotebookPen, CalendarClock, Undo2, Scissors, Ruler,
-  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList
+  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList, ChevronUp, ChevronDown
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -14682,6 +14682,53 @@ function montoMensualDeuda(d) {
   return 0;
 }
 
+// De quién es la deuda. Las tarjetas y el UVA están a nombre de Sergio, no de
+// la empresa, y mezcladas hacían que ninguno de los dos totales sirviera.
+// Las deudas que vinieron de la planilla no traen el campo, así que se deduce
+// del nombre; queda escrito de verdad recién cuando se edita la fila.
+const TITULAR_EMPRESA = "Empresa";
+function titularDeuda(d) {
+  const t = (d?.titular || "").trim();
+  if (t) return t;
+  return /sergio/i.test(d?.motivo || "") ? "Sergio" : TITULAR_EMPRESA;
+}
+// Los titulares que hay, con la empresa siempre primero.
+function titularesDe(lista) {
+  const vistos = [];
+  (lista || []).forEach((d) => { const t = titularDeuda(d); if (!vistos.includes(t)) vistos.push(t); });
+  return vistos.sort((a, b) => (a === TITULAR_EMPRESA ? -1 : b === TITULAR_EMPRESA ? 1 : a.localeCompare(b, "es")));
+}
+
+const ORDENES_AGENDA = {
+  fecha: "Por fecha de pago",
+  monto: "Por monto de la cuota",
+  resta: "Por lo que falta pagar",
+  nombre: "Por nombre",
+  mano: "A mi manera",
+};
+function ordenarDeudas(lista, criterio) {
+  const arr = (lista || []).slice();
+  const prox = (d) => pagosProgramados(d)[0]?.fecha || "9999-99-99";
+  const porFecha = (a, b) => (prox(a) < prox(b) ? -1 : prox(a) > prox(b) ? 1 : 0);
+  if (criterio === "monto") return arr.sort((a, b) => montoMensualDeuda(b) - montoMensualDeuda(a) || porFecha(a, b));
+  if (criterio === "resta") return arr.sort((a, b) => restaPagarDeuda(b) - restaPagarDeuda(a) || porFecha(a, b));
+  if (criterio === "nombre") return arr.sort((a, b) => nombreDeuda(a).localeCompare(nombreDeuda(b), "es"));
+  // «A mi manera»: las que todavía no se movieron nunca van al final, y entre
+  // ellas por fecha, para que no queden todas empatadas en el mismo lugar.
+  if (criterio === "mano") return arr.sort((a, b) =>
+    (Number.isFinite(Number(a.orden)) ? Number(a.orden) : 9999) - (Number.isFinite(Number(b.orden)) ? Number(b.orden) : 9999) || porFecha(a, b));
+  return arr.sort(porFecha);
+}
+// Los números de un conjunto de deudas, para el pie y para cada titular.
+function totalesDeDeudas(filas) {
+  return {
+    abonado: (filas || []).reduce((t, d) => t + yaAbonadoDeuda(d), 0),
+    falta: (filas || []).reduce((t, d) => t + restaPagarDeuda(d), 0),
+    porMes: (filas || []).filter((d) => ["cuotas", "tarjeta"].includes(tipoDeuda(d)))
+      .reduce((t, d) => t + montoMensualDeuda(d), 0),
+  };
+}
+
 // «11 de 12» para la columna de cuota.
 function etiquetaCuota(d) {
   const tipo = tipoDeuda(d);
@@ -14700,7 +14747,7 @@ function diaDePagoDeuda(d) {
 }
 function DeudaForm({ inicial, onGuardar, onCancelar }) {
   const [v, setV] = useState(() => ({
-    motivo: "", categoria: "deudas", observaciones: "",
+    motivo: "", categoria: "deudas", observaciones: "", titular: TITULAR_EMPRESA,
     montoCuota: "", cuotaProxima: "1", cuotasTotal: "", proximoVencimiento: "", montoUltimaCuota: "", totalDeuda: "", montoVariable: false,
     montoEstimado: "", hasta: "", saldo: "", monto: "", fecha: "",
     ...(inicial ? Object.fromEntries(Object.entries(inicial).map(([k, x]) => [k, typeof x === "number" ? String(x) : x])) : {}),
@@ -14717,7 +14764,7 @@ function DeudaForm({ inicial, onGuardar, onCancelar }) {
 
   function guardar() {
     if (!valido) return;
-    const base = { id: inicial?.id || uid(), tipo: t, motivo: v.motivo.trim(), categoria: v.categoria, observaciones: v.observaciones.trim(), pagos: inicial?.pagos || [], creado: inicial?.creado || new Date().toISOString() };
+    const base = { id: inicial?.id || uid(), tipo: t, motivo: v.motivo.trim(), categoria: v.categoria, observaciones: v.observaciones.trim(), titular: (v.titular || "").trim() || TITULAR_EMPRESA, pagos: inicial?.pagos || [], creado: inicial?.creado || new Date().toISOString() };
     let d;
     if (t === "cuotas") {
       d = { ...base, montoCuota: num(v.montoCuota), cuotaProxima: num(v.cuotaProxima), cuotasTotal: num(v.cuotasTotal), proximoVencimiento: v.proximoVencimiento, dia: Number(v.proximoVencimiento.slice(8, 10)),
@@ -14742,6 +14789,9 @@ function DeudaForm({ inicial, onGuardar, onCancelar }) {
           </select>
         </Field>
         <Field label={t === "unico" ? "Motivo" : "Acreedor / nombre"}><input value={v.motivo} onChange={(e) => set("motivo", e.target.value)} placeholder={t === "tarjeta" ? "Ej: Tarjeta Galicia" : "Ej: Santander préstamo"} /></Field>
+        <Field label="De quién es">
+          <input list="dg-titulares-lista" value={v.titular} onChange={(e) => set("titular", e.target.value)} placeholder="Empresa" />
+        </Field>
         {t !== "flexible" && (
           <Field label="Categoría del egreso">
             <select value={v.categoria} onChange={(e) => set("categoria", e.target.value)}>
@@ -14833,7 +14883,41 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
   const porMes = conPagos.filter((d) => ["cuotas", "tarjeta"].includes(tipoDeuda(d))).reduce((t, d) => t + montoMensualDeuda(d), 0);
   const prox6 = Array.from({ length: 6 }, (_, k) => fechaMasMeses(`${mesHoy}-01`, k, 1).slice(0, 7))
     .map((ym) => ({ ym, monto: suma(programados.filter((p) => p.fecha.slice(0, 7) === ym)) }));
-  const filasOrdenadas = conPagos.slice().sort((a, b) => ((pagosProgramados(a)[0]?.fecha || "9999") < (pagosProgramados(b)[0]?.fecha || "9999") ? -1 : 1));
+  // ---- Cómo se ordena y se agrupa la tabla ----
+  // Son preferencias de cómo mirar, no datos: van al navegador de cada uno.
+  const [agrupar, setAgrupar] = useState(() => {
+    try { return window.localStorage.getItem("dg-agenda-agrupar") !== "no"; } catch (e) { return true; }
+  });
+  const [ordenAgenda, setOrdenAgenda] = useState(() => {
+    try { const x = window.localStorage.getItem("dg-agenda-orden"); return ORDENES_AGENDA[x] ? x : "fecha"; } catch (e) { return "fecha"; }
+  });
+  function elegirAgrupar(v) { setAgrupar(v); try { window.localStorage.setItem("dg-agenda-agrupar", v ? "si" : "no"); } catch (e) {} }
+  function elegirOrden(v) { setOrdenAgenda(v); try { window.localStorage.setItem("dg-agenda-orden", v); } catch (e) {} }
+
+  const titulares = titularesDe(conPagos);
+  const gruposAgenda = agrupar && titulares.length > 1
+    ? titulares.map((t) => ({ titular: t, filas: ordenarDeudas(conPagos.filter((d) => titularDeuda(d) === t), ordenAgenda) })).filter((g) => g.filas.length)
+    : [{ titular: "", filas: ordenarDeudas(conPagos, ordenAgenda) }];
+  const filasOrdenadas = gruposAgenda.flatMap((g) => g.filas);
+
+  // Mover una fila a mano. Se mueve dentro de su propio grupo —cruzar de
+  // titular sin cambiarle el titular sería mentir— y después se renumeran
+  // TODAS: si solo se tocaran las dos que se mueven, las que nunca se
+  // ordenaron quedarían empatadas en el medio.
+  function moverFila(d, delta) {
+    const grupo = gruposAgenda.find((g) => g.filas.some((x) => x.id === d.id));
+    if (!grupo) return;
+    const i = grupo.filas.findIndex((x) => x.id === d.id);
+    const j = i + delta;
+    if (j < 0 || j >= grupo.filas.length) return;
+    const movido = grupo.filas.slice();
+    [movido[i], movido[j]] = [movido[j], movido[i]];
+    const plano = gruposAgenda.flatMap((g) => (g === grupo ? movido : g.filas));
+    const porId = {};
+    plano.forEach((x, k) => { porId[x.id] = k; });
+    onChangeDeudas(lista.map((x) => (porId[x.id] === undefined ? x : { ...x, orden: porId[x.id] })));
+  }
+
 
   // ---- Poner al día las cuotas que ya vencieron ----
   // Las deudas se cargaron en septiembre. Desde entonces fueron venciendo
@@ -14904,7 +14988,7 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     // corremos, «Guardar» queda cortado contra el borde derecho.
     setTimeout(() => { const c = tablaRef.current; if (c) c.scrollLeft = c.scrollWidth; }, 30);
     setFilaEdit({
-      id: d.id, tipo: tipoDeuda(d), motivo: d.motivo || "",
+      id: d.id, tipo: tipoDeuda(d), motivo: d.motivo || "", titular: titularDeuda(d),
       montoCuota: String(d.montoCuota || ""), cuotaProxima: String(d.cuotaProxima || ""),
       cuotasTotal: String(d.cuotasTotal || ""), proximoVencimiento: d.proximoVencimiento || "",
       montoEstimado: String(d.montoEstimado || ""), hasta: d.hasta || "",
@@ -14926,7 +15010,7 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     if (!d) { setFilaEdit(null); return; }
     const n = (x) => Number(String(x).replace(",", ".")) || 0;
     const motivo = f.motivo.trim() || nombreDeuda(d);
-    let cambio = { motivo };
+    let cambio = { motivo, titular: (f.titular || "").trim() || TITULAR_EMPRESA };
     if (f.tipo === "cuotas") {
       const total = Math.max(1, Math.round(n(f.cuotasTotal)));
       const prox = Math.min(Math.max(1, Math.round(n(f.cuotaProxima))), total + 1);
@@ -14946,7 +15030,9 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
     setFilaEdit(null);
   }
 
-  function filaAgenda(d) {
+  function filaAgenda(d, filasDelGrupo) {
+    const enGrupo = filasDelGrupo || filasOrdenadas;
+    const pos = enGrupo.findIndex((x) => x.id === d.id);
     const tipo = tipoDeuda(d);
     const prox = pagosProgramados(d)[0];
     const vencido = prox && prox.fecha < hoyIso;
@@ -14961,7 +15047,11 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
       const f = filaEdit;
       return (
         <tr key={d.id} className="dg-agenda-editando">
-          <td><input className="dg-agenda-input" value={f.motivo} onChange={(e) => set("motivo", e.target.value)} placeholder="Entidad o banco" /></td>
+          <td>
+            <input className="dg-agenda-input" value={f.motivo} onChange={(e) => set("motivo", e.target.value)} placeholder="Entidad o banco" />
+            <input className="dg-agenda-input dg-agenda-input-titular" list="dg-titulares-lista" value={f.titular}
+              onChange={(e) => set("titular", e.target.value)} placeholder="De quién es" title="De quién es la deuda: de la empresa o de alguien en particular" />
+          </td>
           <td className="dg-num">
             {f.tipo === "cuotas" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.montoCuota} onChange={(e) => set("montoCuota", e.target.value)} />}
             {f.tipo === "tarjeta" && <input className="dg-agenda-input dg-agenda-input-num" type="number" inputMode="decimal" value={f.montoEstimado} onChange={(e) => set("montoEstimado", e.target.value)} />}
@@ -15004,6 +15094,7 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
           <td>
             <strong>{nombreDeuda(d)}</strong>
             <small className={`dg-deuda-chip dg-deuda-chip-${tipo}`}>{TIPOS_DEUDA_CORTO[tipo]}</small>
+            {!agrupar && titulares.length > 1 && <small className="dg-agenda-titular-chip">{titularDeuda(d)}</small>}
             {d.observaciones && <small className="dg-agenda-obs" title={d.observaciones}>{d.observaciones}</small>}
           </td>
           <td className="dg-num">{faltanDatos ? <span className="dg-recorrido-vacio">Faltan datos</span> : <>{estimado ? "~ " : ""}{money(montoMensualDeuda(d) || Number(d.monto) || 0)}</>}</td>
@@ -15016,6 +15107,12 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
           <td className="dg-num dg-recorrido-pagado">{yaAbonadoDeuda(d) > 0 ? money(yaAbonadoDeuda(d)) : <span className="dg-recorrido-vacio">—</span>}</td>
           <td className="dg-num dg-recorrido-total">{money(restaPagarDeuda(d))}</td>
           <td className="dg-agenda-acciones">
+            {ordenAgenda === "mano" && (
+              <span className="dg-agenda-mover">
+                <button type="button" className="dg-icon-btn" onClick={() => moverFila(d, -1)} disabled={pos <= 0} title="Subir" aria-label="Subir"><ChevronUp size={14} /></button>
+                <button type="button" className="dg-icon-btn" onClick={() => moverFila(d, 1)} disabled={pos < 0 || pos >= enGrupo.length - 1} title="Bajar" aria-label="Bajar"><ChevronDown size={14} /></button>
+              </span>
+            )}
             {prox && <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => { setFilaEdit(null); empezarPago(d); }}><Check size={13} /> Pagar</button>}
             <button type="button" className="dg-icon-btn" onClick={() => empezarEdicionFila(d)} title="Editar esta fila"><Pencil size={14} /></button>
             <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrar(d)} title="Borrar"><Trash2 size={14} /></button>
@@ -15359,6 +15456,21 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
       {vista === "tabla" && (
         <>
           <div className="dg-section-card dg-agenda">
+            <div className="dg-agenda-controles">
+              <label className="dg-agenda-orden">
+                Ordenar
+                <select value={ordenAgenda} onChange={(e) => elegirOrden(e.target.value)}>
+                  {Object.entries(ORDENES_AGENDA).map(([k, x]) => (<option key={k} value={k}>{x}</option>))}
+                </select>
+              </label>
+              {titulares.length > 1 && (
+                <label className="dg-check-inline">
+                  <input type="checkbox" checked={agrupar} onChange={(e) => elegirAgrupar(e.target.checked)} />
+                  Separar por titular
+                </label>
+              )}
+              {ordenAgenda === "mano" && <span className="dg-agenda-mano-aviso">Acomodalas con las flechas de cada fila. El orden queda guardado para todos.</span>}
+            </div>
             <div className="dg-agenda-scroll" ref={tablaRef}>
               <table className="dg-recorrido-tabla dg-agenda-tabla">
                 <thead>
@@ -15374,7 +15486,24 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
                   </tr>
                 </thead>
                 <tbody>
-                  {filasOrdenadas.map(filaAgenda)}
+                  {gruposAgenda.map((g) => {
+                    const tot = totalesDeDeudas(g.filas);
+                    return (
+                      <Fragment key={g.titular || "todas"}>
+                        {g.titular && (
+                          <tr className="dg-agenda-grupo">
+                            <td colSpan={8}>
+                              <strong>{g.titular}</strong>
+                              <span>
+                                {g.filas.length} {g.filas.length === 1 ? "deuda" : "deudas"} · {money(tot.porMes)} por mes · falta {money(tot.falta)}
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                        {g.filas.map((d) => filaAgenda(d, g.filas))}
+                      </Fragment>
+                    );
+                  })}
                   {filasOrdenadas.length > 0 && (
                     <tr className="dg-agenda-pie">
                       <td>Total de {filasOrdenadas.length} {filasOrdenadas.length === 1 ? "deuda" : "deudas"}</td>
@@ -15390,6 +15519,7 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
                 </tbody>
               </table>
             </div>
+            <datalist id="dg-titulares-lista">{titulares.map((t) => (<option key={t} value={t} />))}</datalist>
             {filasOrdenadas.length === 0 && !creando && <div className="dg-empty">No hay deudas cargadas. Usá «Nueva deuda», «Importar» o el anotador de voz.</div>}
             <p className="dg-hint dg-agenda-hint">
               El lápiz edita la fila ahí mismo. Para lo demás (categoría del egreso, observaciones, última cuota distinta, cuota UVA) usá la vista de fichas.
@@ -15424,6 +15554,26 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
             {abonadoTotal + faltaTotal > 0 && (
               <div className="dg-agenda-barra" title={`${money(abonadoTotal)} pagado de ${money(abonadoTotal + faltaTotal)}`}>
                 <span style={{ width: `${Math.min(100, Math.round((abonadoTotal / (abonadoTotal + faltaTotal)) * 100))}%` }} />
+              </div>
+            )}
+            {titulares.length > 1 && (
+              <div className="dg-agenda-portitular">
+                <strong>Quién debe qué</strong>
+                {titulares.map((t) => {
+                  const tot = totalesDeDeudas(conPagos.filter((d) => titularDeuda(d) === t));
+                  return (
+                    <div className="dg-agenda-portitular-fila" key={t}>
+                      <span className="dg-agenda-portitular-nombre">{t}</span>
+                      <span><small>por mes</small><b>{money(tot.porMes)}</b></span>
+                      <span><small>ya abonado</small><b className="dg-recorrido-pagado">{money(tot.abonado)}</b></span>
+                      <span><small>falta pagar</small><b>{money(tot.falta)}</b></span>
+                    </div>
+                  );
+                })}
+                <p className="dg-hint" style={{ marginTop: 6 }}>
+                  Las deudas que tienen «Sergio» en el nombre se separan solas. Para cambiarle el titular a una,
+                  editala con el lápiz y escribí de quién es.
+                </p>
               </div>
             )}
             <div className="dg-agenda-meses">
@@ -18758,6 +18908,35 @@ function Style() {
       .dg-agenda-mes b { display:block; margin-top:3px; font-size:12px; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
       .dg-agenda-mes-hoy { border-color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 10%, var(--dg-bg)); }
       .dg-agenda-pie-nota { margin:4px 0 0; }
+      /* ---- Separar por titular y acomodar a mano ---- */
+      .dg-agenda-controles { display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:11px 13px 0; }
+      .dg-agenda-orden { display:inline-flex; align-items:center; gap:7px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); }
+      .dg-agenda-orden select { padding:5px 8px; font-size:12px; font-weight:600; text-transform:none; letter-spacing:0; border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:7px; background:var(--dg-bg); color:var(--dg-text); }
+      .dg-agenda-mano-aviso { font-size:11.5px; color:var(--dg-accent); font-weight:600; }
+
+      .dg-agenda-grupo td { background:rgba(var(--dg-accent-rgb),.1) !important; padding:7px 11px !important; border-top:2px solid rgba(var(--dg-accent-rgb),.3); white-space:normal; }
+      .dg-agenda-grupo strong { font-size:12px; text-transform:uppercase; letter-spacing:.4px; color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); margin-right:10px; }
+      .dg-agenda-grupo span { font-size:11.5px; color:var(--dg-text-dim); font-weight:600; }
+      .dg-agenda-titular-chip { display:inline-block !important; margin-left:5px; padding:1px 7px; border-radius:99px; font-size:10px !important; font-weight:700 !important; border:1px solid rgba(var(--dg-line-rgb),.22); color:var(--dg-text-dim) !important; }
+      .dg-agenda-mover { display:inline-flex; flex-direction:column; gap:1px; }
+      .dg-agenda-mover .dg-icon-btn { padding:1px 3px; min-height:0; }
+      .dg-agenda-mover .dg-icon-btn:disabled { opacity:.3; cursor:default; }
+      .dg-agenda-input-titular { margin-top:4px; font-size:11px; }
+
+      .dg-agenda-portitular { margin-top:12px; padding-top:11px; border-top:1px dashed rgba(var(--dg-line-rgb),.18); }
+      .dg-agenda-portitular > strong { display:block; font-size:12.5px; margin-bottom:8px; }
+      .dg-agenda-portitular-fila { display:grid; grid-template-columns:1fr repeat(3, minmax(0,auto)); gap:14px; align-items:center; padding:8px 10px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:9px; background:var(--dg-bg); margin-bottom:5px; }
+      .dg-agenda-portitular-nombre { font-size:13px; font-weight:700; }
+      .dg-agenda-portitular-fila span span, .dg-agenda-portitular-fila > span:not(.dg-agenda-portitular-nombre) { display:flex; flex-direction:column; align-items:flex-end; }
+      .dg-agenda-portitular-fila small { font-size:10px; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); font-weight:700; }
+      .dg-agenda-portitular-fila b { font-size:13px; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+
+      @media (max-width: 620px) {
+        .dg-agenda-portitular-fila { grid-template-columns:1fr 1fr; row-gap:8px; }
+        .dg-agenda-portitular-nombre { grid-column:1 / span 2; }
+        .dg-agenda-controles { gap:10px; }
+      }
+
       /* ---- Poner la agenda al día ---- */
       .dg-aldia { border-color:rgba(var(--dg-warning-rgb),.4); background:color-mix(in srgb, var(--dg-warning) 7%, var(--dg-surface)); }
       .dg-aldia-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
