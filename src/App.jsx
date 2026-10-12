@@ -18916,13 +18916,13 @@ function Style() {
       .dg-agenda-scroll { overflow-x:auto; }
       .dg-agenda-tabla { font-size:13px; }
       .dg-agenda-tabla th { background:rgba(var(--dg-line-rgb),.06); }
-      .dg-agenda-tabla td { vertical-align:middle; padding:9px 11px; }
+      .dg-agenda-tabla td { vertical-align:middle; padding:9px 9px; }
       .dg-agenda-tabla td:first-child { white-space:normal; min-width:170px; }
       .dg-agenda-tabla td:first-child strong { display:block; font-size:13px; }
       .dg-agenda-tabla td:first-child small { display:inline-block; margin-top:3px; }
       .dg-agenda-tabla td small { display:block; font-size:11px; color:var(--dg-text-dim); font-weight:500; }
       .dg-agenda-tabla td:first-child small.dg-agenda-obs {
-        display:block; max-width:240px; white-space:nowrap; overflow:hidden;
+        display:block; max-width:190px; white-space:nowrap; overflow:hidden;
         text-overflow:ellipsis; font-style:italic; cursor:help;
       }
       /* En el celular no hay mouse: si se corta, el texto no se puede leer de
@@ -19365,6 +19365,7 @@ function Style() {
       .dg-room-enter { top:9px; right:9px; width:28px; height:28px; background:rgba(12,9,7,.72); border:1px solid rgba(238,226,210,.16); color:#F3EDE4; }
 
       .dg-sector-page, .dg-page { max-width:1120px; }
+      .dg-sector-page:has(.dg-venc), .dg-page:has(.dg-venc), .dg-page.dg-venc { max-width:1420px; }
       .dg-sector-hero { position:relative; min-height:148px; display:flex; align-items:flex-end; gap:18px; overflow:hidden; margin-bottom:10px; padding:18px 20px; border:1px solid rgba(var(--dg-line-rgb),.15); border-radius:18px; background:var(--dg-bg); }
       .dg-sector-hero .dg-room-scene { position:absolute; inset:0; }
       .dg-sector-hero .dg-scene-image { filter:grayscale(1) sepia(.1) saturate(.76) contrast(.72) brightness(1.28); background-size:300% 200%; }
