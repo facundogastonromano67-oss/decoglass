@@ -15004,7 +15004,7 @@ function DeudasPanel({ deudas, onChangeDeudas, purchases, onChangePurchases, ses
           <td>
             <strong>{nombreDeuda(d)}</strong>
             <small className={`dg-deuda-chip dg-deuda-chip-${tipo}`}>{TIPOS_DEUDA_CORTO[tipo]}</small>
-            {d.observaciones && <small className="dg-agenda-obs">{d.observaciones}</small>}
+            {d.observaciones && <small className="dg-agenda-obs" title={d.observaciones}>{d.observaciones}</small>}
           </td>
           <td className="dg-num">{faltanDatos ? <span className="dg-recorrido-vacio">Faltan datos</span> : <>{estimado ? "~ " : ""}{money(montoMensualDeuda(d) || Number(d.monto) || 0)}</>}</td>
           <td className="dg-num">{etiquetaCuota(d)}</td>
@@ -18707,7 +18707,15 @@ function Style() {
       .dg-agenda-tabla td:first-child strong { display:block; font-size:13px; }
       .dg-agenda-tabla td:first-child small { display:inline-block; margin-top:3px; }
       .dg-agenda-tabla td small { display:block; font-size:11px; color:var(--dg-text-dim); font-weight:500; }
-      .dg-agenda-obs { font-style:italic; }
+      .dg-agenda-tabla td:first-child small.dg-agenda-obs {
+        display:block; max-width:240px; white-space:nowrap; overflow:hidden;
+        text-overflow:ellipsis; font-style:italic; cursor:help;
+      }
+      /* En el celular no hay mouse: si se corta, el texto no se puede leer de
+         ninguna manera, asi que ahi se muestra entero. */
+      @media (max-width: 860px) {
+        .dg-agenda-tabla td:first-child small.dg-agenda-obs { white-space:normal; max-width:none; cursor:auto; }
+      }
       .dg-agenda-roja { color:var(--dg-danger) !important; font-weight:600; }
       .dg-agenda-vencida td:first-child { box-shadow:inset 3px 0 0 var(--dg-danger); }
       .dg-agenda-acciones { display:flex; gap:5px; align-items:center; justify-content:flex-end; white-space:nowrap; }
