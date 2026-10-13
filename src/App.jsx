@@ -180,8 +180,23 @@ const SUGGESTED_TASKS = {
 // edita desde «Guía de trabajo» y lo que deje ahí manda sobre esto.
 // Si se cambia el contenido de acá, hay que subir GUIA_VERSION, porque si no
 // la guía guardada de antes le gana a la nueva y nadie ve el cambio.
-const GUIA_VERSION = 2;
+// Sube a 3 el 13/10/2026: se agregaron los pasos de Fábrica. Con la versión
+// vieja guardada, guiasConDefecto hace que los pasos nuevos igual aparezcan.
+const GUIA_VERSION = 3;
 const GUIA_POR_DEFECTO = {
+  // En Fábrica los pasos van CORTOS, de una línea, sin explicaciones: la regla
+  // del sector es que todo se entienda a la primera sin leer nada. Un párrafo
+  // acá termina usado de excusa. Facundo los ajusta desde «Guía de trabajo».
+  fabrica: [
+    { id: "f1", titulo: "Mirar el aviso del día antes de arrancar", detalle: "Lo que está atrasado va primero. Siempre." },
+    { id: "f2", titulo: "Cortar lo del día", detalle: "La lista del día ya viene armada con su cupo. Si algo no entra, queda para mañana: no se adelanta trabajo salteando lo atrasado." },
+    { id: "f3", titulo: "Mandar a grabar lo que corresponda", detalle: "Es el paso que más demora todo. Lo que se manda hoy vuelve en días: cuanto antes salga, mejor." },
+    { id: "f4", titulo: "Pedir los biselados", detalle: "" },
+    { id: "f5", titulo: "Armar los que ya tienen todas las piezas", detalle: "" },
+    { id: "f6", titulo: "Embalar y marcar listo", detalle: "El espejo no está terminado hasta que está embalado y marcado. Si no se marca, PostVenta no sabe que puede entregarlo." },
+    { id: "f7", titulo: "Avisar si una máquina quedó con problema", detalle: "Antes de irte. Si se entera el que entra mañana, perdió la mañana." },
+    { id: "f8", titulo: "Avisar si se está por acabar un material", detalle: "Antes de que se acabe, no cuando ya no hay." },
+  ],
   ventas: [
     { id: "v1", titulo: "Contestar en el momento",
       detalle: "Si hay mensajes esperando, eso es lo primero. El cliente puede estar en una obra, con el teléfono en la mano, comparando proveedores. No sabe que estamos ocupados: solo sabe que no le contestamos. Los mensajes que entran por el link de seguimiento te llegan a «Consultas», arriba de todo, con el pedido ya enganchado. Los de WhatsApp e Instagram se contestan desde ahí. Bandeja limpia = clientes atendidos. Nunca «son pocos, después los hago»." },
@@ -726,6 +741,7 @@ const SECTOR_SUBPAGES = {
   ventas: [
     { id: "presupuestador", label: "Presupuestador" },
     { id: "pedidos", label: "Pedidos" },
+    { id: "turno", label: "Mi turno" },
     { id: "crm", label: "CRM (Kommo)" },
     { id: "recursos", label: "Catálogos y precios" },
     { id: "guia", label: "Guía de trabajo" },
@@ -740,6 +756,7 @@ const SECTOR_SUBPAGES = {
   ],
   fabrica: [
     { id: "pedidos", label: "Pedidos de fábrica" },
+    { id: "turno", label: "Mi turno" },
     { id: "corte", label: "Optimizador de corte" },
     { id: "numeros", label: "Números", soloAdmin: true },
     { id: "materiales", label: "Stock de materiales" },
@@ -1358,6 +1375,20 @@ function App() {
     const elegido = abiertos.find((t) => t.id === turnoMirado) || abiertos[0] || null;
     return { turno: elegido, soloMirando: !!elegido, abiertos };
   }
+  // Los turnos que quedaron abiertos se cierran solos a las 19:00. Se revisa
+  // al entrar y cada 10 minutos. turnosConCierreAutomatico devuelve null si no
+  // hay nada que cerrar, para no escribirle a la base en cada vuelta.
+  useEffect(() => {
+    if (!Array.isArray(turnos) || !turnos.length) return undefined;
+    const revisar = () => {
+      const cerrados = turnosConCierreAutomatico(turnos);
+      if (cerrados) persistTurnos(cerrados);
+    };
+    revisar();
+    const id = window.setInterval(revisar, 10 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [turnos]);
+
   const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
@@ -2347,7 +2378,7 @@ function App() {
         {(() => {
           const v = turnoALaVista();
           if (!session || !v.turno) return null;
-          const pasos = (guias && guias.postventa) || [];
+          const pasos = (guias && guias[sectorDelTurno(v.turno)]) || [];
           const hechas = pasos.filter((p) => (v.turno.tareas || {})[p.id]).length;
           return (
             <button className={`dg-fab-tareas ${v.soloMirando ? "dg-fab-tareas-mirando" : ""}`}
@@ -2364,7 +2395,7 @@ function App() {
           if (!v.turno) return null;
           return (
             <TareasDelTurnoPanel
-              pasos={(guias && guias.postventa) || []}
+              pasos={(guias && guias[sectorDelTurno(v.turno)]) || []}
               turno={v.turno}
               soloMirando={v.soloMirando}
               otrosTurnos={v.abiertos}
@@ -11252,6 +11283,108 @@ const ACCIONES_POSTVENTA = [
   "Facturó un pedido completo", "Verificó un pedido", "Editó los datos de entrega",
 ];
 
+/* ===========================================================================
+   TURNOS POR SECTOR
+   Todos los turnos viven en la misma clave de siempre («turnos-postventa»,
+   que quedó con ese nombre de cuando PostVenta era el único sector). Lo que
+   los distingue es el campo `sector`: los que no lo tienen son de PostVenta,
+   porque hasta el 13/10/2026 no había otros.
+   =========================================================================== */
+
+const SECTORES_CON_TURNO = {
+  postventa: { label: "PostVenta", entrada: "manual" },
+  ventas: { label: "Ventas", entrada: "manual" },
+  // En fábrica no se ficha a mano: el turno se abre solo la primera vez que
+  // entran a la app. Están con las manos en el vidrio, no mirando la pantalla.
+  fabrica: { label: "Fábrica", entrada: "automatica" },
+};
+const HORA_CIERRE_AUTOMATICO = 19;
+
+// La bajada del parte. En PostVenta y Ventas lo que importa son las promesas;
+// en Fábrica, el estado en que queda el taller.
+const INTRO_DEL_PARTE = {
+  postventa: "Lo que importa no es lo que hiciste: es lo que prometiste.",
+  ventas: "Lo que importa no es lo que vendiste: es lo que quedó prometido y sin cerrar.",
+  fabrica: "Esto lo lee el que entra mañana. Contá cómo queda el taller.",
+};
+
+// Qué cosas se le anotan solas a cada sector, para explicarlo en su idioma.
+const LO_QUE_SE_ANOTA = {
+  postventa: "cuando avisás a un cliente, confirmás un envío, facturás o marcás una entrega",
+  ventas: "cuando cargás o editás un pedido, o cuando lo verificás",
+  fabrica: "cuando movés un espejo de paso en las listas del taller",
+};
+
+function sectorDelTurno(t) { return t?.sector || "postventa"; }
+function tieneTurno(sectorId) { return !!SECTORES_CON_TURNO[sectorId]; }
+function nuevoTurno(persona, sectorId, automatico) {
+  return {
+    id: uid(), persona, sector: sectorId, fecha: isoLocal(new Date()),
+    inicio: new Date().toISOString(), fin: null, tareas: {}, notas: {},
+    ...(automatico ? { aperturaAutomatica: true } : {}),
+  };
+}
+
+// A qué hora le corresponde cerrar a un turno que quedó abierto. Devuelve null
+// si todavía no le toca.
+//
+// OJO con el turno olvidado: si quedó abierto del viernes, se cierra a las
+// 19:00 DE ESE VIERNES, no ahora. Si no, el lunes aparecería con 70 horas
+// trabajadas y los números del sector quedarían para la basura.
+function cierreQueCorresponde(turno, ahora) {
+  if (!turno || turno.fin) return null;
+  const inicio = new Date(turno.inicio);
+  if (Number.isNaN(inicio.getTime())) return null;
+  const limiteDe = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), HORA_CIERRE_AUTOMATICO, 0, 0, 0);
+  let limite = limiteDe(inicio);
+  // Si entró DESPUÉS de las 19:00 (un turno de noche), no se le cierra al
+  // minuto: se le da hasta las 19:00 del día siguiente.
+  if (inicio > limite) limite = new Date(limite.getTime() + 24 * 3600 * 1000);
+  return ahora > limite ? limite.toISOString() : null;
+}
+
+// Cierra los que haya que cerrar. Devuelve null si no hay nada que tocar, para
+// no escribir en la base en cada vuelta: el plan de Supabase se paga por uso.
+function turnosConCierreAutomatico(turnos, ahora = new Date()) {
+  let hayCambio = false;
+  const out = (turnos || []).map((t) => {
+    const cierre = cierreQueCorresponde(t, ahora);
+    if (!cierre) return t;
+    hayCambio = true;
+    return { ...t, fin: cierre, cierreAutomatico: true };
+  });
+  return hayCambio ? out : null;
+}
+
+// Lo que se le pregunta a cada sector al cerrar el turno. Son distintas: lo
+// que necesita saber el que entra a fábrica no tiene nada que ver con lo que
+// necesita saber el que entra a PostVenta.
+const PARTE_POR_SECTOR = {
+  postventa: PARTE_TITULOS,
+  ventas: [
+    { id: "presupuestos", label: "Presupuestos esperando respuesta", pista: "quién, por cuánto y qué se le prometió" },
+    { id: "contestar", label: "Clientes que quedaron en contestar", pista: "y para cuándo dijeron" },
+    { id: "sinpasar", label: "Pedidos cargados que todavía no se pasaron a fábrica", pista: "y qué falta para pasarlos" },
+    { id: "senas", label: "Señas o pagos sin confirmar", pista: "quién y cuánto" },
+    { id: "pendiente", label: "Lo que le queda al que sigue", pista: "" },
+  ],
+  fabrica: [
+    { id: "maquinas", label: "Máquinas con algún problema", pista: "cuál y qué le pasa" },
+    { id: "trabados", label: "Espejos trabados", pista: "número de orden y por qué no avanza" },
+    { id: "materiales", label: "Materiales que se están por acabar", pista: "" },
+    { id: "sinterminar", label: "Lo que quedó sin terminar", pista: "y para cuándo se puede" },
+    { id: "pendiente", label: "Lo que le queda al turno que sigue", pista: "" },
+  ],
+};
+
+// Las acciones del registro que cuentan como trabajo de cada sector. El resto
+// no se suma: ensucia el resumen del turno con cosas de otro.
+const ACCIONES_POR_SECTOR = {
+  postventa: ACCIONES_POSTVENTA,
+  ventas: ["Cargó un pedido", "Editó un pedido", "Verificó un pedido", "Facturó un pedido completo"],
+  fabrica: ["Actualizó producción", "Reabrió producción"],
+};
+
 function minutosEntre(desde, hasta) {
   const a = new Date(desde).getTime(), b = new Date(hasta).getTime();
   if (Number.isNaN(a) || Number.isNaN(b) || b < a) return 0;
@@ -11277,22 +11410,27 @@ function loHechoEnElTurno(auditoria, turno) {
   (auditoria || []).forEach((a) => {
     const t = new Date(a.fecha).getTime();
     if (Number.isNaN(t) || t < desde || t > hasta) return;
-    if (!ACCIONES_POSTVENTA.includes(a.accion)) return;
+    if (!(ACCIONES_POR_SECTOR[sectorDelTurno(turno)] || ACCIONES_POSTVENTA).includes(a.accion)) return;
     if (turno.persona && !mio(a)) return;
     cuenta.set(a.accion, (cuenta.get(a.accion) || 0) + 1);
   });
   return [...cuenta.entries()].map(([accion, n]) => ({ accion, n })).sort((a, b) => b.n - a.n);
 }
 
-// El turno que está abierto ahora para esta persona.
-function turnoAbiertoDe(turnos, persona) {
-  return (turnos || []).find((t) => !t.fin && String(t.persona || "") === String(persona || "")) || null;
+// El turno que está abierto ahora para esta persona. Si se pasa un sector,
+// solo cuenta el de ese sector: una misma persona puede estar en Ventas y
+// después pasar a Fábrica el mismo día.
+function turnoAbiertoDe(turnos, persona, sectorId) {
+  return (turnos || []).find((t) => !t.fin
+    && String(t.persona || "") === String(persona || "")
+    && (!sectorId || sectorDelTurno(t) === sectorId)) || null;
 }
 
 // El resumen que se le pasa al compañero, en texto, listo para copiar.
 function textoDelParte(turno, pasos, hecho) {
   const lineas = [];
-  lineas.push(`PARTE DE TURNO — ${turno.persona || "Sin nombre"}`);
+  const nombreSector = (SECTORES_CON_TURNO[sectorDelTurno(turno)] || {}).label || "";
+  lineas.push(`PARTE DE TURNO — ${turno.persona || "Sin nombre"}${nombreSector ? ` · ${nombreSector}` : ""}`);
   lineas.push(`${turno.fecha} · de ${horaCorta(turno.inicio)} a ${turno.fin ? horaCorta(turno.fin) : "ahora"} (${horasYminutos(minutosEntre(turno.inicio, turno.fin || new Date().toISOString()))})`);
   lineas.push("");
   if (hecho.length) {
@@ -11308,7 +11446,7 @@ function textoDelParte(turno, pasos, hecho) {
     faltan.forEach((p) => lineas.push(`· ${p.titulo}`));
   }
   lineas.push("");
-  PARTE_TITULOS.forEach((t, i) => {
+  (PARTE_POR_SECTOR[sectorDelTurno(turno)] || PARTE_TITULOS).forEach((t, i) => {
     const txt = String((turno.notas && turno.notas[t.id]) || "").trim();
     lineas.push(`${i + 1}. ${t.label.toUpperCase()}`);
     lineas.push(txt || "Sin novedades.");
@@ -11319,13 +11457,13 @@ function textoDelParte(turno, pasos, hecho) {
 // PostVenta no se abre sin marcar el ingreso. Es la única forma de saber a qué
 // hora arrancaron y de que el parte del turno signifique algo. El
 // administrador no pasa por acá: tiene que poder mirar sin fichar.
-function PuertaDeTurno({ persona, onIngreso, onBack }) {
+function PuertaDeTurno({ persona, onIngreso, onBack, sectorNombre }) {
   return (
     <div className="dg-page">
       <div className="dg-section-card dg-puerta-turno">
         <div className="dg-puerta-icono"><CalendarClock size={26} /></div>
         <div>
-          <strong>Hola {persona}. Marcá tu ingreso para entrar.</strong>
+          <strong>Hola {persona}. Marcá tu ingreso para entrar{sectorNombre ? ` a ${sectorNombre}` : ""}.</strong>
           <span>
             Desde que lo tocás, la app empieza a anotar sola lo que vas haciendo y arma el parte
             para el que entra después. Sin esto, el turno no queda registrado y tu compañero
@@ -11404,20 +11542,143 @@ function TareasDelTurnoPanel({ pasos, turno, onToggle, onClose, soloMirando, otr
     </div>
   );
 }
-function TurnosPostventaPanel({ turnos, onChange, pasos, auditoria, session, isAdmin }) {
-  const lista = Array.isArray(turnos) ? turnos : [];
+// OJO: ANOTADOR_DIAS va SIN tildes porque lo usa el reconocimiento de voz para
+// comparar lo que se dicta. Para mostrar hacen falta los nombres bien escritos.
+const DIAS_PARA_MOSTRAR = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+
+// «Lunes 13/10». La fecha puede venir como `2026-10-13` o como ISO completo.
+function diaYmes(fecha) {
+  const iso = String(fecha || "").slice(0, 10);
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso || "sin fecha";
+  const dia = DIAS_PARA_MOSTRAR[new Date(y, m - 1, d).getDay()] || "";
+  return `${dia ? dia + " " : ""}${d}/${m}`;
+}
+// Los turnos cerrados, en carpetas: primero la persona, adentro el mes, y
+// adentro los días. Antes era una lista plana cortada en 12 y no se encontraba
+// nada. Todo arranca cerrado: se abre lo que se quiere mirar.
+function agruparTurnos(turnos) {
+  const porPersona = new Map();
+  (turnos || []).forEach((t) => {
+    const quien = (t.persona || "Sin nombre").trim() || "Sin nombre";
+    if (!porPersona.has(quien)) porPersona.set(quien, new Map());
+    const meses = porPersona.get(quien);
+    const ym = String(t.fecha || t.inicio || "").slice(0, 7) || "sin-fecha";
+    if (!meses.has(ym)) meses.set(ym, []);
+    meses.get(ym).push(t);
+  });
+  const orden = (a, b) => (a < b ? 1 : a > b ? -1 : 0);   // lo más nuevo primero
+  return [...porPersona.entries()]
+    .map(([persona, meses]) => ({
+      persona,
+      total: [...meses.values()].reduce((n, arr) => n + arr.length, 0),
+      minutos: [...meses.values()].flat().reduce((n, t) => n + minutosEntre(t.inicio, t.fin), 0),
+      meses: [...meses.entries()]
+        .map(([ym, arr]) => ({
+          ym,
+          turnos: arr.slice().sort((a, b) => orden(a.inicio, b.inicio)),
+          minutos: arr.reduce((n, t) => n + minutosEntre(t.inicio, t.fin), 0),
+        }))
+        .sort((a, b) => orden(a.ym, b.ym)),
+    }))
+    .sort((a, b) => a.persona.localeCompare(b.persona, "es"));
+}
+
+function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin }) {
+  const carpetas = agruparTurnos(turnos);
+  // Si es uno solo el que tiene turnos, no tiene sentido hacerlo abrir carpetas.
+  const [personasAbiertas, setPersonasAbiertas] = useState(() => new Set(carpetas.length === 1 ? [carpetas[0].persona] : []));
+  const [mesesAbiertos, setMesesAbiertos] = useState(() => new Set());
+  const [turnosAbiertos, setTurnosAbiertos] = useState(() => new Set());
+  const alternar = (set, poner, clave) => {
+    const copia = new Set(set);
+    if (copia.has(clave)) copia.delete(clave); else copia.add(clave);
+    poner(copia);
+  };
+
+  return (
+    <div className="dg-section-card dg-archivo">
+      <div className="dg-section-header"><CalendarDays size={14} /> Turnos anteriores</div>
+      <p className="dg-hint" style={{ marginTop: 0 }}>
+        Archivados por persona y por mes. {isAdmin ? "Abrí el día que quieras mirar." : "Acá están los tuyos y los de tus compañeros."}
+      </p>
+      <div className="dg-archivo-lista">
+        {carpetas.map((c) => {
+          const abierta = personasAbiertas.has(c.persona);
+          return (
+            <div className={`dg-archivo-persona ${abierta ? "dg-archivo-abierta" : ""}`} key={c.persona}>
+              <button type="button" className="dg-archivo-cab" onClick={() => alternar(personasAbiertas, setPersonasAbiertas, c.persona)} aria-expanded={abierta}>
+                <ChevronRight size={14} className={abierta ? "dg-presu-chevron-on" : ""} />
+                <span className="dg-archivo-nombre">
+                  {c.persona}{c.persona === yoSoy ? <small> (vos)</small> : null}
+                </span>
+                <span className="dg-archivo-dato">{c.total} {c.total === 1 ? "turno" : "turnos"}</span>
+                <span className="dg-archivo-dato">{horasYminutos(c.minutos)}</span>
+              </button>
+              {abierta && c.meses.map((m) => {
+                const claveMes = c.persona + "|" + m.ym;
+                const mesAbierto = mesesAbiertos.has(claveMes);
+                return (
+                  <div className="dg-archivo-mes" key={claveMes}>
+                    <button type="button" className="dg-archivo-cab dg-archivo-cab-mes" onClick={() => alternar(mesesAbiertos, setMesesAbiertos, claveMes)} aria-expanded={mesAbierto}>
+                      <ChevronRight size={13} className={mesAbierto ? "dg-presu-chevron-on" : ""} />
+                      <span className="dg-archivo-nombre">{m.ym === "sin-fecha" ? "Sin fecha" : nombreMesLargo(m.ym)}</span>
+                      <span className="dg-archivo-dato">{m.turnos.length} {m.turnos.length === 1 ? "día" : "días"}</span>
+                      <span className="dg-archivo-dato">{horasYminutos(m.minutos)}</span>
+                    </button>
+                    {mesAbierto && (
+                      <ul className="dg-archivo-dias">
+                        {m.turnos.map((t) => {
+                          const hechas = (pasos || []).filter((p) => (t.tareas || {})[p.id]).length;
+                          const total = (pasos || []).length;
+                          const completo = total > 0 && hechas === total;
+                          const verParte = turnosAbiertos.has(t.id);
+                          return (
+                            <li key={t.id}>
+                              <div className="dg-archivo-dia">
+                                <button type="button" className="dg-archivo-dia-btn" onClick={() => alternar(turnosAbiertos, setTurnosAbiertos, t.id)} aria-expanded={verParte}>
+                                  <ChevronRight size={12} className={verParte ? "dg-presu-chevron-on" : ""} />
+                                  <b>{diaYmes(t.fecha || t.inicio)}</b>
+                                  <span>{horaCorta(t.inicio)} a {horaCorta(t.fin)}</span>
+                                  <span className="dg-archivo-horas">{horasYminutos(minutosEntre(t.inicio, t.fin))}</span>
+                                </button>
+                                <span className={completo ? "dg-turno-tareas-ok" : "dg-turno-tareas-falta"}>{hechas} de {total}</span>
+                                {t.cierreAutomatico && <span className="dg-archivo-auto" title="Nadie lo cerró: lo cerró la app a las 19:00">cerró solo</span>}
+                                {t.aperturaAutomatica && <span className="dg-archivo-auto" title="Se abrió solo al entrar a la app">abrió solo</span>}
+                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => onCopiar(t)}><Copy size={12} /> Copiar</button>
+                              </div>
+                              {verParte && <pre className="dg-turno-parte">{textoDelParte(t, pasos, loHechoEnElTurno(auditoria, t))}</pre>}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sectorId = "postventa" }) {
+  const todos = Array.isArray(turnos) ? turnos : [];
+  const lista = todos.filter((t) => sectorDelTurno(t) === sectorId);
   const persona = session?.nombre || (isAdmin ? "Admin" : "");
-  const hoy = isoLocal(new Date());
-  const abierto = turnoAbiertoDe(lista, persona);
+  const abierto = turnoAbiertoDe(lista, persona, sectorId);
+  const preguntas = PARTE_POR_SECTOR[sectorId] || PARTE_TITULOS;
+  const entradaAutomatica = (SECTORES_CON_TURNO[sectorId] || {}).entrada === "automatica";
   const [copiado, setCopiado] = useState(false);
 
+  // OJO: se guarda la lista COMPLETA, no la filtrada. Si se guardara solo la
+  // de este sector, se borrarían los turnos de los otros.
   const guardar = (next) => onChange(next);
-  const cambiarAbierto = (patch) => guardar(lista.map((t) => (t.id === abierto.id ? { ...t, ...patch } : t)));
+  const cambiarAbierto = (patch) => guardar(todos.map((t) => (t.id === abierto.id ? { ...t, ...patch } : t)));
 
-  const marcarIngreso = () => {
-    const ahora = new Date().toISOString();
-    guardar([{ id: uid(), persona, fecha: hoy, inicio: ahora, fin: null, tareas: {}, notas: {} }, ...lista]);
-  };
+  const marcarIngreso = () => guardar([nuevoTurno(persona, sectorId), ...todos]);
   const tildar = (pasoId) => {
     const tareas = { ...(abierto.tareas || {}) };
     if (tareas[pasoId]) delete tareas[pasoId]; else tareas[pasoId] = true;
@@ -11433,7 +11694,7 @@ function TurnosPostventaPanel({ turnos, onChange, pasos, auditoria, session, isA
   const otrosAdentro = lista.filter((t) => !t.fin && String(t.persona || "") !== String(persona || ""));
   const hecho = loHechoEnElTurno(auditoria, abierto);
   const tareasHechas = abierto ? (pasos || []).filter((p) => (abierto.tareas || {})[p.id]).length : 0;
-  const cerrados = lista.filter((t) => t.fin).slice(0, 12);
+  const cerrados = lista.filter((t) => t.fin);
 
   const copiarParte = (turno) => {
     const txt = textoDelParte(turno, pasos, loHechoEnElTurno(auditoria, turno));
@@ -11494,7 +11755,9 @@ function TurnosPostventaPanel({ turnos, onChange, pasos, auditoria, session, isA
                 {hecho.map((h) => <span key={h.accion}><b>{h.n}</b> {h.accion.toLowerCase()}</span>)}
               </div>
             ) : (
-              <p className="dg-hint" style={{ margin: "10px 0 0" }}>Todavía no quedó registrada ninguna acción en este turno. Se anotan solas cuando avisás a un cliente, confirmás un envío, facturás o marcás una entrega.</p>
+              <p className="dg-hint" style={{ margin: "10px 0 0" }}>
+                Todavía no quedó registrada ninguna acción en este turno. Se anotan solas: {LO_QUE_SE_ANOTA[sectorId] || LO_QUE_SE_ANOTA.postventa}.
+              </p>
             )}
           </div>
 
@@ -11521,8 +11784,10 @@ function TurnosPostventaPanel({ turnos, onChange, pasos, auditoria, session, isA
 
           <div className="dg-section-card">
             <div className="dg-section-header"><NotebookPen size={14} /> Para el que entra después</div>
-            <p className="dg-hint" style={{ marginTop: 0 }}>Lo que importa no es lo que hiciste: es lo que prometiste. Si un punto no tiene nada, dejalo vacío y sale «sin novedades».</p>
-            {PARTE_TITULOS.map((t, i) => (
+            <p className="dg-hint" style={{ marginTop: 0 }}>
+              {INTRO_DEL_PARTE[sectorId] || INTRO_DEL_PARTE.postventa} Si un punto no tiene nada, dejalo vacío y sale «sin novedades».
+            </p>
+            {preguntas.map((t, i) => (
               <div className="dg-turno-campo" key={t.id}>
                 <label>{i + 1}. {t.label}{t.pista ? <small> — {t.pista}</small> : null}</label>
                 <CampoQueCrece rows={2} value={(abierto.notas || {})[t.id] || ""} placeholder="Sin novedades"
@@ -11537,27 +11802,10 @@ function TurnosPostventaPanel({ turnos, onChange, pasos, auditoria, session, isA
       )}
 
       {cerrados.length > 0 && (
-        <div className="dg-section-card">
-          <div className="dg-section-header"><CalendarDays size={14} /> Turnos anteriores</div>
-          <ul className="dg-turno-historial">
-            {cerrados.map((t) => {
-              const hechas = (pasos || []).filter((p) => (t.tareas || {})[p.id]).length;
-              const total = (pasos || []).length;
-              const completo = total > 0 && hechas === total;
-              return (
-                <li key={t.id}>
-                  <div className="dg-turno-fila">
-                    <span className="dg-turno-quien">{t.persona || "Sin nombre"}</span>
-                    <span className="dg-turno-cuando">{t.fecha} · {horaCorta(t.inicio)} a {horaCorta(t.fin)} ({horasYminutos(minutosEntre(t.inicio, t.fin))})</span>
-                    <span className={completo ? "dg-turno-tareas-ok" : "dg-turno-tareas-falta"}>{hechas} de {total} tareas</span>
-                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarParte(t)}><Copy size={12} /> Copiar</button>
-                  </div>
-                  <pre className="dg-turno-parte">{textoDelParte(t, pasos, loHechoEnElTurno(auditoria, t))}</pre>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        <ArchivoDeTurnos
+          turnos={cerrados} pasos={pasos} auditoria={auditoria}
+          onCopiar={copiarParte} yoSoy={persona} isAdmin={isAdmin}
+        />
       )}
     </div>
   );
@@ -16952,6 +17200,19 @@ function SectorPage({
 }) {
   const tabs = (SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }]).filter((t) => !t.soloAdmin || isAdmin);
   const [subpage, setSubpage] = useState(tabs[0].id);
+  // En fábrica no se ficha a mano: apenas entran a la pantalla se les abre el
+  // turno. El cierre sí lo hacen ellos a la tarde, y si se olvidan se cierra
+  // solo a las 19:00. El administrador no ficha: entra a mirar.
+  const entradaAuto = (SECTORES_CON_TURNO[sector.id] || {}).entrada === "automatica";
+  const personaAuto = session?.role === "sector" ? (session?.nombre || "") : "";
+  const yaTieneTurno = !!turnoAbiertoDe(turnos, personaAuto, sector.id);
+  useEffect(() => {
+    if (!entradaAuto || !personaAuto || yaTieneTurno) return;
+    onChangeTurnos([nuevoTurno(personaAuto, sector.id, true), ...(Array.isArray(turnos) ? turnos : [])]);
+    // La lista de turnos queda fuera de las dependencias a propósito: con ella
+    // adentro el efecto se volvería a disparar y abriría un segundo turno.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entradaAuto, personaAuto, yaTieneTurno, sector.id]);
   const Icon = ICONS[sector.icon];
   const { key } = getStatus(sector.tasks);
   const glow = STATUS[key].glow;
@@ -16970,19 +17231,19 @@ function SectorPage({
   if (restringidoAFabrica && sector.id !== "fabrica") {
     return <SinAccesoSector nombre={sector.name} motivo="Tu usuario de Fábrica solo puede ver y trabajar dentro de Fábrica." onBack={onBack} />;
   }
-  // PostVenta pide el ingreso antes de dejar entrar. Solo a la gente del
-  // sector: el administrador mira sin fichar. Y si el usuario no tiene nombre
-  // cargado no se traba, porque no habría a quién atribuirle el turno.
+  // PostVenta y Ventas piden el ingreso antes de dejar entrar. Solo a la gente
+  // del sector: el administrador mira sin fichar. Y si el usuario no tiene
+  // nombre cargado no se traba, porque no habría a quién atribuirle el turno.
+  // Fábrica no pasa por acá: su turno se abre solo (más arriba, en el efecto).
   const personaTurno = session?.nombre || "";
-  if (sector.id === "postventa" && session?.role === "sector" && personaTurno && !turnoAbiertoDe(turnos, personaTurno)) {
+  const pideFichar = (SECTORES_CON_TURNO[sector.id] || {}).entrada === "manual";
+  if (pideFichar && session?.role === "sector" && personaTurno && !turnoAbiertoDe(turnos, personaTurno, sector.id)) {
     return (
       <PuertaDeTurno
         persona={personaTurno}
+        sectorNombre={sector.name}
         onBack={onBack}
-        onIngreso={() => onChangeTurnos([
-          { id: uid(), persona: personaTurno, fecha: isoLocal(new Date()), inicio: new Date().toISOString(), fin: null, tareas: {}, notas: {} },
-          ...(Array.isArray(turnos) ? turnos : []),
-        ])}
+        onIngreso={() => onChangeTurnos([nuevoTurno(personaTurno, sector.id), ...(Array.isArray(turnos) ? turnos : [])])}
       />
     );
   }
@@ -17087,11 +17348,11 @@ function SectorPage({
 
       {subpage === "numeros" && sector.id === "fabrica" && isAdmin && <NumerosFabricaPanel pedidos={pedidos} />}
 
-      {subpage === "turno" && sector.id === "postventa" && (
+      {subpage === "turno" && tieneTurno(sector.id) && (
         canSeePedidos ? (
-          <TurnosPostventaPanel
-            turnos={turnos} onChange={onChangeTurnos} pasos={guias?.postventa || []}
-            auditoria={auditoria} session={session} isAdmin={isAdmin}
+          <TurnosPanel
+            turnos={turnos} onChange={onChangeTurnos} pasos={guias?.[sector.id] || []}
+            auditoria={auditoria} session={session} isAdmin={isAdmin} sectorId={sector.id}
           />
         ) : <LockedPage label="Mi turno" onLogin={onRequestLogin} />
       )}
@@ -18082,10 +18343,6 @@ function Style() {
       .dg-turno-campo label { font-size:12px; font-weight:700; color:var(--dg-text); }
       .dg-turno-campo label small { font-weight:400; color:var(--dg-text-dim); }
       .dg-turno-campo textarea { width:100%; box-sizing:border-box; font-size:14px; line-height:1.5; resize:none; overflow:hidden; min-height:34px; }
-      .dg-turno-historial { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
-      .dg-turno-fila { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-      .dg-turno-quien { font-weight:700; color:var(--dg-text); }
-      .dg-turno-cuando { font-size:12px; color:var(--dg-text-dim); }
       .dg-turno-tareas-ok { margin-left:auto; font-size:12px; font-weight:700; color:var(--dg-success); }
       .dg-turno-tareas-falta { margin-left:auto; font-size:12px; font-weight:700; color:var(--dg-warning-2); }
       .dg-turno-parte { margin:6px 0 0; padding:11px 13px; border-radius:10px; background:rgba(var(--dg-line-rgb),.05);
@@ -18978,6 +19235,34 @@ function Style() {
       .dg-agenda-mes b { display:block; margin-top:3px; font-size:12px; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
       .dg-agenda-mes-hoy { border-color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 10%, var(--dg-bg)); }
       .dg-agenda-pie-nota { margin:4px 0 0; }
+      /* ---- Archivo de turnos: carpetas por persona y por mes ---- */
+      .dg-archivo-lista { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+      .dg-archivo-persona { border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:10px; overflow:hidden; background:var(--dg-bg); }
+      .dg-archivo-abierta { border-color:rgba(var(--dg-accent-rgb),.4); }
+      .dg-archivo-cab { width:100%; display:grid; grid-template-columns:16px 1fr auto auto; gap:10px; align-items:center; padding:10px 11px; background:none; border:0; cursor:pointer; text-align:left; color:var(--dg-text); font-family:inherit; }
+      .dg-archivo-cab:hover { background:rgba(var(--dg-accent-rgb),.06); }
+      .dg-archivo-cab svg { color:var(--dg-text-dim); transition:transform .15s ease; }
+      .dg-archivo-nombre { font-size:13px; font-weight:700; }
+      .dg-archivo-nombre small { font-weight:500; color:var(--dg-text-dim); }
+      .dg-archivo-dato { font-size:11px; color:var(--dg-text-dim); font-weight:600; white-space:nowrap; }
+      .dg-archivo-mes { border-top:1px solid rgba(var(--dg-line-rgb),.09); }
+      .dg-archivo-cab-mes { padding-left:26px; }
+      .dg-archivo-cab-mes .dg-archivo-nombre { font-size:12.5px; font-weight:600; }
+      .dg-archivo-dias { list-style:none; margin:0; padding:0 11px 9px 34px; display:flex; flex-direction:column; gap:3px; }
+      .dg-archivo-dia { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:5px 0; border-top:1px solid rgba(var(--dg-line-rgb),.07); }
+      .dg-archivo-dia-btn { flex:1; min-width:190px; display:flex; align-items:center; gap:7px; background:none; border:0; padding:3px 0; cursor:pointer; text-align:left; color:var(--dg-text); font-family:inherit; font-size:12.5px; }
+      .dg-archivo-dia-btn svg { color:var(--dg-text-dim); transition:transform .15s ease; }
+      .dg-archivo-dia-btn span { color:var(--dg-text-dim); font-size:11.5px; }
+      .dg-archivo-horas { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
+      .dg-archivo-auto { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; padding:2px 7px; border-radius:99px; border:1px solid rgba(var(--dg-warning-rgb),.4); color:var(--dg-warning); white-space:nowrap; }
+      .dg-archivo .dg-turno-parte { margin:4px 0 8px 19px; }
+
+      @media (max-width: 620px) {
+        .dg-archivo-cab { grid-template-columns:16px 1fr auto; row-gap:2px; }
+        .dg-archivo-cab .dg-archivo-dato:last-child { grid-column:2 / span 2; }
+        .dg-archivo-dias { padding-left:18px; }
+      }
+
       /* ---- Separar por titular y acomodar a mano ---- */
       .dg-agenda-controles { display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:11px 13px 0; }
       .dg-agenda-orden { display:inline-flex; align-items:center; gap:7px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); }
