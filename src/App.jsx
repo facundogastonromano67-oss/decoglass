@@ -11717,12 +11717,61 @@ function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin })
   );
 }
 
+// El mensaje se escribe como él quiera. Se respeta así:
+//   · los renglones salen tal cual los escribió
+//   · un renglón que arranca con «- » o «• » sale como viñeta
+//   · lo que va *entre asteriscos* sale resaltado
+//   · un renglón en blanco deja aire
+// Nada más. Cualquier otra cosa se muestra literal, que es lo que uno espera.
+function conResaltado(texto) {
+  return String(texto).split(/(\*[^*\n]+\*)/g).map((t, i) => (
+    t.length > 2 && t.startsWith("*") && t.endsWith("*")
+      ? <b key={i}>{t.slice(1, -1)}</b>
+      : <Fragment key={i}>{t}</Fragment>
+  ));
+}
+
+function CuerpoDeMision({ texto }) {
+  const limpio = String(texto || "").replace(/\r\n/g, "\n");
+  if (!limpio.trim()) return null;
+  const bloques = [];
+  limpio.split("\n").forEach((linea) => {
+    const vineta = /^\s*[-•]\s+(.*)$/.exec(linea);
+    const ultimo = bloques[bloques.length - 1];
+    if (vineta) {
+      if (ultimo && ultimo.tipo === "lista") ultimo.items.push(vineta[1]);
+      else bloques.push({ tipo: "lista", items: [vineta[1]] });
+      return;
+    }
+    if (!linea.trim()) { bloques.push({ tipo: "aire" }); return; }
+    bloques.push({ tipo: "parrafo", texto: linea });
+  });
+  return (
+    <div className="dg-mision-cuerpo">
+      {bloques.map((b, i) => {
+        if (b.tipo === "aire") return <span className="dg-mision-aire" key={i} />;
+        if (b.tipo === "lista") {
+          return (
+            <ul key={i}>
+              {b.items.map((x, k) => (<li key={k}>{conResaltado(x)}</li>))}
+            </ul>
+          );
+        }
+        return <p key={i}>{conResaltado(b.texto)}</p>;
+      })}
+    </div>
+  );
+}
+
+// Lo que se muestra de una misión, venga del formato nuevo (`mensaje`) o de
+// las que se cargaron antes del 13/10, que tenían `detalle`.
+function textoDeMision(m) { return m?.mensaje || m?.detalle || ""; }
+
 // El cartel. Sale una sola vez por persona y por misión, apenas entra al
 // sector. Si no hay nada escrito para ese día, no aparece: ese es el punto.
-function MisionDelSistema({ misiones, persona, onAceptar }) {
+function MisionDelSistema({ misiones, persona, onAceptar, vistaPrevia }) {
   const urgente = misiones.some((m) => m.rango === "urgente");
-  return (
-    <div className="dg-sistema-fondo" role="dialog" aria-modal="true" aria-label="Misión del sistema">
+  const tarjeta = (
       <div className={`dg-sistema ${urgente ? "dg-sistema-urgente" : ""}`}>
         <span className="dg-sistema-esquina dg-sistema-e1" aria-hidden="true" />
         <span className="dg-sistema-esquina dg-sistema-e2" aria-hidden="true" />
@@ -11743,13 +11792,20 @@ function MisionDelSistema({ misiones, persona, onAceptar }) {
                 {m.persona && <span className="dg-sistema-para">para {m.persona}</span>}
               </div>
               <strong>{m.titulo}</strong>
-              {m.detalle && <p>{m.detalle}</p>}
+              <CuerpoDeMision texto={textoDeMision(m)} />
             </div>
           ))}
         </div>
         <p className="dg-sistema-pie">Queda en «Mi turno» hasta que la marques hecha.</p>
-        <button type="button" className="dg-sistema-btn" onClick={onAceptar} autoFocus>Aceptar</button>
+        <button type="button" className="dg-sistema-btn" onClick={onAceptar} autoFocus={!vistaPrevia} disabled={vistaPrevia}>Aceptar</button>
       </div>
+  );
+  // En la vista previa va suelto, sin el fondo que tapa la pantalla: es para
+  // mirarlo mientras se escribe, no para interrumpir a nadie.
+  if (vistaPrevia) return <div className="dg-sistema-suelto">{tarjeta}</div>;
+  return (
+    <div className="dg-sistema-fondo" role="dialog" aria-modal="true" aria-label="Misión del sistema">
+      {tarjeta}
     </div>
   );
 }
@@ -11770,7 +11826,7 @@ function MisionesDelTurno({ misiones, persona, onHecha }) {
                 <input type="checkbox" checked={hecha} onChange={() => onHecha(m)} />
                 <span className="dg-mision-texto">
                   <strong>{m.titulo}</strong>
-                  {m.detalle && <small>{m.detalle}</small>}
+                  <CuerpoDeMision texto={textoDeMision(m)} />
                   {hecha && quien && <small className="dg-mision-quien">La marcó {quien}</small>}
                 </span>
                 {m.rango === "urgente" && <span className="dg-mision-urgente">Urgente</span>}
@@ -11784,7 +11840,7 @@ function MisionesDelTurno({ misiones, persona, onHecha }) {
 }
 
 // Donde Facundo las escribe. Arranca en mañana, que es como las va a cargar.
-function MisionesPanel({ misiones, onChange, sectors, session }) {
+function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) {
   const lista = Array.isArray(misiones) ? misiones : [];
   const hoy = isoLocal(hoyLocal());
   const manana = isoLocal(sumarDias(hoyLocal(), 1));
@@ -11792,20 +11848,35 @@ function MisionesPanel({ misiones, onChange, sectors, session }) {
   const [sector, setSector] = useState("fabrica");
   const [quien, setQuien] = useState("");
   const [titulo, setTitulo] = useState("");
-  const [detalle, setDetalle] = useState("");
+  const [mensaje, setMensaje] = useState("");
   const [rango, setRango] = useState("normal");
 
   const sectoresPosibles = (sectors || []).filter((s) => tieneTurno(s.id));
+  // La gente de ese sector, de los usuarios cargados. Se agrega el que esté
+  // elegido aunque ya no figure, para no perderlo al editar algo viejo.
+  const gente = (usuarios || [])
+    .filter((u) => u && u.aprobado !== false && u.sectorId === sector)
+    .map((u) => u.nombre)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "es"));
+  if (quien && !gente.includes(quien)) gente.push(quien);
   const valido = !!titulo.trim() && !!fecha;
+
+  // Lo que se está escribiendo, con la misma forma que una misión de verdad,
+  // para poder mostrarlo con el mismo componente que ve el operario.
+  const borrador = {
+    id: "vista-previa", fecha, sector, persona: quien, titulo: titulo.trim() || "Así va a salir el título",
+    mensaje, rango, aceptada: {}, hecha: {}, hechaPor: {},
+  };
 
   function agregar() {
     if (!valido) return;
     onChange([{
       id: uid(), fecha, sector, persona: quien.trim(), titulo: titulo.trim(),
-      detalle: detalle.trim(), rango, creado: new Date().toISOString(),
+      mensaje: mensaje.trim(), rango, creado: new Date().toISOString(),
       creadoPor: session?.nombre || "Admin", aceptada: {}, hecha: {}, hechaPor: {},
     }, ...lista]);
-    setTitulo(""); setDetalle("");
+    setTitulo(""); setMensaje("");
   }
   function borrar(id) {
     if (!window.confirm("¿Borrar esta misión?")) return;
@@ -11835,7 +11906,7 @@ function MisionesPanel({ misiones, onChange, sectors, session }) {
               <div className="dg-mision-fila">
                 <span className="dg-mision-texto">
                   <strong>{m.titulo}</strong>
-                  {m.detalle && <small>{m.detalle}</small>}
+                  <CuerpoDeMision texto={textoDeMision(m)} />
                   <small className="dg-mision-quien">
                     {nombreSector(m.sector)}{m.persona ? ` · solo para ${m.persona}` : " · todo el sector"}
                     {hechaPor.length ? ` · hecha por ${hechaPor.join(", ")}` : ""}
@@ -11854,36 +11925,59 @@ function MisionesPanel({ misiones, onChange, sectors, session }) {
 
   return (
     <div className="dg-page">
-      <div className="dg-section-card">
-        <div className="dg-section-header"><Sparkles size={14} /> Escribir una misión</div>
-        <p className="dg-hint" style={{ marginTop: 0 }}>
-          Le aparece como un cartel apenas entra al sector, el día que vos pongas. Si no escribís nada,
-          no les aparece nada — por eso cuando sale, saben que es algo de verdad.
-        </p>
-        <div className="dg-field-grid">
-          <Field label="Para qué día"><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
-          <Field label="Sector">
-            <select value={sector} onChange={(e) => setSector(e.target.value)}>
-              {sectoresPosibles.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
-            </select>
-          </Field>
-          <Field label="Para quién">
-            <input value={quien} onChange={(e) => setQuien(e.target.value)} placeholder="Vacío = todo el sector" />
-          </Field>
-          <Field label="Rango">
-            <select value={rango} onChange={(e) => setRango(e.target.value)}>
-              {Object.entries(MISION_RANGOS).map(([k, x]) => (<option key={k} value={k}>{x.label}</option>))}
-            </select>
-          </Field>
+      <div className="dg-mision-armar">
+        <div className="dg-section-card">
+          <div className="dg-section-header"><Sparkles size={14} /> Escribir una misión</div>
+          <p className="dg-hint" style={{ marginTop: 0 }}>
+            Le aparece como un cartel apenas entra al sector, el día que vos pongas. Si no escribís nada,
+            no les aparece nada — por eso cuando sale, saben que es algo de verdad.
+          </p>
+          <div className="dg-field-grid">
+            <Field label="Para qué día"><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+            <Field label="Sector">
+              <select value={sector} onChange={(e) => { setSector(e.target.value); setQuien(""); }}>
+                {sectoresPosibles.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+              </select>
+            </Field>
+            <Field label="Para quién">
+              <select value={quien} onChange={(e) => setQuien(e.target.value)}>
+                <option value="">Todo el sector</option>
+                {gente.map((n) => (<option key={n} value={n}>{n}</option>))}
+              </select>
+            </Field>
+            <Field label="Rango">
+              <select value={rango} onChange={(e) => setRango(e.target.value)}>
+                {Object.entries(MISION_RANGOS).map(([k, x]) => (<option key={k} value={k}>{x.label}</option>))}
+              </select>
+            </Field>
+          </div>
+          {gente.length === 0 && (
+            <p className="dg-hint">
+              No hay usuarios cargados en {nombreSector(sector)}, así que por ahora solo se puede mandar a todo el sector.
+              Se cargan en Ajustes ▸ Usuarios.
+            </p>
+          )}
+          <div className="dg-field-grid" style={{ marginTop: 12 }}>
+            <Field label="Título"><input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: dejar separados los espejos del pedido 812" /></Field>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Field label="El mensaje">
+              <CampoQueCrece value={mensaje} onChange={(e) => setMensaje(e.target.value)} rows={4}
+                placeholder={"Escribilo como quieras.\n\n- Los renglones que arrancan con un guión salen como lista\n- Lo que va *entre asteriscos* sale resaltado"} />
+            </Field>
+            <p className="dg-hint dg-mision-ayuda">
+              Los renglones salen tal cual los escribís. Con <code>- </code> adelante sale una viñeta,
+              y <code>*así*</code> sale resaltado.
+            </p>
+          </div>
+          <div className="dg-form-actions">
+            <button type="button" className="dg-btn-primary" onClick={agregar} disabled={!valido}><Plus size={15} /> Agregar misión</button>
+          </div>
         </div>
-        <div className="dg-field-grid" style={{ marginTop: 12 }}>
-          <Field label="La misión"><input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: dejar separados los espejos del pedido 812" /></Field>
-        </div>
-        <div className="dg-field-grid" style={{ marginTop: 12 }}>
-          <Field label="Detalle (opcional)"><input value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Lo que haga falta aclarar" /></Field>
-        </div>
-        <div className="dg-form-actions">
-          <button type="button" className="dg-btn-primary" onClick={agregar} disabled={!valido}><Plus size={15} /> Agregar misión</button>
+
+        <div className="dg-mision-previa">
+          <div className="dg-section-header"><Search size={14} /> Así lo va a ver {quien || "el sector"}</div>
+          <MisionDelSistema misiones={[borrador]} vistaPrevia />
         </div>
       </div>
 
@@ -17612,7 +17706,7 @@ function SectorPage({
       {subpage === "numeros" && sector.id === "fabrica" && isAdmin && <NumerosFabricaPanel pedidos={pedidos} />}
 
       {subpage === "misiones" && sector.id === "administracion" && isAdmin && (
-        <MisionesPanel misiones={misiones} onChange={onChangeMisiones} sectors={sectors} session={session} />
+        <MisionesPanel misiones={misiones} onChange={onChangeMisiones} sectors={sectors} session={session} usuarios={admins} />
       )}
 
       {porVer.length > 0 && personaMision && (
@@ -19578,6 +19672,30 @@ function Style() {
       .dg-mision-dia-cab { display:flex; align-items:baseline; gap:9px; margin-bottom:4px; }
       .dg-mision-dia-cab strong { font-size:13.5px; }
       .dg-mision-dia-cab span { font-size:11.5px; color:var(--dg-text-dim); }
+      /* ---- Escribir la misión con la vista previa al lado ---- */
+      .dg-mision-armar { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,420px); gap:14px; align-items:start; margin-bottom:14px; }
+      .dg-mision-armar > .dg-section-card { margin-bottom:0; }
+      .dg-mision-previa { position:sticky; top:14px; }
+      .dg-mision-previa .dg-section-header { margin-bottom:8px; }
+      .dg-sistema-suelto { border-radius:6px; overflow:hidden; background:rgba(4,8,18,.9); padding:12px; }
+      .dg-sistema-suelto .dg-sistema { width:100%; max-height:none; animation:none; }
+      .dg-sistema-suelto .dg-sistema-btn { cursor:default; opacity:.75; }
+      .dg-mision-ayuda code { font-family:'JetBrains Mono', monospace; font-size:11px; padding:1px 5px; border-radius:4px; background:rgba(var(--dg-line-rgb),.1); }
+
+      /* El cuerpo del mensaje, con el formato que escribió */
+      .dg-mision-cuerpo p { margin:0; }
+      .dg-mision-cuerpo ul { margin:3px 0; padding-left:17px; }
+      .dg-mision-cuerpo li { margin:1px 0; }
+      .dg-mision-aire { display:block; height:7px; }
+      .dg-sistema-item .dg-mision-cuerpo { margin-top:5px; font-size:12.5px; color:#A9CDE6; line-height:1.45; }
+      .dg-sistema-item .dg-mision-cuerpo b { color:#E6F6FF; }
+      .dg-mision-texto .dg-mision-cuerpo { font-size:11.5px; color:var(--dg-text-dim); line-height:1.45; }
+
+      @media (max-width: 980px) {
+        .dg-mision-armar { grid-template-columns:minmax(0,1fr); }
+        .dg-mision-previa { position:static; }
+      }
+
 
       /* ---- Archivo de turnos: carpetas por persona y por mes ---- */
       .dg-archivo-lista { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
