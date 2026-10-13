@@ -762,6 +762,7 @@ const SECTOR_SUBPAGES = {
     { id: "numeros", label: "Números", soloAdmin: true },
     { id: "materiales", label: "Stock de materiales" },
     { id: "stock", label: "Stock de espejos" },
+    { id: "guia", label: "Guía de trabajo" },
     { id: "tareas", label: "Tareas" },
   ],
   postventa: [
@@ -2387,7 +2388,7 @@ function App() {
         {(() => {
           const v = turnoALaVista();
           if (!session || !v.turno) return null;
-          const pasos = (guias && guias[sectorDelTurno(v.turno)]) || [];
+          const pasos = pasosDePersona((guias && guias[sectorDelTurno(v.turno)]) || [], v.turno.persona);
           const hechas = pasos.filter((p) => (v.turno.tareas || {})[p.id]).length;
           return (
             <button className={`dg-fab-tareas ${v.soloMirando ? "dg-fab-tareas-mirando" : ""}`}
@@ -2404,7 +2405,7 @@ function App() {
           if (!v.turno) return null;
           return (
             <TareasDelTurnoPanel
-              pasos={(guias && guias[sectorDelTurno(v.turno)]) || []}
+              pasos={pasosDePersona((guias && guias[sectorDelTurno(v.turno)]) || [], v.turno.persona)}
               turno={v.turno}
               soloMirando={v.soloMirando}
               otrosTurnos={v.abiertos}
@@ -4404,8 +4405,18 @@ function CampoQueCrece({ value, ...resto }) {
   return <textarea ref={caja} value={value} {...resto} />;
 }
 
-function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
+function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector, sectorId, usuarios = [] }) {
   const lista = Array.isArray(pasos) ? pasos : [];
+  // Para poder decir «este paso es solo de Nico» hace falta saber quién
+  // trabaja acá. Están en dos listas distintas; ver juntarPersonas.
+  const [registrados, setRegistrados] = useState(null);
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let vivo = true;
+    traerPersonasRegistradas().then((p) => { if (vivo) setRegistrados(p); });
+    return () => { vivo = false; };
+  }, [isAdmin]);
+  const gente = personasDelSector(juntarPersonas(usuarios, registrados || []), sectorId);
   const guardar = (next) => onChange(next);
   const editar = (id, campo, valor) => guardar(lista.map((p) => (p.id === id ? { ...p, [campo]: valor } : p)));
   const borrar = (id) => { if (window.confirm("¿Borrar este paso de la guía?")) guardar(lista.filter((p) => p.id !== id)); };
@@ -4416,14 +4427,16 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
     [next[i], next[j]] = [next[j], next[i]];
     guardar(next);
   };
-  const agregar = () => guardar([...lista, { id: uid(), titulo: "", detalle: "" }]);
+  const agregar = () => guardar([...lista, { id: uid(), titulo: "", detalle: "", persona: "" }]);
 
   return (
     <div className="dg-page">
       <div className="dg-section-card">
         <div className="dg-section-header"><ClipboardList size={14} /> Cómo se trabaja en {sector}</div>
         <p className="dg-pago-meta" style={{ marginTop: 0 }}>
-          Los pasos del día a día. {isAdmin ? "Podés cambiarlos, reordenarlos o agregar los que falten." : "Si algo no coincide con cómo lo hacen, decíselo al encargado."}
+          Los pasos del día a día. {isAdmin
+            ? "Podés cambiarlos, reordenarlos o agregar los que falten. Cada paso puede ser de todos o de una persona: los que tienen nombre solo le aparecen a esa persona en «Mi turno»."
+            : "Si algo no coincide con cómo lo hacen, decíselo al encargado."}
         </p>
       </div>
 
@@ -4442,6 +4455,14 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
                   <CampoQueCrece className="dg-guia-detalle-edit" value={p.detalle} rows={3} placeholder="Explicá qué hay que hacer"
                     onChange={(e) => editar(p.id, "detalle", e.target.value)} />
                   <div className="dg-guia-acciones">
+                    <label className="dg-guia-quien">
+                      Lo hace
+                      <select value={p.persona || ""} onChange={(e) => editar(p.id, "persona", e.target.value)}>
+                        <option value="">Todos</option>
+                        {gente.map((n) => (<option key={n} value={n}>{n}</option>))}
+                        {p.persona && !gente.includes(p.persona) && <option value={p.persona}>{p.persona}</option>}
+                      </select>
+                    </label>
                     <button type="button" onClick={() => mover(i, -1)} disabled={i === 0} title="Subir">↑</button>
                     <button type="button" onClick={() => mover(i, 1)} disabled={i === lista.length - 1} title="Bajar">↓</button>
                     <button type="button" className="dg-guia-borrar" onClick={() => borrar(p.id)} title="Borrar"><Trash2 size={13} /></button>
@@ -4450,6 +4471,7 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector }) {
               ) : (
                 <>
                   <strong>{p.titulo || "Sin título"}</strong>
+                  {p.persona && <span className="dg-guia-de-quien">Lo hace {p.persona}</span>}
                   {p.detalle ? <p>{p.detalle}</p> : null}
                 </>
               )}
@@ -11453,6 +11475,17 @@ const LO_QUE_SE_ANOTA = {
 };
 
 function sectorDelTurno(t) { return t?.sector || "postventa"; }
+
+// Las tareas del día salen de la guía del sector. Un paso SIN `persona` es de
+// todos; con un nombre, solo lo ve esa persona. Así cada uno tiene su lista y
+// el «3 de 8» de cada uno cuenta sobre lo suyo, no sobre lo de todos.
+function pasosDePersona(pasos, persona) {
+  const quien = String(persona || "").trim().toLowerCase();
+  return (pasos || []).filter((p) => {
+    const suyo = String(p?.persona || "").trim().toLowerCase();
+    return !suyo || suyo === quien;
+  });
+}
 function tieneTurno(sectorId) { return !!SECTORES_CON_TURNO[sectorId]; }
 function nuevoTurno(persona, sectorId, automatico) {
   return {
@@ -11575,9 +11608,10 @@ function textoDelParte(turno, pasos, hecho) {
     hecho.forEach((h) => lineas.push(`· ${h.accion}: ${h.n}`));
     lineas.push("");
   }
-  const hechas = (pasos || []).filter((p) => turno.tareas && turno.tareas[p.id]);
-  const faltan = (pasos || []).filter((p) => !(turno.tareas && turno.tareas[p.id]));
-  lineas.push(`TAREAS: ${hechas.length} de ${(pasos || []).length}`);
+  const mios = pasosDePersona(pasos, turno.persona);
+  const hechas = mios.filter((p) => turno.tareas && turno.tareas[p.id]);
+  const faltan = mios.filter((p) => !(turno.tareas && turno.tareas[p.id]));
+  lineas.push(`TAREAS: ${hechas.length} de ${mios.length}`);
   if (faltan.length) {
     lineas.push("Quedaron sin hacer:");
     faltan.forEach((p) => lineas.push(`· ${p.titulo}`));
@@ -11766,8 +11800,9 @@ function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin })
                     {mesAbierto && (
                       <ul className="dg-archivo-dias">
                         {m.turnos.map((t) => {
-                          const hechas = (pasos || []).filter((p) => (t.tareas || {})[p.id]).length;
-                          const total = (pasos || []).length;
+                          const suyos = pasosDePersona(pasos, t.persona);
+                          const hechas = suyos.filter((p) => (t.tareas || {})[p.id]).length;
+                          const total = suyos.length;
                           const completo = total > 0 && hechas === total;
                           const verParte = turnosAbiertos.has(t.id);
                           return (
@@ -11935,6 +11970,8 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
   const [mensaje, setMensaje] = useState("");
   const [rango, setRango] = useState("normal");
   const [etiqueta, setEtiqueta] = useState("");
+  // Cuál se está editando. Null = se está escribiendo una nueva.
+  const [editando, setEditando] = useState(null);
 
   const sectoresPosibles = (sectors || []).filter((s) => tieneTurno(s.id));
 
@@ -11961,14 +11998,35 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
     mensaje, rango, etiqueta, aceptada: {}, hecha: {}, hechaPor: {},
   };
 
+  function limpiar() {
+    setEditando(null); setTitulo(""); setMensaje(""); setEtiqueta("");
+    setQuien(""); setRango("normal"); setFecha(manana);
+  }
+  function empezarAEditar(m) {
+    setEditando(m.id);
+    setFecha(m.fecha || manana); setSector(m.sector || "fabrica"); setQuien(m.persona || "");
+    setTitulo(m.titulo || ""); setMensaje(textoDeMision(m)); setRango(m.rango || "normal");
+    setEtiqueta(m.etiqueta || "");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) {}
+  }
   function agregar() {
     if (!valido) return;
-    onChange([{
-      id: uid(), fecha, sector, persona: quien.trim(), titulo: titulo.trim(),
-      mensaje: mensaje.trim(), rango, etiqueta: etiqueta.trim(), creado: new Date().toISOString(),
-      creadoPor: session?.nombre || "Admin", aceptada: {}, hecha: {}, hechaPor: {},
-    }, ...lista]);
-    setTitulo(""); setMensaje("");
+    const campos = {
+      fecha, sector, persona: quien.trim(), titulo: titulo.trim(),
+      mensaje: mensaje.trim(), rango, etiqueta: etiqueta.trim(),
+    };
+    if (editando) {
+      // Se cambian los datos y NADA más: lo que ya aceptaron o marcaron hecho
+      // se respeta. Si se pisara, al que ya la vio le volvería a saltar el
+      // cartel y el que la hizo aparecería como que no la hizo.
+      onChange(lista.map((m) => (m.id === editando ? { ...m, ...campos, editado: new Date().toISOString() } : m)));
+    } else {
+      onChange([{
+        id: uid(), ...campos, creado: new Date().toISOString(),
+        creadoPor: session?.nombre || "Admin", aceptada: {}, hecha: {}, hechaPor: {},
+      }, ...lista]);
+    }
+    limpiar();
   }
   function borrar(id) {
     if (!window.confirm("¿Borrar esta misión?")) return;
@@ -11995,7 +12053,7 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
           const hechaPor = Object.values(m.hechaPor || {});
           return (
             <li key={m.id}>
-              <div className="dg-mision-fila">
+              <div className={`dg-mision-fila ${editando === m.id ? "dg-mision-editandose" : ""}`}>
                 <span className="dg-mision-texto">
                   <strong>{m.titulo}</strong>
                   <CuerpoDeMision texto={textoDeMision(m)} />
@@ -12006,6 +12064,7 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
                 </span>
                 {m.rango === "urgente" && <span className="dg-mision-urgente">Urgente</span>}
                 {hechaPor.length > 0 && <span className="dg-mision-hecha-chip">Hecha</span>}
+                <button type="button" className="dg-icon-btn" onClick={() => empezarAEditar(m)} title="Editar"><Pencil size={14} /></button>
                 <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrar(m.id)} title="Borrar"><Trash2 size={14} /></button>
               </div>
             </li>
@@ -12019,7 +12078,7 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
     <div className="dg-page">
       <div className="dg-mision-armar">
         <div className="dg-section-card">
-          <div className="dg-section-header"><Sparkles size={14} /> Escribir una misión</div>
+          <div className="dg-section-header"><Sparkles size={14} /> {editando ? "Editar la misión" : "Escribir una misión"}</div>
           <p className="dg-hint" style={{ marginTop: 0 }}>
             Le aparece como un cartel apenas entra al sector, el día que vos pongas. Si no escribís nada,
             no les aparece nada — por eso cuando sale, saben que es algo de verdad.
@@ -12074,7 +12133,10 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
             </p>
           </div>
           <div className="dg-form-actions">
-            <button type="button" className="dg-btn-primary" onClick={agregar} disabled={!valido}><Plus size={15} /> Agregar misión</button>
+            {editando && <button type="button" className="dg-btn-ghost" onClick={limpiar}>Cancelar</button>}
+            <button type="button" className="dg-btn-primary" onClick={agregar} disabled={!valido}>
+              {editando ? <><Save size={15} /> Guardar los cambios</> : <><Plus size={15} /> Agregar misión</>}
+            </button>
           </div>
         </div>
 
@@ -12128,7 +12190,9 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
   // Los turnos de otros que están abiertos en este momento.
   const otrosAdentro = lista.filter((t) => !t.fin && String(t.persona || "") !== String(persona || ""));
   const hecho = loHechoEnElTurno(auditoria, abierto);
-  const tareasHechas = abierto ? (pasos || []).filter((p) => (abierto.tareas || {})[p.id]).length : 0;
+  // Los pasos de ESTA persona: los generales más los que tienen su nombre.
+  const misPasos = pasosDePersona(pasos, persona);
+  const tareasHechas = abierto ? misPasos.filter((p) => (abierto.tareas || {})[p.id]).length : 0;
   const cerrados = lista.filter((t) => t.fin);
 
   const copiarParte = (turno) => {
@@ -12151,13 +12215,14 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
           <div className="dg-section-header"><User size={14} /> Trabajando ahora</div>
           <ul>
             {otrosAdentro.map((t) => {
-              const hechas = (pasos || []).filter((p) => (t.tareas || {})[p.id]).length;
+              const suyos = pasosDePersona(pasos, t.persona);
+              const hechas = suyos.filter((p) => (t.tareas || {})[p.id]).length;
               return (
                 <li key={t.id}>
                   <span className="dg-turno-punto" aria-hidden="true" />
                   <b>{t.persona || "Sin nombre"}</b>
                   <span>entró a las {horaCorta(t.inicio)} · lleva {horasYminutos(minutosEntre(t.inicio, new Date().toISOString()))}</span>
-                  <span className="dg-turno-cuenta">{hechas} de {(pasos || []).length} tareas</span>
+                  <span className="dg-turno-cuenta">{hechas} de {suyos.length} tareas</span>
                 </li>
               );
             })}
@@ -12181,7 +12246,7 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
             <div className="dg-turno-cabeza">
               <div>
                 <strong>Entraste a las {horaCorta(abierto.inicio)}</strong>
-                <span>Llevás {horasYminutos(minutosEntre(abierto.inicio, new Date().toISOString()))} · {tareasHechas} de {(pasos || []).length} tareas</span>
+                <span>Llevás {horasYminutos(minutosEntre(abierto.inicio, new Date().toISOString()))} · {tareasHechas} de {misPasos.length} tareas</span>
               </div>
               <button type="button" className="dg-btn-primary" onClick={cerrarTurno}>Cerrar turno</button>
             </div>
@@ -12198,11 +12263,11 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
 
           <div className="dg-section-card">
             <div className="dg-section-header"><ClipboardList size={14} /> Las tareas del día</div>
-            {(pasos || []).length === 0 ? (
+            {misPasos.length === 0 ? (
               <p className="dg-hint" style={{ margin: 0 }}>No hay pasos cargados en la guía de trabajo de este sector.</p>
             ) : (
               <ul className="dg-turno-tareas">
-                {pasos.map((p) => {
+                {misPasos.map((p) => {
                   const lista2 = !!(abierto.tareas || {})[p.id];
                   return (
                     <li key={p.id}>
@@ -17785,6 +17850,8 @@ function SectorPage({
       {subpage === "guia" && (
         <GuiaTrabajoPanel
           sector={sector.name}
+          sectorId={sector.id}
+          usuarios={admins}
           pasos={guias?.[sector.id] || []}
           isAdmin={isAdmin}
           onChange={(next) => onChangeGuias({ ...guias, v: GUIA_VERSION, [sector.id]: next })}
@@ -19775,6 +19842,12 @@ function Style() {
       .dg-mision-dia-cab { display:flex; align-items:baseline; gap:9px; margin-bottom:4px; }
       .dg-mision-dia-cab strong { font-size:13.5px; }
       .dg-mision-dia-cab span { font-size:11.5px; color:var(--dg-text-dim); }
+      /* ---- Pasos de la guía con dueño, y editar una misión ---- */
+      .dg-guia-quien { display:inline-flex; align-items:center; gap:6px; margin-right:auto; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); }
+      .dg-guia-quien select { padding:3px 6px; font-size:11.5px; font-weight:600; text-transform:none; letter-spacing:0; border:1px solid rgba(var(--dg-line-rgb),.2); border-radius:6px; background:var(--dg-bg); color:var(--dg-text); }
+      .dg-guia-de-quien { display:inline-block; margin-left:8px; padding:1px 8px; border-radius:99px; font-size:10.5px; font-weight:700; color:var(--dg-accent); border:1px solid rgba(var(--dg-accent-rgb),.35); vertical-align:2px; }
+      .dg-mision-editandose { border-color:var(--dg-accent) !important; box-shadow:0 0 0 1px rgba(var(--dg-accent-rgb),.3); }
+
       /* ---- Escribir la misión con la vista previa al lado ---- */
       .dg-mision-armar { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,420px); gap:14px; align-items:start; margin-bottom:14px; }
       .dg-mision-armar > .dg-section-card { margin-bottom:0; }
