@@ -182,6 +182,49 @@ const SUGGESTED_TASKS = {
 // la guía guardada de antes le gana a la nueva y nadie ve el cambio.
 // Sube a 3 el 13/10/2026: se agregaron los pasos de Fábrica. Con la versión
 // vieja guardada, guiasConDefecto hace que los pasos nuevos igual aparezcan.
+/* ===========================================================================
+   TAREAS FIJAS DEL SECTOR
+   Hasta el 13/10/2026 el checklist del turno ERA la guía de trabajo. Estaba
+   mal: la guía de Ventas son 25 textos largos que explican CÓMO contestarle a
+   un cliente —se lee como un manual, no se tilda— y aparecían como 25 tareas
+   sueltas. Ahora son dos cosas distintas:
+     · la guía de trabajo se lee (sigue igual, en su pestaña)
+     · las tareas del día se tildan, y son cortas
+   =========================================================================== */
+
+const TAREAS_VERSION = 1;
+const TAREAS_POR_DEFECTO = {
+  fabrica: [
+    { id: "f1", titulo: "Mirar el aviso del día antes de arrancar", persona: "" },
+    { id: "f7", titulo: "Avisar si una máquina quedó con problema", persona: "" },
+    { id: "f8", titulo: "Avisar si se está por acabar un material", persona: "" },
+    { id: "f9", titulo: "Dejar el puesto limpio antes de irse", persona: "" },
+  ],
+  ventas: [
+    { id: "tv1", titulo: "Dejar la bandeja de consultas en cero", persona: "" },
+    { id: "tv2", titulo: "Llamar a los presupuestos que no contestaron", persona: "" },
+    { id: "tv3", titulo: "Pasar a fábrica lo que quedó verificado", persona: "" },
+    { id: "tv4", titulo: "Confirmar las señas que entraron hoy", persona: "" },
+    { id: "tv5", titulo: "Dejar anotado lo prometido para los próximos días", persona: "" },
+  ],
+  postventa: [
+    { id: "tp1", titulo: "Avisarle a todos los que tienen el espejo listo", persona: "" },
+    { id: "tp2", titulo: "Confirmar los envíos del día siguiente", persona: "" },
+    { id: "tp3", titulo: "Mover los reclamos abiertos", persona: "" },
+    { id: "tp4", titulo: "Reclamar los saldos sin cobrar", persona: "" },
+    { id: "tp5", titulo: "Facturar lo que se entregó", persona: "" },
+  ],
+};
+
+// Igual que con las guías: si él ya las editó, se respeta lo suyo, pero las
+// que agreguemos después igual aparecen.
+function tareasConDefecto(guardado) {
+  const g = guardado && typeof guardado === "object" ? guardado : null;
+  if (!g) return { ...TAREAS_POR_DEFECTO, v: TAREAS_VERSION };
+  if (Number(g.v) >= TAREAS_VERSION) return { ...TAREAS_POR_DEFECTO, ...g };
+  return { ...g, ...TAREAS_POR_DEFECTO, v: TAREAS_VERSION };
+}
+
 const GUIA_VERSION = 3;
 const GUIA_POR_DEFECTO = {
   // En Fábrica los pasos van CORTOS, de una línea, sin explicaciones: la regla
@@ -744,7 +787,7 @@ const SECTOR_SUBPAGES = {
     { id: "turno", label: "Mi turno" },
     { id: "crm", label: "CRM (Kommo)" },
     { id: "recursos", label: "Catálogos y precios" },
-    { id: "guia", label: "Guía de trabajo" },
+    { id: "guia", label: "Guía y tareas" },
     { id: "tareas", label: "Tareas" },
   ],
   administracion: [
@@ -762,7 +805,7 @@ const SECTOR_SUBPAGES = {
     { id: "numeros", label: "Números", soloAdmin: true },
     { id: "materiales", label: "Stock de materiales" },
     { id: "stock", label: "Stock de espejos" },
-    { id: "guia", label: "Guía de trabajo" },
+    { id: "guia", label: "Guía y tareas" },
     { id: "tareas", label: "Tareas" },
   ],
   postventa: [
@@ -772,7 +815,7 @@ const SECTOR_SUBPAGES = {
     { id: "interior", label: "Envíos al interior" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "reclamos", label: "Reclamos" },
-    { id: "guia", label: "Guía de trabajo" },
+    { id: "guia", label: "Guía y tareas" },
     { id: "tareas", label: "Tareas" },
   ],
   logistica: [
@@ -1300,6 +1343,7 @@ const SHARED_SYNC_KEYS = [
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
   "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas", "misiones",
+  "tareas-sector",
 ];
 
 function App() {
@@ -1321,6 +1365,7 @@ function App() {
   const [guias, setGuias] = useState(null);
   const [turnos, setTurnos] = useState(null);
   const [misiones, setMisiones] = useState(null);
+  const [tareasSector, setTareasSector] = useState(null);
   const [facturas, setFacturas] = useState(null);
   const [enviosLogistica, setEnviosLogistica] = useState(null);
   const [reclamos, setReclamos] = useState(null);
@@ -1510,6 +1555,7 @@ function App() {
       "guias-trabajo": setGuias,
       "turnos-postventa": (v) => setTurnos(Array.isArray(v) ? v : []),
       misiones: (v) => setMisiones(Array.isArray(v) ? v : []),
+      "tareas-sector": (v) => setTareasSector(tareasConDefecto(v)),
       "facturas-manuales": setFacturas,
       "envios-logistica": setEnviosLogistica,
       "empleados-sueldo": setEmpleadosSueldo,
@@ -1902,6 +1948,10 @@ function App() {
       setMisiones(ms ? JSON.parse(ms.value) : []);
     } catch (e) { setMisiones([]); }
     try {
+      const ts = await storage.get("tareas-sector", true);
+      setTareasSector(tareasConDefecto(ts ? JSON.parse(ts.value) : null));
+    } catch (e) { setTareasSector(tareasConDefecto(null)); }
+    try {
       const tn = await storage.get("turnos-postventa", true);
       const guardados = tn ? JSON.parse(tn.value) : [];
       setTurnos(Array.isArray(guardados) ? guardados : []);
@@ -2085,6 +2135,7 @@ function App() {
   async function persistGuias(next) { guardar("guias-trabajo", next, () => setGuias(next)); }
   async function persistTurnos(next) { guardar("turnos-postventa", next, () => setTurnos(next)); }
   async function persistMisiones(next) { guardar("misiones", next, () => setMisiones(next)); }
+  async function persistTareasSector(next) { guardar("tareas-sector", next, () => setTareasSector(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistEnviosLogistica(next) { guardar("envios-logistica", next, () => setEnviosLogistica(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
@@ -2357,6 +2408,7 @@ function App() {
             guias={guias} onChangeGuias={persistGuias}
             turnos={turnos || []} onChangeTurnos={persistTurnos}
             misiones={misiones || []} onChangeMisiones={persistMisiones}
+            tareasSector={tareasSector || {}} onChangeTareasSector={persistTareasSector}
             facturas={facturas} onChangeFacturas={persistFacturas}
             enviosLogistica={enviosLogistica} onChangeEnviosLogistica={persistEnviosLogistica}
             reclamos={reclamos} onChangeReclamos={persistReclamos}
@@ -2388,7 +2440,7 @@ function App() {
         {(() => {
           const v = turnoALaVista();
           if (!session || !v.turno) return null;
-          const pasos = pasosDePersona((guias && guias[sectorDelTurno(v.turno)]) || [], v.turno.persona);
+          const pasos = pasosDePersona((tareasSector && tareasSector[sectorDelTurno(v.turno)]) || [], v.turno.persona);
           const hechas = pasos.filter((p) => (v.turno.tareas || {})[p.id]).length;
           return (
             <button className={`dg-fab-tareas ${v.soloMirando ? "dg-fab-tareas-mirando" : ""}`}
@@ -2405,7 +2457,7 @@ function App() {
           if (!v.turno) return null;
           return (
             <TareasDelTurnoPanel
-              pasos={pasosDePersona((guias && guias[sectorDelTurno(v.turno)]) || [], v.turno.persona)}
+              pasos={pasosDePersona((tareasSector && tareasSector[sectorDelTurno(v.turno)]) || [], v.turno.persona)}
               turno={v.turno}
               soloMirando={v.soloMirando}
               otrosTurnos={v.abiertos}
@@ -4405,8 +4457,20 @@ function CampoQueCrece({ value, ...resto }) {
   return <textarea ref={caja} value={value} {...resto} />;
 }
 
-function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector, sectorId, usuarios = [] }) {
+function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector, sectorId, usuarios = [], tareas: tareasProp, onChangeTareas }) {
   const lista = Array.isArray(pasos) ? pasos : [];
+  const tareas = Array.isArray(tareasProp) ? tareasProp : [];
+  const guardarTareas = (next) => onChangeTareas && onChangeTareas(next);
+  const editarTarea = (id, campo, valor) => guardarTareas(tareas.map((t) => (t.id === id ? { ...t, [campo]: valor } : t)));
+  const borrarTarea = (id) => { if (window.confirm("¿Borrar esta tarea?")) guardarTareas(tareas.filter((t) => t.id !== id)); };
+  const agregarTarea = () => guardarTareas([...tareas, { id: uid(), titulo: "", persona: "" }]);
+  const moverTarea = (i, hacia) => {
+    const j = i + hacia;
+    if (j < 0 || j >= tareas.length) return;
+    const next = tareas.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    guardarTareas(next);
+  };
   // Para poder decir «este paso es solo de Nico» hace falta saber quién
   // trabaja acá. Están en dos listas distintas; ver juntarPersonas.
   const [registrados, setRegistrados] = useState(null);
@@ -4431,11 +4495,46 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector, sectorId, usuarios
 
   return (
     <div className="dg-page">
+      {/* Las tareas se tildan y la guía se lee. Van juntas en la pantalla pero
+          separadas a la vista: mezclarlas fue el error de antes. */}
+      {isAdmin && (
+        <div className="dg-section-card dg-tareas-fijas">
+          <div className="dg-section-header"><ClipboardList size={14} /> Las tareas del día</div>
+          <p className="dg-hint" style={{ marginTop: 0 }}>
+            Cortas, para tildar. Lo que depende del trabajo que hay —cuántos cortar, cuántos mandar a grabar—
+            lo pone la app sola; acá van las que no se pueden adivinar.
+          </p>
+          {tareas.length === 0 && <div className="dg-empty">No hay tareas fijas en este sector.</div>}
+          <ul className="dg-tareas-editor">
+            {tareas.map((t, i) => (
+              <li key={t.id}>
+                <input className="dg-tarea-titulo" value={t.titulo} placeholder="Qué hay que hacer"
+                  onChange={(e) => editarTarea(t.id, "titulo", e.target.value)} />
+                <label className="dg-guia-quien">
+                  Lo hace
+                  <select value={t.persona || ""} onChange={(e) => editarTarea(t.id, "persona", e.target.value)}>
+                    <option value="">Todos</option>
+                    {gente.map((n) => (<option key={n} value={n}>{n}</option>))}
+                    {t.persona && !gente.includes(t.persona) && <option value={t.persona}>{t.persona}</option>}
+                  </select>
+                </label>
+                <button type="button" className="dg-icon-btn" onClick={() => moverTarea(i, -1)} disabled={i === 0} title="Subir"><ChevronUp size={14} /></button>
+                <button type="button" className="dg-icon-btn" onClick={() => moverTarea(i, 1)} disabled={i === tareas.length - 1} title="Bajar"><ChevronDown size={14} /></button>
+                <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrarTarea(t.id)} title="Borrar"><Trash2 size={14} /></button>
+              </li>
+            ))}
+          </ul>
+          <div className="dg-form-actions">
+            <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={agregarTarea}><Plus size={13} /> Agregar tarea</button>
+          </div>
+        </div>
+      )}
+
       <div className="dg-section-card">
-        <div className="dg-section-header"><ClipboardList size={14} /> Cómo se trabaja en {sector}</div>
+        <div className="dg-section-header"><FileText size={14} /> Cómo se trabaja en {sector}</div>
         <p className="dg-pago-meta" style={{ marginTop: 0 }}>
-          Los pasos del día a día. {isAdmin
-            ? "Podés cambiarlos, reordenarlos o agregar los que falten. Cada paso puede ser de todos o de una persona: los que tienen nombre solo le aparecen a esa persona en «Mi turno»."
+          Esto se lee, no se tilda: es el manual de cómo hacer bien el trabajo. {isAdmin
+            ? "Podés cambiarlo, reordenarlo o agregar lo que falte. Las tareas que se tildan son las de arriba."
             : "Si algo no coincide con cómo lo hacen, decíselo al encargado."}
         </p>
       </div>
@@ -4455,14 +4554,6 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector, sectorId, usuarios
                   <CampoQueCrece className="dg-guia-detalle-edit" value={p.detalle} rows={3} placeholder="Explicá qué hay que hacer"
                     onChange={(e) => editar(p.id, "detalle", e.target.value)} />
                   <div className="dg-guia-acciones">
-                    <label className="dg-guia-quien">
-                      Lo hace
-                      <select value={p.persona || ""} onChange={(e) => editar(p.id, "persona", e.target.value)}>
-                        <option value="">Todos</option>
-                        {gente.map((n) => (<option key={n} value={n}>{n}</option>))}
-                        {p.persona && !gente.includes(p.persona) && <option value={p.persona}>{p.persona}</option>}
-                      </select>
-                    </label>
                     <button type="button" onClick={() => mover(i, -1)} disabled={i === 0} title="Subir">↑</button>
                     <button type="button" onClick={() => mover(i, 1)} disabled={i === lista.length - 1} title="Bajar">↓</button>
                     <button type="button" className="dg-guia-borrar" onClick={() => borrar(p.id)} title="Borrar"><Trash2 size={13} /></button>
@@ -4471,7 +4562,6 @@ function GuiaTrabajoPanel({ pasos, onChange, isAdmin, sector, sectorId, usuarios
               ) : (
                 <>
                   <strong>{p.titulo || "Sin título"}</strong>
-                  {p.persona && <span className="dg-guia-de-quien">Lo hace {p.persona}</span>}
                   {p.detalle ? <p>{p.detalle}</p> : null}
                 </>
               )}
@@ -11361,6 +11451,94 @@ const MISION_RANGOS = {
 };
 
 /* ===========================================================================
+   LAS TAREAS QUE SALEN SOLAS DEL TRABAJO QUE HAY
+   La app mira los pedidos y arma la lista del día. Si no hay espejos para
+   cortar, la tarea de cortar NO aparece: darles para tildar algo que no
+   existe los acostumbra a tildar por tildar, y después tildan sin mirar lo
+   que sí importa.
+   Estas NO se tildan (salvo la de revisar lo de días anteriores): el número
+   baja solo a medida que trabajan, así que no pueden mentir.
+   =========================================================================== */
+
+function tareasAutomaticas(sectorId, pedidos, hoyIso) {
+  if (sectorId !== "fabrica") return [];
+  const vivos = (pedidos || []).filter((p) => p && p.estado !== "Cancelado" && p.estado !== "Sin pasar a fábrica");
+  const enLista = (id) => vivos.filter((p) => esDeLaPestana(p, id));
+  const unidadesQue = (arr, cond) => arr.reduce((n, p) => n + unidadesDePedido(p).filter(cond).length, 0);
+  const out = [];
+  const agregar = (t) => { if (t.n > 0) out.push({ ...t, auto: true }); };
+  const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+
+  const paraArmar = [...enLista("simples"), ...enLista("esm_cortar"), ...enLista("esm_armar")].filter((p) => !pedidoEstaListo(p));
+  // Los que esperan para mandar a grabar hay que cortarlos igual, y encima son
+  // los que frenan todo: el grabador es el cuello de botella.
+  const aGrabar = enLista("mandar_grabar");
+  const sinCortar = unidadesQue([...paraArmar, ...aGrabar], (u) => unidadPasosCompletados(u) === 0);
+  agregar({
+    id: "auto-cortar", n: sinCortar,
+    titulo: `Cortar ${plural(sinCortar, "espejo", "espejos")}`,
+    detalle: aGrabar.length ? "Primero los que van a grabado: son los que frenan todo." : "",
+  });
+
+  agregar({
+    id: "auto-mandar-grabar", n: aGrabar.length,
+    titulo: `Mandar a grabar ${plural(aGrabar.length, "pedido", "pedidos")}`,
+    detalle: numerosDePedidos(aGrabar),
+  });
+
+  const enGrabado = enLista("en_grabado");
+  const colgados = enGrabado.filter((p) => (diasEnEtapa(p) || 0) > (UMBRAL_ETAPA_DIAS.en_grabado || 8));
+  agregar({
+    id: "auto-en-grabado", n: enGrabado.length,
+    titulo: `Controlar ${plural(enGrabado.length, "pedido que está", "pedidos que están")} en grabado`,
+    detalle: colgados.length ? `${plural(colgados.length, "lleva", "llevan")} más de ${UMBRAL_ETAPA_DIAS.en_grabado} días: ${numerosDePedidos(colgados)}` : "",
+  });
+
+  const bisel = enLista("bisel_sin_pedir");
+  agregar({
+    id: "auto-bisel", n: bisel.length,
+    titulo: `Pedir ${plural(bisel.length, "biselado", "biselados")}`,
+    detalle: numerosDePedidos(bisel),
+  });
+
+  const paraArmarYa = unidadesQue(paraArmar, (u) => unidadPasosCompletados(u) === 1);
+  agregar({
+    id: "auto-armar", n: paraArmarYa,
+    titulo: `Armar ${plural(paraArmarYa, "espejo que ya está cortado", "espejos que ya están cortados")}`,
+  });
+
+  const paraEmbalar = unidadesQue(paraArmar, (u) => unidadPasosCompletados(u) === 2);
+  agregar({
+    id: "auto-embalar", n: paraEmbalar,
+    titulo: `Embalar ${plural(paraEmbalar, "espejo armado", "espejos armados")}`,
+    detalle: "Hasta que no está embalado y marcado, PostVenta no sabe que puede entregarlo.",
+  });
+
+  // El control de lo de días anteriores. OJO: la tarea es REVISAR, no
+  // terminarlo. Se olvidan de marcar lo que hicieron, así que primero hay que
+  // saber cuál de las dos cosas es: si está hecho y sin marcar, o si falta.
+  const atrasados = vivos.filter((p) => entraEnPlanTaller(p) && diaPuesto(p) && diaPuesto(p) < hoyIso);
+  const nAtrasados = atrasados.reduce((n, p) => n + unidadesPendientesTaller(p), 0);
+  if (nAtrasados > 0) {
+    out.push({
+      id: "auto-pendientes", n: nAtrasados, auto: true, seTilda: true,
+      titulo: `Revisar ${plural(nAtrasados, "espejo que quedó", "espejos que quedaron")} de días anteriores`,
+      detalle: `${numerosDePedidos(atrasados)}. Fijate si se hicieron y quedaron sin marcar, o si de verdad faltan.`,
+    });
+  }
+  return out;
+}
+
+// «#812, #815 y 3 más». Los números son lo único que les sirve para buscarlo.
+function numerosDePedidos(pedidos, tope = 3) {
+  const nums = [...new Set((pedidos || []).map((p) => p?.orden).filter((x) => x || x === 0))];
+  if (!nums.length) return "";
+  const vistos = nums.slice(0, tope).map((n) => `#${n}`);
+  const resto = nums.length - vistos.length;
+  return resto > 0 ? `${vistos.join(", ")} y ${resto} más` : vistos.join(", ");
+}
+
+/* ===========================================================================
    QUIÉN TRABAJA ACÁ
    Hay DOS listas de usuarios por historia: la vieja (`admins`, en kv_store) y
    la del auto-registro (`profiles`, en Supabase), que es donde están los que
@@ -12161,7 +12339,7 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
   );
 }
 
-function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sectorId = "postventa" }) {
+function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sectorId = "postventa", pedidos = [] }) {
   const todos = Array.isArray(turnos) ? turnos : [];
   const lista = todos.filter((t) => sectorDelTurno(t) === sectorId);
   const persona = session?.nombre || (isAdmin ? "Admin" : "");
@@ -12192,6 +12370,8 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
   const hecho = loHechoEnElTurno(auditoria, abierto);
   // Los pasos de ESTA persona: los generales más los que tienen su nombre.
   const misPasos = pasosDePersona(pasos, persona);
+  // Y lo que la app ve que hay para hacer hoy, mirando los pedidos de verdad.
+  const automaticas = tareasAutomaticas(sectorId, pedidos, isoLocal(hoyLocal()));
   const tareasHechas = abierto ? misPasos.filter((p) => (abierto.tareas || {})[p.id]).length : 0;
   const cerrados = lista.filter((t) => t.fin);
 
@@ -12261,10 +12441,45 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
             )}
           </div>
 
+          {automaticas.length > 0 && (
+            <div className="dg-section-card dg-auto-card">
+              <div className="dg-section-header"><Factory size={14} /> Lo que hay para hacer hoy</div>
+              <p className="dg-hint" style={{ marginTop: 0 }}>
+                Esto lo mira la app sola en los pedidos. No se tilda: el número baja a medida que trabajan.
+              </p>
+              <ul className="dg-auto-lista">
+                {automaticas.map((t) => {
+                  const tildada = !!(abierto.tareas || {})[t.id];
+                  return (
+                    <li key={t.id} className={t.seTilda ? "dg-auto-tilda" : ""}>
+                      {t.seTilda ? (
+                        <label className={tildada ? "dg-turno-tarea dg-turno-tarea-ok" : "dg-turno-tarea"}>
+                          <input type="checkbox" checked={tildada} onChange={() => tildar(t.id)} />
+                          <span className="dg-auto-texto">
+                            <b>{t.titulo}</b>
+                            {t.detalle && <small>{t.detalle}</small>}
+                          </span>
+                        </label>
+                      ) : (
+                        <div className="dg-auto-fila">
+                          <span className="dg-auto-n">{t.n}</span>
+                          <span className="dg-auto-texto">
+                            <b>{t.titulo}</b>
+                            {t.detalle && <small>{t.detalle}</small>}
+                          </span>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
           <div className="dg-section-card">
-            <div className="dg-section-header"><ClipboardList size={14} /> Las tareas del día</div>
+            <div className="dg-section-header"><ClipboardList size={14} /> Para no olvidarse</div>
             {misPasos.length === 0 ? (
-              <p className="dg-hint" style={{ margin: 0 }}>No hay pasos cargados en la guía de trabajo de este sector.</p>
+              <p className="dg-hint" style={{ margin: 0 }}>No hay tareas fijas cargadas para este sector.</p>
             ) : (
               <ul className="dg-turno-tareas">
                 {misPasos.map((p) => {
@@ -17693,6 +17908,7 @@ function SectorPage({
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "",
   guias = {}, onChangeGuias, turnos = [], onChangeTurnos, misiones = [], onChangeMisiones,
+  tareasSector = {}, onChangeTareasSector,
   listasBloqueadas = false, onCambiarBloqueoListas,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
@@ -17853,6 +18069,8 @@ function SectorPage({
           sectorId={sector.id}
           usuarios={admins}
           pasos={guias?.[sector.id] || []}
+          tareas={tareasSector?.[sector.id] || []}
+          onChangeTareas={(next) => onChangeTareasSector({ ...tareasSector, [sector.id]: next })}
           isAdmin={isAdmin}
           onChange={(next) => onChangeGuias({ ...guias, v: GUIA_VERSION, [sector.id]: next })}
         />
@@ -17890,8 +18108,9 @@ function SectorPage({
       {subpage === "turno" && tieneTurno(sector.id) && (
         canSeePedidos ? (
           <TurnosPanel
-            turnos={turnos} onChange={onChangeTurnos} pasos={guias?.[sector.id] || []}
+            turnos={turnos} onChange={onChangeTurnos} pasos={tareasSector?.[sector.id] || []}
             auditoria={auditoria} session={session} isAdmin={isAdmin} sectorId={sector.id}
+            pedidos={pedidos}
           />
         ) : <LockedPage label="Mi turno" onLogin={onRequestLogin} />
       )}
@@ -19845,8 +20064,29 @@ function Style() {
       /* ---- Pasos de la guía con dueño, y editar una misión ---- */
       .dg-guia-quien { display:inline-flex; align-items:center; gap:6px; margin-right:auto; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-dim); }
       .dg-guia-quien select { padding:3px 6px; font-size:11.5px; font-weight:600; text-transform:none; letter-spacing:0; border:1px solid rgba(var(--dg-line-rgb),.2); border-radius:6px; background:var(--dg-bg); color:var(--dg-text); }
-      .dg-guia-de-quien { display:inline-block; margin-left:8px; padding:1px 8px; border-radius:99px; font-size:10.5px; font-weight:700; color:var(--dg-accent); border:1px solid rgba(var(--dg-accent-rgb),.35); vertical-align:2px; }
       .dg-mision-editandose { border-color:var(--dg-accent) !important; box-shadow:0 0 0 1px rgba(var(--dg-accent-rgb),.3); }
+      /* ---- Lo que la app ve que hay para hacer ---- */
+      .dg-auto-card { border-color:rgba(var(--dg-accent-rgb),.4); }
+      .dg-auto-lista { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-auto-fila { display:flex; align-items:flex-start; gap:11px; padding:9px 11px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:9px; background:var(--dg-bg); }
+      .dg-auto-n { flex:none; min-width:30px; height:26px; display:inline-flex; align-items:center; justify-content:center; padding:0 7px; border-radius:7px; font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; color:var(--dg-text); background:color-mix(in srgb, var(--dg-accent) 26%, var(--dg-surface)); border:1px solid rgba(var(--dg-accent-rgb),.45); }
+      .dg-auto-texto { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-auto-texto b { font-size:13.5px; font-weight:600; }
+      .dg-auto-texto small { font-size:11.5px; color:var(--dg-text-dim); }
+      .dg-auto-tilda .dg-turno-tarea { align-items:flex-start; }
+      .dg-auto-tilda .dg-auto-texto b { font-weight:600; }
+
+      /* ---- El editor de tareas fijas, arriba de la guía ---- */
+      .dg-tareas-fijas { border-color:rgba(var(--dg-line-rgb),.2); }
+      .dg-tareas-editor { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-tareas-editor li { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:7px 9px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:9px; background:var(--dg-bg); }
+      .dg-tarea-titulo { flex:1; min-width:180px; padding:6px 9px; font-size:13px; border:1px solid rgba(var(--dg-line-rgb),.18); border-radius:7px; background:var(--dg-surface); color:var(--dg-text); }
+      .dg-tareas-editor .dg-guia-quien { margin-right:0; }
+
+      @media (max-width: 620px) {
+        .dg-tarea-titulo { min-width:100%; }
+      }
+
 
       /* ---- Escribir la misión con la vista previa al lado ---- */
       .dg-mision-armar { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,420px); gap:14px; align-items:start; margin-bottom:14px; }
