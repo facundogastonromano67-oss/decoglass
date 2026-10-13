@@ -3232,6 +3232,16 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
     } catch (e) { setSolicitudes([]); }
   }
   useEffect(() => { cargarSolicitudes(); }, []);
+
+  // Los que ya se registraron y están aprobados viven en `profiles`, no en la
+  // lista vieja. Hasta ahora esta pantalla no los mostraba y parecía que no
+  // existían: se veían solo las solicitudes pendientes.
+  const [registrados, setRegistrados] = useState(null);
+  async function cargarRegistrados() {
+    const p = await traerPersonasRegistradas();
+    setRegistrados(p);
+  }
+  useEffect(() => { cargarRegistrados(); }, []);
   async function aprobarSolicitud(id) {
     setMsgSol("");
     try {
@@ -3311,8 +3321,31 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
         </div>
       )}
 
+      {Array.isArray(registrados) && registrados.length > 0 && (
+        <div className="dg-section-card">
+          <div className="dg-section-header"><UserPlus size={14} /> Se registraron solos ({registrados.length})</div>
+          <p className="dg-hint" style={{ marginTop: 0 }}>
+            Estos entraron por el formulario de registro y ya están aprobados. Son los nombres que usa la app
+            para los turnos y las misiones. Para darlos de baja hay que hacerlo desde Supabase.
+          </p>
+          <div className="dg-task-list" style={{ marginBottom: 0 }}>
+            {registrados.map((u) => (
+              <div className="dg-task" key={`reg-${u.nombre}`}>
+                <ShieldCheck size={14} style={{ color: rolColor(u.rol) }} />
+                <div className="dg-pago-info">
+                  <span>{u.nombre}{u.nombre === session?.nombre ? " (vos)" : ""}</span>
+                  <span className="dg-pago-meta">
+                    {rolLabel(u.rol)}{u.sectorId ? ` · ${sectorNombre(u.sectorId)}` : " · sin sector asignado"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="dg-section-card">
-        <div className="dg-section-header"><Users size={14} /> Usuarios ({aprobados.length})</div>
+        <div className="dg-section-header"><Users size={14} /> Usuarios cargados a mano ({aprobados.length})</div>
         <div className="dg-task-list" style={{ marginBottom: 0 }}>
           {aprobados.map((u) => (
             <div className="dg-task" key={u.id}>
@@ -11305,6 +11338,49 @@ const MISION_RANGOS = {
   urgente: { label: "Misión urgente", color: "danger" },
 };
 
+/* ===========================================================================
+   QUIÉN TRABAJA ACÁ
+   Hay DOS listas de usuarios por historia: la vieja (`admins`, en kv_store) y
+   la del auto-registro (`profiles`, en Supabase), que es donde están los que
+   se registraron solos. Para cualquier cosa que necesite «la gente», hay que
+   mirar las dos: con una sola falta medio equipo.
+   =========================================================================== */
+
+async function traerPersonasRegistradas() {
+  try {
+    const { data, error } = await supabase
+      .from("profiles").select("nombre, rol, sector_id").eq("aprobado", true);
+    if (error) throw error;
+    return (data || []).map((p) => ({
+      nombre: p.nombre, rol: p.rol, sectorId: p.sector_id, aprobado: true, origen: "registro",
+    }));
+  } catch (e) {
+    // Si no se puede leer (permisos, base caída), se sigue con la lista vieja:
+    // es mejor mostrar de menos que romper la pantalla.
+    return [];
+  }
+}
+
+// Junta las dos listas sin repetidos. El nombre es la identidad: es con lo que
+// entran a la app y con lo que se guardan los turnos y las misiones.
+function juntarPersonas(deKv, deRegistro) {
+  const porNombre = new Map();
+  [...(deKv || []), ...(deRegistro || [])].forEach((u) => {
+    const nombre = String(u?.nombre || "").trim();
+    if (!nombre || u.aprobado === false) return;
+    const clave = nombre.toLowerCase();
+    const previo = porNombre.get(clave);
+    // Si está en las dos, gana la que tenga sector cargado: sin sector no
+    // aparecería en ninguna lista y sería como si no existiera.
+    if (!previo || (!previo.sectorId && u.sectorId)) porNombre.set(clave, { ...u, nombre });
+  });
+  return [...porNombre.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+}
+
+function personasDelSector(personas, sectorId) {
+  return (personas || []).filter((u) => u.sectorId === sectorId).map((u) => u.nombre);
+}
+
 // Lo que dice el cartelito de arriba de cada aviso. Si no escribió nada, usa
 // el nombre del rango; si escribió algo, manda lo suyo: puede decir «ORDEN
 // DIRECTA», «AVISO» o lo que se le cante.
@@ -11861,14 +11937,21 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
   const [etiqueta, setEtiqueta] = useState("");
 
   const sectoresPosibles = (sectors || []).filter((s) => tieneTurno(s.id));
-  // La gente de ese sector, de los usuarios cargados. Se agrega el que esté
-  // elegido aunque ya no figure, para no perderlo al editar algo viejo.
-  const gente = (usuarios || [])
-    .filter((u) => u && u.aprobado !== false && u.sectorId === sector)
-    .map((u) => u.nombre)
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b, "es"));
+
+  // Los que se registraron solos están en Supabase, no en la lista vieja. Se
+  // traen una vez al abrir la pantalla: es una consulta chica y solo la hace
+  // el administrador, así que no mueve la aguja del consumo.
+  const [registrados, setRegistrados] = useState(null);
+  useEffect(() => {
+    let vivo = true;
+    traerPersonasRegistradas().then((p) => { if (vivo) setRegistrados(p); });
+    return () => { vivo = false; };
+  }, []);
+  const personas = juntarPersonas(usuarios, registrados || []);
+  const gente = personasDelSector(personas, sector);
+  // El que esté elegido no se pierde aunque ya no figure en la lista.
   if (quien && !gente.includes(quien)) gente.push(quien);
+  const sinSector = personas.filter((u) => !u.sectorId && u.rol !== "admin").length;
   const valido = !!titulo.trim() && !!fecha;
 
   // Lo que se está escribiendo, con la misma forma que una misión de verdad,
@@ -11966,8 +12049,15 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
           </div>
           {gente.length === 0 && (
             <p className="dg-hint">
-              No hay usuarios cargados en {nombreSector(sector)}, así que por ahora solo se puede mandar a todo el sector.
-              Se cargan en Ajustes ▸ Usuarios.
+              {registrados === null
+                ? "Buscando quién trabaja en este sector…"
+                : `No figura nadie en ${nombreSector(sector)}, así que por ahora solo se puede mandar a todo el sector. Los que se registraron se ven en Ajustes ▸ Usuarios.`}
+            </p>
+          )}
+          {sinSector > 0 && (
+            <p className="dg-hint">
+              Hay {sinSector} {sinSector === 1 ? "usuario" : "usuarios"} sin sector asignado: no {sinSector === 1 ? "aparece" : "aparecen"} en
+              ninguna lista hasta que se {sinSector === 1 ? "le" : "les"} ponga el sector.
             </p>
           )}
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
