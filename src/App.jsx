@@ -749,6 +749,7 @@ const SECTOR_SUBPAGES = {
   ],
   administracion: [
     { id: "finanzas", label: "Finanzas" },
+    { id: "misiones", label: "Misiones" },
     { id: "comisiones", label: "Comisiones" },
     { id: "fletes", label: "Fletes" },
     { id: "sueldos", label: "Sueldos" },
@@ -1297,7 +1298,7 @@ const SHARED_SYNC_KEYS = [
   "vendedores", "recursos-venta", "guias-trabajo", "turnos-postventa", "facturas-manuales", "envios-logistica",
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
-  "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas",
+  "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas", "misiones",
 ];
 
 function App() {
@@ -1318,6 +1319,7 @@ function App() {
   const [recursos, setRecursos] = useState(null);
   const [guias, setGuias] = useState(null);
   const [turnos, setTurnos] = useState(null);
+  const [misiones, setMisiones] = useState(null);
   const [facturas, setFacturas] = useState(null);
   const [enviosLogistica, setEnviosLogistica] = useState(null);
   const [reclamos, setReclamos] = useState(null);
@@ -1506,6 +1508,7 @@ function App() {
       "recursos-venta": setRecursos,
       "guias-trabajo": setGuias,
       "turnos-postventa": (v) => setTurnos(Array.isArray(v) ? v : []),
+      misiones: (v) => setMisiones(Array.isArray(v) ? v : []),
       "facturas-manuales": setFacturas,
       "envios-logistica": setEnviosLogistica,
       "empleados-sueldo": setEmpleadosSueldo,
@@ -1894,6 +1897,10 @@ function App() {
       setGuias(guiasConDefecto(guardado));
     } catch (e) { setGuias(guiasConDefecto(null)); }
     try {
+      const ms = await storage.get("misiones", true);
+      setMisiones(ms ? JSON.parse(ms.value) : []);
+    } catch (e) { setMisiones([]); }
+    try {
       const tn = await storage.get("turnos-postventa", true);
       const guardados = tn ? JSON.parse(tn.value) : [];
       setTurnos(Array.isArray(guardados) ? guardados : []);
@@ -2076,6 +2083,7 @@ function App() {
   async function persistRecursos(next) { guardar("recursos-venta", next, () => setRecursos(next)); }
   async function persistGuias(next) { guardar("guias-trabajo", next, () => setGuias(next)); }
   async function persistTurnos(next) { guardar("turnos-postventa", next, () => setTurnos(next)); }
+  async function persistMisiones(next) { guardar("misiones", next, () => setMisiones(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistEnviosLogistica(next) { guardar("envios-logistica", next, () => setEnviosLogistica(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
@@ -2347,6 +2355,7 @@ function App() {
             recursos={recursos} onChangeRecursos={persistRecursos}
             guias={guias} onChangeGuias={persistGuias}
             turnos={turnos || []} onChangeTurnos={persistTurnos}
+            misiones={misiones || []} onChangeMisiones={persistMisiones}
             facturas={facturas} onChangeFacturas={persistFacturas}
             enviosLogistica={enviosLogistica} onChangeEnviosLogistica={persistEnviosLogistica}
             reclamos={reclamos} onChangeReclamos={persistReclamos}
@@ -11284,6 +11293,50 @@ const ACCIONES_POSTVENTA = [
 ];
 
 /* ===========================================================================
+   MISIONES DEL SISTEMA
+   Tareas que Facundo escribe para un día, normalmente el día anterior. Le
+   aparecen a quien corresponda como un cartel tipo «notificación del sistema»
+   apenas entra. Si no hay nada escrito para ese día, NO aparece nada: ese es
+   el punto, que cuando salga el cartel sea porque hay algo de verdad.
+   =========================================================================== */
+
+const MISION_RANGOS = {
+  normal: { label: "Misión diaria", color: "accent" },
+  urgente: { label: "Misión urgente", color: "danger" },
+};
+
+function misionesDelDia(misiones, fechaIso, sectorId, persona) {
+  const quien = String(persona || "").trim().toLowerCase();
+  return (misiones || []).filter((m) => {
+    if (!m || m.fecha !== fechaIso) return false;
+    if (m.sector && m.sector !== sectorId) return false;
+    // Sin `persona` es para todo el sector; con nombre, solo para esa persona.
+    if (m.persona && String(m.persona).trim().toLowerCase() !== quien) return false;
+    return true;
+  });
+}
+
+// Las que todavía no aceptó esta persona. El cartel sale una sola vez por
+// persona y por misión: después queda en la pantalla del turno.
+function misionesSinVer(misiones, fechaIso, sectorId, persona) {
+  const quien = String(persona || "").trim().toLowerCase();
+  return misionesDelDia(misiones, fechaIso, sectorId, persona)
+    .filter((m) => !(m.aceptada || {})[quien]);
+}
+
+function misionHecha(m, persona) {
+  const quien = String(persona || "").trim().toLowerCase();
+  // Una misión de todo el sector se da por hecha cuando la marca cualquiera:
+  // si hay que barrer el taller, lo barre uno y listo.
+  return m.persona ? !!(m.hecha || {})[quien] : Object.keys(m.hecha || {}).length > 0;
+}
+
+function quienLaHizo(m) {
+  const nombres = Object.values(m?.hechaPor || {});
+  return nombres.length ? nombres[0] : "";
+}
+
+/* ===========================================================================
    TURNOS POR SECTOR
    Todos los turnos viven en la misma clave de siempre («turnos-postventa»,
    que quedó con ese nombre de cuando PostVenta era el único sector). Lo que
@@ -11660,6 +11713,191 @@ function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin })
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// El cartel. Sale una sola vez por persona y por misión, apenas entra al
+// sector. Si no hay nada escrito para ese día, no aparece: ese es el punto.
+function MisionDelSistema({ misiones, persona, onAceptar }) {
+  const urgente = misiones.some((m) => m.rango === "urgente");
+  return (
+    <div className="dg-sistema-fondo" role="dialog" aria-modal="true" aria-label="Misión del sistema">
+      <div className={`dg-sistema ${urgente ? "dg-sistema-urgente" : ""}`}>
+        <span className="dg-sistema-esquina dg-sistema-e1" aria-hidden="true" />
+        <span className="dg-sistema-esquina dg-sistema-e2" aria-hidden="true" />
+        <span className="dg-sistema-esquina dg-sistema-e3" aria-hidden="true" />
+        <span className="dg-sistema-esquina dg-sistema-e4" aria-hidden="true" />
+        <div className="dg-sistema-alerta"><AlertTriangle size={30} /></div>
+        <div className="dg-sistema-titulo">Notificación</div>
+        <p className="dg-sistema-bajada">
+          {misiones.length === 1
+            ? `Llegó una ${(MISION_RANGOS[misiones[0].rango] || MISION_RANGOS.normal).label.toLowerCase()}.`
+            : `Llegaron ${misiones.length} misiones para hoy.`}
+        </p>
+        <div className="dg-sistema-lista">
+          {misiones.map((m) => (
+            <div className={`dg-sistema-item ${m.rango === "urgente" ? "dg-sistema-item-urgente" : ""}`} key={m.id}>
+              <div className="dg-sistema-item-cab">
+                <span className="dg-sistema-rango">{(MISION_RANGOS[m.rango] || MISION_RANGOS.normal).label}</span>
+                {m.persona && <span className="dg-sistema-para">para {m.persona}</span>}
+              </div>
+              <strong>{m.titulo}</strong>
+              {m.detalle && <p>{m.detalle}</p>}
+            </div>
+          ))}
+        </div>
+        <p className="dg-sistema-pie">Queda en «Mi turno» hasta que la marques hecha.</p>
+        <button type="button" className="dg-sistema-btn" onClick={onAceptar} autoFocus>Aceptar</button>
+      </div>
+    </div>
+  );
+}
+
+// Las misiones del día adentro de «Mi turno», para marcarlas hechas.
+function MisionesDelTurno({ misiones, persona, onHecha }) {
+  if (!misiones.length) return null;
+  return (
+    <div className="dg-section-card dg-misiones-turno">
+      <div className="dg-section-header"><Sparkles size={14} /> Misiones de hoy</div>
+      <ul className="dg-misiones-lista">
+        {misiones.map((m) => {
+          const hecha = misionHecha(m, persona);
+          const quien = hecha ? quienLaHizo(m) : "";
+          return (
+            <li key={m.id} className={hecha ? "dg-mision-ok" : ""}>
+              <label className="dg-mision-fila">
+                <input type="checkbox" checked={hecha} onChange={() => onHecha(m)} />
+                <span className="dg-mision-texto">
+                  <strong>{m.titulo}</strong>
+                  {m.detalle && <small>{m.detalle}</small>}
+                  {hecha && quien && <small className="dg-mision-quien">La marcó {quien}</small>}
+                </span>
+                {m.rango === "urgente" && <span className="dg-mision-urgente">Urgente</span>}
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+// Donde Facundo las escribe. Arranca en mañana, que es como las va a cargar.
+function MisionesPanel({ misiones, onChange, sectors, session }) {
+  const lista = Array.isArray(misiones) ? misiones : [];
+  const hoy = isoLocal(hoyLocal());
+  const manana = isoLocal(sumarDias(hoyLocal(), 1));
+  const [fecha, setFecha] = useState(manana);
+  const [sector, setSector] = useState("fabrica");
+  const [quien, setQuien] = useState("");
+  const [titulo, setTitulo] = useState("");
+  const [detalle, setDetalle] = useState("");
+  const [rango, setRango] = useState("normal");
+
+  const sectoresPosibles = (sectors || []).filter((s) => tieneTurno(s.id));
+  const valido = !!titulo.trim() && !!fecha;
+
+  function agregar() {
+    if (!valido) return;
+    onChange([{
+      id: uid(), fecha, sector, persona: quien.trim(), titulo: titulo.trim(),
+      detalle: detalle.trim(), rango, creado: new Date().toISOString(),
+      creadoPor: session?.nombre || "Admin", aceptada: {}, hecha: {}, hechaPor: {},
+    }, ...lista]);
+    setTitulo(""); setDetalle("");
+  }
+  function borrar(id) {
+    if (!window.confirm("¿Borrar esta misión?")) return;
+    onChange(lista.filter((m) => m.id !== id));
+  }
+
+  // Agrupadas por día, de la más cercana a la más lejana. Lo viejo se esconde.
+  const [verPasadas, setVerPasadas] = useState(false);
+  const porDia = new Map();
+  lista.forEach((m) => { if (!porDia.has(m.fecha)) porDia.set(m.fecha, []); porDia.get(m.fecha).push(m); });
+  const dias = [...porDia.keys()].sort();
+  const proximos = dias.filter((d) => d >= hoy);
+  const pasados = dias.filter((d) => d < hoy).reverse();
+  const nombreSector = (id) => (sectoresPosibles.find((s) => s.id === id) || {}).name || id;
+
+  const bloqueDeDia = (d) => (
+    <div className="dg-mision-dia" key={d}>
+      <div className="dg-mision-dia-cab">
+        <strong>{d === hoy ? "Hoy" : d === manana ? "Mañana" : diaYmes(d)}</strong>
+        <span>{porDia.get(d).length} {porDia.get(d).length === 1 ? "misión" : "misiones"}</span>
+      </div>
+      <ul className="dg-misiones-lista">
+        {porDia.get(d).map((m) => {
+          const hechaPor = Object.values(m.hechaPor || {});
+          return (
+            <li key={m.id}>
+              <div className="dg-mision-fila">
+                <span className="dg-mision-texto">
+                  <strong>{m.titulo}</strong>
+                  {m.detalle && <small>{m.detalle}</small>}
+                  <small className="dg-mision-quien">
+                    {nombreSector(m.sector)}{m.persona ? ` · solo para ${m.persona}` : " · todo el sector"}
+                    {hechaPor.length ? ` · hecha por ${hechaPor.join(", ")}` : ""}
+                  </small>
+                </span>
+                {m.rango === "urgente" && <span className="dg-mision-urgente">Urgente</span>}
+                {hechaPor.length > 0 && <span className="dg-mision-hecha-chip">Hecha</span>}
+                <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrar(m.id)} title="Borrar"><Trash2 size={14} /></button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+
+  return (
+    <div className="dg-page">
+      <div className="dg-section-card">
+        <div className="dg-section-header"><Sparkles size={14} /> Escribir una misión</div>
+        <p className="dg-hint" style={{ marginTop: 0 }}>
+          Le aparece como un cartel apenas entra al sector, el día que vos pongas. Si no escribís nada,
+          no les aparece nada — por eso cuando sale, saben que es algo de verdad.
+        </p>
+        <div className="dg-field-grid">
+          <Field label="Para qué día"><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+          <Field label="Sector">
+            <select value={sector} onChange={(e) => setSector(e.target.value)}>
+              {sectoresPosibles.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+            </select>
+          </Field>
+          <Field label="Para quién">
+            <input value={quien} onChange={(e) => setQuien(e.target.value)} placeholder="Vacío = todo el sector" />
+          </Field>
+          <Field label="Rango">
+            <select value={rango} onChange={(e) => setRango(e.target.value)}>
+              {Object.entries(MISION_RANGOS).map(([k, x]) => (<option key={k} value={k}>{x.label}</option>))}
+            </select>
+          </Field>
+        </div>
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="La misión"><input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: dejar separados los espejos del pedido 812" /></Field>
+        </div>
+        <div className="dg-field-grid" style={{ marginTop: 12 }}>
+          <Field label="Detalle (opcional)"><input value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Lo que haga falta aclarar" /></Field>
+        </div>
+        <div className="dg-form-actions">
+          <button type="button" className="dg-btn-primary" onClick={agregar} disabled={!valido}><Plus size={15} /> Agregar misión</button>
+        </div>
+      </div>
+
+      {proximos.length === 0 && <div className="dg-empty">No hay misiones escritas. Nadie va a ver ningún cartel.</div>}
+      {proximos.map(bloqueDeDia)}
+
+      {pasados.length > 0 && (
+        <div className="dg-section-card">
+          <button type="button" className="dg-anotador-historial-btn" onClick={() => setVerPasadas((v) => !v)} aria-expanded={verPasadas}>
+            <ChevronRight size={14} className={verPasadas ? "dg-presu-chevron-on" : ""} /> Misiones de días pasados ({pasados.reduce((n, d) => n + porDia.get(d).length, 0)})
+          </button>
+          {verPasadas && pasados.map(bloqueDeDia)}
+        </div>
+      )}
     </div>
   );
 }
@@ -17192,7 +17430,7 @@ function SectorPage({
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "",
-  guias = {}, onChangeGuias, turnos = [], onChangeTurnos,
+  guias = {}, onChangeGuias, turnos = [], onChangeTurnos, misiones = [], onChangeMisiones,
   listasBloqueadas = false, onCambiarBloqueoListas,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
@@ -17200,6 +17438,31 @@ function SectorPage({
 }) {
   const tabs = (SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }]).filter((t) => !t.soloAdmin || isAdmin);
   const [subpage, setSubpage] = useState(tabs[0].id);
+  // Las misiones de hoy que esta persona todavía no vio. El cartel sale una
+  // sola vez; después quedan en «Mi turno» hasta marcarlas hechas.
+  const personaMision = session?.nombre || "";
+  const hoyMision = isoLocal(hoyLocal());
+  const misionesHoy = misionesDelDia(misiones, hoyMision, sector.id, personaMision);
+  const [misionCerrada, setMisionCerrada] = useState(false);
+  const porVer = misionCerrada ? [] : misionesSinVer(misiones, hoyMision, sector.id, personaMision);
+  function aceptarMisiones() {
+    const clave = String(personaMision || "").trim().toLowerCase();
+    setMisionCerrada(true);
+    if (!clave || !porVer.length) return;
+    const ids = new Set(porVer.map((m) => m.id));
+    onChangeMisiones((misiones || []).map((m) => (ids.has(m.id)
+      ? { ...m, aceptada: { ...(m.aceptada || {}), [clave]: new Date().toISOString() } } : m)));
+  }
+  function marcarMisionHecha(m) {
+    const clave = String(personaMision || "").trim().toLowerCase();
+    if (!clave) return;
+    const hecha = { ...(m.hecha || {}) };
+    const hechaPor = { ...(m.hechaPor || {}) };
+    if (hecha[clave]) { delete hecha[clave]; delete hechaPor[clave]; }
+    else { hecha[clave] = new Date().toISOString(); hechaPor[clave] = personaMision; }
+    onChangeMisiones((misiones || []).map((x) => (x.id === m.id ? { ...x, hecha, hechaPor } : x)));
+  }
+
   // En fábrica no se ficha a mano: apenas entran a la pantalla se les abre el
   // turno. El cierre sí lo hacen ellos a la tarde, y si se olvidan se cierra
   // solo a las 19:00. El administrador no ficha: entra a mirar.
@@ -17347,6 +17610,18 @@ function SectorPage({
       )}
 
       {subpage === "numeros" && sector.id === "fabrica" && isAdmin && <NumerosFabricaPanel pedidos={pedidos} />}
+
+      {subpage === "misiones" && sector.id === "administracion" && isAdmin && (
+        <MisionesPanel misiones={misiones} onChange={onChangeMisiones} sectors={sectors} session={session} />
+      )}
+
+      {porVer.length > 0 && personaMision && (
+        <MisionDelSistema misiones={porVer} persona={personaMision} onAceptar={aceptarMisiones} />
+      )}
+
+      {subpage === "turno" && tieneTurno(sector.id) && misionesHoy.length > 0 && (
+        <MisionesDelTurno misiones={misionesHoy} persona={personaMision} onHecha={marcarMisionHecha} />
+      )}
 
       {subpage === "turno" && tieneTurno(sector.id) && (
         canSeePedidos ? (
@@ -19235,6 +19510,75 @@ function Style() {
       .dg-agenda-mes b { display:block; margin-top:3px; font-size:12px; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; }
       .dg-agenda-mes-hoy { border-color:var(--dg-accent); background:color-mix(in srgb, var(--dg-accent) 10%, var(--dg-bg)); }
       .dg-agenda-pie-nota { margin:4px 0 0; }
+      /* ---- La notificación del Sistema ---- */
+      /* Fondo oscuro propio, igual en los dos temas: el cartel tiene que verse
+         como una pantalla aparte, no como una parte más de la app. */
+      .dg-sistema-fondo { position:fixed; inset:0; z-index:120; display:flex; align-items:center; justify-content:center; padding:20px;
+        background:rgba(4,8,18,.82); backdrop-filter:blur(3px); animation:dg-sistema-entra .18s ease-out; }
+      .dg-sistema { position:relative; width:min(520px, 100%); max-height:86vh; overflow-y:auto; padding:30px 26px 24px; text-align:center;
+        color:#D8F2FF; border:1px solid rgba(110,208,255,.55); border-radius:4px;
+        background:linear-gradient(180deg, rgba(10,30,56,.97), rgba(6,18,36,.97));
+        box-shadow:0 0 0 1px rgba(110,208,255,.18), 0 0 34px rgba(80,180,255,.3), inset 0 0 50px rgba(60,150,230,.12);
+        animation:dg-sistema-abre .22s cubic-bezier(.2,.9,.3,1.2); }
+      .dg-sistema-urgente { border-color:rgba(255,150,120,.6); box-shadow:0 0 0 1px rgba(255,150,120,.2), 0 0 34px rgba(255,120,90,.3), inset 0 0 50px rgba(230,110,80,.12); }
+
+      /* Las cuatro esquinas marcadas, como las ventanas del juego */
+      .dg-sistema-esquina { position:absolute; width:16px; height:16px; border:2px solid rgba(130,215,255,.9); }
+      .dg-sistema-urgente .dg-sistema-esquina { border-color:rgba(255,165,135,.9); }
+      .dg-sistema-e1 { top:6px; left:6px; border-right:0; border-bottom:0; }
+      .dg-sistema-e2 { top:6px; right:6px; border-left:0; border-bottom:0; }
+      .dg-sistema-e3 { bottom:6px; left:6px; border-right:0; border-top:0; }
+      .dg-sistema-e4 { bottom:6px; right:6px; border-left:0; border-top:0; }
+
+      .dg-sistema-alerta { display:flex; justify-content:center; color:#8FDCFF; filter:drop-shadow(0 0 10px rgba(110,208,255,.75)); animation:dg-sistema-late 2.4s ease-in-out infinite; }
+      .dg-sistema-urgente .dg-sistema-alerta { color:#FFB199; filter:drop-shadow(0 0 10px rgba(255,150,120,.75)); }
+      .dg-sistema-titulo { margin-top:8px; font-size:21px; font-weight:800; letter-spacing:5px; text-transform:uppercase; color:#EAF9FF; text-shadow:0 0 14px rgba(110,208,255,.6); }
+      .dg-sistema-urgente .dg-sistema-titulo { text-shadow:0 0 14px rgba(255,150,120,.6); }
+      .dg-sistema-bajada { margin:6px 0 16px; font-size:13px; letter-spacing:.4px; color:#9FC8E4; }
+
+      .dg-sistema-lista { display:flex; flex-direction:column; gap:9px; text-align:left; }
+      .dg-sistema-item { padding:12px 14px; border:1px solid rgba(110,208,255,.3); border-left:3px solid #6ED0FF; border-radius:3px; background:rgba(16,42,74,.6); }
+      .dg-sistema-item-urgente { border-color:rgba(255,150,120,.35); border-left-color:#FF9A78; background:rgba(60,26,22,.5); }
+      .dg-sistema-item-cab { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+      .dg-sistema-rango { font-size:9.5px; font-weight:800; letter-spacing:2px; text-transform:uppercase; color:#6ED0FF; }
+      .dg-sistema-item-urgente .dg-sistema-rango { color:#FF9A78; }
+      .dg-sistema-para { font-size:10px; color:#8BAFC9; }
+      .dg-sistema-item strong { display:block; font-size:15px; color:#F2FBFF; line-height:1.3; }
+      .dg-sistema-item p { margin:5px 0 0; font-size:12.5px; color:#A9CDE6; line-height:1.45; }
+      .dg-sistema-pie { margin:14px 0 0; font-size:11px; letter-spacing:.3px; color:#7FA4BF; }
+
+      .dg-sistema-btn { margin-top:14px; width:100%; min-height:44px; font-size:13px; font-weight:800; letter-spacing:3px; text-transform:uppercase; cursor:pointer;
+        color:#061826; border:0; border-radius:3px; background:linear-gradient(180deg,#9FE4FF,#5FC2F0); box-shadow:0 0 20px rgba(110,208,255,.45); }
+      .dg-sistema-btn:hover { filter:brightness(1.07); }
+      .dg-sistema-btn:focus-visible { outline:2px solid #EAF9FF; outline-offset:2px; }
+      .dg-sistema-urgente .dg-sistema-btn { color:#2A0F08; background:linear-gradient(180deg,#FFCBB8,#FF9A78); box-shadow:0 0 20px rgba(255,150,120,.45); }
+
+      @keyframes dg-sistema-entra { from { opacity:0; } to { opacity:1; } }
+      @keyframes dg-sistema-abre { from { opacity:0; transform:scale(.94); } to { opacity:1; transform:scale(1); } }
+      @keyframes dg-sistema-late { 0%,100% { opacity:1; } 50% { opacity:.55; } }
+      @media (prefers-reduced-motion: reduce) {
+        .dg-sistema-fondo, .dg-sistema { animation:none; }
+        .dg-sistema-alerta { animation:none; }
+      }
+
+      /* ---- Las misiones adentro de «Mi turno» y en la pantalla del admin ---- */
+      .dg-misiones-turno { border-color:rgba(var(--dg-accent-rgb),.4); }
+      .dg-misiones-lista { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-mision-fila { display:flex; align-items:flex-start; gap:10px; padding:9px 11px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:9px; background:var(--dg-bg); cursor:pointer; }
+      .dg-mision-fila input[type="checkbox"] { margin-top:2px; flex:none; }
+      .dg-mision-texto { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+      .dg-mision-texto strong { font-size:13.5px; }
+      .dg-mision-texto small { font-size:11.5px; color:var(--dg-text-dim); }
+      .dg-mision-quien { font-style:italic; }
+      .dg-mision-ok .dg-mision-texto strong { text-decoration:line-through; color:var(--dg-text-dim); }
+      .dg-mision-ok .dg-mision-fila { border-color:rgba(var(--dg-success-rgb),.4); background:color-mix(in srgb, var(--dg-success) 8%, var(--dg-bg)); }
+      .dg-mision-urgente { flex:none; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; padding:2px 8px; border-radius:99px; color:var(--dg-danger); border:1px solid rgba(var(--dg-danger-rgb),.4); }
+      .dg-mision-hecha-chip { flex:none; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; padding:2px 8px; border-radius:99px; color:var(--dg-success); border:1px solid rgba(var(--dg-success-rgb),.4); }
+      .dg-mision-dia { margin-bottom:12px; }
+      .dg-mision-dia-cab { display:flex; align-items:baseline; gap:9px; margin-bottom:4px; }
+      .dg-mision-dia-cab strong { font-size:13.5px; }
+      .dg-mision-dia-cab span { font-size:11.5px; color:var(--dg-text-dim); }
+
       /* ---- Archivo de turnos: carpetas por persona y por mes ---- */
       .dg-archivo-lista { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
       .dg-archivo-persona { border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:10px; overflow:hidden; background:var(--dg-bg); }
