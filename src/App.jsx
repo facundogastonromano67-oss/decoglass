@@ -11305,6 +11305,14 @@ const MISION_RANGOS = {
   urgente: { label: "Misión urgente", color: "danger" },
 };
 
+// Lo que dice el cartelito de arriba de cada aviso. Si no escribió nada, usa
+// el nombre del rango; si escribió algo, manda lo suyo: puede decir «ORDEN
+// DIRECTA», «AVISO» o lo que se le cante.
+function etiquetaDeMision(m) {
+  const propia = String(m?.etiqueta || "").trim();
+  return propia || (MISION_RANGOS[m?.rango] || MISION_RANGOS.normal).label;
+}
+
 function misionesDelDia(misiones, fechaIso, sectorId, persona) {
   const quien = String(persona || "").trim().toLowerCase();
   return (misiones || []).filter((m) => {
@@ -11781,14 +11789,14 @@ function MisionDelSistema({ misiones, persona, onAceptar, vistaPrevia }) {
         <div className="dg-sistema-titulo">Notificación</div>
         <p className="dg-sistema-bajada">
           {misiones.length === 1
-            ? `Llegó una ${(MISION_RANGOS[misiones[0].rango] || MISION_RANGOS.normal).label.toLowerCase()}.`
-            : `Llegaron ${misiones.length} misiones para hoy.`}
+            ? `Llegó una ${etiquetaDeMision(misiones[0]).toLowerCase()}.`
+            : `Llegaron ${misiones.length} avisos para hoy.`}
         </p>
         <div className="dg-sistema-lista">
           {misiones.map((m) => (
             <div className={`dg-sistema-item ${m.rango === "urgente" ? "dg-sistema-item-urgente" : ""}`} key={m.id}>
               <div className="dg-sistema-item-cab">
-                <span className="dg-sistema-rango">{(MISION_RANGOS[m.rango] || MISION_RANGOS.normal).label}</span>
+                <span className="dg-sistema-rango">{etiquetaDeMision(m)}</span>
                 {m.persona && <span className="dg-sistema-para">para {m.persona}</span>}
               </div>
               <strong>{m.titulo}</strong>
@@ -11850,6 +11858,7 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
   const [titulo, setTitulo] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [rango, setRango] = useState("normal");
+  const [etiqueta, setEtiqueta] = useState("");
 
   const sectoresPosibles = (sectors || []).filter((s) => tieneTurno(s.id));
   // La gente de ese sector, de los usuarios cargados. Se agrega el que esté
@@ -11866,14 +11875,14 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
   // para poder mostrarlo con el mismo componente que ve el operario.
   const borrador = {
     id: "vista-previa", fecha, sector, persona: quien, titulo: titulo.trim() || "Así va a salir el título",
-    mensaje, rango, aceptada: {}, hecha: {}, hechaPor: {},
+    mensaje, rango, etiqueta, aceptada: {}, hecha: {}, hechaPor: {},
   };
 
   function agregar() {
     if (!valido) return;
     onChange([{
       id: uid(), fecha, sector, persona: quien.trim(), titulo: titulo.trim(),
-      mensaje: mensaje.trim(), rango, creado: new Date().toISOString(),
+      mensaje: mensaje.trim(), rango, etiqueta: etiqueta.trim(), creado: new Date().toISOString(),
       creadoPor: session?.nombre || "Admin", aceptada: {}, hecha: {}, hechaPor: {},
     }, ...lista]);
     setTitulo(""); setMensaje("");
@@ -11945,10 +11954,14 @@ function MisionesPanel({ misiones, onChange, sectors, session, usuarios = [] }) 
                 {gente.map((n) => (<option key={n} value={n}>{n}</option>))}
               </select>
             </Field>
-            <Field label="Rango">
+            <Field label="Color del cartel">
               <select value={rango} onChange={(e) => setRango(e.target.value)}>
                 {Object.entries(MISION_RANGOS).map(([k, x]) => (<option key={k} value={k}>{x.label}</option>))}
               </select>
+            </Field>
+            <Field label="Qué dice arriba">
+              <input value={etiqueta} onChange={(e) => setEtiqueta(e.target.value)}
+                placeholder={(MISION_RANGOS[rango] || MISION_RANGOS.normal).label} />
             </Field>
           </div>
           {gente.length === 0 && (
