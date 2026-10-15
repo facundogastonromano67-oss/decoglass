@@ -958,6 +958,31 @@ function igLink(user) {
   return clean ? `https://instagram.com/${clean}` : null;
 }
 
+// Cuándo se le puede enviar. Si ya tiene fecha coordinada, esa; si no, se
+// propone el próximo día hábil, porque el domingo no sale nadie.
+// OJO: es una PROPUESTA, no una promesa — el mensaje lo dice así («si te queda
+// bien, confirmanos»). Prometerle una fecha que nadie planificó sería peor que
+// no decir nada.
+function proximoDiaDeEnvio(desde = new Date()) {
+  const d = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate() + 1);
+  // 0 = domingo. El sábado sí se reparte.
+  while (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  return isoLocal(d);
+}
+function fechaDeEnvioParaElCliente(p) {
+  const puesta = p?.fechaEnvio;
+  if (puesta) return { fecha: puesta, propuesta: false };
+  return { fecha: proximoDiaDeEnvio(), propuesta: true };
+}
+// «jueves 16 oct»
+function fechaLargaCorta(iso) {
+  if (!iso) return "";
+  const [y, m, d] = String(iso).split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  const dia = DIAS_PARA_MOSTRAR[new Date(y, m - 1, d).getDay()] || "";
+  return `${dia ? dia.toLowerCase() + " " : ""}${fechaEntregaCorta(iso) || ""}`.trim();
+}
+
 function entregaWaLink(p) {
   const base = waLink(p.celular);
   if (!base) return null;
@@ -969,7 +994,15 @@ function entregaWaLink(p) {
   } else if (p.metodo === "Colocación") {
     cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo. ¿Coordinamos día y horario para la colocación?\n\n${saldoTexto}`;
   } else {
-    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo para el envío. Por favor confirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
+    // Lo primero que quiere saber el cliente es CUÁNDO lo recibe, no que esté
+    // listo. Si la fecha ya está coordinada se la damos; si no, se le propone
+    // una y se le pide que confirme.
+    const { fecha, propuesta } = fechaDeEnvioParaElCliente(p);
+    const cuando = fechaLargaCorta(fecha);
+    const linea = propuesta
+      ? `te lo podemos enviar el ${cuando}. Si te queda bien, confirmanos y lo dejamos agendado.`
+      : `tu envío quedó agendado para el ${cuando}.`;
+    cuerpo = `tu espejo ${p.ancho}×${p.alto} cm ya está listo y ${linea}\n\nConfirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
   }
   const mensaje = `Hola${nombre}! 👋 ${cuerpo}`;
   return `${base}?text=${encodeURIComponent(mensaje)}`;
@@ -1213,6 +1246,16 @@ function computeQuote(inputs, cfg) {
 
 // Arma el texto para el cliente. Con un solo espejo sale igual que siempre;
 // con varios, los numera y agrega el total abajo.
+// Un espejo redondo no tiene ancho y alto: tiene diámetro. Decir «80 × 80 cm»
+// confunde al cliente y encima deja lugar a que se lo imagine cuadrado.
+// Si por lo que sea el ancho y el alto NO coinciden, se muestran los dos: un
+// redondo con medidas distintas es un dato raro que hay que poder ver.
+function medidaParaTexto(ancho, alto, display) {
+  const a = Number(ancho) || 0, h = Number(alto) || 0;
+  if (display === "Redondo" && a > 0 && a === h) return `${a} cm Diam.`;
+  return `${ancho} × ${alto} cm`;
+}
+
 function buildWhatsappMessage(datos, lineas, totales) {
   const { cliente, envioInterior } = datos;
   const cierre = envioInterior === "Sí"
@@ -1224,7 +1267,7 @@ function buildWhatsappMessage(datos, lineas, totales) {
   if (lineas.length === 1) {
     const { espejo, result } = lineas[0];
     const unidades = Number(espejo.cantidad) || 1;
-    let msg = `${saludo}\n\nEspejo ${result.tipoComercialDisplay} retroiluminado\n• Modelo: ${result.modeloComercial}\n\n📏 Medida: ${espejo.ancho} × ${espejo.alto} cm\n\n`;
+    let msg = `${saludo}\n\nEspejo ${result.tipoComercialDisplay} retroiluminado\n• Modelo: ${result.modeloComercial}\n\n📏 Medida: ${medidaParaTexto(espejo.ancho, espejo.alto, result.tipoComercialDisplay)}\n\n`;
     if (result.precio3Cuotas) msg += `💰 ${fmtMoney(roundTo1000(result.precio3Cuotas))} - Hasta 3 cuotas\n`;
     if (result.precioTransferencia) msg += `💰 ${fmtMoney(roundTo1000(result.precioTransferencia))} - Transferencia`;
     if (unidades > 1) msg += `\n\nPor las ${unidades} unidades: ${fmtMoney(roundTo1000(result.totalPedidoTransferencia))} - Transferencia`;
@@ -1239,7 +1282,7 @@ function buildWhatsappMessage(datos, lineas, totales) {
     msg += `\n${i + 1}) ${etiquetaEspejo(espejo, i).toUpperCase()}\n`;
     msg += `Espejo ${result.tipoComercialDisplay} retroiluminado\n`;
     msg += `• Modelo: ${result.modeloComercial}\n`;
-    msg += `📏 Medida: ${espejo.ancho} × ${espejo.alto} cm${unidades > 1 ? ` — ${unidades} unidades` : ""}\n`;
+    msg += `📏 Medida: ${medidaParaTexto(espejo.ancho, espejo.alto, result.tipoComercialDisplay)}${unidades > 1 ? ` — ${unidades} unidades` : ""}\n`;
     if (result.precio3Cuotas) msg += `💰 ${fmtMoney(roundTo1000(result.precio3Cuotas))} - Hasta 3 cuotas\n`;
     if (result.precioTransferencia) msg += `💰 ${fmtMoney(roundTo1000(result.precioTransferencia))} - Transferencia\n`;
     if (unidades > 1) msg += `   (${fmtMoney(roundTo1000(result.totalPedidoTransferencia))} por las ${unidades})\n`;
@@ -2706,6 +2749,14 @@ function labelMes(ym) {
 
 // Fecha de entrega en formato corto para el equipo: "27 ago", sin año (no
 // hace falta para pedidos del año en curso, que es lo único que se ve acá).
+// «15 de octubre de 2026». Es como está escrita la fecha en la plantilla del
+// presupuesto de siempre.
+function fechaEnLetras(d) {
+  const f = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(f.getTime())) return "";
+  return `${f.getDate()} de ${ANOTADOR_MESES[f.getMonth()]} de ${f.getFullYear()}`;
+}
+
 function fechaEntregaCorta(fechaISO) {
   if (!fechaISO) return null;
   const [y, m, d] = fechaISO.split("-").map(Number);
@@ -17302,7 +17353,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
       id: uid(), fecha: new Date().toISOString().slice(0, 10),
       cliente: cliente || "Sin nombre", celular: celular || "",
       resumen: uno
-        ? `${uno.espejo.tipoProducto} ${uno.espejo.ancho}×${uno.espejo.alto} cm${uno.espejo.sinLed ? " sin LED" : ""}${cant(uno.espejo) > 1 ? ` ×${cant(uno.espejo)}` : ""}`
+        ? `${uno.espejo.tipoProducto} ${medidaParaTexto(uno.espejo.ancho, uno.espejo.alto, uno.result.tipoComercialDisplay)}${uno.espejo.sinLed ? " sin LED" : ""}${cant(uno.espejo) > 1 ? ` ×${cant(uno.espejo)}` : ""}`
         : `${lineas.length} espejos · ${unidades} unidad${unidades === 1 ? "" : "es"}`,
       espejos: lineas.map((l, i) => ({
         ubicacion: etiquetaEspejo(l.espejo, i), tipoProducto: l.espejo.tipoProducto,
@@ -17560,30 +17611,67 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
         </div>
       )}
 
-      <div className="dg-print-area">
-        <div className="dg-print-head">
-          <div className="dg-print-brand">DECOGLASS</div>
-          <div className="dg-print-sub">Espejos LED — Presupuesto</div>
-        </div>
-        <div className="dg-print-row"><span>Fecha</span><span>{new Date().toLocaleDateString("es-AR")}</span></div>
-        {cliente && <div className="dg-print-row"><span>Cliente</span><span>{cliente}</span></div>}
-        {lineas.map((l, i) => (
-          <div className="dg-print-row" key={l.espejo.id}>
-            <span>{etiquetaEspejo(l.espejo, i)}</span>
-            <span>
-              Espejo {l.result.tipoComercialDisplay} · {l.espejo.ancho} × {l.espejo.alto} cm
-              {cant(l.espejo) > 1 ? ` · ${cant(l.espejo)} u` : ""} — {l.result.modeloComercial}
-              {" — "}{fmtMoney(roundTo1000(l.result.totalPedidoTransferencia))}
-            </span>
+      {/* La hoja del presupuesto. Sigue la plantilla de siempre —membrete,
+          «Sres:», el detalle, la forma de pago y la firma— pero armada para
+          que entren varios espejos sin que se desarme, y con los números
+          alineados en columna, que en la plantilla a mano quedaban corridos. */}
+      <div className="dg-print-area dg-presu-hoja">
+        <div className="dg-presu-membrete">
+          <img src="/logo-decoglass.png" alt="DECOGLASS" className="dg-presu-logo" />
+          <div className="dg-presu-datos">
+            <div>José Mármol 1660 — CP 1255 — Capital Federal</div>
+            <div>Cel. 11 5951-3250 · WhatsApp 11 7059-4088</div>
+            <div>decoglass@hotmail.com</div>
           </div>
-        ))}
-        <div className="dg-print-row"><span>Tiempo de fabricación</span><span>{tiempoFabricacion}</span></div>
-        <div className="dg-print-price">
-          <div>{fmtMoney(roundTo1000(totalTransferencia))} <small>transferencia</small></div>
-          {total3Cuotas && <div>{fmtMoney(roundTo1000(total3Cuotas))} <small>hasta 3 cuotas</small></div>}
         </div>
-        <div className="dg-print-terms">
-          {envioInterior === "Sí" ? "Se puede encargar con un anticipo del 50% y el saldo restante antes del despacho." : "Se puede encargar con un anticipo del 50% y el saldo restante al momento de retirar o antes de la entrega."}
+        <div className="dg-presu-linea" />
+
+        <div className="dg-presu-fecha">CABA, {fechaEnLetras(new Date())}</div>
+        <div className="dg-presu-sres">Sres: <strong>{cliente || "—"}</strong></div>
+        <h1 className="dg-presu-titulo">Presupuesto</h1>
+
+        {lineas.map((l, i) => {
+          const unidades = cant(l.espejo);
+          return (
+            <div className="dg-presu-item" key={l.espejo.id}>
+              {lineas.length > 1 && <div className="dg-presu-item-nro">{i + 1}. {etiquetaEspejo(l.espejo, i)}</div>}
+              <div className="dg-presu-item-nombre">Espejo {l.result.tipoComercialDisplay} retroiluminado</div>
+              <ul className="dg-presu-item-datos">
+                <li><span>Modelo</span><b>{l.result.modeloComercial}</b></li>
+                <li><span>Medida</span><b>{medidaParaTexto(l.espejo.ancho, l.espejo.alto, l.result.tipoComercialDisplay)}</b></li>
+                {unidades > 1 && <li><span>Cantidad</span><b>{unidades} unidades</b></li>}
+              </ul>
+              <div className="dg-presu-precios">
+                {l.result.precio3Cuotas > 0 && (
+                  <div><span>Hasta 3 cuotas</span><b>{fmtMoney(roundTo1000(l.result.precio3Cuotas))}</b></div>
+                )}
+                <div><span>Transferencia</span><b>{fmtMoney(roundTo1000(l.result.precioTransferencia))}</b></div>
+                {unidades > 1 && (
+                  <div className="dg-presu-porunidades">
+                    <span>Por las {unidades} unidades</span><b>{fmtMoney(roundTo1000(l.result.totalPedidoTransferencia))}</b>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {lineas.length > 1 && (
+          <div className="dg-presu-total">
+            {total3Cuotas > 0 && <div><span>Total hasta 3 cuotas</span><b>{fmtMoney(roundTo1000(total3Cuotas))}</b></div>}
+            <div className="dg-presu-total-fuerte"><span>Total transferencia</span><b>{fmtMoney(roundTo1000(totalTransferencia))}</b></div>
+          </div>
+        )}
+
+        <div className="dg-presu-condiciones">
+          <div><span>Tiempo de fabricación</span><b>{tiempoFabricacion}</b></div>
+          <div><span>Envío</span><b>{envioInterior === "Sí" ? "Al interior, por Vía Cargo (a cargo del cliente)" : "Sin cargo en CABA"}</b></div>
+          <div><span>Forma de pago</span><b>50% de anticipo y el saldo restante {envioInterior === "Sí" ? "antes del despacho" : "antes del envío"}</b></div>
+        </div>
+
+        <div className="dg-presu-firma">
+          <div>Sergio Romano</div>
+          <div className="dg-presu-firma-empresa">DECOGLASS S.R.L.</div>
         </div>
       </div>
     </div>
@@ -20297,12 +20385,6 @@ function Style() {
         .dg-print-area { display:block; position:absolute; top:0; left:0; width:100%; padding:24px; background:#fff; color:#111; font-family:'Jost',sans-serif; }
         .dg-print-brand { font-family:'Jost', sans-serif; font-weight:700; font-size:24px; color:#7C4A27; letter-spacing:1px; }
         .dg-print-sub { font-size:13px; color:#555; margin-bottom:20px; }
-        .dg-print-row { display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:8px 0; font-size:13px; }
-        .dg-print-row span:first-child { color:#666; }
-        .dg-print-price { margin:20px 0; padding:16px; border:2px solid #7C4A27; border-radius:12px; }
-        .dg-print-price div { font-family:'JetBrains Mono', monospace; font-size:18px; font-weight:700; color:#7C4A27; margin-bottom:4px; }
-        .dg-print-price small { font-size:13px; color:#555; font-weight:400; }
-        .dg-print-terms { margin-top:16px; font-size:13px; color:#555; }
         .dg-print-remito-total { margin-top:14px; font-size:13px; color:#111; }
         .dg-print-remito-total strong { font-family:'JetBrains Mono', monospace; font-size:15px; }
         .dg-print-firmas { display:flex; gap:40px; margin-top:52px; }
@@ -20312,6 +20394,48 @@ function Style() {
         .dg-print-table th, .dg-print-table td { border-bottom:1px solid #ddd; padding:6px 8px; text-align:left; }
         .dg-print-table th { color:#555; font-weight:600; text-transform:uppercase; font-size:11px; }
         .dg-print-total { margin-top:14px; font-family:'JetBrains Mono', monospace; font-size:15px; font-weight:700; color:#7C4A27; text-align:right; }
+        /* ---- La hoja del presupuesto ---- */
+        /* Va adentro del @media print: estos colores son tinta sobre papel
+           blanco, no tienen que seguir el tema de la app. */
+        .dg-presu-hoja { padding:34px 38px; font-family:'Jost', sans-serif; color:#1A1A1A; }
+        .dg-presu-membrete { display:flex; align-items:center; gap:18px; }
+        .dg-presu-logo { width:92px; height:auto; }
+        .dg-presu-datos { font-size:11.5px; line-height:1.55; color:#444; }
+        .dg-presu-linea { height:3px; margin:12px 0 22px; background:linear-gradient(90deg,#4A9D8F 0%,#4A9D8F 50%,#4B7C98 50%,#4B7C98 100%); }
+        .dg-presu-fecha { font-size:12px; color:#555; text-align:right; }
+        .dg-presu-sres { margin-top:16px; font-size:13.5px; }
+        .dg-presu-titulo { margin:18px 0 16px; font-size:26px; font-weight:700; letter-spacing:.5px; }
+
+        .dg-presu-item { margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid #E4E4E4; break-inside:avoid; }
+        .dg-presu-item:last-of-type { border-bottom:0; }
+        .dg-presu-item-nro { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:#4B7C98; margin-bottom:3px; }
+        .dg-presu-item-nombre { font-size:16px; font-weight:600; margin-bottom:7px; }
+        .dg-presu-item-datos { list-style:none; margin:0 0 9px; padding:0; }
+        .dg-presu-item-datos li { display:flex; gap:10px; font-size:13px; padding:2px 0; }
+        .dg-presu-item-datos span { min-width:92px; color:#666; }
+        .dg-presu-item-datos b { font-weight:600; }
+
+        /* Los precios en columna: en la plantilla a mano quedaban corridos y
+           costaba comparar 3 cuotas contra transferencia. */
+        .dg-presu-precios { margin-top:6px; }
+        .dg-presu-precios > div { display:flex; justify-content:space-between; align-items:baseline; gap:16px; padding:4px 0; font-size:13.5px; max-width:380px; }
+        .dg-presu-precios span { color:#555; }
+        .dg-presu-precios b { font-family:'JetBrains Mono', monospace; font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; }
+        .dg-presu-porunidades { border-top:1px dashed #D8D8D8; margin-top:4px; padding-top:6px !important; }
+
+        .dg-presu-total { margin:18px 0; padding:13px 15px; border:2px solid #4B7C98; border-radius:10px; max-width:380px; }
+        .dg-presu-total > div { display:flex; justify-content:space-between; align-items:baseline; gap:16px; padding:3px 0; font-size:13.5px; }
+        .dg-presu-total span { color:#555; }
+        .dg-presu-total b { font-family:'JetBrains Mono', monospace; font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; }
+        .dg-presu-total-fuerte b { font-size:19px; color:#4B7C98; }
+
+        .dg-presu-condiciones { margin-top:20px; padding-top:14px; border-top:1px solid #E4E4E4; }
+        .dg-presu-condiciones > div { display:flex; gap:10px; font-size:12.5px; padding:3px 0; }
+        .dg-presu-condiciones span { min-width:140px; color:#666; }
+        .dg-presu-condiciones b { font-weight:600; }
+
+        .dg-presu-firma { margin-top:46px; font-size:13px; }
+        .dg-presu-firma-empresa { font-weight:700; letter-spacing:.4px; }
       }
 
       .dg-plant-outer { position:relative; }
