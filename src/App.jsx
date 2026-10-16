@@ -7790,39 +7790,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     if (onRegistrar) onRegistrar("Confirmó un envío", `#${espejos[0].orden} — ${espejos[0].cliente} — ${elegibles.length} espejo(s)`);
   }
   function entregarGrupo(espejos) {
-    const pendientes = espejos.filter((e) => e.estado === "Espejo listo");
-    if (!pendientes.length) return;
-    if (pendientes.some((e) => !e.clienteAvisado)) { window.alert("Antes de entregar, avisá al cliente que el pedido está listo."); return; }
-    if (pendientes.some((e) => esPedidoConEnvio(e) && !e.envioConfirmado)) { window.alert("Antes de entregar, confirmá el envío del pedido."); return; }
-    const saldoTotal = pendientes.reduce((t, e) => t + Math.max(0, (Number(e.monto) || 0) - (Number(e.montoRegistrado) || 0)), 0);
-    const cuantos = pendientes.length;
-    const msg = saldoTotal > 0
-      ? `El pedido tiene ${money(saldoTotal)} de saldo pendiente en total.\n\nAl marcarlo entregado se registra ese saldo como ingreso cobrado.\n\n¿Confirmás la entrega de los ${cuantos} espejo(s)?`
-      : `¿Confirmás la entrega de los ${cuantos} espejo(s) de este pedido?`;
-    if (!window.confirm(msg)) return;
-    const ingresos = [];
-    pendientes.forEach((e) => {
-      const delta = (Number(e.monto) || 0) - (Number(e.montoRegistrado) || 0);
-      if (delta !== 0) {
-        const cuenta = determineCuentaPedido(e);
-        ingresos.push({
-          id: uid(),
-          concepto: `${(Number(e.montoRegistrado) || 0) > 0 ? "Saldo" : "Anticipo"} pedido #${e.orden || "?"} — ${e.cliente || "Sin nombre"}`,
-          monto: delta,
-          canal: canalDelPedido(e),
-          cuenta, cliente: e.cliente || "",
-          metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
-          sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
-        });
-      }
-    });
-    if (ingresos.length && onCreateIncome) onCreateIncome(ingresos);
-    const ids = new Set(pendientes.map((e) => e.id));
-    const ahora = new Date().toISOString();
-    onChange(normalizarOrdenesPorGrupo(pedidos.map((x) => (ids.has(x.id)
-      ? { ...x, estado: "Entregado", entregadoFecha: ahora, montoRegistrado: Number(x.monto) || 0 }
-      : x))));
-    if (onRegistrar) onRegistrar("Marcó entregado", `#${espejos[0].orden} — ${espejos[0].cliente} — ${cuantos} espejo(s)`);
+    const prep = prepararEntregaDelGrupo(espejos);
+    if (prep.error) { if (!prep.silencioso) window.alert(prep.error); return; }
+    if (!window.confirm(preguntaDeEntrega(prep))) return;
+    if (prep.ingresos.length && onCreateIncome) onCreateIncome(prep.ingresos);
+    onChange(normalizarOrdenesPorGrupo(aplicarEntregaDelGrupo(pedidos, prep.ids)));
+    if (onRegistrar) onRegistrar("Marcó entregado", `#${espejos[0].orden} — ${espejos[0].cliente} — ${prep.cuantos} espejo(s)`);
   }
   function reabrir(p) {
     onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: "Espejo listo", entregadoFecha: "" } : x)));
@@ -9140,6 +9113,61 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
 }
 
 // Lunes y domingo de la semana actual, como "AAAA-MM-DD" en hora local.
+// ===== Entregar un pedido entero ==========================================
+// Es LA regla: la usan el botón de Pedidos y el botón rápido de la tabla de
+// salidas de PostVenta. Si se toca acá, se toca en los dos lados a la vez.
+// Devuelve lo que hay que hacer, sin hacerlo: así el que llama decide si
+// pregunta, si avisa o si lo hace callado.
+function prepararEntregaDelGrupo(espejos) {
+  const pendientes = (espejos || []).filter((e) => e.estado === "Espejo listo");
+  // Callado: no hay nada para entregar. No es un error del que lo toca.
+  if (!pendientes.length) return { error: "Este pedido no tiene espejos listos para entregar.", silencioso: true };
+  if (pendientes.some((e) => !e.clienteAvisado)) return { error: "Antes de entregar, avisá al cliente que el pedido está listo." };
+  if (pendientes.some((e) => esPedidoConEnvio(e) && !e.envioConfirmado)) return { error: "Antes de entregar, confirmá el envío del pedido." };
+
+  // Lo que falta cobrar de cada espejo. Entregar es cobrar el saldo: si esto
+  // no se registra, la plata entra y no queda en ningún lado.
+  const ingresos = [];
+  pendientes.forEach((e) => {
+    const delta = (Number(e.monto) || 0) - (Number(e.montoRegistrado) || 0);
+    if (delta === 0) return;
+    const cuenta = determineCuentaPedido(e);
+    ingresos.push({
+      id: uid(),
+      concepto: `${(Number(e.montoRegistrado) || 0) > 0 ? "Saldo" : "Anticipo"} pedido #${e.orden || "?"} — ${e.cliente || "Sin nombre"}`,
+      monto: delta,
+      canal: canalDelPedido(e),
+      cuenta, cliente: e.cliente || "",
+      metodo: cuenta === "caja_efectivo" ? "efectivo_nuestro" : "mercado_pago",
+      sectorId: "ventas", fecha: new Date().toISOString().slice(0, 10), estado: "pagado",
+    });
+  });
+  return {
+    pendientes,
+    ids: new Set(pendientes.map((e) => e.id)),
+    ingresos,
+    saldoTotal: pendientes.reduce((t, e) => t + Math.max(0, (Number(e.monto) || 0) - (Number(e.montoRegistrado) || 0)), 0),
+    cuantos: pendientes.length,
+  };
+}
+function preguntaDeEntrega(prep) {
+  return prep.saldoTotal > 0
+    ? `El pedido tiene ${money(prep.saldoTotal)} de saldo pendiente en total.\n\nAl marcarlo entregado se registra ese saldo como ingreso cobrado.\n\n¿Confirmás la entrega de los ${prep.cuantos} espejo(s)?`
+    : `¿Confirmás la entrega de los ${prep.cuantos} espejo(s) de este pedido?`;
+}
+function aplicarEntregaDelGrupo(pedidos, ids) {
+  const ahora = new Date().toISOString();
+  return pedidos.map((x) => (ids.has(x.id)
+    ? { ...x, estado: "Entregado", entregadoFecha: ahora, montoRegistrado: Number(x.monto) || 0 }
+    : x));
+}
+// Qué le falta a un pedido para poder entregarlo, en una línea corta. Sirve
+// para explicar un botón apagado sin abrir un cartel.
+function faltaParaEntregar(espejos) {
+  const prep = prepararEntregaDelGrupo(espejos);
+  return prep.error || "";
+}
+
 function semanaActual() {
   const hoy = new Date();
   const lunes = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - ((hoy.getDay() + 6) % 7));
@@ -9148,7 +9176,7 @@ function semanaActual() {
   return { hoy: iso(hoy), lunes: iso(lunes), domingo: iso(domingo) };
 }
 
-function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos }) {
+function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar }) {
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
@@ -9191,6 +9219,31 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
     if (onChangeReclamos) onChangeReclamos(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
+  // El botón rápido de la tabla: cerrar la salida sin bajar hasta la tarjeta.
+  // Entregar es cobrar el saldo, así que pasa por la MISMA regla que el botón
+  // de Pedidos. Si no hay dónde registrar la plata, no entrega: antes que
+  // perder un ingreso, que avise.
+  function entregarDesdeLaTabla(f) {
+    const prep = prepararEntregaDelGrupo(f.items);
+    if (prep.error) { window.alert(prep.error); return; }
+    if (prep.ingresos.length && !onCreateIncome) {
+      window.alert("No se puede registrar el cobro desde acá. Entregalo desde la tarjeta del pedido en Pedidos.");
+      return;
+    }
+    if (!window.confirm(preguntaDeEntrega(prep))) return;
+    if (prep.ingresos.length) onCreateIncome(prep.ingresos);
+    onChange(aplicarEntregaDelGrupo(pedidos, prep.ids));
+    if (onRegistrar) onRegistrar("Marcó entregado", `#${f.p.orden} — ${f.p.cliente} — ${prep.cuantos} espejo(s)`);
+    setFilaAbierta(null);
+  }
+  // Una visita hecha sale de la tabla, pero el reclamo sigue abierto: todavía
+  // hay que cerrarlo con el cliente.
+  function marcarVisitaHecha(r) {
+    if (!window.confirm(`¿Ya fuiste al domicilio de ${r.cliente || "este cliente"}?\n\nSale de esta tabla, pero el reclamo queda abierto hasta que lo cierres en Reclamos.`)) return;
+    updateReclamo(r.id, { visitaHecha: new Date().toISOString().slice(0, 10) });
+    setFilaAbierta(null);
+  }
+
   function mensaje(items) {
     const p = items[0];
     const espejos = items.map((e) => `Espejo ${e.ancho}×${e.alto} cm`).join("\n");
@@ -9231,13 +9284,15 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
             return {
               clave: p.grupoId || p.id, p, items, fecha, visita: false,
               cliente: p.cliente || "Sin nombre",
-              barrio: p.barrio || "",
-              direccion: [p.detalleEntrega, p.piso].filter(Boolean).join(" · "),
+              // Barrio y calle en una sola columna: son el mismo dato para el
+              // que maneja, y en dos columnas la tabla no entraba en pantalla.
+              donde: [p.barrio, p.detalleEntrega, p.piso].filter(Boolean).join(" · "),
               listoPara: items.map((x) => x.listo).filter(Boolean).sort()[0] || "",
               productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
               saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
               flete: items.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0),
               fletePagado: items.some((x) => x.envioPagado),
+              falta: faltaParaEntregar(items),
             };
           });
         // Las visitas por reclamo entran con los mismos campos que un envío,
@@ -9247,10 +9302,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           clave: `visita-${r.id}`, r, visita: true,
           fecha: r.fechaEnvio || "",
           cliente: r.cliente || "Sin nombre",
-          barrio: r.barrio || "",
-          direccion: direccionReclamo(r),
+          donde: [r.barrio, r.detalleEntrega, r.piso].filter(Boolean).join(" · "),
           productos: r.tipo || "Reclamo",
-          saldo: 0, flete: 0, fletePagado: false,
+          saldo: 0, flete: 0, fletePagado: false, falta: "",
         }));
         const filas = [...filasEnvio, ...filasVisita]
           // Por fecha; los que no tienen fecha, al final.
@@ -9275,11 +9329,11 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
             </button>
             {tablaAbierta && (
               <div className="dg-envios-tabla-scroll">
-                <table className="dg-envios-tabla">
+                <table className="dg-envios-tabla dg-salidas-tabla">
                   <thead>
                     <tr>
-                      <th>Salida</th><th>Nombre</th><th>Barrio</th><th>Productos</th><th>Dirección</th>
-                      <th className="dg-num">Saldo restante</th><th className="dg-num">Monto flete</th>
+                      <th>Salida</th><th>Nombre</th><th>Dónde</th><th>Productos</th>
+                      <th className="dg-num">Saldo</th><th className="dg-num">Flete</th><th className="dg-envios-hecho-col">Hecho</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -9303,9 +9357,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                               ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
                               : <button type="button" className="dg-envios-nombre-btn" onClick={irATarjeta} title="Ir a la tarjeta de este envío">{f.cliente}</button>}
                           </td>
-                          <td>{f.barrio || <span className="dg-envios-falta">—</span>}</td>
+                          <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
-                          <td className="dg-envios-dir">{f.direccion || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-num">
                             {f.visita
                               ? <span className="dg-envios-falta">—</span>
@@ -9313,10 +9366,23 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           </td>
                           <td className="dg-num">
                             {f.visita
-                              ? <span className="dg-envios-falta">sin cargo</span>
+                              ? <span className="dg-envios-falta">—</span>
                               : f.flete > 0
-                                ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)} · pagado</span> : money(f.flete))
+                                ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)}</span> : money(f.flete))
                                 : <span className="dg-envios-falta">sin cargar</span>}
+                          </td>
+                          {/* El botón rápido: cerrar la salida sin bajar hasta
+                              la tarjeta. Si todavía no se puede, queda apagado
+                              y al tocarlo dice qué falta. */}
+                          <td className="dg-envios-hecho-col">
+                            <button
+                              type="button"
+                              className={`dg-envios-hecho ${f.falta ? "dg-envios-hecho-off" : ""}`}
+                              disabled={!canEdit}
+                              title={f.visita ? "Ya fuimos al domicilio" : (f.falta || "Marcar este pedido como entregado")}
+                              onClick={(ev) => { ev.stopPropagation(); f.visita ? marcarVisitaHecha(f.r) : entregarDesdeLaTabla(f); }}>
+                              <Check size={15} />
+                            </button>
                           </td>
                         </tr>
                         {abierta && (
@@ -9331,11 +9397,6 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                   <span><b>Teléfono</b> {f.r.celular || "—"}</span>
                                   <span><b>Horario</b> {f.r.horarioEntrega || "a coordinar"}</span>
                                   <span><b>Reclamo</b> {f.r.notas || f.r.tipo}</span>
-                                  {canEdit && (
-                                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => updateReclamo(f.r.id, { visitaHecha: new Date().toISOString().slice(0, 10) })}>
-                                      <Check size={13} /> Ya fuimos
-                                    </button>
-                                  )}
                                 </div>
                               ) : (
                                 <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
@@ -9346,6 +9407,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                   <span><b>Teléfono</b> {f.p.celular || "—"}</span>
                                   <span><b>Horario</b> {f.p.horarioEntrega || "a coordinar"}</span>
                                   <span><b>Listo para</b> {f.listoPara ? fechaEntregaCorta(f.listoPara) : "—"}</span>
+                                  {f.flete > 0 && f.fletePagado && <span className="dg-envios-pagado">Flete pagado</span>}
+                                  {f.falta && <span className="dg-envios-detalle-falta">{f.falta}</span>}
                                   <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
                                 </div>
                               )}
@@ -9358,9 +9421,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={5}>Total a cobrar en las entregas</td>
+                      <td colSpan={4}>Total a cobrar en las entregas</td>
                       <td className="dg-num">{money(totalSaldo)}</td>
                       <td className="dg-num">{money(totalFlete)}</td>
+                      <td />
                     </tr>
                   </tfoot>
                 </table>
@@ -18524,7 +18588,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "postventa" && (
-        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} />
+        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
       )}
 
@@ -18965,7 +19029,7 @@ function Style() {
       .dg-envios-fila-atrasada { background:rgba(var(--dg-danger-rgb),.07); }
       .dg-envios-fila-atrasada .dg-envios-fecha { color:var(--dg-danger); }
       .dg-envios-falta { color:var(--dg-text-dim); font-style:italic; font-family:'Jost',sans-serif; }
-      .dg-envios-pagado { color:var(--dg-success); font-weight:600; font-family:'Jost',sans-serif; }
+      .dg-envios-pagado { color:color-mix(in srgb, var(--dg-success) 65%, var(--dg-text)); font-weight:600; font-family:'Jost',sans-serif; }
 
       /* Las visitas a domicilio van en la misma tabla que los envíos, pero
          tienen que leerse distinto de una ojeada: franja amarilla al costado.
@@ -18993,6 +19057,42 @@ function Style() {
       .dg-reclamo-visita-check svg { color:var(--dg-warning); }
       .dg-reclamo-visita-pie { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 14px; margin-top:10px; }
       .dg-reclamo-visita-pie .dg-envios-pagado { display:inline-flex; align-items:center; gap:5px; font-size:13px; }
+
+      /* La tabla de salidas tiene que entrar de un vistazo. Con columnas
+         automáticas, una dirección larga empujaba la tabla a 950px y abajo de
+         ~1050px de pantalla aparecía la barra para arrastrar. Con columnas
+         fijas la tabla mide siempre lo que mide el contenedor y lo que no
+         entra se corta con puntos suspensivos. */
+      .dg-envios-tabla.dg-salidas-tabla { table-layout:fixed; min-width:660px; }
+      .dg-salidas-tabla thead th:nth-child(1) { width:92px; }
+      .dg-salidas-tabla thead th:nth-child(2) { width:20%; }
+      .dg-salidas-tabla thead th:nth-child(4) { width:18%; }
+      .dg-salidas-tabla thead th:nth-child(5),
+      .dg-salidas-tabla thead th:nth-child(6) { width:96px; }
+      .dg-salidas-tabla thead th:nth-child(7) { width:62px; }
+      /* Con columnas fijas el ancho ya lo pone la columna: el tope de la celda
+         solo la haría más angosta que su propia columna. */
+      .dg-salidas-tabla .dg-envios-fila > td { max-width:none; }
+      .dg-envios-tabla.dg-reclamos-tabla { table-layout:fixed; min-width:680px; }
+      .dg-reclamos-tabla thead th:nth-child(1) { width:88px; }
+      .dg-reclamos-tabla thead th:nth-child(2) { width:21%; }
+      .dg-reclamos-tabla thead th:nth-child(3) { width:17%; }
+      .dg-reclamos-tabla thead th:nth-child(4) { width:170px; }
+      .dg-reclamos-tabla thead th:nth-child(6) { width:112px; }
+      .dg-reclamos-tabla .dg-envios-fila > td { max-width:none; }
+      .dg-envios-tabla th { overflow:hidden; text-overflow:ellipsis; }
+
+      /* El botón rápido para cerrar la salida sin bajar hasta la tarjeta. */
+      .dg-envios-tabla th.dg-envios-hecho-col, .dg-envios-tabla td.dg-envios-hecho-col { text-align:center; padding-left:4px; padding-right:4px; }
+      .dg-envios-hecho { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:1px solid color-mix(in srgb, var(--dg-success) 45%, transparent); border-radius:8px; background:color-mix(in srgb, var(--dg-success) 15%, transparent); color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); cursor:pointer; transition:background .15s ease, transform .1s ease; }
+      .dg-envios-hecho:hover:not(:disabled) { background:color-mix(in srgb, var(--dg-success) 28%, transparent); }
+      .dg-envios-hecho:active:not(:disabled) { transform:scale(.92); }
+      /* Apagado = todavía le falta algo. Se puede tocar igual: al tocarlo dice
+         qué falta, que es más útil que un botón muerto. */
+      .dg-envios-hecho-off { border-color:rgba(var(--dg-line-rgb),.2); background:transparent; color:var(--dg-text-dim); }
+      .dg-envios-hecho-off:hover:not(:disabled) { background:rgba(var(--dg-line-rgb),.07); }
+      .dg-envios-hecho:disabled { opacity:.45; cursor:not-allowed; }
+      .dg-envios-detalle-falta { color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); font-weight:600; }
       .dg-envios-tabla tfoot td { font-weight:700; border-top:2px solid rgba(var(--dg-line-rgb),.18); color:var(--dg-text-dim); }
       .dg-envios-tabla tfoot .dg-num { color:var(--dg-text); }
       .dg-shipping-confirm-card { scroll-margin-top:16px; }
@@ -19331,11 +19431,11 @@ function Style() {
 
       .dg-reclamo-ciclo { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:2px 0 9px; }
       .dg-reclamo-estado { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; padding:3px 8px; border-radius:8px; background:rgba(var(--dg-line-rgb),0.08); color:var(--dg-text-dim); }
-      .dg-reclamo-estado-abierto { background:rgba(var(--dg-danger-rgb),0.15); color:var(--dg-danger); }
-      .dg-reclamo-estado-ofrecida { background:rgba(var(--dg-warning-rgb),0.18); color:var(--dg-warning); }
-      .dg-reclamo-estado-acepto { background:rgba(var(--dg-accent-rgb),0.14); color:var(--dg-accent); }
-      .dg-reclamo-estado-fabrica { background:rgba(var(--dg-accent-rgb),0.14); color:var(--dg-accent); }
-      .dg-reclamo-estado-resuelto { background:rgba(var(--dg-success-rgb),0.16); color:var(--dg-success); }
+      .dg-reclamo-estado-abierto { background:rgba(var(--dg-danger-rgb),0.15); color:color-mix(in srgb, var(--dg-danger) 50%, var(--dg-text)); }
+      .dg-reclamo-estado-ofrecida { background:rgba(var(--dg-warning-rgb),0.18); color:color-mix(in srgb, var(--dg-warning) 45%, var(--dg-text)); }
+      .dg-reclamo-estado-acepto { background:rgba(var(--dg-accent-rgb),0.14); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
+      .dg-reclamo-estado-fabrica { background:rgba(var(--dg-accent-rgb),0.14); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
+      .dg-reclamo-estado-resuelto { background:rgba(var(--dg-success-rgb),0.16); color:color-mix(in srgb, var(--dg-success) 45%, var(--dg-text)); }
       .dg-reclamo-edad { font-size:11px; color:var(--dg-text-faint); }
       .dg-reclamo-edad-alerta { color:var(--dg-danger); font-weight:600; }
       .dg-reclamo-editar { margin:2px 0 12px; border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:8px; padding:8px 11px; }
