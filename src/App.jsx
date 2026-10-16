@@ -5346,6 +5346,64 @@ function AvisosFlotantesFabrica({ paraHoy, sinHacer, urgentes, nuevos }) {
   );
 }
 
+
+// Lo mismo que el cartel de fábrica, pero para postventa: al entrar al sector
+// ven cuántos reclamos hay abiertos sin tener que buscarlos. Un reclamo que
+// nadie mira es el que termina en una mala reseña.
+function AvisosFlotantesPostventa({ reclamos }) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const [cerrado, setCerrado] = useState(false);
+  const n = resumenDeReclamos(reclamos);
+
+  const filas = [
+    { id: "abiertos", n: n.abiertos, clase: "dg-aviso-n-hoy", Icono: AlertTriangle, uno: "reclamo abierto", varios: "reclamos abiertos" },
+    { id: "sinrespuesta", n: n.sinRespuesta, clase: "dg-aviso-n-sinhacer", Icono: MessageCircle, uno: "sin respuesta para el cliente", varios: "sin respuesta para el cliente" },
+    { id: "demorados", n: n.demorados, clase: "dg-aviso-n-urgente", Icono: CalendarDays, uno: `abierto hace ${DIAS_RECLAMO_DEMORADO} días o más`, varios: `abiertos hace ${DIAS_RECLAMO_DEMORADO} días o más` },
+    { id: "visitas", n: n.visitas, clase: "dg-aviso-n-nuevo", Icono: Wrench, uno: "para ir al domicilio", varios: "para ir al domicilio" },
+  ].filter((f) => f.n > 0);
+
+  function yaLeido() {
+    if (cerrado) return true;
+    try {
+      const g = JSON.parse(localStorage.getItem("dg_pv_aviso_dia") || "null");
+      return !!g && g.fecha === hoy;
+    } catch (e) { return false; }
+  }
+  function marcarLeido() {
+    try { localStorage.setItem("dg_pv_aviso_dia", JSON.stringify({ fecha: hoy })); } catch (e) {}
+    setCerrado(true);
+  }
+
+  if (!filas.length || yaLeido()) return null;
+
+  return (
+    <div className="dg-avisos-flot-overlay" role="dialog" aria-modal="true" aria-label="Avisos de postventa">
+      <div className="dg-aviso-card dg-aviso-resumen">
+        <div className="dg-aviso-card-head">
+          <span className="dg-aviso-card-icono"><Headphones size={16} /></span>
+          <strong>Reclamos para resolver</strong>
+        </div>
+        <ul className="dg-aviso-numeros">
+          {filas.map((f) => {
+            const { Icono } = f;
+            return (
+              <li key={f.id} className={f.clase}>
+                <Icono size={18} />
+                <strong>{f.n}</strong>
+                <span>{f.n === 1 ? f.uno : f.varios}</span>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="dg-aviso-card-bajada">Están en la pestaña Reclamos.</p>
+        <button type="button" className="dg-btn-primary dg-avisos-flot-ok" onClick={marcarLeido}>
+          <Check size={15} /> Entendido
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Lo que hay que grabar, tal como lo anotó ventas. "Aura" es un diseño fijo
 // de 2 cm: se le agrega la medida para que el grabador la tenga a la vista.
 function medidaGrabado(pedido) {
@@ -9090,7 +9148,7 @@ function semanaActual() {
   return { hoy: iso(hoy), lunes: iso(lunes), domingo: iso(domingo) };
 }
 
-function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
+function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos }) {
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
@@ -9124,6 +9182,15 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
   }
   function updateShipping(pedido, patch) { updateGrupo(pedido, () => patch); }
 
+  // Un reclamo a domicilio es, para postventa, una salida más: hay que
+  // coordinar el día e ir. Entra en la misma tabla que los envíos.
+  const visitas = (reclamos || [])
+    .filter(reclamoVisitaPendiente)
+    .filter((r) => !busqueda.trim() || String(r.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
+  function updateReclamo(id, patch) {
+    if (onChangeReclamos) onChangeReclamos(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
   function mensaje(items) {
     const p = items[0];
     const espejos = items.map((e) => `Espejo ${e.ancho}×${e.alto} cm`).join("\n");
@@ -9155,21 +9222,37 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
     <div className="dg-page">
       <div className="dg-crm-filters"><Filter size={14} /><input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
 
-      {grupos.length > 0 && (() => {
+      {(grupos.length > 0 || visitas.length > 0) && (() => {
         const semana = semanaActual();
-        const filas = grupos
+        const filasEnvio = grupos
           .map((items) => {
             const p = items[0];
             const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
             return {
-              clave: p.grupoId || p.id, p, items, fecha,
+              clave: p.grupoId || p.id, p, items, fecha, visita: false,
+              cliente: p.cliente || "Sin nombre",
+              barrio: p.barrio || "",
+              direccion: [p.detalleEntrega, p.piso].filter(Boolean).join(" · "),
               listoPara: items.map((x) => x.listo).filter(Boolean).sort()[0] || "",
               productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
               saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
               flete: items.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0),
               fletePagado: items.some((x) => x.envioPagado),
             };
-          })
+          });
+        // Las visitas por reclamo entran con los mismos campos que un envío,
+        // así la tabla no tiene que saber de dónde salió cada fila. Lo único
+        // propio es el color y el cartelito.
+        const filasVisita = visitas.map((r) => ({
+          clave: `visita-${r.id}`, r, visita: true,
+          fecha: r.fechaEnvio || "",
+          cliente: r.cliente || "Sin nombre",
+          barrio: r.barrio || "",
+          direccion: direccionReclamo(r),
+          productos: r.tipo || "Reclamo",
+          saldo: 0, flete: 0, fletePagado: false,
+        }));
+        const filas = [...filasEnvio, ...filasVisita]
           // Por fecha; los que no tienen fecha, al final.
           .sort((a, b) => (a.fecha || "9999") < (b.fecha || "9999") ? -1 : (a.fecha || "9999") > (b.fecha || "9999") ? 1 : 0);
         const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
@@ -9180,9 +9263,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
           <div className={`dg-section-card dg-envios-tabla-card ${tablaAbierta ? "dg-envios-tabla-abierta" : ""}`}>
             <button type="button" className="dg-envios-tabla-head" onClick={() => setTablaAbierta((v) => !v)} aria-expanded={tablaAbierta}>
               <span className="dg-envios-tabla-tit">
-                <strong><CalendarDays size={14} /> Todos los envíos</strong>
+                <strong><CalendarDays size={14} /> Todas las salidas</strong>
                 <small>
-                  {filas.length} {filas.length === 1 ? "pedido" : "pedidos"}
+                  {filasEnvio.length} {filasEnvio.length === 1 ? "pedido" : "pedidos"}
+                  {filasVisita.length > 0 && ` · ${filasVisita.length} ${filasVisita.length === 1 ? "visita por reclamo" : "visitas por reclamo"}`}
                   {estaSemana > 0 && ` · ${estaSemana} esta semana`}
                   {atrasadas > 0 && <span className="dg-envios-tabla-atraso"> · {atrasadas} pasados de fecha</span>}
                 </small>
@@ -9194,7 +9278,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                 <table className="dg-envios-tabla">
                   <thead>
                     <tr>
-                      <th>Envío</th><th>Nombre</th><th>Barrio</th><th>Productos</th><th>Dirección</th>
+                      <th>Salida</th><th>Nombre</th><th>Barrio</th><th>Productos</th><th>Dirección</th>
                       <th className="dg-num">Saldo restante</th><th className="dg-num">Monto flete</th>
                     </tr>
                   </thead>
@@ -9210,36 +9294,61 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit }) {
                       return (
                         <Fragment key={f.clave}>
                         <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""}`}
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""}`}
                           onClick={() => setFilaAbierta(abierta ? null : f.clave)}
                           aria-expanded={abierta}>
                           <td className="dg-envios-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : <span className="dg-envios-falta">a coordinar</span>}</td>
                           <td className="dg-envios-nombre">
-                            <button type="button" className="dg-envios-nombre-btn" onClick={irATarjeta} title="Ir a la tarjeta de este envío">{f.p.cliente || "Sin nombre"}</button>
+                            {f.visita
+                              ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
+                              : <button type="button" className="dg-envios-nombre-btn" onClick={irATarjeta} title="Ir a la tarjeta de este envío">{f.cliente}</button>}
                           </td>
-                          <td>{f.p.barrio || <span className="dg-envios-falta">—</span>}</td>
+                          <td>{f.barrio || <span className="dg-envios-falta">—</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
-                          <td className="dg-envios-dir">{[f.p.detalleEntrega, f.p.piso].filter(Boolean).join(" · ") || <span className="dg-envios-falta">sin dirección</span>}</td>
-                          <td className="dg-num">{f.saldo > 0 ? money(f.saldo) : <span className="dg-envios-pagado">pagado</span>}</td>
+                          <td className="dg-envios-dir">{f.direccion || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-num">
-                            {f.flete > 0
-                              ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)} · pagado</span> : money(f.flete))
-                              : <span className="dg-envios-falta">sin cargar</span>}
+                            {f.visita
+                              ? <span className="dg-envios-falta">—</span>
+                              : (f.saldo > 0 ? money(f.saldo) : <span className="dg-envios-pagado">pagado</span>)}
+                          </td>
+                          <td className="dg-num">
+                            {f.visita
+                              ? <span className="dg-envios-falta">sin cargo</span>
+                              : f.flete > 0
+                                ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)} · pagado</span> : money(f.flete))
+                                : <span className="dg-envios-falta">sin cargar</span>}
                           </td>
                         </tr>
                         {abierta && (
                           <tr className="dg-envios-detalle">
                             <td colSpan={7}>
-                              <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
-                                <label className="dg-envios-detalle-fecha">
-                                  <span>Fecha de envío</span>
-                                  <input type="date" disabled={!canEdit} value={f.p.fechaEnvio || ""} onChange={(e) => updateShipping(f.p, { fechaEnvio: e.target.value })} />
-                                </label>
-                                <span><b>Teléfono</b> {f.p.celular || "—"}</span>
-                                <span><b>Horario</b> {f.p.horarioEntrega || "a coordinar"}</span>
-                                <span><b>Listo para</b> {f.listoPara ? fechaEntregaCorta(f.listoPara) : "—"}</span>
-                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
-                              </div>
+                              {f.visita ? (
+                                <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
+                                  <label className="dg-envios-detalle-fecha">
+                                    <span>Fecha de la visita</span>
+                                    <input type="date" disabled={!canEdit} value={f.r.fechaEnvio || ""} onChange={(e) => updateReclamo(f.r.id, { fechaEnvio: e.target.value })} />
+                                  </label>
+                                  <span><b>Teléfono</b> {f.r.celular || "—"}</span>
+                                  <span><b>Horario</b> {f.r.horarioEntrega || "a coordinar"}</span>
+                                  <span><b>Reclamo</b> {f.r.notas || f.r.tipo}</span>
+                                  {canEdit && (
+                                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => updateReclamo(f.r.id, { visitaHecha: new Date().toISOString().slice(0, 10) })}>
+                                      <Check size={13} /> Ya fuimos
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
+                                  <label className="dg-envios-detalle-fecha">
+                                    <span>Fecha de envío</span>
+                                    <input type="date" disabled={!canEdit} value={f.p.fechaEnvio || ""} onChange={(e) => updateShipping(f.p, { fechaEnvio: e.target.value })} />
+                                  </label>
+                                  <span><b>Teléfono</b> {f.p.celular || "—"}</span>
+                                  <span><b>Horario</b> {f.p.horarioEntrega || "a coordinar"}</span>
+                                  <span><b>Listo para</b> {f.listoPara ? fechaEntregaCorta(f.listoPara) : "—"}</span>
+                                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         )}
@@ -9394,6 +9503,33 @@ function reclamoFinalizado(r) {
   return r.finalizado === true || (typeof r.estado === "string" && r.estado.toLowerCase().includes("final"));
 }
 
+// Un reclamo que no se arregla por teléfono: hay que ir al domicilio a
+// cambiar el espejo o a arreglarlo. Para postventa eso es un envío más —hay
+// que ponerle fecha y salir— así que aparece en la tabla de envíos.
+// Guarda la dirección con los MISMOS nombres de campo que un pedido
+// (barrio, detalleEntrega, piso, horarioEntrega, fechaEnvio) para que la
+// tabla de envíos no tenga que traducir nada.
+function reclamoVisitaPendiente(r) {
+  return !!r.aDomicilio && !r.visitaHecha && !reclamoFinalizado(r);
+}
+function direccionReclamo(r) {
+  return [r.detalleEntrega, r.piso].filter(Boolean).join(" · ");
+}
+
+// Los números que ve postventa al entrar. Se superponen a propósito: un
+// reclamo sin respuesta también está abierto. Lo que importa es que de una
+// ojeada vean cuántos hay y cuántos se están durmiendo.
+const DIAS_RECLAMO_DEMORADO = 3;
+function resumenDeReclamos(reclamos) {
+  const abiertos = (reclamos || []).filter((r) => !reclamoFinalizado(r));
+  return {
+    abiertos: abiertos.length,
+    sinRespuesta: abiertos.filter((r) => !String(r.solucion || "").trim()).length,
+    demorados: abiertos.filter((r) => diasDesde(r.fecha) >= DIAS_RECLAMO_DEMORADO).length,
+    visitas: abiertos.filter(reclamoVisitaPendiente).length,
+  };
+}
+
 function saludoReclamo(r) {
   const hola = r.cliente ? `Hola ${r.cliente}!` : "Hola!";
   return `${hola} Te escribimos de DECOGLASS por tu reclamo${r.tipo ? ` (${r.tipo})` : ""}. `;
@@ -9432,6 +9568,9 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
   const [celular, setCelular] = useState("");
   const [notas, setNotas] = useState("");
   const [vista, setVista] = useState("activos");
+  const [tablaAbierta, setTablaAbierta] = useState(true);
+  const [filaAbierta, setFilaAbierta] = useState(null);
+  const [tarjetaMarcada, marcarTarjeta] = useTarjetaMarcada();
   const [copiadoId, setCopiadoId] = useState(null);
   const [avisandoId, setAvisandoId] = useState(null);
   function setCampoReclamo(id, patch) { onChange(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r))); }
@@ -9525,13 +9664,102 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
         <button className={`dg-quickview-btn ${vista === "finalizados" ? "dg-quickview-on" : ""}`} onClick={() => setVista("finalizados")}>Finalizados ({finalizados.length})</button>
       </div>
 
+      {/* La misma tabla que la de envíos: de un vistazo quién, por qué, en qué
+          estado y hace cuánto. Las tarjetas de abajo son para trabajar cada
+          reclamo; esto es para ver el conjunto. */}
+      {visibles.length > 0 && (() => {
+        const filas = visibles
+          .map((r) => ({
+            r,
+            // Un reclamo cerrado ya no "lleva abierto" nada: lo que interesa
+            // es cuánto tardamos en resolverlo.
+            dias: reclamoFinalizado(r) && r.finalizadoFecha ? (diasEntreDias(r.fecha, r.finalizadoFecha) ?? diasDesde(r.fecha)) : diasDesde(r.fecha),
+            demorado: !reclamoFinalizado(r) && diasDesde(r.fecha) >= DIAS_RECLAMO_DEMORADO,
+            visita: reclamoVisitaPendiente(r),
+          }))
+          // Los más viejos primero: son los que hay que destrabar.
+          .sort((a, b) => (a.r.fecha || "") < (b.r.fecha || "") ? -1 : (a.r.fecha || "") > (b.r.fecha || "") ? 1 : 0);
+        const demorados = filas.filter((f) => f.demorado).length;
+        const visitas = filas.filter((f) => f.visita).length;
+        return (
+          <div className={`dg-section-card dg-envios-tabla-card ${tablaAbierta ? "dg-envios-tabla-abierta" : ""}`}>
+            <button type="button" className="dg-envios-tabla-head" onClick={() => setTablaAbierta((v) => !v)} aria-expanded={tablaAbierta}>
+              <span className="dg-envios-tabla-tit">
+                <strong><LayoutList size={14} /> Todos los reclamos {vista === "activos" ? "activos" : "finalizados"}</strong>
+                <small>
+                  {filas.length} {filas.length === 1 ? "reclamo" : "reclamos"}
+                  {visitas > 0 && ` · ${visitas} para ir al domicilio`}
+                  {demorados > 0 && <span className="dg-envios-tabla-atraso"> · {demorados} hace {DIAS_RECLAMO_DEMORADO} días o más</span>}
+                </small>
+              </span>
+              <ChevronRight size={16} className={tablaAbierta ? "dg-presu-chevron-on" : ""} />
+            </button>
+            {tablaAbierta && (
+              <div className="dg-envios-tabla-scroll">
+                <table className="dg-envios-tabla dg-reclamos-tabla">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th><th>Cliente</th><th>Motivo</th><th>Estado</th><th>Qué se le dijo</th>
+                      <th className="dg-num">{vista === "activos" ? "Días abierto" : "Días que llevó"}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filas.map((f) => {
+                      const r = f.r;
+                      const abierta = filaAbierta === r.id;
+                      const irATarjeta = (ev) => {
+                        ev.stopPropagation();
+                        irAlaTarjeta(`reclamo-${r.id}`, () => marcarTarjeta(r.id));
+                      };
+                      const clase = { "Abierto": "abierto", "Solución ofrecida": "ofrecida", "Cliente aceptó": "acepto", "Espejo en fábrica": "fabrica", "Resuelto": "resuelto" }[estadoReclamo(r)] || "abierto";
+                      return (
+                        <Fragment key={r.id}>
+                        <tr
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${f.demorado ? "dg-envios-fila-atrasada" : ""} ${f.visita ? "dg-envios-fila-visita" : ""}`}
+                          onClick={() => setFilaAbierta(abierta ? null : r.id)}
+                          aria-expanded={abierta}>
+                          <td className="dg-envios-fecha">{r.fecha ? fechaEntregaCorta(r.fecha) : <span className="dg-envios-falta">—</span>}</td>
+                          <td className="dg-envios-nombre">
+                            <button type="button" className="dg-envios-nombre-btn" onClick={irATarjeta} title="Ir a la tarjeta de este reclamo">{r.cliente || "Sin nombre"}</button>
+                            {f.visita && <span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span>}
+                          </td>
+                          <td className="dg-envios-productos">{r.tipo}</td>
+                          <td><span className={`dg-reclamo-estado dg-reclamo-estado-${clase}`}>{estadoReclamo(r)}</span></td>
+                          <td className="dg-envios-dir">{r.solucion || <span className="dg-envios-falta">sin respuesta todavía</span>}</td>
+                          <td className="dg-num">{f.dias}</td>
+                        </tr>
+                        {abierta && (
+                          <tr className="dg-envios-detalle">
+                            <td colSpan={6}>
+                              <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
+                                <span><b>Teléfono</b> {r.celular || "—"}</span>
+                                <span><b>Detalle</b> {r.notas || "sin notas"}</span>
+                                {f.visita && <span><b>Domicilio</b> {direccionReclamo(r) || "sin cargar"}</span>}
+                                {f.visita && <span><b>Visita</b> {r.fechaEnvio ? fechaEntregaCorta(r.fechaEnvio) : "a coordinar"}</span>}
+                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {visibles.length === 0 && <div className="dg-empty">{vista === "activos" ? "No hay reclamos activos. ¡Buenas noticias!" : "Todavía no finalizaste ningún reclamo."}</div>}
 
       <div className="dg-reclamo-lista">
         {visibles.map((r) => {
           const tieneCelular = !!waLink(r.celular);
+          const ficha = clienteDelReclamo(clientesConocidos, r);
           return (
-            <div className="dg-section-card dg-reclamo-card" key={r.id}>
+            <div className={`dg-section-card dg-reclamo-card ${tarjetaMarcada === r.id ? "dg-tarjeta-marcada" : ""}`} key={r.id} id={`reclamo-${r.id}`}>
               <div className="dg-reclamo-head">
                 <span className="dg-badge" style={{ "--bc": RECLAMO_COLORS[RECLAMO_TIPOS.indexOf(r.tipo)] || "var(--dg-text-dim)" }}>{r.tipo}</span>
                 <span className="dg-reclamo-cliente">{r.cliente || "Sin cliente"}</span>
@@ -9554,7 +9782,6 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
               ) : (
                 <>
                   {(() => {
-                    const ficha = clienteDelReclamo(clientesConocidos, r);
                     const compras = ficha ? ficha.pedidos.slice(0, 4) : [];
                     return (
                       <>
@@ -9606,6 +9833,53 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                       <Field label="Notas"><CampoTextoGuardado value={r.notas} onGuardar={(v) => setCampoReclamo(r.id, { notas: v })} placeholder="Detalle del problema" /></Field>
                     </div>
                   </details>
+
+                  {/* Cuando hay que ir a la casa del cliente, el reclamo deja
+                      de ser un llamado y pasa a ser una salida: necesita
+                      dirección y día, igual que un envío. */}
+                  <div className={`dg-reclamo-visita ${r.aDomicilio ? "dg-reclamo-visita-on" : ""}`}>
+                    <label className="dg-reclamo-visita-check">
+                      <input type="checkbox" checked={!!r.aDomicilio} onChange={(e) => {
+                        const prende = e.target.checked;
+                        // Si ya le vendimos alguna vez, la dirección la tenemos:
+                        // no se la volvemos a pedir.
+                        const datos = prende && ficha ? datosDelCliente(ficha) : null;
+                        setCampoReclamo(r.id, {
+                          aDomicilio: prende,
+                          ...(datos ? {
+                            barrio: r.barrio || datos.barrio || "",
+                            detalleEntrega: r.detalleEntrega || datos.detalleEntrega || "",
+                            piso: r.piso || datos.piso || "",
+                            horarioEntrega: r.horarioEntrega || datos.horarioEntrega || "",
+                            celular: r.celular || datos.celular || "",
+                          } : {}),
+                        });
+                      }} />
+                      <span><Wrench size={13} /> Hay que ir al domicilio a cambiarlo o arreglarlo</span>
+                    </label>
+                    {r.aDomicilio && (
+                      <>
+                        <div className="dg-field-grid" style={{ marginTop: 10 }}>
+                          <Field label="Barrio"><CampoTextoGuardado value={r.barrio} onGuardar={(v) => setCampoReclamo(r.id, { barrio: v })} placeholder="Ej: Palermo" /></Field>
+                          <Field label="Dirección"><CampoTextoGuardado value={r.detalleEntrega} onGuardar={(v) => setCampoReclamo(r.id, { detalleEntrega: v })} placeholder="Calle y número" /></Field>
+                          <Field label="Piso / Depto"><CampoTextoGuardado value={r.piso} onGuardar={(v) => setCampoReclamo(r.id, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></Field>
+                          <Field label="Horario"><CampoTextoGuardado value={r.horarioEntrega} onGuardar={(v) => setCampoReclamo(r.id, { horarioEntrega: v })} placeholder="Ej: 13 a 17 hs" /></Field>
+                          <Field label="Fecha de la visita"><input type="date" value={r.fechaEnvio || ""} onChange={(e) => setCampoReclamo(r.id, { fechaEnvio: e.target.value })} /></Field>
+                        </div>
+                        <div className="dg-reclamo-visita-pie">
+                          {r.visitaHecha
+                            ? <>
+                                <span className="dg-envios-pagado"><Check size={12} /> Fuimos el {fechaEntregaCorta(r.visitaHecha)}</span>
+                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: "" })}><RotateCcw size={12} /> Todavía hay que volver</button>
+                              </>
+                            : <>
+                                <span className="dg-pago-meta">Aparece en la tabla de Envíos marcada como visita.</span>
+                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: new Date().toISOString().slice(0, 10) })}><Check size={12} /> Ya fuimos</button>
+                              </>}
+                        </div>
+                      </>
+                    )}
+                  </div>
 
                   <Field label="Solución para el cliente">
                     <CampoTextoGuardado value={r.solucion} onGuardar={(v) => setSolucion(r.id, v)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
@@ -18127,6 +18401,10 @@ function SectorPage({
         </div>
       )}
 
+      {/* Apenas entran a PostVenta, cuántos reclamos hay sin resolver. Igual
+          que el de fábrica: se cierra una vez y no vuelve hasta mañana. */}
+      {sector.id === "postventa" && canSeePedidos && <AvisosFlotantesPostventa reclamos={reclamos} />}
+
       {subpage === "tareas" && (
         <SectorTasksPanel sector={sector} session={session} isAdmin={isAdmin} onUpdate={onUpdate} onRequestLogin={onRequestLogin} />
       )}
@@ -18246,7 +18524,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "postventa" && (
-        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} />
+        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
       )}
 
@@ -18688,6 +18966,33 @@ function Style() {
       .dg-envios-fila-atrasada .dg-envios-fecha { color:var(--dg-danger); }
       .dg-envios-falta { color:var(--dg-text-dim); font-style:italic; font-family:'Jost',sans-serif; }
       .dg-envios-pagado { color:var(--dg-success); font-weight:600; font-family:'Jost',sans-serif; }
+
+      /* Las visitas a domicilio van en la misma tabla que los envíos, pero
+         tienen que leerse distinto de una ojeada: franja amarilla al costado.
+         Va DESPUÉS de las reglas de atrasada/semana para que una visita se
+         siga viendo como visita aunque esté pasada de fecha. */
+      .dg-envios-fila-visita { background:rgba(var(--dg-warning-rgb),.10); }
+      .dg-envios-fila-visita > td:first-child { box-shadow:inset 3px 0 0 var(--dg-warning); }
+ /* Una visita atrasada lleva dos fondos encima: el rojo del texto se
+         quedaba en 4,45 sobre tema claro. Se lo acerca al color del texto, que
+         sube el contraste en los dos temas sin dejar de leerse como atraso. */
+      .dg-envios-fila-visita.dg-envios-fila-atrasada .dg-envios-fecha { color:color-mix(in srgb, var(--dg-danger) 70%, var(--dg-text)); }
+      .dg-envios-visita-nombre { display:inline-flex; align-items:center; gap:7px; font-weight:600; }
+      .dg-envios-chip-visita { display:inline-flex; align-items:center; gap:3px; padding:1px 7px; border-radius:100px; background:rgba(var(--dg-warning-rgb),.18); color:color-mix(in srgb, var(--dg-warning) 45%, var(--dg-text)); font-size:11px; font-weight:600; white-space:nowrap; }
+      .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
+      /* La tabla de reclamos tiene una columna menos y textos más largos. */
+      .dg-reclamos-tabla { min-width:700px; }
+      .dg-reclamos-tabla .dg-envios-dir { min-width:200px; color:var(--dg-text-dim); }
+
+      /* El bloque de visita adentro de la tarjeta del reclamo */
+      .dg-reclamo-visita { margin:12px 0; padding:11px 13px; border:1px dashed rgba(var(--dg-line-rgb),.18); border-radius:12px; }
+      .dg-reclamo-visita-on { border-style:solid; border-color:rgba(var(--dg-warning-rgb),.45); background:rgba(var(--dg-warning-rgb),.07); }
+      .dg-reclamo-visita-check { display:flex; align-items:center; gap:9px; cursor:pointer; font-size:13px; color:var(--dg-text); }
+      .dg-reclamo-visita-check input { width:16px; height:16px; flex:0 0 auto; accent-color:var(--dg-warning); cursor:pointer; }
+      .dg-reclamo-visita-check span { display:inline-flex; align-items:center; gap:6px; }
+      .dg-reclamo-visita-check svg { color:var(--dg-warning); }
+      .dg-reclamo-visita-pie { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 14px; margin-top:10px; }
+      .dg-reclamo-visita-pie .dg-envios-pagado { display:inline-flex; align-items:center; gap:5px; font-size:13px; }
       .dg-envios-tabla tfoot td { font-weight:700; border-top:2px solid rgba(var(--dg-line-rgb),.18); color:var(--dg-text-dim); }
       .dg-envios-tabla tfoot .dg-num { color:var(--dg-text); }
       .dg-shipping-confirm-card { scroll-margin-top:16px; }
