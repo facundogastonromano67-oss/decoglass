@@ -5039,7 +5039,7 @@ function emptyPedido(prefill) {
     canalVenta: prefill?.canalVenta || "",
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
-    fletero: "", fleteroTel: "", envioCobro: "", fleteLiquidado: false, fleteLiquidadoMonto: 0, fleteLiquidadoFecha: "",
+    fletero: "", fleteroTel: "", fletePago: "", envioCobro: "", fleteLiquidado: false, fleteLiquidadoMonto: 0, fleteLiquidadoFecha: "",
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
     motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "", destinoLat: null, destinoLng: null, fechaEnvio: "",
     tipoPedido: prefill?.tipoPedido || "venta", urgente: prefill?.urgente || false, reclamoId: prefill?.reclamoId || null,
@@ -7476,7 +7476,18 @@ function fleteElegible(p) {
 function fleteSeLeDebe(p) {
   return fleteElegible(p) && p.envioCobro === "anticipado";
 }
-function fleteMonto(p) { return costoEnvioPedido(p) || 0; }
+// Lo que se lleva el flete por este envío. Puede ser menos que lo que le
+// cobramos al cliente: esa diferencia es lo que le queda a la empresa.
+// Sin cargar vale lo que pagó el cliente, que es como funcionaba antes.
+// OJO: un 0 cargado a propósito ES un valor (un envío que el flete no cobra);
+// lo que no está cargado es el vacío.
+function pagoAlFletePedido(pedido) {
+  const puesto = pedido?.fletePago;
+  if (puesto === "" || puesto === null || puesto === undefined) return costoEnvioPedido(pedido);
+  const n = Number(puesto);
+  return Number.isFinite(n) && n >= 0 ? n : costoEnvioPedido(pedido);
+}
+function fleteMonto(p) { return pagoAlFletePedido(p) || 0; }
 // Los nombres de fletero que ya se usaron, para sugerirlos.
 function fleterosUsados(pedidos) {
   return [...new Set((pedidos || []).map((p) => String(p.fletero || "").trim()).filter(Boolean))].sort();
@@ -9182,6 +9193,14 @@ function faltaParaEntregar(espejos) {
   return prep.error || "";
 }
 
+// Los dos horarios de siempre. Se guardan en el MISMO campo que el horario
+// escrito a mano (horarioEntrega), así no hay dos datos diciendo cosas
+// distintas sobre la misma entrega.
+const TURNOS_ENVIO = [
+  { id: "Por la mañana", label: "Mañana" },
+  { id: "Por la tarde", label: "Tarde" },
+];
+
 // ===== Coordinar con el flete ==============================================
 // El teléfono del flete no se carga en ningún lado aparte: se recuerda del
 // último envío que llevó esa misma persona, igual que los datos del cliente
@@ -9259,9 +9278,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
-  const [tarjetaMarcada, marcarTarjeta] = useTarjetaMarcada();
   const [copiedId, setCopiedId] = useState(null);
   const [copiadoQue, setCopiadoQue] = useState(null);
+  const [editandoFila, setEditandoFila] = useState(null);
   const [mapaPedido, setMapaPedido] = useState(null);
   // Copiar cualquier texto dejando la marca de "copiado" dos segundos.
   function copiarTexto(texto, clave) {
@@ -9430,10 +9449,6 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       const atrasada = f.fecha && f.fecha < semana.hoy;
                       const deSemana = f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo;
                       const abierta = filaAbierta === f.clave;
-                      const irATarjeta = (ev) => {
-                        ev.stopPropagation();
-                        irAlaTarjeta(`envio-${f.clave}`, () => marcarTarjeta(f.clave));
-                      };
                       return (
                         <Fragment key={f.clave}>
                         <tr
@@ -9444,7 +9459,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           <td className="dg-envios-nombre">
                             {f.visita
                               ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
-                              : <button type="button" className="dg-envios-nombre-btn" onClick={irATarjeta} title="Ir a la tarjeta de este envío">{f.cliente}</button>}
+                              : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
                           </td>
                           <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
@@ -9489,9 +9504,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                 </div>
                               ) : (() => {
                                 // Todo lo del envío en un solo lugar: qué falta,
-                                // cuánta plata hay que cobrar y la coordinación
-                                // con el flete. La idea es no tener que bajar
-                                // hasta la tarjeta para mover un envío.
+                                // cuánta plata hay que cobrar, qué se lleva el
+                                // flete y la coordinación con él. Desde que esto
+                                // está completo, abajo ya no hacen falta las
+                                // tarjetas: eran lo mismo dos veces.
                                 const p = f.p;
                                 const listo = pedidoEstaListo(p);
                                 const entregado = p.estado === "Entregado";
@@ -9501,6 +9517,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                 const mensajeFlete = mensajeParaElFlete(f.items, p.fletero);
                                 const saldoEspejos = f.items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0);
                                 const envioPend = f.items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+                                const seLleva = pagoAlFletePedido(p);
+                                const nosQueda = f.flete - seLleva;
+                                const waCliente = listo && !entregado ? entregaWaLink(p) : null;
+                                const abiertoEditar = editandoFila === f.clave;
                                 return (
                                 <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
 
@@ -9554,7 +9574,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                         {saldoEspejos > 0 ? <b>{money(saldoEspejos)}</b> : <b className="dg-envios-pagado">saldado</b>}
                                       </li>
                                       <li>
-                                        <span>Envío</span>
+                                        <span>Envío al cliente</span>
                                         {f.flete > 0
                                           ? (envioPend > 0 ? <b>{money(f.flete)}</b> : <b className="dg-envios-pagado">{money(f.flete)} · pagado</b>)
                                           : <b className="dg-envios-falta">sin cargar</b>}
@@ -9563,6 +9583,21 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                         <span>A cobrar en la entrega</span>
                                         <b>{money(saldoEspejos + envioPend)}</b>
                                       </li>
+                                      {/* Lo que se lleva el flete y lo que queda. Solo si hay
+                                          algo cargado: una diferencia inventada confunde más
+                                          que no mostrar nada. */}
+                                      {f.flete > 0 && (
+                                        <>
+                                          <li className="dg-salida-plata-aparte">
+                                            <span>Se lleva el flete</span>
+                                            <b>{money(seLleva)}</b>
+                                          </li>
+                                          <li>
+                                            <span>Nos queda</span>
+                                            <b className={nosQueda < 0 ? "dg-salida-perdida" : nosQueda > 0 ? "dg-envios-pagado" : ""}>{money(nosQueda)}</b>
+                                          </li>
+                                        </>
+                                      )}
                                     </ul>
                                     <p className="dg-salida-nota">{saldoEspejos + envioPend > 0 ? "Decíselo al flete en el mensaje, o nadie lo cobra." : "No hay que cobrar nada en la entrega."}</p>
                                   </div>
@@ -9575,8 +9610,13 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                       <li><span>Dónde</span><b className="dg-salida-dato">{f.donde || "sin dirección"}</b></li>
                                     </ul>
                                     <div className="dg-salida-acciones">
+                                      {waCliente && (
+                                        <a className="dg-btn-ghost dg-mini-btn" href={waCliente} target="_blank" rel="noopener noreferrer">
+                                          <MessageCircle size={13} /> Avisarle que está listo
+                                        </a>
+                                      )}
                                       <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiar(f.items)}>
-                                        {copiedId === f.clave ? <Check size={13} /> : <Copy size={13} />} {copiedId === f.clave ? "Copiado" : "Mensaje para el cliente"}
+                                        {copiedId === f.clave ? <Check size={13} /> : <Copy size={13} />} {copiedId === f.clave ? "Copiado" : "Copiar los datos"}
                                       </button>
                                     </div>
                                   </div>
@@ -9601,6 +9641,11 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                           onGuardar={(v) => updateShipping(p, { fleteroTel: v })} />
                                       </label>
                                       <label>
+                                        <span>Se lleva</span>
+                                        <CampoTextoGuardado value={p.fletePago == null ? "" : String(p.fletePago)} placeholder={f.flete > 0 ? String(f.flete) : "Ej: 12000"}
+                                          onGuardar={(v) => updateShipping(p, { fletePago: String(v).trim() === "" ? "" : Number(String(v).replace(/[^0-9.-]/g, "")) || 0 })} />
+                                      </label>
+                                      <label>
                                         <span>El flete lo cobra</span>
                                         <select disabled={!canEdit} value={p.envioCobro || ""}
                                           onChange={(e) => updateShipping(p, { envioCobro: e.target.value, envioPagado: e.target.value === "anticipado" })}>
@@ -9619,22 +9664,60 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                         ? <a className="dg-btn-primary dg-mini-btn" href={`${waFlete}?text=${encodeURIComponent(mensajeFlete)}`} target="_blank" rel="noopener noreferrer">
                                             <MessageCircle size={13} /> Preguntarle qué día puede
                                           </a>
-                                        : <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTexto(mensajeFlete, `flete-${f.clave}`)}>
-                                            {copiadoQue === `flete-${f.clave}` ? <Check size={13} /> : <Copy size={13} />} {copiadoQue === `flete-${f.clave}` ? "Copiado" : "Copiar el mensaje para el flete"}
-                                          </button>}
-                                      {waFlete && (
-                                        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTexto(mensajeFlete, `flete-${f.clave}`)}>
-                                          {copiadoQue === `flete-${f.clave}` ? <Check size={13} /> : <Copy size={13} />} {copiadoQue === `flete-${f.clave}` ? "Copiado" : "Copiar"}
-                                        </button>
-                                      )}
+                                        : null}
+                                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTexto(mensajeFlete, `flete-${f.clave}`)}>
+                                        {copiadoQue === `flete-${f.clave}` ? <Check size={13} /> : <Copy size={13} />} {copiadoQue === `flete-${f.clave}` ? "Copiado" : waFlete ? "Copiar" : "Copiar el mensaje para el flete"}
+                                      </button>
                                       <span className={`dg-salida-pagoflete dg-salida-pagoflete-${pago.clase}`}>{pago.texto}</span>
                                     </div>
                                     {!waFlete && p.fletero && <p className="dg-salida-nota">Cargale el teléfono y la próxima vez se abre el WhatsApp solo.</p>}
                                   </div>
 
+                                  {/* Lo que antes estaba en la tarjeta de abajo. Va escondido
+                                      porque es lo que menos se toca: la dirección se carga una
+                                      vez y no se vuelve a mirar. */}
+                                  {abiertoEditar && (
+                                    <div className="dg-salida-bloque dg-salida-bloque-ancho dg-salida-editar">
+                                      <div className="dg-salida-tit">Datos de entrega</div>
+                                      <div className="dg-salida-campos">
+                                        <label><span>Teléfono</span><CampoTextoGuardado value={p.celular} onGuardar={(v) => updateShipping(p, { celular: v })} placeholder="Ej: 1122334455" /></label>
+                                        <label><span>Barrio</span><CampoTextoGuardado value={p.barrio} onGuardar={(v) => updateShipping(p, { barrio: v })} placeholder="Ej: Palermo" /></label>
+                                        <label><span>Dirección</span><CampoTextoGuardado value={p.detalleEntrega} onGuardar={(v) => updateShipping(p, { detalleEntrega: v })} placeholder="Calle y número" /></label>
+                                        <label><span>Piso / Depto</span><CampoTextoGuardado value={p.piso} onGuardar={(v) => updateShipping(p, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></label>
+                                        <label><span>Localidad</span><CampoTextoGuardado value={p.localidad} onGuardar={(v) => updateShipping(p, { localidad: v })} placeholder="Opcional" /></label>
+                                      </div>
+                                      <div className="dg-salida-horario">
+                                        <span>Horario de entrega</span>
+                                        <div className="dg-salida-turnos">
+                                          {TURNOS_ENVIO.map((t) => (
+                                            <button key={t.id} type="button" disabled={!canEdit}
+                                              className={`dg-salida-turno ${p.horarioEntrega === t.id ? "dg-salida-turno-on" : ""}`}
+                                              onClick={() => updateShipping(p, { horarioEntrega: p.horarioEntrega === t.id ? "" : t.id })}>
+                                              {t.label}
+                                            </button>
+                                          ))}
+                                        </div>
+                                        <CampoTextoGuardado className="dg-salida-horario-libre" value={p.horarioEntrega} onGuardar={(v) => updateShipping(p, { horarioEntrega: v })} placeholder="o escribilo: 13 a 17 hs" />
+                                      </div>
+                                      {canEdit && (
+                                        <div className="dg-salida-acciones">
+                                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setMapaPedido(p)}>
+                                            <MapPin size={13} /> {p.destinoLat != null ? "Cambiar la ubicación" : "Marcar en el mapa"}
+                                          </button>
+                                          {p.destinoLat != null
+                                            ? <span className="dg-shipping-mapa-ok"><CheckCircle2 size={12} /> El flete ve el pin del destino</span>
+                                            : <span className="dg-salida-nota" style={{ margin: 0 }}>Si la marcás, el flete no tiene que buscar la dirección.</span>}
+                                          <BotonCompartirSeguimiento pedido={p} />
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
                                   <div className="dg-salida-pie">
                                     <span className="dg-salida-datos">Pedido #{p.orden}{f.items.length > 1 ? ` · ${f.items.length} espejos` : ""} · {p.metodo}</span>
-                                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
+                                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoFila(abiertoEditar ? null : f.clave)} aria-expanded={abiertoEditar}>
+                                      <Pencil size={13} /> {abiertoEditar ? "Listo" : "Datos de entrega, horario y mapa"}
+                                    </button>
                                   </div>
                                 </div>
                                 );
@@ -9661,73 +9744,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
         );
       })()}
 
-      <div className="dg-task-list dg-pedido-list">
-        {grupos.length === 0 && <div className="dg-empty">No hay pedidos con envío pendientes.</div>}
-        {grupos.map((items) => {
-          const p = items[0];
-          const clave = p.grupoId || p.id;
-          // Espejos del mismo pedido que todavía no salieron de fábrica.
-          const enProduccion = pedidos.filter((x) => (x.grupoId || x.id) === clave && x.estado !== "Cancelado" && !pedidoEstaListo(x)).length;
-          const saldoEspejos = items.reduce((total, x) => total + Math.max(0, pedidoSaldo(x)), 0);
-          const costoEnvio = items.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0);
-          const envioPendiente = items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
-          const totalPendiente = saldoEspejos + envioPendiente;
-          const ordenes = [...new Set(items.map((x) => x.orden))].map((o) => `#${o}`).join(" · ");
-          const medidas = items.map((x) => `${x.ancho}×${x.alto} cm`).join(" · ");
-          return (
-          <div className={`dg-section-card dg-shipping-confirm-card ${tarjetaMarcada === clave ? "dg-tarjeta-marcada" : ""}`} key={clave} id={`envio-${clave}`}>
-            <div className="dg-section-header"><Truck size={14} /> {ordenes} · {p.cliente} {esperaAcusePostventa(p) && <span className="dg-pedido-flag dg-flag-nuevo" style={{ marginLeft: 8 }}>NUEVO</span>} {p.envioConfirmado && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Confirmado</span>}</div>
-            <div className="dg-pago-meta" style={{ marginBottom: 10 }}>
-              {items.length === 1 ? `${p.ancho}×${p.alto} cm · ${p.forma}` : `${items.length} espejos · ${medidas}`} · {p.metodo}
-              {enProduccion > 0 && ` · ${enProduccion === 1 ? "falta 1 espejo" : `faltan ${enProduccion} espejos`} en producción`}
-            </div>
-            <details className="dg-shipping-editor">
-              <summary>
-                <span className="dg-shipping-editor-icon"><Pencil size={14} /></span>
-                <span><strong>Cargar o corregir datos de entrega</strong><small>{[p.barrio, p.detalleEntrega].filter(Boolean).join(" · ") || "Sin dirección"} {p.fechaEnvio && <span className="dg-fecha-entrega-badge"><CalendarDays size={11} /> Envío {fechaEntregaCorta(p.fechaEnvio)}</span>}</small></span>
-                <ChevronRight size={16} />
-              </summary>
-              <EnterFlow autoFocus={false} className="dg-shipping-editor-body">
-                <div className="dg-shipping-fields">
-                  <div className="dg-shipping-field"><Field label="Teléfono"><input disabled={!canEdit} value={p.celular || ""} onChange={(e) => updateShipping(p, { celular: e.target.value })} /></Field></div>
-                  <div className="dg-shipping-field"><Field label="Barrio"><input disabled={!canEdit} value={p.barrio || ""} onChange={(e) => updateShipping(p, { barrio: e.target.value })} placeholder="Ej: Palermo" /></Field></div>
-                  <div className="dg-shipping-field dg-shipping-address"><Field label="Dirección"><input disabled={!canEdit} value={p.detalleEntrega || ""} onChange={(e) => updateShipping(p, { detalleEntrega: e.target.value })} placeholder="Calle y número" /></Field></div>
-                  <div className="dg-shipping-field"><Field label="Piso / Depto"><input disabled={!canEdit} value={p.piso || ""} onChange={(e) => updateShipping(p, { piso: e.target.value })} placeholder="Ej: 3° B — o 'casa'" /></Field></div>
-                  <div className="dg-shipping-field"><Field label="Horario"><input disabled={!canEdit} value={p.horarioEntrega || ""} onChange={(e) => updateShipping(p, { horarioEntrega: e.target.value })} placeholder="Ej: 13 a 17 hs" /></Field></div>
-                  <div className="dg-shipping-field"><Field label="Fecha de envío"><input type="date" disabled={!canEdit} value={p.fechaEnvio || ""} onChange={(e) => updateShipping(p, { fechaEnvio: e.target.value })} /></Field></div>
-                </div>
-                {canEdit && (
-                  <div className="dg-shipping-mapa">
-                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setMapaPedido(p)}>
-                      <MapPin size={13} /> {p.destinoLat != null ? "Cambiar ubicación en el mapa" : "Marcar ubicación en el mapa"}
-                    </button>
-                    {p.destinoLat != null
-                      ? <span className="dg-shipping-mapa-ok"><CheckCircle2 size={12} /> Ubicación marcada — el flete no la tiene que buscar</span>
-                      : <span className="dg-pago-meta">Si la marcás, el cliente ve el pin del destino y el flete solo maneja.</span>}
-                  </div>
-                )}
-              </EnterFlow>
-            </details>
-            {/* Con el flete sin cargar y sin saldo, esa fila no dice nada: se esconde. */}
-            {(costoEnvio > 0 || totalPendiente > 0) && (
-              <div className={`dg-shipping-total-preview ${costoEnvio > 0 ? "" : "dg-shipping-total-missing"}`}>
-                <span>{costoEnvio > 0 ? "Total a confirmar con el cliente" : "Total parcial · falta cargar el envío"}</span>
-                <strong>{money(totalPendiente)}</strong>
-              </div>
-            )}
-            <div className="dg-quote-actions dg-shipping-copy">
-              <button className="dg-btn-ghost" onClick={() => copiar(items)}>{copiedId === clave ? <Check size={14} /> : <Copy size={14} />} {copiedId === clave ? "Copiado" : "Copiar mensaje para el cliente"}</button>
-            </div>
-            <FlujoPedido
-              pedido={p}
-              canEdit={canEdit}
-              onClienteConfirmado={() => marcarClienteAvisado(items)}
-              onEnvioConfirmado={() => marcarEnvioConfirmado(items)}
-            />
-          </div>
-          );
-        })}
-      </div>
+      {grupos.length === 0 && visitas.length === 0 && <div className="dg-empty">No hay pedidos con envío pendientes.</div>}
 
       {mapaPedido && (
         <ModalDestinoRecorrido
@@ -19368,6 +19385,20 @@ function Style() {
       .dg-salida-pie { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
       .dg-salida-datos { margin-right:auto; font-size:12px; color:var(--dg-text-dim); }
       .dg-salida-datos b { color:var(--dg-text); font-weight:600; }
+      /* Lo que se lleva el flete va separado de lo que cobra el cliente: son
+         dos plata distintas y mezclarlas fue justo lo que hubo que desarmar. */
+      .dg-salida-plata-aparte { margin-top:6px; padding-top:6px; border-top:1px dashed rgba(var(--dg-line-rgb),.14); }
+      .dg-salida-perdida { color:color-mix(in srgb, var(--dg-danger) 65%, var(--dg-text)); }
+
+      .dg-salida-editar { padding-top:11px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
+      .dg-salida-horario { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin-top:11px; }
+      .dg-salida-horario > span { font-size:12px; color:var(--dg-text-dim); }
+      .dg-salida-turnos { display:inline-flex; gap:0; border:1px solid rgba(var(--dg-line-rgb),.2); border-radius:9px; overflow:hidden; }
+      .dg-salida-turno { padding:6px 14px; border:0; background:transparent; font-family:'Jost',sans-serif; font-size:13px; font-weight:600; color:var(--dg-text-dim); cursor:pointer; }
+      .dg-salida-turno + .dg-salida-turno { border-left:1px solid rgba(var(--dg-line-rgb),.2); }
+      .dg-salida-turno:hover:not(:disabled) { background:rgba(var(--dg-line-rgb),.06); }
+      .dg-salida-turno-on { background:rgba(var(--dg-accent-rgb),.16); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
+      .dg-salida-horario-libre { flex:1 1 170px; min-width:0; padding:6px 9px; font-size:13px; }
       /* En el teléfono la tabla se mira de costado, pero el desplegable no:
          queda pegado al borde izquierdo y en una sola columna, del ancho que
          realmente se ve. Si no, había que arrastrar la tabla para leer cada
@@ -20285,7 +20316,6 @@ function Style() {
       .dg-fab-foot { display:flex; align-items:center; gap:10px; padding-top:10px; border-top:0.5px solid rgba(var(--dg-line-rgb),0.07); flex-wrap:wrap; }
       .dg-fab-foot-txt { font-size:11px; color:var(--dg-text-faint); flex:1 1 220px; min-width:0; }
       .dg-fab-flag-demora { color:var(--dg-danger); font-weight:600; }
-      .dg-fecha-entrega-badge { display:inline-flex; align-items:center; gap:4px; margin-left:6px; padding:2px 8px; border:1px solid rgba(var(--dg-line-rgb),0.25); border-radius:8px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:600; color:var(--dg-text); vertical-align:middle; }
       .dg-fab-flag-ok { color:var(--dg-success); font-weight:600; }
       .dg-fab-acciones { display:flex; align-items:center; gap:4px; min-width:0; }
       .dg-fab-btn-listo { display:flex; align-items:center; gap:6px; background: rgba(var(--dg-success-rgb),0.12); border:1px solid rgba(var(--dg-success-rgb),0.4);
@@ -21543,22 +21573,7 @@ function Style() {
       .dg-shipping-editor > summary > svg { color:var(--dg-text-faint); transition:transform .18s ease; }
       .dg-shipping-editor[open] > summary > svg { transform:rotate(90deg); color:var(--dg-accent); }
       .dg-shipping-editor-icon { width:27px; height:27px; display:flex !important; align-items:center; justify-content:center; border-radius:8px; background:rgba(var(--dg-accent-rgb),.1); color:var(--dg-accent); }
-      .dg-shipping-editor-body { padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-bg); }
-      .dg-shipping-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-      .dg-shipping-field { min-width:0; }
-      .dg-shipping-mapa { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:10px; padding-top:9px; border-top:1px dashed rgba(var(--dg-line-rgb),0.15); }
       .dg-shipping-mapa-ok { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:var(--dg-success); }
-      .dg-shipping-address { grid-column:1 / -1; }
-      .dg-shipping-field .dg-field { gap:3px; }
-      .dg-shipping-field .dg-field label { font-size:11px; }
-      .dg-shipping-field .dg-field input { min-width:0; min-height:39px; padding:7px 9px; font-size:13px; }
-      .dg-shipping-total-preview { min-height:36px; display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:7px; padding:7px 9px; border:1px solid rgba(var(--dg-accent-rgb),.2); border-radius:8px; background:rgba(var(--dg-accent-rgb),.06); }
-      .dg-shipping-total-preview > span { color:var(--dg-text-dim); font-size:11px; font-weight:650; }
-      .dg-shipping-total-preview > strong { color:var(--dg-accent-2); font-family:'JetBrains Mono',monospace; font-size:13px; white-space:nowrap; }
-      .dg-shipping-total-missing { border-color:rgba(var(--dg-warning-rgb),.24); background:rgba(var(--dg-warning-rgb),.06); }
-      .dg-shipping-total-missing > strong { color:var(--dg-warning); }
-      .dg-shipping-copy { margin-top:7px; }
-      .dg-shipping-copy .dg-btn-ghost { min-height:34px; padding:7px 10px; font-size:11px; }
 
       /* Logística: una entrega por cliente, con la información de calle a primera vista. */
       .dg-logistics-list { display:flex; flex-direction:column; gap:12px; max-height:none; overflow:visible; }
@@ -21749,9 +21764,6 @@ function Style() {
         .dg-order-step { min-height:0; }
         .dg-shipping-confirm-card { padding:11px; }
         .dg-shipping-editor > summary { min-height:46px; padding:6px 8px; }
-        .dg-shipping-editor-body { padding:7px; }
-        .dg-shipping-fields { gap:6px; }
-        .dg-shipping-field .dg-field input { min-height:40px; padding:7px 8px; font-size:15px; }
         .dg-logistics-head { grid-template-columns:minmax(0,1fr) auto; gap:5px; padding:9px 10px; }
         .dg-logistics-head > strong { grid-column:1; grid-row:2; }
         .dg-logistics-head > time { grid-column:2; grid-row:1 / 3; }
@@ -21771,8 +21783,6 @@ function Style() {
       @media (max-width:340px) {
         .dg-building-floor .dg-plant-grid { grid-template-columns:1fr; }
         .dg-room-tile { aspect-ratio:16/10; }
-        .dg-shipping-fields { grid-template-columns:1fr; }
-        .dg-shipping-address { grid-column:auto; }
       }
       @media (prefers-reduced-motion: reduce) {
         .dg-spin { animation:none; }
