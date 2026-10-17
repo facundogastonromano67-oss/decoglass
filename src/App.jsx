@@ -5039,7 +5039,7 @@ function emptyPedido(prefill) {
     canalVenta: prefill?.canalVenta || "",
     estado: "Sin pasar a fábrica", demorado: false, listo: "", metodo: prefill?.metodo || "A confirmar", barrio: prefill?.barrio || "", detalleEntrega: prefill?.detalleEntrega || "", costoEnvio: "", piso: prefill?.piso || "", horarioEntrega: "", envioPagado: false, envioConfirmado: false, vistoFabrica: "", vistoFabricaPor: "", vistoPostventa: "", vistoPostventaPor: "", clienteAvisado: false, clienteAvisadoFecha: "", pedidoVerificadoFecha: "", produccionEtapa: "", produccionCortadoFecha: "", produccionCortadoPor: "", grabadoEnviadoFecha: "", grabadoEnviadoPor: "", grabadoRegresoFecha: "", grabadoRegresoPor: "", grabadoRegresoPrometido: "", biseladoPedidoFecha: "", biseladoPedidoPor: "", biseladoRegresoFecha: "", biseladoRegresoPor: "", biseladoRegresoPrometido: "", produccionArmadoFecha: "", produccionArmadoPor: "", produccionEmbaladoFecha: "", produccionEmbaladoPor: "", produccionListaFecha: "", envioConfirmadoFecha: "", entregadoFecha: "",
     comisionPagada: false, comisionExcluida: false, comisionLiquidadaMonto: 0, comisionEmpleadoId: null,
-    fletero: "", envioCobro: "", fleteLiquidado: false, fleteLiquidadoMonto: 0, fleteLiquidadoFecha: "",
+    fletero: "", fleteroTel: "", envioCobro: "", fleteLiquidado: false, fleteLiquidadoMonto: 0, fleteLiquidadoFecha: "",
     facturaUrl: "", remitoUrl: "", remitoNumeroGuia: "",
     motivoCancelacion: "", motivoReproceso: "", cantidadReprocesos: 0, stockEspejoId: "", destinoLat: null, destinoLng: null, fechaEnvio: "",
     tipoPedido: prefill?.tipoPedido || "venta", urgente: prefill?.urgente || false, reclamoId: prefill?.reclamoId || null,
@@ -9182,6 +9182,71 @@ function faltaParaEntregar(espejos) {
   return prep.error || "";
 }
 
+// ===== Coordinar con el flete ==============================================
+// El teléfono del flete no se carga en ningún lado aparte: se recuerda del
+// último envío que llevó esa misma persona, igual que los datos del cliente
+// salen de sus pedidos anteriores. Un nombre nuevo arranca sin teléfono y se
+// escribe una sola vez.
+function telDeFletero(pedidos, nombre) {
+  const buscado = textoComparable(nombre || "");
+  if (!buscado) return "";
+  const conTel = (pedidos || [])
+    .filter((p) => textoComparable(p.fletero || "") === buscado && String(p.fleteroTel || "").trim())
+    .sort((a, b) => (b.fechaEnvio || b.fecha || "").localeCompare(a.fechaEnvio || a.fecha || ""));
+  return conTel.length ? String(conTel[0].fleteroTel).trim() : "";
+}
+
+// El mensaje para preguntarle al flete qué día puede. Lleva exactamente lo
+// que dice la guía de trabajo: dirección, teléfono del cliente, cuántos
+// bultos y si hay que cobrar algo al entregar. Lo del cobro no es un detalle:
+// un envío que sale a cobrar y nadie se lo dijo al flete es plata perdida.
+function mensajeParaElFlete(items, nombreFlete) {
+  const lista = items || [];
+  const p = lista[0] || {};
+  const hola = nombreFlete ? `Hola ${String(nombreFlete).trim()}!` : "Hola!";
+  const bultos = lista.reduce((t, x) => t + Math.max(1, Number(x.cant) || 1), 0);
+  const medidas = lista
+    .map((x) => (x.ancho && x.alto ? `${x.ancho}×${x.alto} cm` : ""))
+    .filter(Boolean).join(" · ");
+  const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
+  const aCobrar = lista.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
+    + lista.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+
+  const lineas = [
+    `${hola} Tenemos un envío para coordinar.`,
+    "",
+    `📦 ${bultos} ${bultos === 1 ? "espejo" : "espejos"}${medidas ? ` (${medidas})` : ""}`,
+    `👤 ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
+    `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
+    `🕐 Horario: ${p.horarioEntrega || "a coordinar con el cliente"}`,
+    aCobrar > 0
+      ? `💵 COBRAR EN LA ENTREGA: ${money(aCobrar)}`
+      : "💵 No hay que cobrar nada: está todo pagado.",
+    "",
+    p.fechaEnvio
+      ? `Lo teníamos para el ${fechaLargaCorta(p.fechaEnvio)}. ¿Te queda bien o lo movemos?`
+      : "¿Qué día lo podés hacer?",
+  ];
+  return lineas.join("\n");
+}
+
+// En qué anda el pago al flete. PostVenta lo VE pero no lo toca: pagarle al
+// flete es un gasto y se liquida desde Administración ▸ Fletes, que además lo
+// registra en Compras. Marcarlo acá dejaría la plata sin asentar.
+function estadoPagoDelFlete(items) {
+  const lista = items || [];
+  const p = lista[0] || {};
+  const monto = lista.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0);
+  if (monto <= 0) return { texto: "Falta cargar el monto del flete", clase: "falta" };
+  if (p.fleteLiquidado) return { texto: `Ya le pagamos ${money(Number(p.fleteLiquidadoMonto) || monto)}${p.fleteLiquidadoFecha ? ` el ${fechaEntregaCorta(p.fleteLiquidadoFecha)}` : ""}`, clase: "ok" };
+  if (p.envioCobro === "entrega") return { texto: `Lo cobra él en la entrega (${money(monto)})`, clase: "neutro" };
+  if (p.envioCobro === "anticipado") return {
+    texto: p.estado === "Entregado" ? `Se le deben ${money(monto)} — se liquida en Administración` : `${money(monto)} a pagarle cuando entregue`,
+    clase: p.estado === "Entregado" ? "debe" : "neutro",
+  };
+  return { texto: "Falta definir quién cobra el flete", clase: "falta" };
+}
+
 function semanaActual() {
   const hoy = new Date();
   const lunes = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - ((hoy.getDay() + 6) % 7));
@@ -9196,7 +9261,16 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   const [filaAbierta, setFilaAbierta] = useState(null);
   const [tarjetaMarcada, marcarTarjeta] = useTarjetaMarcada();
   const [copiedId, setCopiedId] = useState(null);
+  const [copiadoQue, setCopiadoQue] = useState(null);
   const [mapaPedido, setMapaPedido] = useState(null);
+  // Copiar cualquier texto dejando la marca de "copiado" dos segundos.
+  function copiarTexto(texto, clave) {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(texto).then(() => {
+      setCopiadoQue(clave);
+      setTimeout(() => setCopiadoQue(null), 2000);
+    });
+  }
 
   const enviosListos = pedidos
     .filter((p) => esPedidoConEnvio(p) && p.metodo !== "Interior")
@@ -9288,6 +9362,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   return (
     <div className="dg-page">
       <div className="dg-crm-filters"><Filter size={14} /><input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
+      <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((x) => <option key={x} value={x} />)}</datalist>
 
       {(grupos.length > 0 || visitas.length > 0) && (() => {
         const semana = semanaActual();
@@ -9412,20 +9487,158 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                   <span><b>Horario</b> {f.r.horarioEntrega || "a coordinar"}</span>
                                   <span><b>Reclamo</b> {f.r.notas || f.r.tipo}</span>
                                 </div>
-                              ) : (
-                                <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
-                                  <label className="dg-envios-detalle-fecha">
-                                    <span>Fecha de envío</span>
-                                    <input type="date" disabled={!canEdit} value={f.p.fechaEnvio || ""} onChange={(e) => updateShipping(f.p, { fechaEnvio: e.target.value })} />
-                                  </label>
-                                  <span><b>Teléfono</b> {f.p.celular || "—"}</span>
-                                  <span><b>Horario</b> {f.p.horarioEntrega || "a coordinar"}</span>
-                                  <span><b>Listo para</b> {f.listoPara ? fechaEntregaCorta(f.listoPara) : "—"}</span>
-                                  {f.flete > 0 && f.fletePagado && <span className="dg-envios-pagado">Flete pagado</span>}
-                                  {f.falta && <span className="dg-envios-detalle-falta">{f.falta}</span>}
-                                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
+                              ) : (() => {
+                                // Todo lo del envío en un solo lugar: qué falta,
+                                // cuánta plata hay que cobrar y la coordinación
+                                // con el flete. La idea es no tener que bajar
+                                // hasta la tarjeta para mover un envío.
+                                const p = f.p;
+                                const listo = pedidoEstaListo(p);
+                                const entregado = p.estado === "Entregado";
+                                const pago = estadoPagoDelFlete(f.items);
+                                const telFlete = p.fleteroTel || telDeFletero(pedidos, p.fletero);
+                                const waFlete = waLink(telFlete);
+                                const mensajeFlete = mensajeParaElFlete(f.items, p.fletero);
+                                const saldoEspejos = f.items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0);
+                                const envioPend = f.items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+                                return (
+                                <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
+
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">En qué anda</div>
+                                    <ul className="dg-salida-checks">
+                                      {/* Estos dos los marca solo el sistema: vienen de fábrica. */}
+                                      <li className={pedidoFueVerificado(p) || entregado ? "dg-salida-ok" : ""}>
+                                        <span className="dg-salida-marca" aria-hidden="true">{pedidoFueVerificado(p) || entregado ? <Check size={13} /> : null}</span>
+                                        Pedido verificado
+                                      </li>
+                                      <li className={listo ? "dg-salida-ok" : ""}>
+                                        <span className="dg-salida-marca" aria-hidden="true">{listo ? <Check size={13} /> : null}</span>
+                                        Espejos listos{f.listoPara ? <small> · {fechaEntregaCorta(f.listoPara)}</small> : null}
+                                      </li>
+                                      {/* Estos los marca PostVenta. */}
+                                      <li>
+                                        <button type="button" className={`dg-salida-check ${p.clienteAvisado || entregado ? "dg-salida-check-on" : ""}`}
+                                          disabled={!canEdit || entregado || !!p.clienteAvisado}
+                                          onClick={() => marcarClienteAvisado(f.items)}>
+                                          <span className="dg-salida-marca" aria-hidden="true">{p.clienteAvisado || entregado ? <Check size={13} /> : null}</span>
+                                          Cliente confirmado
+                                        </button>
+                                      </li>
+                                      <li>
+                                        <button type="button" className={`dg-salida-check ${p.envioConfirmado || entregado ? "dg-salida-check-on" : ""}`}
+                                          disabled={!canEdit || entregado || !!p.envioConfirmado}
+                                          onClick={() => marcarEnvioConfirmado(f.items)}>
+                                          <span className="dg-salida-marca" aria-hidden="true">{p.envioConfirmado || entregado ? <Check size={13} /> : null}</span>
+                                          Envío confirmado
+                                        </button>
+                                      </li>
+                                      <li>
+                                        <button type="button" className="dg-salida-check"
+                                          disabled={!canEdit}
+                                          title={f.falta || "Marcar este pedido como entregado"}
+                                          onClick={() => entregarDesdeLaTabla(f)}>
+                                          <span className="dg-salida-marca" aria-hidden="true" />
+                                          Entregado
+                                        </button>
+                                      </li>
+                                    </ul>
+                                    {f.falta && <p className="dg-salida-falta">{f.falta}</p>}
+                                  </div>
+
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">La plata</div>
+                                    <ul className="dg-salida-plata">
+                                      <li>
+                                        <span>Espejos</span>
+                                        {saldoEspejos > 0 ? <b>{money(saldoEspejos)}</b> : <b className="dg-envios-pagado">saldado</b>}
+                                      </li>
+                                      <li>
+                                        <span>Envío</span>
+                                        {f.flete > 0
+                                          ? (envioPend > 0 ? <b>{money(f.flete)}</b> : <b className="dg-envios-pagado">{money(f.flete)} · pagado</b>)
+                                          : <b className="dg-envios-falta">sin cargar</b>}
+                                      </li>
+                                      <li className="dg-salida-plata-total">
+                                        <span>A cobrar en la entrega</span>
+                                        <b>{money(saldoEspejos + envioPend)}</b>
+                                      </li>
+                                    </ul>
+                                    <p className="dg-salida-nota">{saldoEspejos + envioPend > 0 ? "Decíselo al flete en el mensaje, o nadie lo cobra." : "No hay que cobrar nada en la entrega."}</p>
+                                  </div>
+
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">El cliente</div>
+                                    <ul className="dg-salida-plata">
+                                      <li><span>Teléfono</span><b className="dg-salida-dato">{p.celular || "—"}</b></li>
+                                      <li><span>Horario</span><b className="dg-salida-dato">{p.horarioEntrega || "a coordinar"}</b></li>
+                                      <li><span>Dónde</span><b className="dg-salida-dato">{f.donde || "sin dirección"}</b></li>
+                                    </ul>
+                                    <div className="dg-salida-acciones">
+                                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiar(f.items)}>
+                                        {copiedId === f.clave ? <Check size={13} /> : <Copy size={13} />} {copiedId === f.clave ? "Copiado" : "Mensaje para el cliente"}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                    <div className="dg-salida-tit">El flete</div>
+                                    <div className="dg-salida-campos">
+                                      <label>
+                                        <span>Lo lleva</span>
+                                        <input list="dg-fleteros" disabled={!canEdit} placeholder="Nombre del flete"
+                                          value={p.fletero || ""}
+                                          onChange={(e) => {
+                                            const nombre = e.target.value;
+                                            // Si ya llevó otros envíos, el teléfono lo sabemos.
+                                            const tel = p.fleteroTel || telDeFletero(pedidos, nombre);
+                                            updateShipping(p, { fletero: nombre, fleteroTel: tel });
+                                          }} />
+                                      </label>
+                                      <label>
+                                        <span>Su teléfono</span>
+                                        <CampoTextoGuardado value={telFlete} placeholder="Ej: 1122334455"
+                                          onGuardar={(v) => updateShipping(p, { fleteroTel: v })} />
+                                      </label>
+                                      <label>
+                                        <span>El flete lo cobra</span>
+                                        <select disabled={!canEdit} value={p.envioCobro || ""}
+                                          onChange={(e) => updateShipping(p, { envioCobro: e.target.value, envioPagado: e.target.value === "anticipado" })}>
+                                          <option value="">— sin definir —</option>
+                                          <option value="anticipado">Ya lo cobramos nosotros</option>
+                                          <option value="entrega">Lo cobra él en la entrega</option>
+                                        </select>
+                                      </label>
+                                      <label>
+                                        <span>Fecha de envío</span>
+                                        <input type="date" disabled={!canEdit} value={p.fechaEnvio || ""} onChange={(e) => updateShipping(p, { fechaEnvio: e.target.value })} />
+                                      </label>
+                                    </div>
+                                    <div className="dg-salida-acciones">
+                                      {waFlete
+                                        ? <a className="dg-btn-primary dg-mini-btn" href={`${waFlete}?text=${encodeURIComponent(mensajeFlete)}`} target="_blank" rel="noopener noreferrer">
+                                            <MessageCircle size={13} /> Preguntarle qué día puede
+                                          </a>
+                                        : <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTexto(mensajeFlete, `flete-${f.clave}`)}>
+                                            {copiadoQue === `flete-${f.clave}` ? <Check size={13} /> : <Copy size={13} />} {copiadoQue === `flete-${f.clave}` ? "Copiado" : "Copiar el mensaje para el flete"}
+                                          </button>}
+                                      {waFlete && (
+                                        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTexto(mensajeFlete, `flete-${f.clave}`)}>
+                                          {copiadoQue === `flete-${f.clave}` ? <Check size={13} /> : <Copy size={13} />} {copiadoQue === `flete-${f.clave}` ? "Copiado" : "Copiar"}
+                                        </button>
+                                      )}
+                                      <span className={`dg-salida-pagoflete dg-salida-pagoflete-${pago.clase}`}>{pago.texto}</span>
+                                    </div>
+                                    {!waFlete && p.fletero && <p className="dg-salida-nota">Cargale el teléfono y la próxima vez se abre el WhatsApp solo.</p>}
+                                  </div>
+
+                                  <div className="dg-salida-pie">
+                                    <span className="dg-salida-datos">Pedido #{p.orden}{f.items.length > 1 ? ` · ${f.items.length} espejos` : ""} · {p.metodo}</span>
+                                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
+                                  </div>
                                 </div>
-                              )}
+                                );
+                              })()}
                             </td>
                           </tr>
                         )}
@@ -19106,7 +19319,70 @@ function Style() {
       .dg-envios-hecho-off { border-color:rgba(var(--dg-line-rgb),.2); background:transparent; color:var(--dg-text-dim); }
       .dg-envios-hecho-off:hover:not(:disabled) { background:rgba(var(--dg-line-rgb),.07); }
       .dg-envios-hecho:disabled { opacity:.45; cursor:not-allowed; }
-      .dg-envios-detalle-falta { color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); font-weight:600; }
+
+      /* El desplegable de una salida: todo lo del envío sin bajar a la tarjeta.
+         Va adentro de un <td colSpan>, pero la tabla es de columnas fijas, así
+         que lo que se ponga acá adentro ya no puede ensancharla. */
+      .dg-salida-panel { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px 16px; padding:12px 2px 6px; font-size:13px; }
+      .dg-salida-bloque { min-width:0; }
+      .dg-salida-bloque-ancho { grid-column:1 / -1; }
+      .dg-salida-tit { font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--dg-text-dim); margin-bottom:7px; }
+
+      .dg-salida-checks { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+      .dg-salida-checks li { display:flex; align-items:center; min-width:0; color:var(--dg-text-dim); }
+      .dg-salida-checks li small { color:var(--dg-text-dim); margin-left:5px; }
+      /* La marca es siempre del mismo tamaño esté o no tildada, para que la
+         lista no se mueva cuando se va completando. */
+      .dg-salida-marca { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:17px; height:17px; margin-right:8px; border:1px solid rgba(var(--dg-line-rgb),.22); border-radius:5px; color:var(--dg-on-accent); }
+      .dg-salida-ok { color:var(--dg-text); }
+      .dg-salida-ok .dg-salida-marca { border-color:color-mix(in srgb, var(--dg-success) 45%, transparent); background:color-mix(in srgb, var(--dg-success) 22%, transparent); color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); }
+      .dg-salida-check { display:flex; align-items:center; width:100%; padding:0; border:0; background:transparent; font:inherit; font-size:13px; color:var(--dg-text-dim); text-align:left; cursor:pointer; }
+      .dg-salida-check:hover:not(:disabled) .dg-salida-marca { border-color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),.14); }
+      .dg-salida-check-on { color:var(--dg-text); }
+      .dg-salida-check-on .dg-salida-marca { border-color:color-mix(in srgb, var(--dg-success) 45%, transparent); background:color-mix(in srgb, var(--dg-success) 22%, transparent); color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); }
+      .dg-salida-check:disabled { cursor:default; }
+      .dg-salida-check-on:disabled { opacity:1; }
+      .dg-salida-falta { margin:8px 0 0; color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); font-weight:600; }
+
+      .dg-salida-plata { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+      .dg-salida-plata li { min-width:0; display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+      .dg-salida-plata span { color:var(--dg-text-dim); flex:0 0 auto; }
+      .dg-salida-dato { font-family:'Jost',sans-serif !important; font-weight:600 !important; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+      .dg-salida-plata b { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-weight:700; color:var(--dg-text); }
+      .dg-salida-plata-total { margin-top:3px; padding-top:5px; border-top:1px solid rgba(var(--dg-line-rgb),.14); }
+      .dg-salida-plata-total b { font-size:15px; }
+      .dg-salida-nota { margin:7px 0 0; font-size:12px; color:var(--dg-text-dim); }
+
+      .dg-salida-campos { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:9px 12px; }
+      .dg-salida-campos label { display:flex; flex-direction:column; gap:4px; min-width:0; }
+      .dg-salida-campos label > span { font-size:12px; color:var(--dg-text-dim); }
+      .dg-salida-campos input, .dg-salida-campos select { width:100%; min-width:0; padding:6px 9px; font-size:13px; }
+
+      .dg-salida-acciones { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-top:11px; }
+      .dg-salida-pagoflete { font-size:12px; }
+      .dg-salida-pagoflete-ok { color:color-mix(in srgb, var(--dg-success) 65%, var(--dg-text)); font-weight:600; }
+      .dg-salida-pagoflete-debe { color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); font-weight:600; }
+      .dg-salida-pagoflete-falta { color:var(--dg-text-dim); font-style:italic; }
+      .dg-salida-pagoflete-neutro { color:var(--dg-text-dim); }
+
+      .dg-salida-pie { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
+      .dg-salida-datos { margin-right:auto; font-size:12px; color:var(--dg-text-dim); }
+      .dg-salida-datos b { color:var(--dg-text); font-weight:600; }
+      /* En el teléfono la tabla se mira de costado, pero el desplegable no:
+         queda pegado al borde izquierdo y en una sola columna, del ancho que
+         realmente se ve. Si no, había que arrastrar la tabla para leer cada
+         bloque. Los 62px son el margen del cuerpo más el borde de la tarjeta;
+         medido, no estimado. */
+      @media (max-width:640px) {
+        .dg-salida-panel {
+          position:sticky; left:0; grid-template-columns:1fr;
+          width:calc(100vw - 62px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+        }
+        .dg-salida-campos { grid-template-columns:1fr; }
+        /* Sin el margen de la celda, el panel arranca justo en el borde
+           visible y aprovecha los 24px que se perdían. */
+        .dg-envios-detalle > td { padding-left:0; padding-right:0; }
+      }
       .dg-envios-tabla tfoot td { font-weight:700; border-top:2px solid rgba(var(--dg-line-rgb),.18); color:var(--dg-text-dim); }
       .dg-envios-tabla tfoot .dg-num { color:var(--dg-text); }
       .dg-shipping-confirm-card { scroll-margin-top:16px; }
