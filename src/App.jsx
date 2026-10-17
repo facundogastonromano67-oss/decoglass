@@ -5582,6 +5582,18 @@ function diaPuesto(pedido) {
   const d = pedido?.diaTaller || pedido?.diaPlan || "";
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
 }
+// El día al que lo movieron A MANO, y nada más. En las listas sin cupo este
+// es el único que vale: ahí no hay reparto automático que respetar (ver
+// diaDeLaLista), pero mover un espejo a otro día tiene que funcionar igual.
+function diaMovidoAMano(pedido) {
+  const d = pedido?.diaTaller || "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
+}
+// Qué día le corresponde mirar a esta lista. Las listas con cupo miran los
+// dos (el movido a mano y el que repartió la app); las que no tienen cupo
+// miran solo el movido a mano, porque no hay reparto automático.
+const diaDeLaLista = (listaId) => (listaSinTope(listaId) ? diaMovidoAMano : diaPuesto);
+
 // Ya tendría que estar terminado: su fecha objetivo quedó atrás.
 function estaAtrasadoTaller(pedido, hoyIso) {
   const objetivo = fechaObjetivoFabrica(pedido);
@@ -6230,6 +6242,8 @@ function nombreDiaTaller(iso, hoyIso) {
 // El plan de UNA lista: "simples", "esm_cortar" o "esm_armar".
 function planTaller(pedidos, hoyIso, listaId = "simples") {
   const primero = primerDiaTaller(hoyIso);
+  // Ver diaDeLaLista: en una lista sin cupo solo cuenta el día puesto a mano.
+  const diaDe = diaDeLaLista(listaId);
   const tope = topeDelDia(listaId, false);
   const mitad = Math.max(1, Math.ceil(tope / 2));
   const deLaLista = (p) => entraEnPlanTaller(p) && esDeLaPestana(p, listaId);
@@ -6251,7 +6265,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
     // El día que le tocaba manda sobre el día en que lo armaron: si era del
     // miércoles, se queda en el miércoles aunque lo armen el jueves. Y todo el
     // pedido va junto a un solo día, para no mostrar la misma tarjeta dos veces.
-    const puesto = listaSinTope(listaId) ? "" : diaPuesto(p);
+    const puesto = diaDe(p);
     const dia = puesto || masViejo;
     if (!embalarPorDia.has(dia)) embalarPorDia.set(dia, []);
     embalarPorDia.get(dia).push({ pedido: p, unidades: total, clase: claseTaller(p) });
@@ -6267,7 +6281,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   enLista.forEach((p) => {
     const unidades = Math.max(0, unidadesPendientesTaller(p) - (armadosDe.get(p.id) || 0));
     if (unidades <= 0) return;
-    const puesto = listaSinTope(listaId) ? "" : diaPuesto(p);
+    const puesto = diaDe(p);
     if (puesto && puesto < primero) {
       if (!sinHacerPorDia.has(puesto)) sinHacerPorDia.set(puesto, []);
       sinHacerPorDia.get(puesto).push({
@@ -6297,7 +6311,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   // embalan el jueves a la mañana porque el pegamento necesita la noche; si
   // eso contara para el jueves, el taller se quedaba sin lista.
   const eraDeAntes = (p) => {
-    const d = listaSinTope(listaId) ? "" : diaPuesto(p);
+    const d = diaDe(p);
     return !!d && d < primero;
   };
   const hechosHoy = primero === hoyIso
