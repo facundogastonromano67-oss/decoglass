@@ -8978,59 +8978,71 @@ function grupoInteriorCompleto(pedido, todos) {
 
 function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
   const [busqueda, setBusqueda] = useState("");
+  const [tablaAbierta, setTablaAbierta] = useState(true);
+  const [filaAbierta, setFilaAbierta] = useState(null);
+  // Cuáles van en ESTE despacho. No es lo mismo que "los que están listos":
+  // puede haber 10 terminados y llevarse 3.
+  const [seleccion, setSeleccion] = useState(() => new Set());
+  function alternarElegido(clave) {
+    setSeleccion((prev) => {
+      const s = new Set(prev);
+      if (s.has(clave)) s.delete(clave); else s.add(clave);
+      return s;
+    });
+  }
 
   const interior = pedidos
     .filter((p) => p.metodo === "Interior")
     .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado" && p.estado !== "Despachado")
-    .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
-    .sort((a, b) => {
-      const aListo = pedidoEstaListo(a), bListo = pedidoEstaListo(b);
-      if (aListo !== bListo) return aListo ? -1 : 1; // los listos para despachar van primero
-      return (b.orden || 0) - (a.orden || 0);
-    });
+    .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
 
   const despachados = pedidos
     .filter((p) => p.metodo === "Interior" && p.estado === "Despachado")
     .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => (b.despachadoFecha || "").localeCompare(a.despachadoFecha || ""));
 
-  // Solo se imprime cuando el pedido está 100% terminado (todos los espejos del
-  // grupo listos) y todavía no se despachó. Nunca de un pedido al que le falta
-  // algún espejo en fábrica.
-  const listosParaDespachar = interior.filter((p) => p.estado === "Espejo listo" && p.ancho && p.alto && grupoInteriorCompleto(p, pedidos));
-
-  function update(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
   function updateGrupo(pedido, patch) {
     const grupo = pedido.grupoId || pedido.id;
     onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patch } : p)));
   }
   function marcarEntregadoGrupo(pedido) { updateGrupo(pedido, { estado: "Entregado", entregadoFecha: new Date().toISOString().slice(0, 10) }); }
 
-  // Un pedido = una tarjeta (aunque tenga varios espejos).
-  const gruposInterior = (() => {
+  // Un pedido = una fila, aunque tenga varios espejos.
+  const agrupar = (lista) => {
     const m = new Map();
-    interior.forEach((p) => {
-      const k = p.grupoId || p.id;
-      if (!m.has(k)) m.set(k, []);
-      m.get(k).push(p);
-    });
-    return [...m.values()]
-      .map((items) => items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0)))
-      .sort((a, b) => {
-        const aListo = a.every(pedidoEstaListo), bListo = b.every(pedidoEstaListo);
-        if (aListo !== bListo) return aListo ? -1 : 1;
-        return (b[0].orden || 0) - (a[0].orden || 0);
-      });
-  })();
-  const gruposDespachados = (() => {
-    const m = new Map();
-    despachados.forEach((p) => {
+    lista.forEach((p) => {
       const k = p.grupoId || p.id;
       if (!m.has(k)) m.set(k, []);
       m.get(k).push(p);
     });
     return [...m.values()].map((items) => items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0)));
-  })();
+  };
+  const gruposInterior = agrupar(interior).sort((a, b) => {
+    const aListo = grupoInteriorCompleto(a[0], pedidos), bListo = grupoInteriorCompleto(b[0], pedidos);
+    if (aListo !== bListo) return aListo ? -1 : 1;  // los que se pueden despachar, arriba
+    return (b[0].orden || 0) - (a[0].orden || 0);
+  });
+  const gruposDespachados = agrupar(despachados);
+
+  const filas = gruposInterior.map((items) => {
+    const p = items[0];
+    const listos = items.filter(pedidoEstaListo);
+    // Solo se despacha un pedido 100% terminado: media entrega no sale.
+    const completo = grupoInteriorCompleto(p, pedidos) && !!p.ancho && !!p.alto;
+    return {
+      clave: p.grupoId || p.id, p, items, completo,
+      ordenes: [...new Set(items.map((x) => x.orden))].map((o) => `#${o}`).join(" · "),
+      espejos: totalUnidades(items),
+      hechos: listos.length,
+      bultos: completo ? bultosDeEnvios(listos) : 0,
+      destino: [p.localidad, p.provincia].filter(Boolean).join(", "),
+    };
+  });
+  const elegidas = filas.filter((f) => f.completo && seleccion.has(f.clave));
+  // Lo que se le manda a Vía Cargo son los espejos, no los pedidos.
+  const espejosElegidos = elegidas.flatMap((f) => f.items.filter(pedidoEstaListo));
+  const bultosElegidos = bultosDeEnvios(espejosElegidos);
+  const listosSinElegir = filas.filter((f) => f.completo && !seleccion.has(f.clave)).length;
 
   return (
     <div className="dg-page">
@@ -9039,75 +9051,149 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
       </div>
 
-      {listosParaDespachar.length > 0 && (
-        <div className="dg-section-card" style={{ borderColor: "rgba(var(--dg-success-rgb),.35)" }}>
-          <div className="dg-section-header" style={{ color: "var(--dg-success)" }}><Truck size={14} /> Listos para despachar ({listosParaDespachar.length})</div>
-          <Ayuda titulo="Qué pedidos entran acá" style={{ marginBottom: 10 }}>Los 3 pasos del despacho — solo incluyen pedidos 100% terminados. Un pedido con espejos todavía en fábrica no aparece hasta que estén todos listos.</Ayuda>
-          <div className="dg-order-despacho-btns">
-            <button className="dg-btn-ghost" onClick={() => abrirDatosDespacho(listosParaDespachar)}><FileText size={14} /> 1. Datos para Vía Cargo</button>
-            <button className="dg-btn-ghost" onClick={() => abrirRotulos(listosParaDespachar)}><Printer size={14} /> 2. Rótulos ({bultosDeEnvios(listosParaDespachar)})</button>
-            <button className="dg-btn-ghost" onClick={() => abrirTirasContieneEspejo(listosParaDespachar.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}><AlertTriangle size={14} /> 3. Tiras "Contiene espejo"</button>
-          </div>
+      {filas.length > 0 && (
+        <div className={`dg-section-card dg-envios-tabla-card ${tablaAbierta ? "dg-envios-tabla-abierta" : ""}`}>
+          <button type="button" className="dg-envios-tabla-head" onClick={() => setTablaAbierta((v) => !v)} aria-expanded={tablaAbierta}>
+            <span className="dg-envios-tabla-tit">
+              <strong><Truck size={14} /> Pedidos al interior</strong>
+              <small>
+                {filas.length} {filas.length === 1 ? "pedido" : "pedidos"}
+                {` · ${filas.filter((f) => f.completo).length} listos para despachar`}
+              </small>
+            </span>
+            <ChevronRight size={16} className={tablaAbierta ? "dg-presu-chevron-on" : ""} />
+          </button>
+          {tablaAbierta && (
+            <div className="dg-envios-tabla-scroll">
+              <table className="dg-envios-tabla dg-interior-tabla">
+                <thead>
+                  <tr>
+                    <th className="dg-sel-col" aria-label="Elegir" />
+                    <th>Pedido</th><th>Destino</th><th className="dg-num">CP</th>
+                    <th className="dg-num">Espejos</th><th className="dg-num">Bultos</th><th>Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filas.map((f) => {
+                    const abierta = filaAbierta === f.clave;
+                    const elegida = seleccion.has(f.clave);
+                    return (
+                      <Fragment key={f.clave}>
+                      <tr
+                        className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${elegida ? "dg-envios-fila-elegida" : ""} ${f.completo ? "" : "dg-interior-fila-falta"}`}
+                        onClick={() => setFilaAbierta(abierta ? null : f.clave)}
+                        aria-expanded={abierta}>
+                        <td className="dg-sel-col">
+                          <input type="checkbox" className="dg-sel-check" disabled={!f.completo}
+                            checked={elegida}
+                            aria-label={`Llevar el pedido de ${f.p.cliente || "sin nombre"} en este despacho`}
+                            title={f.completo ? "Llevarlo en este despacho" : "Todavía le faltan espejos en fábrica"}
+                            onClick={(ev) => ev.stopPropagation()}
+                            onChange={() => alternarElegido(f.clave)} />
+                        </td>
+                        <td className="dg-envios-nombre">
+                          <span className="dg-interior-orden">{f.ordenes}</span> {f.p.cliente || "Sin nombre"}
+                        </td>
+                        <td className="dg-envios-dir">{f.destino || <span className="dg-envios-falta">sin destino</span>}</td>
+                        <td className="dg-num">{f.p.codigoPostal || <span className="dg-envios-falta">—</span>}</td>
+                        <td className="dg-num">{f.espejos}</td>
+                        <td className="dg-num">{f.completo ? f.bultos : <span className="dg-envios-falta">—</span>}</td>
+                        <td>
+                          {f.completo
+                            ? <span className="dg-reclamo-estado dg-reclamo-estado-resuelto">Listo</span>
+                            : <span className="dg-reclamo-estado dg-reclamo-estado-ofrecida">faltan {f.items.length - f.hechos}</span>}
+                        </td>
+                      </tr>
+                      {abierta && (
+                        <tr className="dg-envios-detalle">
+                          <td colSpan={7}>
+                            <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
+
+                              <div className="dg-salida-bloque">
+                                <div className="dg-salida-tit">El pedido</div>
+                                <ul className="dg-salida-plata">
+                                  <li><span>Cliente</span><b className="dg-salida-dato">{f.p.cliente || "—"}</b></li>
+                                  <li><span>Teléfono</span><b className="dg-salida-dato">{f.p.celular || "—"}</b></li>
+                                  <li><span>DNI / CUIT</span><b className="dg-salida-dato">{f.p.dniCuit || "—"}</b></li>
+                                  <li><span>Espejos</span><b className="dg-salida-dato">{f.espejos}{f.completo ? "" : ` · ${f.hechos} listos`}</b></li>
+                                </ul>
+                                <ul className="dg-interior-espejos">
+                                  {f.items.map((e) => (
+                                    <li key={e.id} className={pedidoEstaListo(e) ? "dg-salida-ok" : ""}>
+                                      <span className="dg-salida-marca" aria-hidden="true">{pedidoEstaListo(e) ? <Check size={13} /> : null}</span>
+                                      #{e.orden} · {e.ancho}×{e.alto} cm · {e.forma}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+
+                              <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                <div className="dg-salida-tit">A dónde va</div>
+                                <div className="dg-salida-campos">
+                                  <label><span>Provincia</span><CampoTextoGuardado value={f.p.provincia} onGuardar={(v) => updateGrupo(f.p, { provincia: v })} placeholder="Ej: Córdoba" /></label>
+                                  <label><span>Localidad</span><CampoTextoGuardado value={f.p.localidad} onGuardar={(v) => updateGrupo(f.p, { localidad: v })} placeholder="Ej: Río Cuarto" /></label>
+                                  <label><span>Código postal</span><CampoTextoGuardado value={f.p.codigoPostal} onGuardar={(v) => updateGrupo(f.p, { codigoPostal: v })} placeholder="Ej: 5800" /></label>
+                                  <label><span>Teléfono</span><CampoTextoGuardado value={f.p.celular} onGuardar={(v) => updateGrupo(f.p, { celular: v })} placeholder="Ej: 1122334455" /></label>
+                                  <label><span>DNI / CUIT</span><CampoTextoGuardado value={f.p.dniCuit} onGuardar={(v) => updateGrupo(f.p, { dniCuit: v })} placeholder="Lo pide Vía Cargo" /></label>
+                                </div>
+                              </div>
+
+                              <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                <div className="dg-salida-tit">El remito de Vía Cargo</div>
+                                <RemitoViaCargoCampo pedido={f.p} canEdit={canEdit} onCambiar={(cambios) => updateGrupo(f.p, cambios)} />
+                              </div>
+
+                              <div className="dg-salida-pie">
+                                <span className="dg-salida-datos">
+                                  {f.completo
+                                    ? `${f.bultos} ${f.bultos === 1 ? "bulto" : "bultos"} para despachar`
+                                    : "Los rótulos se habilitan cuando estén listos todos los espejos del pedido."}
+                                </span>
+                                {f.completo && (
+                                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(f.items.filter(pedidoEstaListo))}>
+                                    <Printer size={13} /> Rótulos de este pedido
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Lo que va en ESTE despacho. Los tres pasos salen de lo elegido, no
+              de todo lo que esté listo: puede haber 10 terminados y llevarse 3. */}
+          {elegidas.length > 0 && (
+            <div className="dg-sel-barra">
+              <span className="dg-sel-cuenta">
+                <strong>{elegidas.length}</strong> {elegidas.length === 1 ? "pedido" : "pedidos"} en este despacho
+                <small> · {bultosElegidos} {bultosElegidos === 1 ? "bulto" : "bultos"}</small>
+                {listosSinElegir > 0 && <small> · quedan {listosSinElegir} listos para otro viaje</small>}
+              </span>
+              <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => abrirDatosDespacho(espejosElegidos)}>
+                <FileText size={13} /> Datos para Vía Cargo
+              </button>
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(espejosElegidos)}>
+                <Printer size={13} /> Rótulos ({bultosElegidos})
+              </button>
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => abrirTirasContieneEspejo(espejosElegidos.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}>
+                <AlertTriangle size={13} /> Tiras "Contiene espejo"
+              </button>
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setSeleccion(new Set())}>
+                <X size={13} /> Limpiar
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      <div className="dg-task-list dg-pedido-list">
-        {gruposInterior.length === 0 && <div className="dg-empty">No hay pedidos al interior pendientes.</div>}
-        {gruposInterior.map((items) => {
-          const principal = items[0];
-          const listos = items.filter(pedidoEstaListo);
-          const todosListos = grupoInteriorCompleto(principal, pedidos);
-          const ordenes = [...new Set(items.map((p) => p.orden))].map((o) => `#${o}`).join(" · ");
-          const total = totalUnidades(items);
-          return (
-            <div className={`dg-section-card dg-shipping-confirm-card ${todosListos ? "dg-fab-terminado" : ""}`} key={principal.grupoId || principal.id}>
-              <div className="dg-section-header">
-                <Truck size={14} /> {ordenes} · {principal.cliente}
-                {todosListos && <span className="dg-badge" style={{ "--bc": "var(--dg-success)", marginLeft: 8 }}><CheckCircle2 size={12} /> Listo</span>}
-              </div>
-              <div className="dg-pago-meta" style={{ marginBottom: 10 }}>
-                {total} {total === 1 ? "espejo" : "espejos"}
-                {items.length === 1 && ` · ${principal.ancho}×${principal.alto} cm · ${principal.forma}`}
-                {!todosListos && ` · ${listos.length}/${items.length} listos, el resto en producción`}
-              </div>
-
-              {items.length > 1 && (
-                <details className="dg-shipping-editor" style={{ marginBottom: 10 }}>
-                  <summary>
-                    <span className="dg-shipping-editor-icon"><Package size={14} /></span>
-                    <span><strong>Ver los {items.length} espejos</strong><small>{items.map((e) => `${e.ancho}×${e.alto}`).join(" · ")}</small></span>
-                    <ChevronRight size={16} />
-                  </summary>
-                  <div style={{ padding: "8px 4px 2px" }}>
-                    {items.map((e) => (
-                      <div className="dg-pago-meta" key={e.id} style={{ padding: "4px 0", display: "flex", justifyContent: "space-between", gap: 8 }}>
-                        <span>#{e.orden} · {e.ancho}×{e.alto} cm · {e.forma}</span>
-                        <span style={{ color: pedidoEstaListo(e) ? "var(--dg-success)" : "var(--dg-text-faint)" }}>{pedidoEstaListo(e) ? "listo" : "en producción"}</span>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
-
-              <div className="dg-field-grid">
-                <Field label="Provincia"><input disabled={!canEdit} value={principal.provincia || ""} onChange={(e) => updateGrupo(principal, { provincia: e.target.value })} /></Field>
-                <Field label="Localidad"><input disabled={!canEdit} value={principal.localidad || ""} onChange={(e) => updateGrupo(principal, { localidad: e.target.value })} /></Field>
-                <Field label="Código postal"><input disabled={!canEdit} value={principal.codigoPostal || ""} onChange={(e) => updateGrupo(principal, { codigoPostal: e.target.value })} /></Field>
-              </div>
-
-              <RemitoViaCargoCampo pedido={principal} canEdit={canEdit} onCambiar={(cambios) => updateGrupo(principal, cambios)} />
-
-              {todosListos && principal.ancho && principal.alto ? (
-                <div className="dg-form-actions" style={{ justifyContent: "flex-start", marginTop: 10 }}>
-                  <button className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(listos)}><Printer size={13} /> Rótulos del pedido ({bultosDeEnvios(listos)})</button>
-                </div>
-              ) : (
-                <p className="dg-hint" style={{ marginTop: 10 }}>Los rótulos se habilitan cuando estén listos todos los espejos del pedido.</p>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {filas.length === 0 && <div className="dg-empty">No hay pedidos al interior pendientes.</div>}
 
       <div className="dg-section-card" style={{ marginTop: 22 }}>
         <div className="dg-section-header"><Check size={14} /> Despachados ({gruposDespachados.length})</div>
@@ -9249,6 +9335,59 @@ function mensajeParaElFlete(items, nombreFlete) {
   return lineas.join("\n");
 }
 
+// Un solo mensaje para varias entregas. Es lo que hacen en la práctica: le
+// pasan la tanda al flete y él contesta qué día puede hacerla. Mandar cinco
+// mensajes sueltos para la misma vuelta no sirve.
+// `grupos` es una lista de pedidos agrupados: cada grupo es UNA entrega,
+// aunque tenga varios espejos.
+function mensajeParaElFleteVarias(grupos, nombreFlete) {
+  const lista = (grupos || []).filter((g) => g && g.length);
+  if (!lista.length) return "";
+  if (lista.length === 1) return mensajeParaElFlete(lista[0], nombreFlete);
+
+  const hola = nombreFlete ? `Hola ${String(nombreFlete).trim()}!` : "Hola!";
+  let totalACobrar = 0;
+  const bloques = lista.map((items, i) => {
+    const p = items[0] || {};
+    const bultos = items.reduce((t, x) => t + Math.max(1, Number(x.cant) || 0), 0);
+    const medidas = items.map((x) => (x.ancho && x.alto ? `${x.ancho}×${x.alto} cm` : "")).filter(Boolean).join(" · ");
+    const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
+    const aCobrar = items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
+      + items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+    totalACobrar += aCobrar;
+    return [
+      `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
+      `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
+      `📦 ${bultos} ${bultos === 1 ? "espejo" : "espejos"}${medidas ? ` (${medidas})` : ""} · 🕐 ${p.horarioEntrega || "a coordinar"}`,
+      aCobrar > 0 ? `💵 COBRAR: ${money(aCobrar)}` : "💵 No cobra nada: está pagado.",
+    ].join("\n");
+  });
+
+  return [
+    `${hola} Te paso ${lista.length} entregas para coordinar.`,
+    "",
+    bloques.join("\n\n"),
+    "",
+    totalACobrar > 0 ? `💰 Total a cobrar en la vuelta: ${money(totalACobrar)}` : "💰 No hay que cobrar nada en esta vuelta.",
+    "",
+    "¿Qué día las podés hacer?",
+  ].join("\n");
+}
+
+// El flete que comparten los envíos elegidos. Si cada uno lo lleva alguien
+// distinto devuelve vacío: mejor que copien el mensaje y se lo manden a quien
+// sea, antes que abrirle el WhatsApp al que no va.
+function fleteEnComun(grupos) {
+  const nombres = new Set();
+  (grupos || []).forEach((items) => {
+    const n = String(((items || [])[0] || {}).fletero || "").trim();
+    if (n) nombres.add(textoComparable(n));
+  });
+  if (nombres.size !== 1) return "";
+  const primero = (grupos || []).map((g) => (g || [])[0]).find((p) => p && String(p.fletero || "").trim());
+  return primero ? String(primero.fletero).trim() : "";
+}
+
 // En qué anda el pago al flete. PostVenta lo VE pero no lo toca: pagarle al
 // flete es un gasto y se liquida desde Administración ▸ Fletes, que además lo
 // registra en Compras. Marcarlo acá dejaría la plata sin asentar.
@@ -9281,6 +9420,15 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   const [copiedId, setCopiedId] = useState(null);
   const [copiadoQue, setCopiadoQue] = useState(null);
   const [editandoFila, setEditandoFila] = useState(null);
+  // Qué envíos están tildados para mandarlos juntos.
+  const [seleccion, setSeleccion] = useState(() => new Set());
+  function alternarElegido(clave) {
+    setSeleccion((prev) => {
+      const s = new Set(prev);
+      if (s.has(clave)) s.delete(clave); else s.add(clave);
+      return s;
+    });
+  }
   const [mapaPedido, setMapaPedido] = useState(null);
   // Copiar cualquier texto dejando la marca de "copiado" dos segundos.
   function copiarTexto(texto, clave) {
@@ -9419,6 +9567,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           .sort((a, b) => (a.fecha || "9999") < (b.fecha || "9999") ? -1 : (a.fecha || "9999") > (b.fecha || "9999") ? 1 : 0);
         const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
         const atrasadas = filas.filter((f) => f.fecha && f.fecha < semana.hoy).length;
+        const elegidos = filas.filter((f) => !f.visita && seleccion.has(f.clave));
         const totalSaldo = filas.reduce((t, f) => t + f.saldo, 0);
         const totalFlete = filas.reduce((t, f) => t + (f.fletePagado ? 0 : f.flete), 0);
         return (
@@ -9440,7 +9589,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                 <table className="dg-envios-tabla dg-salidas-tabla">
                   <thead>
                     <tr>
-                      <th>Salida</th><th>Nombre</th><th>Dónde</th><th>Productos</th>
+                      <th className="dg-sel-col" aria-label="Elegir" /><th>Salida</th><th>Nombre</th><th>Dónde</th><th>Productos</th>
                       <th className="dg-num">Saldo</th><th className="dg-num">Flete</th><th className="dg-envios-hecho-col">Hecho</th>
                     </tr>
                   </thead>
@@ -9452,9 +9601,18 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       return (
                         <Fragment key={f.clave}>
                         <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""}`}
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
                           onClick={() => setFilaAbierta(abierta ? null : f.clave)}
                           aria-expanded={abierta}>
+                          <td className="dg-sel-col">
+                            {/* Las visitas por reclamo las hacemos nosotros, no el
+                                flete: no entran en la tanda. */}
+                            <input type="checkbox" className="dg-sel-check" disabled={f.visita}
+                              checked={seleccion.has(f.clave)}
+                              aria-label={`Elegir el envío de ${f.cliente}`}
+                              onClick={(ev) => ev.stopPropagation()}
+                              onChange={() => alternarElegido(f.clave)} />
+                          </td>
                           <td className="dg-envios-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : <span className="dg-envios-falta">a coordinar</span>}</td>
                           <td className="dg-envios-nombre">
                             {f.visita
@@ -9491,7 +9649,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                         </tr>
                         {abierta && (
                           <tr className="dg-envios-detalle">
-                            <td colSpan={7}>
+                            <td colSpan={8}>
                               {f.visita ? (
                                 <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
                                   <label className="dg-envios-detalle-fecha">
@@ -9731,7 +9889,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={4}>Total a cobrar en las entregas</td>
+                      <td colSpan={5}>Total a cobrar en las entregas</td>
                       <td className="dg-num">{money(totalSaldo)}</td>
                       <td className="dg-num">{money(totalFlete)}</td>
                       <td />
@@ -9740,6 +9898,39 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                 </table>
               </div>
             )}
+            {/* Elegir algunos y armar un solo mensaje con esa tanda. Es lo que
+                hacen de verdad: no mandan los envíos de a uno, mandan la
+                vuelta del día. */}
+            {elegidos.length > 0 && (() => {
+              const gruposElegidos = elegidos.map((f) => f.items);
+              const nombre = fleteEnComun(gruposElegidos);
+              const tel = nombre ? telDeFletero(pedidos, nombre) : "";
+              const wa = waLink(tel);
+              const texto = mensajeParaElFleteVarias(gruposElegidos, nombre);
+              const aCobrar = elegidos.reduce((t, f) => t
+                + f.items.reduce((x, i) => x + Math.max(0, pedidoSaldo(i)), 0)
+                + f.items.reduce((mayor, i) => Math.max(mayor, envioPendientePedido(i)), 0), 0);
+              return (
+                <div className="dg-sel-barra">
+                  <span className="dg-sel-cuenta">
+                    <strong>{elegidos.length}</strong> {elegidos.length === 1 ? "envío elegido" : "envíos elegidos"}
+                    {aCobrar > 0 && <small> · {money(aCobrar)} a cobrar</small>}
+                    {!nombre && <small className="dg-sel-aviso"> · son de fletes distintos</small>}
+                  </span>
+                  {wa && (
+                    <a className="dg-btn-primary dg-mini-btn" href={`${wa}?text=${encodeURIComponent(texto)}`} target="_blank" rel="noopener noreferrer">
+                      <MessageCircle size={13} /> Pasarle la tanda a {nombre}
+                    </a>
+                  )}
+                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTexto(texto, "tanda")}>
+                    {copiadoQue === "tanda" ? <Check size={13} /> : <Copy size={13} />} {copiadoQue === "tanda" ? "Copiado" : "Copiar el mensaje"}
+                  </button>
+                  <button type="button" className="dg-btn-ghost dg-mini-btn dg-sel-limpiar" onClick={() => setSeleccion(new Set())}>
+                    <X size={13} /> Limpiar
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         );
       })()}
@@ -18881,6 +19072,9 @@ function Style() {
         --dg-line-rgb:246,236,224;
         --dg-text:#F6ECE0; --dg-text-dim:#B4ACC2; --dg-text-faint:#8B84A0;
         --dg-accent:#60ADD9; --dg-accent-rgb:96,173,217; --dg-accent-2:#83C2E6; --dg-on-accent:#10242F;
+        /* El azul cuando va de fondo con texto encima. Ver el comentario de
+           la versión clara: acá es el mismo acento porque ya contrasta. */
+        --dg-accent-solido:var(--dg-accent);
         --dg-success:#5FB79B; --dg-success-rgb:95,183,155;
         --dg-warning:#E7B15A; --dg-warning-rgb:231,177,90; --dg-warning-2:#E7B15A;
         --dg-danger:#E37B6C; --dg-danger-rgb:227,123,108;
@@ -18903,6 +19097,10 @@ function Style() {
         --dg-line-rgb:49,43,72;
         --dg-text:#2E2D2D; --dg-text-dim:#585366; --dg-text-faint:#847F92;
         --dg-accent:#2F82B3; --dg-accent-rgb:47,130,179; --dg-accent-2:#256A94; --dg-on-accent:#FFFFFF;
+        /* Un 8% más oscuro SOLO donde el azul es fondo: blanco sobre el
+           acento tal cual daba 4,23 y no se leía bien. Así pasa a 4,86 sin
+           cambiarle el tono a nada más. */
+        --dg-accent-solido:color-mix(in srgb, var(--dg-accent) 92%, #000);
         --dg-success:#3C7A62; --dg-success-rgb:60,122,98;
         --dg-warning:#96611A; --dg-warning-rgb:150,97,26; --dg-warning-2:#7A4E12;
         --dg-danger:#B04A3D; --dg-danger-rgb:176,74,61;
@@ -18969,7 +19167,7 @@ function Style() {
       .dg-chat-vacio { font-size:13px; color:var(--dg-text-faint); text-align:center; margin:14px 0; }
       .dg-chat-burbuja { max-width:80%; align-self:flex-start; display:flex; flex-direction:column; gap:2px; padding:8px 11px; border-radius:12px; border-bottom-left-radius:4px;
         background:rgba(var(--dg-line-rgb),0.09); font-size:13px; color:var(--dg-text); line-height:1.4; }
-      .dg-chat-mia { align-self:flex-end; background:var(--dg-accent); color:var(--dg-on-accent); border-radius:12px; border-bottom-right-radius:4px; }
+      .dg-chat-mia { align-self:flex-end; background:var(--dg-accent-solido); color:var(--dg-on-accent); border-radius:12px; border-bottom-right-radius:4px; }
       .dg-chat-autor { font-size:11px; font-weight:700; opacity:0.7; }
       .dg-chat-texto { white-space:pre-wrap; word-break:break-word; }
       .dg-chat-hora { font-size:11px; opacity:0.6; align-self:flex-end; }
@@ -19040,7 +19238,7 @@ function Style() {
       .dg-chat-input { display:flex; gap:7px; padding:9px; border-top:1px solid rgba(var(--dg-line-rgb),0.12); align-items:flex-end; }
       .dg-chat-input textarea { flex:1; min-height:38px; max-height:120px; resize:none; border:1px solid rgba(var(--dg-line-rgb),0.18); border-radius:12px; padding:9px 11px;
         background:var(--dg-surface-2); color:var(--dg-text); font-family:'Jost',sans-serif; font-size:15px; line-height:1.35; }
-      .dg-chat-input button { flex:none; width:38px; height:38px; display:flex; align-items:center; justify-content:center; border:none; border-radius:12px; background:var(--dg-accent); color:var(--dg-on-accent); cursor:pointer; }
+      .dg-chat-input button { flex:none; width:38px; height:38px; display:flex; align-items:center; justify-content:center; border:none; border-radius:12px; background:var(--dg-accent-solido); color:var(--dg-on-accent); cursor:pointer; }
       .dg-chat-input button:disabled { opacity:0.45; cursor:default; }
       .dg-chat-hilo-page .dg-chat-hilo-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:12px 0 8px; }
       .dg-chat-hilo-head strong { font-family:'Jost',sans-serif; font-size:15px; }
@@ -19307,13 +19505,16 @@ function Style() {
          ~1050px de pantalla aparecía la barra para arrastrar. Con columnas
          fijas la tabla mide siempre lo que mide el contenedor y lo que no
          entra se corta con puntos suspensivos. */
-      .dg-envios-tabla.dg-salidas-tabla { table-layout:fixed; min-width:660px; }
-      .dg-salidas-tabla thead th:nth-child(1) { width:92px; }
-      .dg-salidas-tabla thead th:nth-child(2) { width:20%; }
-      .dg-salidas-tabla thead th:nth-child(4) { width:18%; }
-      .dg-salidas-tabla thead th:nth-child(5),
-      .dg-salidas-tabla thead th:nth-child(6) { width:96px; }
-      .dg-salidas-tabla thead th:nth-child(7) { width:62px; }
+      .dg-envios-tabla.dg-salidas-tabla { table-layout:fixed; min-width:700px; }
+      /* Con columnas fijas los anchos salen de la PRIMERA fila, así que estos
+         números son el orden de las columnas. Al sumar el casillero adelante
+         se corrieron todos uno: ojo si se agrega otra. */
+      .dg-salidas-tabla thead th:nth-child(2) { width:92px; }
+      .dg-salidas-tabla thead th:nth-child(3) { width:20%; }
+      .dg-salidas-tabla thead th:nth-child(5) { width:18%; }
+      .dg-salidas-tabla thead th:nth-child(6),
+      .dg-salidas-tabla thead th:nth-child(7) { width:96px; }
+      .dg-salidas-tabla thead th:nth-child(8) { width:62px; }
       /* Con columnas fijas el ancho ya lo pone la columna: el tope de la celda
          solo la haría más angosta que su propia columna. */
       .dg-salidas-tabla .dg-envios-fila > td { max-width:none; }
@@ -19385,6 +19586,34 @@ function Style() {
       .dg-salida-pie { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
       .dg-salida-datos { margin-right:auto; font-size:12px; color:var(--dg-text-dim); }
       .dg-salida-datos b { color:var(--dg-text); font-weight:600; }
+      /* Elegir varias salidas y mandarlas juntas */
+      .dg-sel-barra { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:10px 14px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:rgba(var(--dg-accent-rgb),.09); }
+      .dg-sel-cuenta { margin-right:auto; font-size:13px; color:var(--dg-text-dim); }
+      .dg-sel-cuenta strong { color:var(--dg-text); font-size:15px; font-family:'JetBrains Mono', monospace; }
+      .dg-sel-cuenta small { color:var(--dg-text-dim); }
+      .dg-sel-aviso { color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); font-weight:600; }
+      .dg-sel-limpiar { margin-left:0; }
+      .dg-envios-tabla th.dg-sel-col, .dg-envios-tabla td.dg-sel-col { width:38px; padding-left:10px; padding-right:4px; text-align:center; }
+      /* El casillero es el mismo de todas las listas, para que se reconozca. */
+      .dg-sel-check { width:17px; height:17px; margin:0; accent-color:var(--dg-accent); cursor:pointer; vertical-align:middle; }
+      .dg-sel-check:disabled { cursor:default; opacity:.3; }
+      .dg-envios-fila-elegida { background:rgba(var(--dg-accent-rgb),.13); }
+      .dg-envios-fila-elegida > td:first-child { box-shadow:inset 3px 0 0 var(--dg-accent); }
+
+      /* La tabla de interior: mismas reglas que la de salidas, otras columnas.
+         Los nth-child son el ORDEN de las columnas, contando el casillero. */
+      .dg-envios-tabla.dg-interior-tabla { table-layout:fixed; min-width:700px; }
+      .dg-interior-tabla thead th:nth-child(3) { width:24%; }
+      .dg-interior-tabla thead th:nth-child(4) { width:70px; }
+      .dg-interior-tabla thead th:nth-child(5) { width:78px; }
+      .dg-interior-tabla thead th:nth-child(6) { width:74px; }
+      .dg-interior-tabla thead th:nth-child(7) { width:104px; }
+      .dg-interior-tabla .dg-envios-fila > td { max-width:none; }
+      .dg-interior-orden { font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--dg-text-dim); }
+      /* Al que le faltan espejos no se le puede armar el despacho: se nota. */
+      .dg-interior-fila-falta > td { opacity:.72; }
+      .dg-interior-espejos { list-style:none; margin:9px 0 0; padding:0; display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-interior-espejos li { display:flex; align-items:center; min-width:0; }
       /* Lo que se lleva el flete va separado de lo que cobra el cliente: son
          dos plata distintas y mezclarlas fue justo lo que hubo que desarmar. */
       .dg-salida-plata-aparte { margin-top:6px; padding-top:6px; border-top:1px dashed rgba(var(--dg-line-rgb),.14); }
@@ -19416,7 +19645,6 @@ function Style() {
       }
       .dg-envios-tabla tfoot td { font-weight:700; border-top:2px solid rgba(var(--dg-line-rgb),.18); color:var(--dg-text-dim); }
       .dg-envios-tabla tfoot .dg-num { color:var(--dg-text); }
-      .dg-shipping-confirm-card { scroll-margin-top:16px; }
       .dg-stock-grupo { padding:0; margin-bottom:10px; overflow:hidden; }
       .dg-stock-grupo-abierto { border-color:rgba(var(--dg-accent-rgb),.4); }
       .dg-stock-grupo-head { width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto 16px; align-items:center; gap:10px; padding:13px 14px; border:0; background:transparent; color:inherit; font-family:'Jost',sans-serif; text-align:left; cursor:pointer; }
@@ -19541,7 +19769,7 @@ function Style() {
       .dg-fab-money { position:fixed; z-index:45;
         right:calc(18px + env(safe-area-inset-right, 0px)); bottom:calc(18px + env(safe-area-inset-bottom, 0px));
         width:58px; height:58px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-        background:var(--dg-accent); color:var(--dg-on-accent); border:none; cursor:pointer;
+        background:var(--dg-accent-solido); color:var(--dg-on-accent); border:none; cursor:pointer;
         box-shadow:0 12px 30px -6px rgba(var(--dg-accent-rgb),0.5), 0 0 0 1px rgba(var(--dg-accent-rgb),0.3); transition:transform .1s ease, filter .15s ease; }
       .dg-fab-money:hover { filter:brightness(1.07); }
       .dg-fab-money:active { transform:scale(0.93); }
@@ -19860,7 +20088,7 @@ function Style() {
       .dg-fab-tareas:hover { filter:brightness(1.08); }
       .dg-fab-tareas:active { transform:scale(0.93); }
       .dg-fab-tareas-badge { position:absolute; top:-5px; right:-7px; padding:1px 6px; border-radius:12px;
-        background:var(--dg-accent); color:var(--dg-on-accent); font-size:10px; font-weight:800;
+        background:var(--dg-accent-solido); color:var(--dg-on-accent); font-size:10px; font-weight:800;
         font-variant-numeric:tabular-nums; border:2px solid var(--dg-bg); white-space:nowrap; }
       .dg-con-aviso-version .dg-fab-tareas { bottom:calc(156px + env(safe-area-inset-bottom, 0px)); }
       /* El panel de tareas, con la misma forma que el del chat */
@@ -20645,7 +20873,7 @@ function Style() {
       .dg-anotador-ayuda { margin:0 0 12px; font-size:13px; line-height:1.45; color:var(--dg-text-dim); }
       .dg-anotador-ayuda em { font-style:normal; color:var(--dg-text); }
       .dg-anotador-entrada { display:flex; align-items:flex-start; gap:14px; }
-      .dg-anotador-mic { flex:none; width:64px; height:64px; border-radius:50%; border:0; display:grid; place-items:center; background:var(--dg-accent); color:var(--dg-on-accent); cursor:pointer; box-shadow:0 6px 18px -6px rgba(var(--dg-accent-rgb),.7); transition:transform .12s ease, background .15s ease; }
+      .dg-anotador-mic { flex:none; width:64px; height:64px; border-radius:50%; border:0; display:grid; place-items:center; background:var(--dg-accent-solido); color:var(--dg-on-accent); cursor:pointer; box-shadow:0 6px 18px -6px rgba(var(--dg-accent-rgb),.7); transition:transform .12s ease, background .15s ease; }
       .dg-anotador-mic:active { transform:scale(.94); }
       .dg-anotador-mic:focus-visible { outline:3px solid rgba(var(--dg-accent-rgb),.45); outline-offset:3px; }
       .dg-anotador-mic-on { background:var(--dg-danger); color:#fff; box-shadow:0 0 0 0 rgba(var(--dg-danger-rgb),.55); animation:dg-mic-pulso 1.4s ease-out infinite; }
@@ -21316,7 +21544,7 @@ function Style() {
       .dg-live-label { display:flex; align-items:center; gap:7px; color:var(--dg-text-dim); font-size:11px; font-weight:600; }
       .dg-live-dot { width:7px; height:7px; border-radius:50%; background:var(--dg-success); box-shadow:0 0 0 4px rgba(var(--dg-success-rgb),.11); }
       .dg-header-date { font-size:11px; color:var(--dg-text-faint); }
-      .dg-login-btn, .dg-btn-primary { min-height:40px; border-radius:12px; padding:9px 15px; background:var(--dg-accent); color:var(--dg-on-accent); box-shadow:none; }
+      .dg-login-btn, .dg-btn-primary { min-height:40px; border-radius:12px; padding:9px 15px; background:var(--dg-accent-solido); color:var(--dg-on-accent); box-shadow:none; }
       .dg-login-btn:hover, .dg-btn-primary:hover { filter:none; background:var(--dg-accent-2); box-shadow:0 8px 24px -15px rgba(var(--dg-accent-rgb),.65); }
       .dg-btn-ghost { min-height:40px; border-radius:12px; border-color:rgba(var(--dg-line-rgb),.12); color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.015); }
       .dg-btn-ghost:hover { background:rgba(var(--dg-line-rgb),.045); border-color:rgba(var(--dg-line-rgb),.22); }
@@ -21508,7 +21736,6 @@ function Style() {
       .dg-order-disclosure { display:block; cursor:default; }
       .dg-order-disclosure > summary::-webkit-details-marker,
       .dg-order-mirror > summary::-webkit-details-marker,
-      .dg-shipping-editor > summary::-webkit-details-marker,
       .dg-logistics-mirror > summary::-webkit-details-marker { display:none; }
       .dg-order-compact { display:grid; grid-template-columns:minmax(150px,1.35fr) minmax(78px,.55fr) minmax(96px,.66fr) minmax(140px,1fr) auto minmax(104px,.62fr) 18px; align-items:center; gap:10px; min-height:52px; padding:8px 12px; list-style:none; background:var(--dg-order-info); cursor:pointer; }
       .dg-order-compact:hover { background:color-mix(in srgb,var(--dg-order-info) 92%,var(--dg-accent) 8%); }
@@ -21534,7 +21761,6 @@ function Style() {
       .dg-order-group-flow-label { font-size:11px; font-weight:800; letter-spacing:0.3px; color:var(--dg-text-dim); text-transform:uppercase; }
       .dg-order-group-flow-wait { font-size:11px; color:var(--dg-text-faint); }
       .dg-order-group-flow .dg-order-group-flow-entregar { background:rgba(var(--dg-success-rgb),.16); border-color:rgba(var(--dg-success-rgb),.42); color:var(--dg-success); }
-      .dg-order-despacho-btns { display:flex; flex-wrap:wrap; gap:6px; }
       .dg-order-detail-actions { display:flex; justify-content:flex-end; gap:6px; padding:8px 10px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:var(--dg-order-flow); }
       .dg-order-detail-actions .dg-btn-ghost { min-height:31px; padding:6px 9px; font-size:11px; }
       .dg-order-expanded-hint { margin:0; padding:0 10px 9px; background:var(--dg-order-flow); }
@@ -21563,16 +21789,6 @@ function Style() {
       .dg-order-mirror .dg-order-flow { border-top:1px solid rgba(var(--dg-accent-rgb),.32); }
 
       /* PostVenta: los cinco campos de coordinación permanecen disponibles sin ocupar toda la tarjeta. */
-      .dg-pedido-list { max-height:none; overflow:visible; }
-      .dg-shipping-confirm-card { flex-shrink:0; overflow:hidden; }
-      .dg-shipping-editor { margin:8px 0 0; overflow:hidden; border:1px solid rgba(var(--dg-line-rgb),.13); border-radius:12px; background:var(--dg-surface-2); }
-      .dg-shipping-editor > summary { min-height:48px; display:grid; grid-template-columns:29px minmax(0,1fr) 18px; align-items:center; gap:8px; padding:7px 10px; list-style:none; cursor:pointer; }
-      .dg-shipping-editor > summary > span:nth-child(2) { min-width:0; display:flex; flex-direction:column; gap:1px; }
-      .dg-shipping-editor > summary strong { color:var(--dg-text); font-size:11px; }
-      .dg-shipping-editor > summary small { overflow:hidden; color:var(--dg-text-faint); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
-      .dg-shipping-editor > summary > svg { color:var(--dg-text-faint); transition:transform .18s ease; }
-      .dg-shipping-editor[open] > summary > svg { transform:rotate(90deg); color:var(--dg-accent); }
-      .dg-shipping-editor-icon { width:27px; height:27px; display:flex !important; align-items:center; justify-content:center; border-radius:8px; background:rgba(var(--dg-accent-rgb),.1); color:var(--dg-accent); }
       .dg-shipping-mapa-ok { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:var(--dg-success); }
 
       /* Logística: una entrega por cliente, con la información de calle a primera vista. */
@@ -21762,8 +21978,6 @@ function Style() {
         .dg-pedido-card:not(.dg-fabrica-card) .dg-pago-meta { font-size:11px; line-height:1.25; }
         .dg-fabrica-btn { min-width:0; padding:7px 5px; font-size:11px; line-height:1.15; }
         .dg-order-step { min-height:0; }
-        .dg-shipping-confirm-card { padding:11px; }
-        .dg-shipping-editor > summary { min-height:46px; padding:6px 8px; }
         .dg-logistics-head { grid-template-columns:minmax(0,1fr) auto; gap:5px; padding:9px 10px; }
         .dg-logistics-head > strong { grid-column:1; grid-row:2; }
         .dg-logistics-head > time { grid-column:2; grid-row:1 / 3; }
