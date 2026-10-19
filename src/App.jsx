@@ -19615,6 +19615,20 @@ function Style() {
       .dg-salida-pie { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
       .dg-salida-datos { margin-right:auto; font-size:12px; color:var(--dg-text-dim); }
       .dg-salida-datos b { color:var(--dg-text); font-weight:600; }
+      /* La puerta del link de seguimiento */
+      .dg-puerta { display:flex; flex-direction:column; align-items:center; gap:12px; margin-top:26px; padding:26px 22px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:18px; background:var(--dg-surface); text-align:center; }
+      .dg-puerta-icono { display:grid; place-items:center; width:46px; height:46px; border-radius:50%; background:rgba(var(--dg-accent-rgb),.14); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
+      .dg-puerta h1 { margin:0; font-size:18px; font-weight:600; color:var(--dg-text); }
+      .dg-puerta p { margin:0; max-width:34ch; font-size:13px; color:var(--dg-text-dim); }
+      .dg-puerta p strong { color:var(--dg-text); font-weight:600; }
+      /* Ojo: el estilo de los inputs está pegado a .dg-form / .dg-field, y este
+         no vive adentro de ninguno de los dos. Se le ponen los colores a mano o
+         sale el input blanco del navegador en una pantalla oscura. */
+      .dg-puerta-input { width:148px; padding:10px 12px; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:12px; background:var(--dg-surface-2); color:var(--dg-text); text-align:center; font-family:'JetBrains Mono', monospace; font-size:24px; letter-spacing:8px; outline:none; box-sizing:border-box; }
+      .dg-puerta-input:focus { border-color:var(--dg-accent); box-shadow:0 0 0 3px rgba(var(--dg-accent-rgb),.14); }
+      .dg-puerta-error { font-size:13px; font-weight:600; color:color-mix(in srgb, var(--dg-danger) 60%, var(--dg-text)); max-width:34ch; }
+      .dg-puerta-btn { justify-content:center; width:100%; max-width:260px; }
+      .dg-puerta-ayuda { justify-content:center; width:100%; margin-top:12px; }
       /* Elegir varias salidas y mandarlas juntas */
       .dg-sel-barra { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:10px 14px; border-top:1px solid rgba(var(--dg-line-rgb),.1); background:rgba(var(--dg-accent-rgb),.09); }
       .dg-sel-cuenta { margin-right:auto; font-size:13px; color:var(--dg-text-dim); }
@@ -22804,6 +22818,132 @@ class ErrorSeguimiento extends Component {
   }
 }
 
+// ===== La puerta del link de seguimiento ===================================
+// El link no tiene login: con tenerlo —reenviado, o adivinando un id— se veía
+// el pedido entero, se bajaba la factura y se podía reclamar por un espejo
+// ajeno. Ahora se piden los últimos 4 dígitos del teléfono del cliente, que es
+// el mismo al que le mandamos el link.
+//
+// LA COMPARACIÓN LA HACE EL SERVIDOR (/api/puerta), no esta pantalla. Si la
+// hiciera el navegador, el pedido ya habría viajado hasta acá y alcanzaría con
+// abrir las herramientas del navegador para leerlo. Por eso el pedido NO se
+// pide hasta que la puerta diga que sí.
+const LLAVE_PUERTA = "dg_seg_ok_";
+
+function claveGuardada(id) {
+  try { return window.localStorage.getItem(LLAVE_PUERTA + id) || ""; } catch (e) { return ""; }
+}
+function guardarClave(id, digitos) {
+  try { window.localStorage.setItem(LLAVE_PUERTA + id, digitos); } catch (e) {}
+}
+// Solo los dígitos, y como mucho 4: es lo que se manda y lo que se guarda.
+function soloCuatro(texto) {
+  return String(texto || "").replace(/\D/g, "").slice(-4);
+}
+
+// Le pregunta al servidor si este link pide clave y, si le pasamos dígitos, si
+// son los correctos. Ante cualquier falla devuelve null = "no sé", y la
+// pantalla deja pasar: un problema de red no puede dejar afuera a un cliente.
+async function preguntarPuerta({ pedido, grupo, t }) {
+  const params = new URLSearchParams();
+  if (pedido) params.set("pedido", pedido);
+  if (grupo) params.set("grupo", grupo);
+  if (t) params.set("t", t);
+  try {
+    const r = await fetch(`/api/puerta?${params.toString()}`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+
+// El estado de la puerta para un link. Devuelve:
+//   abierta  → se puede cargar el pedido
+//   pide     → hay que mostrar la pantalla de los 4 dígitos
+//   clave    → los dígitos con los que entró (van en el link de la factura)
+function usePuertaSeguimiento({ pedido, grupo }) {
+  const id = pedido || grupo || "";
+  const [estado, setEstado] = useState({ abierta: false, pide: false, clave: "", listo: false });
+
+  useEffect(() => {
+    let vivo = true;
+    async function mirar() {
+      if (!id) return;
+      const guardada = claveGuardada(id);
+      const r = await preguntarPuerta({ pedido, grupo, t: guardada });
+      if (!vivo) return;
+      // null = no se pudo preguntar. Se deja pasar: la factura igual la
+      // protege el servidor por su cuenta.
+      if (!r) return setEstado({ abierta: true, pide: false, clave: guardada, listo: true });
+      if (!r.pide) return setEstado({ abierta: true, pide: false, clave: "", listo: true });
+      if (guardada && r.ok) return setEstado({ abierta: true, pide: true, clave: guardada, listo: true });
+      setEstado({ abierta: false, pide: true, clave: "", listo: true });
+    }
+    mirar();
+    return () => { vivo = false; };
+  }, [id, pedido, grupo]);
+
+  async function probar(escrito) {
+    const digitos = soloCuatro(escrito);
+    if (digitos.length < 4) return "Son los últimos 4 números de tu teléfono.";
+    const r = await preguntarPuerta({ pedido, grupo, t: digitos });
+    if (!r) return "No pudimos verificarlo. Probá de nuevo en un momento.";
+    if (!r.ok) return "Esos no son los últimos 4 dígitos del teléfono del pedido.";
+    guardarClave(id, digitos);
+    setEstado({ abierta: true, pide: true, clave: digitos, listo: true });
+    return "";
+  }
+
+  return { ...estado, probar };
+}
+
+// La pantalla de los 4 dígitos. Tiene la misma cara que el seguimiento para
+// que no parezca otra página, y una salida por WhatsApp para el que no los
+// tenga (por ejemplo si el pedido lo hizo otra persona de la casa).
+function PuertaSeguimiento({ onProbar, tema }) {
+  const [valor, setValor] = useState("");
+  const [error, setError] = useState("");
+  const [probando, setProbando] = useState(false);
+
+  async function entrar(e) {
+    if (e) e.preventDefault();
+    setProbando(true);
+    const msg = await onProbar(valor);
+    setProbando(false);
+    setError(msg);
+  }
+
+  return (
+    <div className="dg-app dg-seguimiento" data-theme={tema}>
+      <Style />
+      <div className="dg-seguimiento-wrap">
+        <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
+        <form className="dg-puerta" onSubmit={entrar}>
+          <div className="dg-puerta-icono"><Lock size={22} /></div>
+          <h1>Para ver tu pedido</h1>
+          <p>Escribí los <strong>últimos 4 números</strong> del teléfono con el que hiciste el pedido.</p>
+          <input
+            className="dg-puerta-input"
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={4}
+            placeholder="0000"
+            value={valor}
+            onChange={(e) => { setValor(e.target.value.replace(/\D/g, "").slice(0, 4)); setError(""); }}
+            aria-label="Últimos 4 números de tu teléfono"
+          />
+          {error && <div className="dg-puerta-error">{error}</div>}
+          <button type="submit" className="dg-btn-primary dg-puerta-btn" disabled={probando || valor.length < 4}>
+            {probando ? <><Loader2 className="dg-spin" size={15} /> Verificando…</> : <>Ver mi pedido</>}
+          </button>
+        </form>
+        <a className="dg-btn-ghost dg-puerta-ayuda" href={`${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent("Hola! No puedo entrar al link de seguimiento de mi pedido")}`} target="_blank" rel="noopener noreferrer">
+          <MessageCircle size={14} /> No los tengo, escribirles
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
   const [fallo, setFallo] = useState("");            // la conexión falló (no es lo mismo que «no existe»)
@@ -22811,8 +22951,12 @@ function SeguimientoPublico({ pedidoId }) {
   const [tema] = useState(() => {
     try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
   });
+  const puerta = usePuertaSeguimiento({ pedido: pedidoId });
 
   useEffect(() => {
+    // Mientras la puerta esté cerrada no se pide el pedido: si se pidiera, el
+    // dato ya estaría en el navegador y la puerta sería un dibujo.
+    if (!puerta.abierta) return undefined;
     let activo = true;
     async function cargar() {
       try {
@@ -22826,7 +22970,11 @@ function SeguimientoPublico({ pedidoId }) {
     cargar();
     const interval = window.setInterval(cargar, 20000);
     return () => { activo = false; window.clearInterval(interval); };
-  }, [pedidoId, intento]);
+  }, [pedidoId, intento, puerta.abierta]);
+
+  if (puerta.listo && !puerta.abierta) {
+    return <PuertaSeguimiento onProbar={puerta.probar} tema={tema} />;
+  }
 
   const tracking = useEnvioTracking(pedido ? (pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id) : null);
   const enViaje = envioEnViaje(tracking);
@@ -22928,7 +23076,7 @@ function SeguimientoPublico({ pedidoId }) {
           <div className="dg-seguimiento-docs">
             {puedeDescargarFactura && (
               pedido.facturaUrl
-                ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(pedido.id)}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(pedido.id)}${puerta.clave ? `&t=${puerta.clave}` : ""}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
                 : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
             )}
             {pedido.metodo === "Interior" && pedido.remitoUrl && (
@@ -22965,8 +23113,10 @@ function SeguimientoGrupoPublico({ grupoId }) {
   const [tema] = useState(() => {
     try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
   });
+  const puerta = usePuertaSeguimiento({ grupo: grupoId });
 
   useEffect(() => {
+    if (!puerta.abierta) return undefined;
     let activo = true;
     async function cargar() {
       try {
@@ -22979,7 +23129,11 @@ function SeguimientoGrupoPublico({ grupoId }) {
     cargar();
     const interval = window.setInterval(cargar, 20000);
     return () => { activo = false; window.clearInterval(interval); };
-  }, [grupoId, intento]);
+  }, [grupoId, intento, puerta.abierta]);
+
+  if (puerta.listo && !puerta.abierta) {
+    return <PuertaSeguimiento onProbar={puerta.probar} tema={tema} />;
+  }
 
   const tracking = useEnvioTracking(grupoId ? `grupo:${grupoId}` : null);
   const enViaje = envioEnViaje(tracking);
@@ -23090,7 +23244,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
             <div className="dg-seguimiento-docs">
               {puedeDescargarFactura && (
                 conFacturaUrl
-                  ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(conFacturaUrl.id)}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                  ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(conFacturaUrl.id)}${puerta.clave ? `&t=${puerta.clave}` : ""}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
                   : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
               )}
               {conRemito?.remitoUrl && (

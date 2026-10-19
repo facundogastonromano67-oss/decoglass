@@ -13,6 +13,7 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from "@supabase/supabase-js";
+import { coincide } from "./_telefono.js";
 
 const BUCKET = "facturas";
 const VENCE_EN = 300; // 5 minutos: alcanza para abrirla o bajarla
@@ -37,6 +38,10 @@ export default async function handler(req, res) {
 
   const id = String((req.query && req.query.pedido) || "").trim();
   if (!id) return res.status(400).json({ error: "Falta el pedido." });
+  // Los últimos 4 dígitos del teléfono del cliente. Se verifican ACÁ aunque la
+  // pantalla ya los haya pedido: si el control viviera solo en el navegador,
+  // alcanzaría con escribir la URL de la factura a mano para saltearlo.
+  const escrito = String((req.query && req.query.t) || "").trim();
 
   const url = process.env.SUPABASE_URL;
   const clave = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -51,6 +56,12 @@ export default async function handler(req, res) {
       .from("pedidos_rows").select("data").eq("id", id).maybeSingle();
     if (error) return res.status(500).json({ error: "No se pudo buscar el pedido." });
     if (!data) return res.status(404).json({ error: "No encontramos ese pedido." });
+
+    // Un pedido sin teléfono cargado no puede pedir nada (coincide() devuelve
+    // true): queda como estaba hasta que se le cargue el teléfono.
+    if (!coincide(data.data && data.data.celular, escrito)) {
+      return res.status(403).json({ error: "Para ver la factura hacen falta los últimos 4 dígitos de tu teléfono." });
+    }
 
     const ruta = rutaDelArchivo(data.data && data.data.facturaUrl);
     if (!ruta) return res.status(404).json({ error: "Ese pedido todavía no tiene factura cargada." });
