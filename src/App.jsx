@@ -809,12 +809,12 @@ const SECTOR_SUBPAGES = {
     { id: "tareas", label: "Tareas" },
   ],
   postventa: [
-    { id: "envios", label: "Envíos" },
     { id: "turno", label: "Mi turno" },
-    { id: "numeros", label: "Números" },
-    { id: "interior", label: "Envíos al interior" },
-    { id: "facturas", label: "Facturas pendientes" },
     { id: "reclamos", label: "Reclamos" },
+    { id: "envios", label: "Envíos" },
+    { id: "interior", label: "Envíos al interior" },
+    { id: "numeros", label: "Números" },
+    { id: "facturas", label: "Facturas pendientes" },
     { id: "guia", label: "Guía y tareas" },
     { id: "tareas", label: "Tareas" },
   ],
@@ -10069,7 +10069,6 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
   const [vista, setVista] = useState("activos");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
-  const [tarjetaMarcada, marcarTarjeta] = useTarjetaMarcada();
   const [copiadoId, setCopiadoId] = useState(null);
   const [avisandoId, setAvisandoId] = useState(null);
   function setCampoReclamo(id, patch) { onChange(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r))); }
@@ -10206,10 +10205,6 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                     {filas.map((f) => {
                       const r = f.r;
                       const abierta = filaAbierta === r.id;
-                      const irATarjeta = (ev) => {
-                        ev.stopPropagation();
-                        irAlaTarjeta(`reclamo-${r.id}`, () => marcarTarjeta(r.id));
-                      };
                       const clase = { "Abierto": "abierto", "Solución ofrecida": "ofrecida", "Cliente aceptó": "acepto", "Espejo en fábrica": "fabrica", "Resuelto": "resuelto" }[estadoReclamo(r)] || "abierto";
                       return (
                         <Fragment key={r.id}>
@@ -10219,7 +10214,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                           aria-expanded={abierta}>
                           <td className="dg-envios-fecha">{r.fecha ? fechaEntregaCorta(r.fecha) : <span className="dg-envios-falta">—</span>}</td>
                           <td className="dg-envios-nombre">
-                            <button type="button" className="dg-envios-nombre-btn" onClick={irATarjeta} title="Ir a la tarjeta de este reclamo">{r.cliente || "Sin nombre"}</button>
+                            <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el reclamo"}>{r.cliente || "Sin nombre"}</button>
                             {f.visita && <span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span>}
                           </td>
                           <td className="dg-envios-productos">{r.tipo}</td>
@@ -10230,13 +10225,202 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                         {abierta && (
                           <tr className="dg-envios-detalle">
                             <td colSpan={6}>
-                              <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
-                                <span><b>Teléfono</b> {r.celular || "—"}</span>
-                                <span><b>Detalle</b> {r.notas || "sin notas"}</span>
-                                {f.visita && <span><b>Domicilio</b> {direccionReclamo(r) || "sin cargar"}</span>}
-                                {f.visita && <span><b>Visita</b> {r.fechaEnvio ? fechaEntregaCorta(r.fechaEnvio) : "a coordinar"}</span>}
-                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={irATarjeta}><ChevronRight size={13} /> Ir a la tarjeta</button>
-                              </div>
+                              {(() => {
+                                // Todo el reclamo adentro de la fila: en qué
+                                // anda, qué le hicimos antes, qué se le ofreció
+                                // y si hay que ir al domicilio. Desde que esto
+                                // está completo, abajo no hacen falta tarjetas.
+                                const cerrado = reclamoFinalizado(r);
+                                const ficha = clienteDelReclamo(clientesConocidos, r);
+                                const compras = ficha ? ficha.pedidos.slice(0, 4) : [];
+                                const tieneCelular = !!waLink(r.celular);
+                                const conSolucion = !!String(r.solucion || "").trim();
+                                return (
+                                <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
+
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">En qué anda</div>
+                                    <ul className="dg-salida-checks">
+                                      <li className="dg-salida-ok">
+                                        <span className="dg-salida-marca" aria-hidden="true"><Check size={13} /></span>
+                                        Reclamo cargado<small> · {r.fecha ? fechaEntregaCorta(r.fecha) : "sin fecha"}</small>
+                                      </li>
+                                      <li className={conSolucion ? "dg-salida-ok" : ""}>
+                                        <span className="dg-salida-marca" aria-hidden="true">{conSolucion ? <Check size={13} /> : null}</span>
+                                        Solución ofrecida
+                                      </li>
+                                      <li>
+                                        <button type="button" className={`dg-salida-check ${r.clienteAcepto ? "dg-salida-check-on" : ""}`}
+                                          disabled={cerrado || !conSolucion || !!r.clienteAcepto}
+                                          title={conSolucion ? "El cliente aceptó la solución" : "Primero cargá qué le vas a ofrecer"}
+                                          onClick={() => setClienteAcepto(r.id)}>
+                                          <span className="dg-salida-marca" aria-hidden="true">{r.clienteAcepto ? <Check size={13} /> : null}</span>
+                                          El cliente aceptó
+                                        </button>
+                                      </li>
+                                      <li className={r.pedidoCreado ? "dg-salida-ok" : ""}>
+                                        <span className="dg-salida-marca" aria-hidden="true">{r.pedidoCreado ? <Check size={13} /> : null}</span>
+                                        Espejo nuevo en fábrica
+                                      </li>
+                                      <li>
+                                        <button type="button" className={`dg-salida-check ${cerrado ? "dg-salida-check-on" : ""}`}
+                                          disabled={cerrado}
+                                          onClick={() => finalizar(r.id)}>
+                                          <span className="dg-salida-marca" aria-hidden="true">{cerrado ? <Check size={13} /> : null}</span>
+                                          Resuelto{cerrado && r.finalizadoFecha ? <small> · {fechaEntregaCorta(r.finalizadoFecha)}</small> : null}
+                                        </button>
+                                      </li>
+                                    </ul>
+                                    {!cerrado && diasDesde(r.fecha) >= DIAS_RECLAMO_DEMORADO && (
+                                      <p className="dg-salida-falta">Abierto hace {diasDesde(r.fecha)} días.</p>
+                                    )}
+                                  </div>
+
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">El reclamo</div>
+                                    <div className="dg-salida-campos">
+                                      <label>
+                                        <span>Motivo</span>
+                                        <select value={r.tipo} onChange={(e) => setCampoReclamo(r.id, { tipo: e.target.value })}>
+                                          {RECLAMO_TIPOS.map((t) => (<option key={t} value={t}>{t}</option>))}
+                                        </select>
+                                      </label>
+                                      <label><span>Cliente</span><CampoTextoGuardado value={r.cliente} onGuardar={(v) => setCampoReclamo(r.id, { cliente: v })} placeholder="Nombre" /></label>
+                                      <label><span>Teléfono</span><CampoTextoGuardado value={r.celular} onGuardar={(v) => setCampoReclamo(r.id, { celular: v })} placeholder="Ej: 1122334455" /></label>
+                                      <label><span>Qué pasó</span><CampoTextoGuardado value={r.notas} onGuardar={(v) => setCampoReclamo(r.id, { notas: v })} placeholder="Detalle del problema" /></label>
+                                    </div>
+                                  </div>
+
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">Qué le hicimos</div>
+                                    {compras.length > 0 ? (
+                                      <>
+                                        <ul className="dg-interior-espejos">
+                                          {compras.map((c) => (
+                                            <li key={c.id}>
+                                              <b>#{c.orden}</b>&nbsp;{c.ancho && c.alto ? `${c.ancho}×${c.alto} cm` : "sin medida"}
+                                              {c.forma ? ` · ${c.forma}` : ""}{c.fecha ? ` · ${fechaEntregaCorta(c.fecha)}` : ""}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                        {ficha.pedidos.length > compras.length && <p className="dg-salida-nota">…y {ficha.pedidos.length - compras.length} compra(s) más.</p>}
+                                      </>
+                                    ) : (
+                                      <p className="dg-salida-nota">No encontramos compras de este cliente. Fijate que el nombre o el teléfono coincidan con los del pedido.</p>
+                                    )}
+                                    {!cerrado && onCrearPedido && (
+                                      <div className="dg-salida-acciones">
+                                        {r.pedidoCreado
+                                          ? <span className="dg-envios-pagado"><Check size={12} /> Pedido de cambio creado</span>
+                                          : <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => {
+                                              // Con la ficha del cliente va todo: DNI, dirección,
+                                              // forma de envío. Sin ella, lo que traiga el reclamo.
+                                              onCrearPedido({
+                                                ...(ficha ? datosDelCliente(ficha) : {}),
+                                                tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo",
+                                                cliente: r.cliente || (ficha ? ficha.nombre : ""),
+                                                celular: r.celular || (ficha ? ficha.celular : ""),
+                                                reclamoId: r.id,
+                                                grabado: r.notas ? `Reclamo (${r.tipo}): ${r.notas}` : `Reclamo: ${r.tipo}`,
+                                              });
+                                              setCampoReclamo(r.id, { pedidoCreado: true });
+                                            }}><Plus size={13} /> Mandar a hacer uno nuevo{ficha ? " (con sus datos)" : ""}</button>}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                    <div className="dg-salida-tit">Qué se le ofrece</div>
+                                    <CampoTextoGuardado className="dg-reclamo-solucion" value={r.solucion} onGuardar={(v) => setSolucion(r.id, v)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
+                                    <div className="dg-salida-acciones">
+                                      {tieneCelular && (
+                                        <a className="dg-btn-ghost dg-mini-btn" href={`${waLink(r.celular)}?text=${encodeURIComponent(saludoReclamo(r))}`} target="_blank" rel="noopener noreferrer">
+                                          <MessageCircle size={13} /> Escribirle
+                                        </a>
+                                      )}
+                                      {tieneCelular && conSolucion && (
+                                        <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => enviarWhatsapp(r)}>
+                                          <MessageCircle size={13} /> {copiadoId === r.id ? "Abriendo…" : "Mandarle la solución"}
+                                        </button>
+                                      )}
+                                      {!tieneCelular && <span className="dg-salida-nota" style={{ margin: 0 }}>Cargale el teléfono y se le puede escribir desde acá.</span>}
+                                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
+                                        <Bell size={13} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar otra vez" : "Avisar al equipo"}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Cuando hay que ir a la casa del cliente, el reclamo deja
+                                      de ser un llamado y pasa a ser una salida: necesita
+                                      dirección y día, igual que un envío. */}
+                                  <div className={`dg-salida-bloque dg-salida-bloque-ancho dg-reclamo-visita ${r.aDomicilio ? "dg-reclamo-visita-on" : ""}`}>
+                                    <label className="dg-reclamo-visita-check">
+                                      <input type="checkbox" checked={!!r.aDomicilio} onChange={(e) => {
+                                        const prende = e.target.checked;
+                                        // Si ya le vendimos alguna vez, la dirección la tenemos.
+                                        const datos = prende && ficha ? datosDelCliente(ficha) : null;
+                                        setCampoReclamo(r.id, {
+                                          aDomicilio: prende,
+                                          ...(datos ? {
+                                            barrio: r.barrio || datos.barrio || "",
+                                            detalleEntrega: r.detalleEntrega || datos.detalleEntrega || "",
+                                            piso: r.piso || datos.piso || "",
+                                            horarioEntrega: r.horarioEntrega || datos.horarioEntrega || "",
+                                            celular: r.celular || datos.celular || "",
+                                          } : {}),
+                                        });
+                                      }} />
+                                      <span><Wrench size={13} /> Hay que ir al domicilio a cambiarlo o arreglarlo</span>
+                                    </label>
+                                    {r.aDomicilio && (
+                                      <>
+                                        <div className="dg-salida-campos" style={{ marginTop: 10 }}>
+                                          <label><span>Barrio</span><CampoTextoGuardado value={r.barrio} onGuardar={(v) => setCampoReclamo(r.id, { barrio: v })} placeholder="Ej: Palermo" /></label>
+                                          <label><span>Dirección</span><CampoTextoGuardado value={r.detalleEntrega} onGuardar={(v) => setCampoReclamo(r.id, { detalleEntrega: v })} placeholder="Calle y número" /></label>
+                                          <label><span>Piso / Depto</span><CampoTextoGuardado value={r.piso} onGuardar={(v) => setCampoReclamo(r.id, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></label>
+                                          <label><span>Fecha de la visita</span><input type="date" value={r.fechaEnvio || ""} onChange={(e) => setCampoReclamo(r.id, { fechaEnvio: e.target.value })} /></label>
+                                        </div>
+                                        <div className="dg-salida-horario">
+                                          <span>Horario</span>
+                                          <div className="dg-salida-turnos">
+                                            {TURNOS_ENVIO.map((t) => (
+                                              <button key={t.id} type="button"
+                                                className={`dg-salida-turno ${r.horarioEntrega === t.id ? "dg-salida-turno-on" : ""}`}
+                                                onClick={() => setCampoReclamo(r.id, { horarioEntrega: r.horarioEntrega === t.id ? "" : t.id })}>
+                                                {t.label}
+                                              </button>
+                                            ))}
+                                          </div>
+                                          <CampoTextoGuardado className="dg-salida-horario-libre" value={r.horarioEntrega} onGuardar={(v) => setCampoReclamo(r.id, { horarioEntrega: v })} placeholder="o escribilo: 13 a 17 hs" />
+                                        </div>
+                                        <div className="dg-reclamo-visita-pie">
+                                          {r.visitaHecha
+                                            ? <>
+                                                <span className="dg-envios-pagado"><Check size={12} /> Fuimos el {fechaEntregaCorta(r.visitaHecha)}</span>
+                                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: "" })}><RotateCcw size={12} /> Todavía hay que volver</button>
+                                              </>
+                                            : <>
+                                                <span className="dg-pago-meta">Aparece en la tabla de Envíos marcada como visita.</span>
+                                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: new Date().toISOString().slice(0, 10) })}><Check size={12} /> Ya fuimos</button>
+                                              </>}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+
+                                  <div className="dg-salida-pie">
+                                    <span className="dg-salida-datos">
+                                      {cerrado
+                                        ? `Resuelto en ${f.dias} ${f.dias === 1 ? "día" : "días"}`
+                                        : `Abierto hace ${f.dias} ${f.dias === 1 ? "día" : "días"}`}
+                                    </span>
+                                    {cerrado
+                                      ? <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => reabrir(r.id)}><RotateCcw size={13} /> Reabrir</button>
+                                      : <button type="button" className="dg-icon-btn dg-task-del" title="Borrar este reclamo" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>}
+                                  </div>
+                                </div>
+                                );
+                              })()}
                             </td>
                           </tr>
                         )}
@@ -10253,161 +10437,6 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
 
       {visibles.length === 0 && <div className="dg-empty">{vista === "activos" ? "No hay reclamos activos. ¡Buenas noticias!" : "Todavía no finalizaste ningún reclamo."}</div>}
 
-      <div className="dg-reclamo-lista">
-        {visibles.map((r) => {
-          const tieneCelular = !!waLink(r.celular);
-          const ficha = clienteDelReclamo(clientesConocidos, r);
-          return (
-            <div className={`dg-section-card dg-reclamo-card ${tarjetaMarcada === r.id ? "dg-tarjeta-marcada" : ""}`} key={r.id} id={`reclamo-${r.id}`}>
-              <div className="dg-reclamo-head">
-                <span className="dg-badge" style={{ "--bc": RECLAMO_COLORS[RECLAMO_TIPOS.indexOf(r.tipo)] || "var(--dg-text-dim)" }}>{r.tipo}</span>
-                <span className="dg-reclamo-cliente">{r.cliente || "Sin cliente"}</span>
-                <span className="dg-pago-meta">{r.fecha}</span>
-                {!reclamoFinalizado(r) && <button className="dg-icon-btn dg-task-del" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>}
-              </div>
-              <div className="dg-reclamo-ciclo">
-                {(() => { const clase = { "Abierto": "abierto", "Solución ofrecida": "ofrecida", "Cliente aceptó": "acepto", "Espejo en fábrica": "fabrica", "Resuelto": "resuelto" }[estadoReclamo(r)] || "abierto"; return <span className={`dg-reclamo-estado dg-reclamo-estado-${clase}`}>{estadoReclamo(r)}</span>; })()}
-                {!reclamoFinalizado(r) && <span className={`dg-reclamo-edad ${diasDesde(r.fecha) >= 3 ? "dg-reclamo-edad-alerta" : ""}`}>abierto hace {diasDesde(r.fecha)} {diasDesde(r.fecha) === 1 ? "día" : "días"}</span>}
-              </div>
-              {r.notas && <div className="dg-pago-meta" style={{ marginBottom: 8 }}>{r.notas}</div>}
-
-              {reclamoFinalizado(r) ? (
-                <>
-                  {r.solucion && <div className="dg-fab-obs"><span>Solución aplicada</span> {r.solucion}</div>}
-                  <div className="dg-form-actions" style={{ marginTop: 8 }}>
-                    <button className="dg-btn-ghost" onClick={() => reabrir(r.id)}><RotateCcw size={13} /> Reabrir reclamo</button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  {(() => {
-                    const compras = ficha ? ficha.pedidos.slice(0, 4) : [];
-                    return (
-                      <>
-                        {compras.length > 0 && (
-                          <div className="dg-reclamo-compras">
-                            <div className="dg-reclamo-compras-tit"><ClipboardList size={13} /> Qué le hicimos a {ficha.nombre}</div>
-                            <ul>
-                              {compras.map((p) => (
-                                <li key={p.id}>
-                                  <b>#{p.orden}</b> {p.ancho && p.alto ? `${p.ancho}×${p.alto} cm` : "sin medida"}
-                                  {p.forma ? ` · ${p.forma}` : ""}{p.tono ? ` · ${p.tono}` : ""}
-                                  {p.fecha ? <span> · {fechaEntregaCorta(p.fecha)}</span> : null}
-                                </li>
-                              ))}
-                            </ul>
-                            {ficha.pedidos.length > compras.length && <div className="dg-pago-meta">…y {ficha.pedidos.length - compras.length} compra(s) más.</div>}
-                          </div>
-                        )}
-                        {onCrearPedido && (
-                          r.pedidoCreado
-                            ? <div className="dg-pago-meta" style={{ marginBottom: 10, color: "var(--dg-success)" }}>✓ Pedido de cambio creado. Completá las medidas en la pestaña Pedidos.</div>
-                            : <button className="dg-btn-ghost dg-mini-btn" style={{ marginBottom: 12 }} onClick={() => {
-                                // Con la ficha del cliente va todo: DNI, dirección,
-                                // forma de envío. Sin ella, lo que traiga el reclamo.
-                                onCrearPedido({
-                                  ...(ficha ? datosDelCliente(ficha) : {}),
-                                  tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo",
-                                  cliente: r.cliente || (ficha ? ficha.nombre : ""),
-                                  celular: r.celular || (ficha ? ficha.celular : ""),
-                                  reclamoId: r.id,
-                                  grabado: r.notas ? `Reclamo (${r.tipo}): ${r.notas}` : `Reclamo: ${r.tipo}`,
-                                });
-                                onChange(reclamos.map((x) => (x.id === r.id ? { ...x, pedidoCreado: true } : x)));
-                              }}><Plus size={13} /> Mandar a hacer un espejo nuevo{ficha ? " (con sus datos)" : ""}</button>
-                        )}
-                      </>
-                    );
-                  })()}
-                  <details className="dg-reclamo-editar" open={!tieneCelular}>
-                    <summary><Pencil size={12} /> Datos del reclamo</summary>
-                    <div className="dg-field-grid" style={{ marginTop: 8 }}>
-                      <Field label="Tipo">
-                        <select value={r.tipo} onChange={(e) => setCampoReclamo(r.id, { tipo: e.target.value })}>
-                          {RECLAMO_TIPOS.map((t) => (<option key={t} value={t}>{t}</option>))}
-                        </select>
-                      </Field>
-                      <Field label="Cliente"><CampoTextoGuardado value={r.cliente} onGuardar={(v) => setCampoReclamo(r.id, { cliente: v })} placeholder="Nombre" /></Field>
-                      <Field label="Celular"><CampoTextoGuardado value={r.celular} onGuardar={(v) => setCampoReclamo(r.id, { celular: v })} placeholder="Ej: 1122334455" /></Field>
-                      <Field label="Notas"><CampoTextoGuardado value={r.notas} onGuardar={(v) => setCampoReclamo(r.id, { notas: v })} placeholder="Detalle del problema" /></Field>
-                    </div>
-                  </details>
-
-                  {/* Cuando hay que ir a la casa del cliente, el reclamo deja
-                      de ser un llamado y pasa a ser una salida: necesita
-                      dirección y día, igual que un envío. */}
-                  <div className={`dg-reclamo-visita ${r.aDomicilio ? "dg-reclamo-visita-on" : ""}`}>
-                    <label className="dg-reclamo-visita-check">
-                      <input type="checkbox" checked={!!r.aDomicilio} onChange={(e) => {
-                        const prende = e.target.checked;
-                        // Si ya le vendimos alguna vez, la dirección la tenemos:
-                        // no se la volvemos a pedir.
-                        const datos = prende && ficha ? datosDelCliente(ficha) : null;
-                        setCampoReclamo(r.id, {
-                          aDomicilio: prende,
-                          ...(datos ? {
-                            barrio: r.barrio || datos.barrio || "",
-                            detalleEntrega: r.detalleEntrega || datos.detalleEntrega || "",
-                            piso: r.piso || datos.piso || "",
-                            horarioEntrega: r.horarioEntrega || datos.horarioEntrega || "",
-                            celular: r.celular || datos.celular || "",
-                          } : {}),
-                        });
-                      }} />
-                      <span><Wrench size={13} /> Hay que ir al domicilio a cambiarlo o arreglarlo</span>
-                    </label>
-                    {r.aDomicilio && (
-                      <>
-                        <div className="dg-field-grid" style={{ marginTop: 10 }}>
-                          <Field label="Barrio"><CampoTextoGuardado value={r.barrio} onGuardar={(v) => setCampoReclamo(r.id, { barrio: v })} placeholder="Ej: Palermo" /></Field>
-                          <Field label="Dirección"><CampoTextoGuardado value={r.detalleEntrega} onGuardar={(v) => setCampoReclamo(r.id, { detalleEntrega: v })} placeholder="Calle y número" /></Field>
-                          <Field label="Piso / Depto"><CampoTextoGuardado value={r.piso} onGuardar={(v) => setCampoReclamo(r.id, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></Field>
-                          <Field label="Horario"><CampoTextoGuardado value={r.horarioEntrega} onGuardar={(v) => setCampoReclamo(r.id, { horarioEntrega: v })} placeholder="Ej: 13 a 17 hs" /></Field>
-                          <Field label="Fecha de la visita"><input type="date" value={r.fechaEnvio || ""} onChange={(e) => setCampoReclamo(r.id, { fechaEnvio: e.target.value })} /></Field>
-                        </div>
-                        <div className="dg-reclamo-visita-pie">
-                          {r.visitaHecha
-                            ? <>
-                                <span className="dg-envios-pagado"><Check size={12} /> Fuimos el {fechaEntregaCorta(r.visitaHecha)}</span>
-                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: "" })}><RotateCcw size={12} /> Todavía hay que volver</button>
-                              </>
-                            : <>
-                                <span className="dg-pago-meta">Aparece en la tabla de Envíos marcada como visita.</span>
-                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: new Date().toISOString().slice(0, 10) })}><Check size={12} /> Ya fuimos</button>
-                              </>}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <Field label="Solución para el cliente">
-                    <CampoTextoGuardado value={r.solucion} onGuardar={(v) => setSolucion(r.id, v)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
-                  </Field>
-                  <div className="dg-form-actions" style={{ marginTop: 10 }}>
-                    {tieneCelular && (
-                      <a className="dg-btn-ghost" href={`${waLink(r.celular)}?text=${encodeURIComponent(saludoReclamo(r))}`} target="_blank" rel="noopener noreferrer">
-                        <MessageCircle size={14} /> Escribir por WhatsApp
-                      </a>
-                    )}
-                    {tieneCelular && r.solucion && (
-                      <button className="dg-btn-ghost" onClick={() => enviarWhatsapp(r)}>
-                        <MessageCircle size={14} /> {copiadoId === r.id ? "Abriendo…" : "Enviar la solución"}
-                      </button>
-                    )}
-                    <button className="dg-btn-ghost dg-mini-btn" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
-                      <Bell size={14} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar al equipo otra vez" : "Avisar al equipo"}
-                    </button>
-                    {r.solucion && !r.clienteAcepto && !r.pedidoCreado && (
-                      <button className="dg-btn-ghost dg-mini-btn" onClick={() => setClienteAcepto(r.id)}><Check size={14} /> El cliente aceptó</button>
-                    )}
-                    <button className="dg-btn-primary" onClick={() => finalizar(r.id)}><CheckCircle2 size={14} /> Marcar como resuelto</button>
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -19614,6 +19643,10 @@ function Style() {
       .dg-interior-fila-falta > td { opacity:.72; }
       .dg-interior-espejos { list-style:none; margin:9px 0 0; padding:0; display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dg-text-dim); }
       .dg-interior-espejos li { display:flex; align-items:center; min-width:0; }
+      .dg-interior-espejos b { color:var(--dg-text); font-weight:600; }
+      /* Lo que se le ofrece al cliente es el campo más importante del reclamo:
+         va ancho, no apretado en una columna. */
+      .dg-reclamo-solucion { width:100%; min-width:0; padding:7px 10px; font-size:13px; }
       /* Lo que se lleva el flete va separado de lo que cobra el cliente: son
          dos plata distintas y mezclarlas fue justo lo que hubo que desarmar. */
       .dg-salida-plata-aparte { margin-top:6px; padding-top:6px; border-top:1px dashed rgba(var(--dg-line-rgb),.14); }
@@ -19978,15 +20011,12 @@ function Style() {
 
       .dg-flag-nuevo { background:var(--dg-accent) !important; }
 
-      .dg-reclamo-ciclo { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:2px 0 9px; }
       .dg-reclamo-estado { font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; padding:3px 8px; border-radius:8px; background:rgba(var(--dg-line-rgb),0.08); color:var(--dg-text-dim); }
       .dg-reclamo-estado-abierto { background:rgba(var(--dg-danger-rgb),0.15); color:color-mix(in srgb, var(--dg-danger) 50%, var(--dg-text)); }
       .dg-reclamo-estado-ofrecida { background:rgba(var(--dg-warning-rgb),0.18); color:color-mix(in srgb, var(--dg-warning) 45%, var(--dg-text)); }
       .dg-reclamo-estado-acepto { background:rgba(var(--dg-accent-rgb),0.14); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
       .dg-reclamo-estado-fabrica { background:rgba(var(--dg-accent-rgb),0.14); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
       .dg-reclamo-estado-resuelto { background:rgba(var(--dg-success-rgb),0.16); color:color-mix(in srgb, var(--dg-success) 45%, var(--dg-text)); }
-      .dg-reclamo-edad { font-size:11px; color:var(--dg-text-faint); }
-      .dg-reclamo-edad-alerta { color:var(--dg-danger); font-weight:600; }
       .dg-reclamo-editar { margin:2px 0 12px; border:1px solid rgba(var(--dg-line-rgb),0.12); border-radius:8px; padding:8px 11px; }
       .dg-reclamo-editar summary { cursor:pointer; font-size:13px; font-weight:600; color:var(--dg-text-dim); display:flex; align-items:center; gap:6px; }
       .dg-reclamo-editar[open] summary { margin-bottom:4px; color:var(--dg-text); }
@@ -20248,11 +20278,6 @@ function Style() {
       .dg-dia-taller-extra-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-dia-item-extra { padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; letter-spacing:.4px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-candado-aviso { display:inline-flex; align-items:center; gap:5px; padding:7px 10px; border-radius:8px; font-size:13px; font-weight:600; color:var(--dg-warning-2); background:rgba(var(--dg-warning-rgb),.10); }
-      .dg-reclamo-compras { margin-bottom:12px; padding:10px 12px; border-radius:10px; background:rgba(var(--dg-accent-rgb),.07); border:1px solid rgba(var(--dg-accent-rgb),.2); }
-      .dg-reclamo-compras-tit { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--dg-accent-2); margin-bottom:5px; }
-      .dg-reclamo-compras ul { margin:0; padding-left:17px; }
-      .dg-reclamo-compras li { padding:2px 0; font-size:13px; color:var(--dg-text); }
-      .dg-reclamo-compras li span { color:var(--dg-text-dim); }
       .dg-montos-grupo { display:flex; flex-direction:column; gap:10px; }
       .dg-montos-total { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; margin:16px 0 6px; padding:11px 13px; border-radius:11px;
         background:rgba(var(--dg-accent-rgb),.09); border:1px solid rgba(var(--dg-accent-rgb),.22); }
@@ -20525,10 +20550,6 @@ function Style() {
       .dg-fab-func { font-size:11px; font-weight:600; padding:4px 9px; border-radius:8px; background: rgba(var(--dg-success-rgb),0.13); color:var(--dg-success); }
 
       .dg-fab-obs { font-size:13px; color:var(--dg-text-dim); margin-bottom:10px; line-height:1.4; }
-      .dg-reclamo-lista { display:flex; flex-direction:column; gap:10px; }
-      .dg-reclamo-card { margin-bottom:0; }
-      .dg-reclamo-head { display:flex; align-items:center; gap:9px; margin-bottom:8px; flex-wrap:wrap; }
-      .dg-reclamo-cliente { font-family:'Jost', sans-serif; font-weight:600; font-size:15px; flex:1; min-width:0; }
       .dg-fab-obs span { color:var(--dg-accent); font-weight:600; margin-right:5px; }
 
       .dg-fab-audit { margin-bottom:10px; font-size:11px; }
