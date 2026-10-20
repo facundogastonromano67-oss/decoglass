@@ -30,6 +30,42 @@ try {
   prueba.src = "data:image/webp;base64,UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==";
 } catch (e) {}
 
+// ===== Que el teléfono vuelva solo a su tamaño ============================
+// El zoom solo que se veía era de iPhone: agranda la página cuando tocás un
+// campo con letra menor a 16px y después no la achica. Eso se corta en el CSS
+// (todos los campos a 16px en el teléfono). Esto es la red de abajo: si por
+// cualquier otra cosa la página quedó agrandada mientras escribían —el
+// teclado, un campo que se nos escape—, al salir del campo vuelve sola.
+//
+// El pellizco a mano NO se toca: esto actúa solamente cuando se termina de
+// escribir, no mientras alguien está mirando algo agrandado a propósito.
+//
+// Cómo vuelve: no hay una forma directa de achicar el zoom desde el código.
+// Lo que sí funciona en iPhone es poner un instante «maximum-scale=1» en la
+// etiqueta viewport —eso lo obliga a volver a 1— y enseguida dejarla como
+// estaba, para que el pellizco siga andando.
+function volverAlZoomNormal() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const vv = window.visualViewport;
+  const meta = document.querySelector('meta[name="viewport"]');
+  if (!vv || !meta) return;
+  const original = meta.getAttribute("content") || "";
+  if (!/maximum-scale=/.test(original)) return;
+  const esCampo = (el) => !!el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+  document.addEventListener("focusout", (e) => {
+    if (!esCampo(e.target)) return;
+    window.setTimeout(() => {
+      // Si saltó a otro campo (siguiente renglón de un formulario), todavía
+      // está escribiendo: no se le mueve la pantalla.
+      if (esCampo(document.activeElement)) return;
+      if (!(vv.scale > 1.01)) return;
+      meta.setAttribute("content", original.replace(/maximum-scale=[^,\s]*/, "maximum-scale=1"));
+      window.setTimeout(() => meta.setAttribute("content", original), 350);
+    }, 120);
+  }, true);
+}
+volverAlZoomNormal();
+
 const ICONS = { Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones };
 
 const LOGO_MARK_D = "M33 120 L33 169 L4 169 L4 96 C4 82 6 79 14 78 C28 74 42 66 53 64 C64 66 77 71 90 75 C97 76 104 64 104 46 L104 0 L0 0 L0 46 C0 62 4 78 14 80 C28 84 42 91 53 92 C64 91 77 84 90 77 C97 78 104 90 104 96 L104 169";
@@ -22117,6 +22153,63 @@ function Style() {
       .dg-factura-actual:hover { text-decoration:underline; }
       .dg-factura-upload-btn { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
       @media (max-width:480px) { .dg-seguimiento { padding-left:16px; padding-right:16px; } }
+    
+      /* VA AL FINAL A PROPÓSITO: corrige reglas que están más arriba con la
+         misma especificidad, y entre iguales gana la última. Si se mueve para
+         arriba, los botones del teléfono vuelven a quedar chicos. */
+      /* ================================================================
+         EL TELÉFONO
+         ================================================================
+         Auditado pantalla por pantalla (41) a 320, 360 y 375px, con la app
+         entera corriendo y datos de prueba. Lo que se arregla acá:
+
+         1) EL ZOOM SOLO. iPhone agranda la página cuando tocás un campo con
+            letra menor a 16px, y después no vuelve. Había 113 campos así
+            (de 11 a 15px). Con 16px el iPhone no hace zoom al tocarlos; el
+            pellizco a mano sigue andando igual. Si por otra cosa queda
+            agrandado, al salir del campo vuelve solo (ver
+            volverAlZoomNormal en App.jsx). */
+      /* OJO: sin el prefijo .dg-app a propósito. Los modales (Ajustes, el
+         login) se dibujan FUERA de .dg-app, y con el prefijo no los agarraba:
+         Ajustes seguía teniendo 8 campos de 15px que hacían zoom. */
+      @media (max-width:760px), (pointer:coarse) {
+        input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+        select,
+        textarea { font-size:16px !important; }
+        /* Los que son MÁS grandes a propósito no se achican. Lleva el mismo
+           selector de arriba más su clase: si no, la regla general le gana por
+           especificidad (las dos tienen !important) y la puerta quedaba en 16. */
+        input.dg-puerta-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]) { font-size:24px !important; }
+      }
+
+      /* 2) EL ENCABEZADO EN TELÉFONOS ANGOSTOS. A menos de 400px no entraba:
+            necesitaba 373px en 296 útiles y empujaba Ajustes y Cerrar sesión
+            fuera de la pantalla, sin forma de tocarlos. El nombre se va (queda
+            el escudito que dice que hay sesión) y los íconos se juntan. */
+      @media (max-width:400px) {
+        .dg-header { gap:6px; }
+        .dg-session { gap:4px; }
+        .dg-session-badge { font-size:0; padding-left:6px; padding-right:6px; gap:0; }
+      }
+
+      /* 3) BOTONES CHICOS PARA EL DEDO. Los pasos del pedido eran cuadraditos
+            de 21px y varios botones no llegaban a 30 de alto. En el teléfono
+            pasan a un mínimo tocable; en la compu quedan como estaban. */
+      @media (max-width:760px) {
+        .dg-flow-dot { width:30px; height:30px; font-size:12px; }
+        .dg-mini-btn,
+        .dg-step-action,
+        .dg-step-whatsapp,
+        .dg-order-compact-facturar { min-height:36px; }
+        /* Las flechas y el tacho de la guía viven en .dg-guia-acciones. */
+        .dg-guia-acciones button { min-width:36px; min-height:36px; }
+        .dg-calendario-vista-toggle button { min-height:36px; }
+        /* La ✕ que BORRA un vendedor medía 11×11: además de difícil de
+           tocar, era fácil borrar al de al lado sin querer. */
+        .dg-vendedor-chip button { min-width:32px; min-height:32px; display:inline-flex; align-items:center; justify-content:center; }
+        /* «Facturar en EcomApp» era un link de 14px de alto. */
+        .dg-link-ecomapp { display:inline-flex; align-items:center; min-height:36px; }
+      }
     `}</style>
   );
 }
