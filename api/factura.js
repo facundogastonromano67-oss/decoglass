@@ -1,19 +1,33 @@
-// Entrega la factura de UN pedido al cliente, sin que tenga que iniciar sesión.
+// Lo privado de UN pedido, para el cliente que no tiene login:
 //
-//   GET /api/factura?pedido=<id del pedido>
+//   GET /api/factura?pedido=<id>&puerta=1          -> { pide: true|false }
+//   GET /api/factura?pedido=<id>&t=1234&puerta=1   -> { pide, ok: true|false }
+//   GET /api/factura?grupo=<grupoId>&puerta=1      -> idem, para el link de grupo
+//   GET /api/factura?pedido=<id>&t=1234            -> manda la factura
 //
-// Por qué existe: el bucket "facturas" es privado (antes era público y se
-// podían listar y bajar TODAS las facturas de la empresa con solo tener el
-// link del bundle). Como el portal de seguimiento no tiene login, el link
-// firmado se arma acá, del lado del servidor, y solo para el pedido que
-// viene en la URL. El cliente nunca ve la clave de servicio ni puede pedir
-// la factura de otro.
+// POR QUÉ LAS DOS COSAS VIVEN EN EL MISMO ARCHIVO: el plan Hobby de Vercel
+// admite 12 funciones por deploy y ya estábamos justo en 12. Separar esto en
+// un /api/puerta hacía 13 y el deploy fallaba al publicar (el build salía
+// bien y moría en "Deploying outputs"). Las dos contestan la misma pregunta
+// —¿este que está del otro lado es el dueño del pedido?— así que tampoco
+// quedan tan lejos. Si algún día sobran funciones, se puede separar.
 //
-// Variables de entorno (las mismas que el resto de /api):
-//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+// La puerta: el link de seguimiento no tiene login. Con tenerlo —reenviado, o
+// adivinando un id— se veía el pedido entero, se bajaba la factura y se podía
+// reclamar por un espejo ajeno. Ahora se piden los últimos 4 dígitos del
+// teléfono del cliente, que es el mismo al que le mandamos el link, y la
+// comparación se hace ACÁ: si se hiciera en el navegador, el pedido ya habría
+// viajado hasta la pantalla y alcanzaría con abrirla para leerlo.
+//
+// La factura: el bucket "facturas" es privado (antes era público y se podían
+// listar y bajar TODAS las facturas de la empresa con solo tener el link del
+// bundle). El link firmado se arma acá, del lado del servidor, y solo para el
+// pedido que viene en la URL.
+//
+// Variables de entorno: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from "@supabase/supabase-js";
-import { coincide } from "./_telefono.js";
+import { ultimos4, coincide } from "./_telefono.js";
 
 const BUCKET = "facturas";
 const VENCE_EN = 300; // 5 minutos: alcanza para abrirla o bajarla
@@ -32,16 +46,31 @@ function rutaDelArchivo(valor) {
   return texto.replace(/^\/+/, "");
 }
 
+// El pedido, o el primero del grupo (es el mismo cliente y el mismo teléfono).
+async function buscarPedido(supabase, { pedido, grupo }) {
+  if (pedido) {
+    const { data, error } = await supabase
+      .from("pedidos_rows").select("data").eq("id", pedido).maybeSingle();
+    if (error) throw new Error("consulta");
+    return data ? data.data : null;
+  }
+  const { data, error } = await supabase
+    .from("pedidos_rows").select("data").eq("data->>grupoId", grupo).limit(1);
+  if (error) throw new Error("consulta");
+  const fila = (data || [])[0];
+  return fila ? fila.data : null;
+}
+
 export default async function handler(req, res) {
   // Nunca cachear: el link vence y cada pedido tiene el suyo.
   res.setHeader("Cache-Control", "no-store");
 
-  const id = String((req.query && req.query.pedido) || "").trim();
-  if (!id) return res.status(400).json({ error: "Falta el pedido." });
-  // Los últimos 4 dígitos del teléfono del cliente. Se verifican ACÁ aunque la
-  // pantalla ya los haya pedido: si el control viviera solo en el navegador,
-  // alcanzaría con escribir la URL de la factura a mano para saltearlo.
-  const escrito = String((req.query && req.query.t) || "").trim();
+  const q = req.query || {};
+  const id = String(q.pedido || "").trim();
+  const grupo = String(q.grupo || "").trim();
+  const escrito = String(q.t || "").trim();
+  const esPuerta = String(q.puerta || "") === "1";
+  if (!id && !grupo) return res.status(400).json({ error: "Falta el pedido." });
 
   const url = process.env.SUPABASE_URL;
   const clave = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -49,21 +78,29 @@ export default async function handler(req, res) {
 
   try {
     const supabase = createClient(url, clave, { auth: { persistSession: false } });
+    const pedido = await buscarPedido(supabase, { pedido: id, grupo });
 
-    // Se busca el pedido por su id y se saca SU factura. No se acepta una
-    // ruta que venga por la URL: si no, cualquiera pediría cualquier archivo.
-    const { data, error } = await supabase
-      .from("pedidos_rows").select("data").eq("id", id).maybeSingle();
-    if (error) return res.status(500).json({ error: "No se pudo buscar el pedido." });
-    if (!data) return res.status(404).json({ error: "No encontramos ese pedido." });
+    if (esPuerta) {
+      // Un pedido que NO EXISTE contesta igual que uno sin teléfono: así el
+      // link tampoco sirve para ir probando ids a ver cuáles existen.
+      if (!pedido) return res.status(200).json({ pide: false, ok: true });
+      const esperado = ultimos4(pedido.celular);
+      if (!esperado) return res.status(200).json({ pide: false, ok: true });
+      if (!escrito) return res.status(200).json({ pide: true });
+      return res.status(200).json({ pide: true, ok: coincide(pedido.celular, escrito) });
+    }
 
-    // Un pedido sin teléfono cargado no puede pedir nada (coincide() devuelve
-    // true): queda como estaba hasta que se le cargue el teléfono.
-    if (!coincide(data.data && data.data.celular, escrito)) {
+    if (!pedido) return res.status(404).json({ error: "No encontramos ese pedido." });
+
+    // Se vuelve a verificar acá aunque la pantalla ya los haya pedido: si el
+    // control viviera solo en el navegador, alcanzaría con escribir la URL de
+    // la factura a mano para saltearlo. Un pedido sin teléfono cargado no
+    // puede pedir nada (coincide() da true) y queda como estaba.
+    if (!coincide(pedido.celular, escrito)) {
       return res.status(403).json({ error: "Para ver la factura hacen falta los últimos 4 dígitos de tu teléfono." });
     }
 
-    const ruta = rutaDelArchivo(data.data && data.data.facturaUrl);
+    const ruta = rutaDelArchivo(pedido.facturaUrl);
     if (!ruta) return res.status(404).json({ error: "Ese pedido todavía no tiene factura cargada." });
 
     const { data: firma, error: errorFirma } = await supabase

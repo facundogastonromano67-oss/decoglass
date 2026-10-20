@@ -22951,9 +22951,9 @@ class ErrorSeguimiento extends Component {
 // ajeno. Ahora se piden los últimos 4 dígitos del teléfono del cliente, que es
 // el mismo al que le mandamos el link.
 //
-// LA COMPARACIÓN LA HACE EL SERVIDOR (/api/puerta), no esta pantalla. Si la
-// hiciera el navegador, el pedido ya habría viajado hasta acá y alcanzaría con
-// abrir las herramientas del navegador para leerlo. Por eso el pedido NO se
+// LA COMPARACIÓN LA HACE EL SERVIDOR (/api/factura?puerta=1), no esta
+// pantalla. Si la hiciera el navegador, el pedido ya habría viajado hasta acá
+// y alcanzaría con abrir las herramientas para leerlo. Por eso el pedido NO se
 // pide hasta que la puerta diga que sí.
 const LLAVE_PUERTA = "dg_seg_ok_";
 
@@ -22976,8 +22976,12 @@ async function preguntarPuerta({ pedido, grupo, t }) {
   if (pedido) params.set("pedido", pedido);
   if (grupo) params.set("grupo", grupo);
   if (t) params.set("t", t);
+  // Va a /api/factura con ?puerta=1, no a un endpoint propio: el plan de
+  // Vercel admite 12 funciones y ya estábamos en 12. Está explicado en
+  // api/factura.js.
+  params.set("puerta", "1");
   try {
-    const r = await fetch(`/api/puerta?${params.toString()}`);
+    const r = await fetch(`/api/factura?${params.toString()}`);
     if (!r.ok) return null;
     return await r.json();
   } catch (e) { return null; }
