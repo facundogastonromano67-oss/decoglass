@@ -23103,12 +23103,16 @@ function SeguimientoPublico({ pedidoId }) {
     return () => { activo = false; window.clearInterval(interval); };
   }, [pedidoId, intento, puerta.abierta]);
 
+  const tracking = useEnvioTracking(pedido ? (pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id) : null);
+  const enViaje = envioEnViaje(tracking);
+
+  // OJO: esto va DESPUÉS de todos los hooks, nunca antes. Un return temprano
+  // arriba de useEnvioTracking cambia la cantidad de hooks entre un render y
+  // el siguiente, y React tira la pantalla entera — que es justo lo que pasó:
+  // los links que pedían código quedaban en blanco al aparecer la puerta.
   if (puerta.listo && !puerta.abierta) {
     return <PuertaSeguimiento onProbar={puerta.probar} tema={tema} />;
   }
-
-  const tracking = useEnvioTracking(pedido ? (pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id) : null);
-  const enViaje = envioEnViaje(tracking);
 
   if (pedido === undefined && fallo) {
     return <PantallaErrorSeguimiento motivo={fallo} onReintentar={() => { setFallo(""); setIntento((x) => x + 1); }} />;
@@ -23262,12 +23266,14 @@ function SeguimientoGrupoPublico({ grupoId }) {
     return () => { activo = false; window.clearInterval(interval); };
   }, [grupoId, intento, puerta.abierta]);
 
+  const tracking = useEnvioTracking(grupoId ? `grupo:${grupoId}` : null);
+  const enViaje = envioEnViaje(tracking);
+
+  // Igual que en el seguimiento de un pedido: la puerta se decide después de
+  // TODOS los hooks. Ver el comentario de allá.
   if (puerta.listo && !puerta.abierta) {
     return <PuertaSeguimiento onProbar={puerta.probar} tema={tema} />;
   }
-
-  const tracking = useEnvioTracking(grupoId ? `grupo:${grupoId}` : null);
-  const enViaje = envioEnViaje(tracking);
 
   if (espejos === undefined && fallo) {
     return <PantallaErrorSeguimiento motivo={fallo} onReintentar={() => { setFallo(""); setIntento((x) => x + 1); }} />;
