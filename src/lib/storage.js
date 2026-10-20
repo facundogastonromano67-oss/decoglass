@@ -442,15 +442,26 @@ export const chatStore = {
     if (error) throw error;
     return data || [];
   },
-  async internoEnviar(cuerpo, autor) {
+  // `sector` es el canal: "" o null = el general de siempre.
+  // OJO: la columna `sector` de chat_interno se agrega con una línea de SQL
+  // (ver supabase/chat-por-sector.sql). Hasta que esté, el insert falla con
+  // 42703 y se reintenta sin ella: el mensaje se manda igual y cae en el
+  // general. Así la app no se rompe entre que sube el código y se corre el SQL.
+  async internoEnviar(cuerpo, autor, sector) {
     const texto = String(cuerpo || "").trim();
     if (!texto) return;
-    const { error } = await supabase.from("chat_interno").insert({
+    const fila = {
       autor_id: autor?.id || null,
       autor_nombre: autor?.nombre || "Alguien",
       cuerpo: texto,
-    });
-    if (error) throw error;
+    };
+    const { error } = await supabase.from("chat_interno").insert({ ...fila, sector: sector || null });
+    if (!error) return;
+    const faltaLaColumna = String(error.code) === "42703"
+      || /column .*sector.* does not exist/i.test(String(error.message || ""));
+    if (!faltaLaColumna) throw error;
+    const reintento = await supabase.from("chat_interno").insert(fila);
+    if (reintento.error) throw reintento.error;
   },
   internoSubscribe(onChange) {
     const channel = supabase

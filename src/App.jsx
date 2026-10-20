@@ -780,7 +780,7 @@ function pasosProduccionCompletados(pedido) {
 }
 
 const SECTOR_SUBPAGES = {
-  marketing: [{ id: "biblioteca", label: "Biblioteca" }, { id: "calendario", label: "Calendario de contenido" }, { id: "tareas", label: "Tareas" }],
+  marketing: [{ id: "biblioteca", label: "Biblioteca" }, { id: "calendario", label: "Calendario de contenido" }, { id: "tareas", label: "Avisos del sector", soloAdmin: true }],
   ventas: [
     { id: "presupuestador", label: "Presupuestador" },
     { id: "pedidos", label: "Pedidos" },
@@ -788,7 +788,7 @@ const SECTOR_SUBPAGES = {
     { id: "crm", label: "CRM (Kommo)" },
     { id: "recursos", label: "Catálogos y precios" },
     { id: "guia", label: "Guía y tareas" },
-    { id: "tareas", label: "Tareas" },
+    { id: "tareas", label: "Avisos del sector", soloAdmin: true },
   ],
   administracion: [
     { id: "finanzas", label: "Finanzas" },
@@ -796,7 +796,7 @@ const SECTOR_SUBPAGES = {
     { id: "comisiones", label: "Comisiones" },
     { id: "fletes", label: "Fletes" },
     { id: "sueldos", label: "Sueldos" },
-    { id: "tareas", label: "Tareas" },
+    { id: "tareas", label: "Avisos del sector", soloAdmin: true },
   ],
   fabrica: [
     { id: "pedidos", label: "Pedidos de fábrica" },
@@ -806,7 +806,7 @@ const SECTOR_SUBPAGES = {
     { id: "materiales", label: "Stock de materiales" },
     { id: "stock", label: "Stock de espejos" },
     { id: "guia", label: "Guía y tareas" },
-    { id: "tareas", label: "Tareas" },
+    { id: "tareas", label: "Avisos del sector", soloAdmin: true },
   ],
   postventa: [
     { id: "turno", label: "Mi turno" },
@@ -816,11 +816,11 @@ const SECTOR_SUBPAGES = {
     { id: "numeros", label: "Números" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "guia", label: "Guía y tareas" },
-    { id: "tareas", label: "Tareas" },
+    { id: "tareas", label: "Avisos del sector", soloAdmin: true },
   ],
   logistica: [
     { id: "envios", label: "Envíos confirmados" },
-    { id: "tareas", label: "Tareas" },
+    { id: "tareas", label: "Avisos del sector", soloAdmin: true },
   ],
 };
 
@@ -2521,7 +2521,7 @@ function App() {
           </button>
         )}
         {chatEquipoOpen && session && (
-          <ChatEquipoPanel session={session} onClose={() => { setChatEquipoOpen(false); setChatEquipoSinLeer(0); }} />
+          <ChatEquipoPanel session={session} onClose={() => { setChatEquipoOpen(false); setChatEquipoSinLeer(0); }} sectors={sectors} onUpdateSector={updateSector} isAdmin={isAdmin} />
         )}
       </div>
 
@@ -19615,6 +19615,25 @@ function Style() {
       .dg-salida-pie { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding-top:10px; border-top:1px solid rgba(var(--dg-line-rgb),.12); }
       .dg-salida-datos { margin-right:auto; font-size:12px; color:var(--dg-text-dim); }
       .dg-salida-datos b { color:var(--dg-text); font-weight:600; }
+      /* Los canales del chat del equipo */
+      .dg-chat-canales { display:flex; gap:4px; padding:0 14px 10px; border-bottom:1px solid rgba(var(--dg-line-rgb),.1); overflow-x:auto; }
+      .dg-chat-canal { position:relative; flex:0 0 auto; padding:6px 12px; border:0; border-radius:100px; background:transparent; font-family:'Jost',sans-serif; font-size:13px; font-weight:600; color:var(--dg-text-dim); cursor:pointer; white-space:nowrap; }
+      .dg-chat-canal:hover { background:rgba(var(--dg-line-rgb),.07); }
+      .dg-chat-canal-on { background:rgba(var(--dg-accent-rgb),.16); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
+      .dg-chat-canal-punto { position:absolute; top:4px; right:5px; width:7px; height:7px; border-radius:50%; background:var(--dg-danger); }
+
+      /* Los avisos del sector, arriba del chat de ese canal */
+      .dg-chat-avisos { padding:11px 14px; border-bottom:1px solid rgba(var(--dg-line-rgb),.1); background:rgba(var(--dg-warning-rgb),.07); }
+      .dg-chat-avisos-tit { display:flex; align-items:center; gap:6px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); margin-bottom:8px; }
+      .dg-chat-avisos-vacio { margin:0; font-size:12px; color:var(--dg-text-dim); }
+      .dg-chat-avisos-lista { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-chat-avisos-lista li { display:flex; align-items:flex-start; gap:8px; font-size:13px; color:var(--dg-text); }
+      .dg-chat-avisos-lista li > span { flex:1; min-width:0; }
+      .dg-chat-avisos-lista li::before { content:"•"; color:color-mix(in srgb, var(--dg-warning) 55%, var(--dg-text)); font-weight:700; }
+      .dg-chat-avisos-nuevo { display:flex; gap:8px; margin-top:10px; }
+      .dg-chat-avisos-nuevo input { flex:1; min-width:0; padding:7px 10px; border:1px solid rgba(var(--dg-line-rgb),.16); border-radius:10px; background:var(--dg-surface-2); color:var(--dg-text); font-family:'Jost',sans-serif; font-size:13px; outline:none; }
+      .dg-chat-avisos-nuevo input:focus { border-color:var(--dg-accent); }
+      .dg-chat-avisos-nuevo .dg-btn-primary { flex:0 0 auto; }
       /* La puerta del link de seguimiento */
       .dg-puerta { display:flex; flex-direction:column; align-items:center; gap:12px; margin-top:26px; padding:26px 22px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:18px; background:var(--dg-surface); text-align:center; }
       .dg-puerta-icono { display:grid; place-items:center; width:46px; height:46px; border-radius:50%; background:rgba(var(--dg-accent-rgb),.14); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
@@ -19910,6 +19929,32 @@ function Style() {
          temas. Sin esto, en tema claro quedaban negro sobre oscuro: el toggle
          de urgente no se leía y el cartel de "faltan datos" tampoco — que es
          justo el que explica por qué no se puede guardar. */
+      /* Lo mismo para el chat del equipo: vive adentro del modal, que es
+         violeta oscuro siempre. Los globos ya estaban así de antes (en tema
+         claro quedaban negro sobre oscuro, ilegibles) y los canales y los
+         avisos son nuevos. Todos con color fijo, no con variables de tema. */
+      .dg-modal .dg-chat-autor { color:#C0B9CE !important; }
+      .dg-modal .dg-chat-texto { color:#F1EAE1; }
+      /* El globo ajeno con fondo fijo: si sigue al tema, la hora encima cambia
+         de contraste entre uno y otro (daba 4,41 en oscuro). */
+      .dg-modal .dg-chat-burbuja:not(.dg-chat-mia) { background:rgba(255,255,255,.07); }
+      .dg-modal .dg-chat-hora { color:#B4ACC2 !important; }
+      .dg-modal .dg-chat-vacio { color:#C0B9CE !important; }
+      /* El globo propio va con el azul CLARO fijo, igual que el botón primario
+         del modal: con el azul oscurecido del tema claro, el texto oscuro
+         encima daba 3,29. */
+      .dg-modal .dg-chat-mia { background:#60ADD9 !important; }
+      .dg-modal .dg-chat-mia .dg-chat-texto, .dg-modal .dg-chat-mia .dg-chat-hora { color:#10242F !important; }
+      .dg-modal .dg-chat-canal { color:#C0B9CE; }
+      .dg-modal .dg-chat-canal:hover { background:rgba(255,255,255,.08); }
+      .dg-modal .dg-chat-canal-on { background:rgba(96,173,217,.22); color:#DCEBF6; }
+      .dg-modal .dg-chat-avisos { background:rgba(231,177,90,.10); border-bottom-color:rgba(246,236,224,.12); }
+      .dg-modal .dg-chat-avisos-tit { color:#E7B15A; }
+      .dg-modal .dg-chat-avisos-vacio { color:#C0B9CE; }
+      .dg-modal .dg-chat-avisos-lista li { color:#F1EAE1; }
+      .dg-modal .dg-chat-avisos-lista li::before { color:#E7B15A; }
+      .dg-modal .dg-chat-avisos-nuevo input { background:#FFFFFF !important; border:1.5px solid #8A8A94 !important; color:#16161A !important; }
+      .dg-modal .dg-chat-avisos-nuevo input::placeholder { color:#6B6B74 !important; }
       .dg-modal .dg-urgente-toggle { color:#F1EAE1; }
       .dg-modal .dg-validacion-banner { color:#FF8A80; }
       .dg-modal .dg-validacion-banner strong { color:#FFB3AD; }
@@ -22707,11 +22752,24 @@ function idDispositivo() {
   } catch (e) { return "anon"; }
 }
 
-// --- Chat interno del equipo (canal general) ---
-function ChatEquipoPanel({ session, onClose }) {
+// Los canales del chat del equipo. El general es el de siempre: todos los
+// mensajes que ya estaban (sin sector) viven ahí, no se pierde ninguno.
+const CANALES_CHAT = [
+  { id: "", label: "General" },
+  { id: "ventas", label: "Ventas" },
+  { id: "postventa", label: "PostVenta" },
+  { id: "fabrica", label: "Fábrica" },
+];
+const esCanal = (id) => CANALES_CHAT.some((c) => c.id === id && c.id);
+
+// --- Chat interno del equipo, dividido por sector ---
+function ChatEquipoPanel({ session, onClose, sectors, onUpdateSector, isAdmin }) {
   const [mensajes, setMensajes] = useState([]);
   const [enviando, setEnviando] = useState(false);
   const [cargando, setCargando] = useState(true);
+  // Cada uno abre en el canal de su sector; el admin, en el general.
+  const [canal, setCanal] = useState(() => (!isAdmin && esCanal(session?.sectorId) ? session.sectorId : ""));
+  const [nuevoAviso, setNuevoAviso] = useState("");
   const scrollRef = useRef(null);
   const yo = idDispositivo();
 
@@ -22724,21 +22782,46 @@ function ChatEquipoPanel({ session, onClose }) {
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, []);
 
+  // Los mensajes viejos no tienen sector: son del general.
+  const delCanal = mensajes.filter((m) => (m.sector || "") === canal);
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     if (mensajes.length) {
       try { localStorage.setItem("dg_chat_interno_visto", mensajes[mensajes.length - 1].created_at); } catch (e) {}
     }
-  }, [mensajes]);
+  }, [mensajes, canal]);
 
   async function enviar(t) {
     setEnviando(true);
     try {
-      await chatStore.internoEnviar(t, { id: yo, nombre: session?.nombre || "Alguien" });
+      await chatStore.internoEnviar(t, { id: yo, nombre: session?.nombre || "Alguien" }, canal);
       setMensajes(await chatStore.internoListar());
     } catch (e) { return false; }
     finally { setEnviando(false); }
   }
+
+  // Los avisos del sector del canal. Son los mismos que ya tenía el sector:
+  // no se duplicó nada, se muestran donde la gente los va a ver.
+  const sectorDelCanal = esCanal(canal) ? (sectors || []).find((s) => s.id === canal) : null;
+  const avisos = (sectorDelCanal && sectorDelCanal.tasks) || [];
+  function agregarAviso() {
+    const t = nuevoAviso.trim();
+    if (!t || !sectorDelCanal) return;
+    onUpdateSector(sectorDelCanal.id, { tasks: [...avisos, { id: uid(), text: t, completed: false }] });
+    setNuevoAviso("");
+  }
+  function borrarAviso(id) {
+    if (!sectorDelCanal) return;
+    onUpdateSector(sectorDelCanal.id, { tasks: avisos.filter((t) => t.id !== id) });
+  }
+
+  const sinLeerDe = (id) => {
+    let visto = "";
+    try { visto = localStorage.getItem("dg_chat_interno_visto") || ""; } catch (e) {}
+    if (!visto) return 0;
+    return mensajes.filter((m) => (m.sector || "") === id && m.created_at > visto && m.autor_id !== yo).length;
+  };
 
   return (
     <div className="dg-overlay">
@@ -22747,10 +22830,54 @@ function ChatEquipoPanel({ session, onClose }) {
           <div className="dg-modal-title"><MessageSquare size={15} /> Chat del equipo</div>
           <button className="dg-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
         </div>
+
+        <div className="dg-chat-canales" role="tablist" aria-label="Canales del chat">
+          {CANALES_CHAT.map((c) => {
+            const n = sinLeerDe(c.id);
+            return (
+              <button key={c.id || "general"} role="tab" aria-selected={canal === c.id}
+                className={`dg-chat-canal ${canal === c.id ? "dg-chat-canal-on" : ""}`}
+                onClick={() => setCanal(c.id)}>
+                {c.label}
+                {n > 0 && canal !== c.id && <span className="dg-chat-canal-punto" aria-label={`${n} sin leer`} />}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Los avisos del sector, arriba de todo. El equipo los ve; agregarlos
+            y sacarlos es solo del administrador. */}
+        {sectorDelCanal && (avisos.length > 0 || isAdmin) && (
+          <div className="dg-chat-avisos">
+            <div className="dg-chat-avisos-tit"><Megaphone size={13} /> Avisos de {sectorDelCanal.name}</div>
+            {avisos.length === 0 && <p className="dg-chat-avisos-vacio">Todavía no hay avisos para este sector.</p>}
+            {avisos.length > 0 && (
+              <ul className="dg-chat-avisos-lista">
+                {avisos.map((a) => (
+                  <li key={a.id}>
+                    <span>{a.text}</span>
+                    {isAdmin && <button type="button" className="dg-icon-btn dg-task-del" onClick={() => borrarAviso(a.id)} aria-label="Borrar aviso"><Trash2 size={13} /></button>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {isAdmin && (
+              <div className="dg-chat-avisos-nuevo">
+                <input value={nuevoAviso} placeholder={`Nuevo aviso para ${sectorDelCanal.name}...`}
+                  onChange={(e) => setNuevoAviso(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") agregarAviso(); }} />
+                <button type="button" className="dg-btn-primary dg-mini-btn" onClick={agregarAviso} disabled={!nuevoAviso.trim()}>
+                  <Plus size={14} /> Agregar
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="dg-chat-scroll dg-chat-scroll-lg" ref={scrollRef}>
           {cargando && <p className="dg-chat-vacio">Cargando…</p>}
-          {!cargando && mensajes.length === 0 && <p className="dg-chat-vacio">Todavía no hay mensajes. Escribí el primero.</p>}
-          {mensajes.map((m) => {
+          {!cargando && delCanal.length === 0 && <p className="dg-chat-vacio">Todavía no hay mensajes en {canal ? CANALES_CHAT.find((c) => c.id === canal).label : "el canal general"}. Escribí el primero.</p>}
+          {delCanal.map((m) => {
             const mio = m.autor_id === yo;
             return (
               <div key={m.id} className={`dg-chat-burbuja ${mio ? "dg-chat-mia" : ""}`}>
@@ -22761,7 +22888,7 @@ function ChatEquipoPanel({ session, onClose }) {
             );
           })}
         </div>
-        <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder="Mensaje para todo el equipo..." />
+        <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder={canal ? `Mensaje para ${CANALES_CHAT.find((c) => c.id === canal).label}...` : "Mensaje para todo el equipo..."} />
       </div>
     </div>
   );
