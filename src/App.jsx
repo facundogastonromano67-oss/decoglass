@@ -1422,7 +1422,7 @@ const SHARED_SYNC_KEYS = [
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
   "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas", "misiones",
-  "tareas-sector",
+  "tareas-sector", "trabas-taller",
 ];
 
 function App() {
@@ -1447,6 +1447,10 @@ function App() {
   const [tareasSector, setTareasSector] = useState(null);
   const [facturas, setFacturas] = useState(null);
   const [enviosLogistica, setEnviosLogistica] = useState(null);
+  // null = todavía no se leyó. Mientras tanto no se traba nada solo: si se
+  // escribiera sin haber leído, se pisarían las trabas guardadas.
+  const [trabasTaller, setTrabasTaller] = useState(null);
+  fijarTrabasTaller(trabasTaller);
   const [reclamos, setReclamos] = useState(null);
   const [stockEspejos, setStockEspejos] = useState(null);
   const [stockMateriales, setStockMateriales] = useState(null);
@@ -1515,6 +1519,28 @@ function App() {
     const id = window.setInterval(revisar, 10 * 60 * 1000);
     return () => window.clearInterval(id);
   }, [turnos]);
+
+  // Las listas del taller se traban solas (ver trabasAutomaticas): la de hoy
+  // al abrir la app y la de mañana a las 19:00. Se revisa al entrar y cada 5
+  // minutos, para agarrar las 19:00 con la app abierta. Solo con los pedidos
+  // ya cargados: si no, se trabaría una lista vacía. Y cada traba se intenta
+  // una sola vez por sesión, por si el guardado no queda (mismo freno que el
+  // día que se le anota a cada espejo).
+  const trabasIntentadas = useRef(new Set());
+  useEffect(() => {
+    if (!session || !Array.isArray(pedidos) || !pedidos.length || !trabasTaller) return undefined;
+    const revisar = () => {
+      const nuevo = trabasAutomaticas(pedidos, trabasTaller);
+      if (!nuevo) return;
+      const claves = Object.keys(nuevo).filter((k) => !trabasTaller[k]);
+      if (!claves.some((k) => !trabasIntentadas.current.has(k))) return;
+      claves.forEach((k) => trabasIntentadas.current.add(k));
+      persistTrabasTaller(nuevo);
+    };
+    revisar();
+    const id = window.setInterval(revisar, 5 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [session, pedidos, trabasTaller]);
 
   const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
   const [activeSectorId, setActiveSectorId] = useState(null);
@@ -1637,6 +1663,7 @@ function App() {
       "tareas-sector": (v) => setTareasSector(tareasConDefecto(v)),
       "facturas-manuales": setFacturas,
       "envios-logistica": setEnviosLogistica,
+      "trabas-taller": (v) => setTrabasTaller(v && typeof v === "object" && !Array.isArray(v) ? v : {}),
       "empleados-sueldo": setEmpleadosSueldo,
       "liquidaciones-sueldo": setLiquidaciones,
       auditoria: setAuditoria,
@@ -2044,6 +2071,11 @@ function App() {
       setEnviosLogistica(el ? JSON.parse(el.value) : []);
     } catch (e) { setEnviosLogistica([]); }
     try {
+      const tt = await storage.get("trabas-taller", true);
+      const leidas = tt ? JSON.parse(tt.value) : {};
+      setTrabasTaller(leidas && typeof leidas === "object" && !Array.isArray(leidas) ? leidas : {});
+    } catch (e) { /* no se pudo leer: queda en null y no se traba nada solo */ }
+    try {
       let reclamosGuardados = await reclamosStore.getAll();
       if (reclamosGuardados.length === 0) {
         try {
@@ -2217,6 +2249,7 @@ function App() {
   async function persistTareasSector(next) { guardar("tareas-sector", next, () => setTareasSector(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistEnviosLogistica(next) { guardar("envios-logistica", next, () => setEnviosLogistica(next)); }
+  async function persistTrabasTaller(next) { guardar("trabas-taller", next, () => setTrabasTaller(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
   async function persistProveedores(next) { guardar("proveedores", next, () => setProveedores(next)); }
@@ -2479,8 +2512,8 @@ function App() {
             auditoria={auditoria}
             kommoSubdominio={integraciones?.kommoSubdominio}
             editorListas={integraciones?.editorListas || ""}
-            listasBloqueadas={!!integraciones?.listasBloqueadas}
-            onCambiarBloqueoListas={(v) => persistIntegraciones({ ...integraciones, listasBloqueadas: !!v })}
+            trabasTaller={trabasTaller || {}}
+            onCambiarTrabas={persistTrabasTaller}
             driveFacturasUrl={integraciones?.driveFacturasUrl || ""}
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
@@ -5630,6 +5663,84 @@ function diaMovidoAMano(pedido) {
 // miran solo el movido a mano, porque no hay reparto automático.
 const diaDeLaLista = (listaId) => (listaSinTope(listaId) ? diaMovidoAMano : diaPuesto);
 
+// ===== LISTAS TRABADAS, UNA POR UNA =========================================
+// Cada día de cada lista se traba por separado (antes era un solo candado
+// para todo, y solo frenaba a los que reacomodaban a mano). Lo pidió Facundo
+// el 21/10/2026: los chicos hacían el corte del día y después la lista seguía
+// creciendo con lo que entraba a fábrica a la tarde.
+//
+// Una lista trabada se queda con los pedidos que tenía cuando se trabó. Lo que
+// entra después no se mete ahí: va al primer día que no esté trabado. Si se
+// termina algo antes, el lugar queda libre; no se rellena solo.
+//
+// Se traba sola: la de mañana a las 19:00, y la de hoy la primera vez que
+// alguien abre la app en el día, si nadie la trabó la noche anterior. Solo las
+// listas de corte (simples y esmerilados p/cortar): lo de armar es lo que
+// vuelve del grabador y conviene que aparezca. Si se la destraba a mano queda
+// «abierta» y la app no la vuelve a trabar.
+//
+// Se guarda aparte, en «trabas-taller», y no en integraciones: la escribe
+// cualquiera que abra la app, y con su propia clave no pisa los ajustes.
+// Clave: «lista|fecha» → { estado: "trabada" | "abierta", ids, por, cuando, auto }.
+const LISTAS_QUE_SE_TRABAN_SOLAS = ["simples", "esm_cortar"];
+// La misma hora a la que se cierran solos los turnos.
+const HORA_TRABA_LISTAS = 19;
+const claveTraba = (listaId, fecha) => `${listaId}|${fecha}`;
+// Lo fija App en cada render con lo que hay guardado. Es global a propósito:
+// planTaller se llama desde ocho lugares (la fecha que se le promete al
+// cliente, el optimizador de corte, los números de la mañana…) y todos tienen
+// que ver las mismas listas trabadas.
+let TRABAS_TALLER = {};
+function fijarTrabasTaller(trabas) { TRABAS_TALLER = trabas && typeof trabas === "object" ? trabas : {}; }
+// Los días trabados de una lista: fecha → ids de los pedidos que tenía.
+function trabasDeLaLista(listaId, trabas = TRABAS_TALLER) {
+  const dias = new Map();
+  Object.entries(trabas || {}).forEach(([clave, t]) => {
+    const [lista, fecha] = clave.split("|");
+    if (lista === listaId && t && t.estado === "trabada" && Array.isArray(t.ids)) dias.set(fecha, new Set(t.ids));
+  });
+  return dias;
+}
+// Lo de hace más de dos semanas ya no sirve: se tira al guardar.
+function limpiarTrabasViejas(trabas, primero) {
+  const [y, m, d] = primero.split("-").map(Number);
+  const limite = isoLocal(new Date(y, m - 1, d - 14));
+  const limpio = {};
+  Object.entries(trabas || {}).forEach(([clave, t]) => {
+    const fecha = clave.split("|")[1] || "";
+    if (fecha >= limite) limpio[clave] = t;
+  });
+  return limpio;
+}
+// Los pedidos que tiene hoy ese día de esa lista: es la «foto» que se guarda
+// al trabarla.
+function idsDelDiaTaller(pedidos, hoyIso, listaId, fecha, trabas) {
+  const dia = planTaller(pedidos, hoyIso, listaId, trabas).find((d) => d.fecha === fecha && !d.pasado);
+  return [...new Set((dia?.items || []).map((x) => x.pedido.id))];
+}
+// Qué hay que trabar solo a esta hora. Devuelve el objeto nuevo entero, o
+// null si no hay nada para hacer (así no se le escribe a la base de gusto).
+function trabasAutomaticas(pedidos, trabas, ahora = new Date()) {
+  const hoyIso = isoLocal(ahora);
+  const primero = primerDiaTaller(hoyIso);
+  const dias = [primero];
+  // A la noche se traba también la del día siguiente. El domingo «primero» ya
+  // es el lunes, así que no se suma nada más.
+  if (primero === hoyIso && ahora.getHours() >= HORA_TRABA_LISTAS) dias.push(siguienteDiaTaller(primero));
+  let nuevo = null;
+  dias.forEach((fecha) => LISTAS_QUE_SE_TRABAN_SOLAS.forEach((listaId) => {
+    const clave = claveTraba(listaId, fecha);
+    // Trabada o destrabada a mano: no se toca.
+    if ((nuevo || trabas || {})[clave]) return;
+    const base = nuevo || limpiarTrabasViejas(trabas, primero);
+    const ids = idsDelDiaTaller(pedidos, hoyIso, listaId, fecha, trabasDeLaLista(listaId, base));
+    base[clave] = { estado: "trabada", ids, por: "La app", cuando: ahora.toISOString(), auto: true };
+    nuevo = base;
+  }));
+  return nuevo;
+}
+// ===== FIN LISTAS TRABADAS ==================================================
+
 // Ya tendría que estar terminado: su fecha objetivo quedó atrás.
 function estaAtrasadoTaller(pedido, hoyIso) {
   const objetivo = fechaObjetivoFabrica(pedido);
@@ -6276,7 +6387,9 @@ function nombreDiaTaller(iso, hoyIso) {
 }
 
 // El plan de UNA lista: "simples", "esm_cortar" o "esm_armar".
-function planTaller(pedidos, hoyIso, listaId = "simples") {
+// trabas: los días trabados de esta lista (fecha → ids); por defecto, los
+// guardados. Ver «LISTAS TRABADAS».
+function planTaller(pedidos, hoyIso, listaId = "simples", trabas = trabasDeLaLista(listaId)) {
   const primero = primerDiaTaller(hoyIso);
   // Ver diaDeLaLista: en una lista sin cupo solo cuenta el día puesto a mano.
   const diaDe = diaDeLaLista(listaId);
@@ -6359,12 +6472,21 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
   const empezado = (x) => x.restantes < x.unidades;
   const ordenDelDia = (a, b) => (empezado(b) ? 1 : 0) - (empezado(a) ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido);
 
+  // Un pedido que estaba en la foto de un día trabado anterior y no se hizo
+  // (nadie abrió Fábrica ese día y no le quedó el día anotado) sigue
+  // prometido: puede entrar en el día trabado siguiente.
+  const fechasTrabadas = [...trabas.keys()].sort();
+  const prometidoAntesDe = (fecha, id) => fechasTrabadas.some((f) => f < fecha && trabas.get(f).has(id));
+
   const dias = [];
   let fecha = primero;
   for (let vuelta = 0; vuelta < 400; vuelta++) {
     const quedan = pool.filter((x) => x.restantes > 0);
     if (!quedan.length && fecha > ultimoFijado && fecha > hastaSabado) break;
     const hechos = fecha === hoyIso ? hechosHoy : [];
+    // Día trabado: entran solo los pedidos que tenía cuando lo trabaron. Lo
+    // que llegó después sigue de largo al primer día sin trabar.
+    const trabada = trabas.get(fecha) || null;
     const items = [];
     const sabado = new Date(`${fecha}T12:00:00`).getDay() === 6;
     const base = topeDelDia(listaId, sabado);
@@ -6409,7 +6531,10 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
       else tomar(x, x.partible ? Math.min(x.restantes, Math.max(1, libre())) : x.restantes, x.aMano);
       x.fijado = "";
     });
-    const candidatos = quedan.filter((x) => !x.fijado && x.restantes > 0).sort(ordenDelDia);
+    const candidatos = quedan
+      .filter((x) => !x.fijado && x.restantes > 0
+        && (!trabada || trabada.has(x.pedido.id) || prometidoAntesDe(fecha, x.pedido.id)))
+      .sort(ordenDelDia);
     // 1) Lo empezado y lo urgente.
     candidatos.forEach((x) => { if (empezado(x) || rangoTaller(x.pedido) <= 1) intentar(x); });
     // 2) El resto, por urgencia y fecha de entrega.
@@ -6421,7 +6546,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
     dias.push({
       fecha, items, hechos, sabado, base, arrastre, porEmbalar, extras,
       porEmbalarU: porEmbalar.reduce((t, x) => t + x.unidades, 0),
-      sinHacerU: 0, pasado: false,
+      sinHacerU: 0, pasado: false, trabada: !!trabada,
       max: maxDia,
       total: usados + extras,
       espejos: usados + extras,
@@ -6444,7 +6569,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples") {
         fecha, items, hechos: [], porEmbalar, porEmbalarU: u, sinHacerU: sinHacer, extras: 0,
         sabado: new Date(`${fecha}T12:00:00`).getDay() === 6,
         base: 0, arrastre: 0, max: 0, total: u + sinHacer, espejos: u + sinHacer,
-        pendientes: sinHacer, pasado: true,
+        pendientes: sinHacer, pasado: true, trabada: false,
       };
     });
   dias.unshift(...atrasSinCerrar);
@@ -13602,21 +13727,43 @@ function NumerosFabricaPanel({ pedidos }) {
   );
 }
 
-function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", listasBloqueadas = false, onCambiarBloqueoListas }) {
+function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas }) {
   // El "editor único" de las listas: la única persona que puede meter espejos
   // de más en un día cuando surge una urgencia. Se configura por nombre en
   // Ajustes; si no hay nadie puesto, no puede nadie.
   const nombreEditor = String(editorListas || "").trim();
   const soyEditorUnico = !!nombreEditor && session?.role === "admin"
     && String(session?.nombre || "").trim().toLowerCase() === nombreEditor.toLowerCase();
-  // El candado: con las listas trabadas nadie las puede reacomodar, ni mover
-  // espejos de día ni sumar extras. Lo que NO traba nunca es el trabajo del
-  // taller: marcar cortado, armado y embalado anda igual.
-  // Lo abre y lo cierra el editor único. Si no hay ninguno configurado, lo
-  // puede hacer cualquier administrador, para que no quede trabado sin salida.
-  const listasTrabadas = !!listasBloqueadas;
-  const puedoTocarElCandado = !!onCambiarBloqueoListas
+  // Las listas se traban de a una, día por día (ver «LISTAS TRABADAS»). A un
+  // día trabado no le entran espejos nuevos ni se le mueven los suyos a otro
+  // día. Lo que NO traba nunca es el trabajo del taller: marcar cortado,
+  // armado y embalado anda igual. El editor único sí le puede sumar un EXTRA:
+  // para eso existe, para las urgencias.
+  // Traba y destraba el editor único. Si no hay ninguno configurado, lo puede
+  // hacer cualquier administrador, para que no quede trabado sin salida.
+  const puedoTocarElCandado = !!onCambiarTrabas
     && (nombreEditor ? soyEditorUnico : session?.role === "admin");
+  const estaTrabado = (fecha) => trabasTaller?.[claveTraba(lista, fecha)]?.estado === "trabada";
+  function cambiarTraba(fecha, trabar) {
+    if (!puedoTocarElCandado) return;
+    const clave = claveTraba(lista, fecha);
+    const base = limpiarTrabasViejas(trabasTaller, primerDiaTaller(hoyTaller));
+    const quien = session?.nombre || "Administrador";
+    const cuando = new Date().toISOString();
+    if (trabar) {
+      // La foto se saca sin esta traba: lo que la lista muestra ahora mismo.
+      const sinEsta = { ...base };
+      delete sinEsta[clave];
+      const ids = idsDelDiaTaller(pedidos, hoyTaller, lista, fecha, trabasDeLaLista(lista, sinEsta));
+      base[clave] = { estado: "trabada", ids, por: quien, cuando, auto: false };
+    } else {
+      // Queda «abierta» a propósito: así la app no la vuelve a trabar sola.
+      base[clave] = { estado: "abierta", por: quien, cuando };
+    }
+    onCambiarTrabas(base);
+    if (onRegistrar) onRegistrar(trabar ? "Trabó una lista del taller" : "Destrabó una lista del taller",
+      `${infoPestana(lista)?.label || lista} — ${nombreDiaTaller(fecha, hoyTaller)}`);
+  }
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
   const [lista, setLista] = useState("simples");
@@ -13644,9 +13791,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     });
   }
   const [diaDestino, setDiaDestino] = useState(null);     // día sobre el que se está soltando al arrastrar
-  const puedeArrastrar = session?.role === "admin" && !listasTrabadas;
+  const puedeArrastrar = session?.role === "admin";
   function moverADia(pedidoId, dia, comoExtra = false) {
-    if (listasTrabadas) return;   // las listas están trabadas con el candado
+    // A un día trabado solo le entra un extra del editor único.
+    if (dia && estaTrabado(dia) && !comoExtra) return;
     const p = pedidos.find((x) => x.id === pedidoId);
     if (!p) return;
     const quien = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
@@ -14294,23 +14442,6 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <option value="todos">Todos ({enFabrica.length})</option>
         </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
-        {puedoTocarElCandado && (
-          <button
-            type="button"
-            className="dg-btn-ghost dg-candado"
-            style={listasTrabadas ? { color: "var(--dg-warning-2)", borderColor: "rgba(var(--dg-warning-rgb),.45)", background: "rgba(var(--dg-warning-rgb),.10)" } : undefined}
-            onClick={() => onCambiarBloqueoListas(!listasTrabadas)}
-            title={listasTrabadas
-              ? "Las listas están trabadas: nadie puede moverlas. Tocá para destrabarlas."
-              : "Las listas se pueden reacomodar. Tocá para trabarlas y que queden como están."}
-          >
-            {listasTrabadas ? <Lock size={14} /> : <Unlock size={14} />}
-            {listasTrabadas ? "Listas trabadas" : "Trabar listas"}
-          </button>
-        )}
-        {listasTrabadas && !puedoTocarElCandado && (
-          <span className="dg-candado-aviso" title="Las listas las ordenó el encargado"><Lock size={13} /> Listas trabadas</span>
-        )}
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
       </div>
 
@@ -14457,8 +14588,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const hechosU = contar(hechosDia);
                 const items = dia.items.filter((x) => coincide(x.pedido));
                 if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && !diasAbiertos.has(dia.fecha)) return null;
-                // A un día que ya pasó no se le puede mandar trabajo nuevo.
-                const arrastrable = puedeArrastrar && !dia.pasado;
+                // A un día que ya pasó no se le puede mandar trabajo nuevo, y
+                // a uno trabado tampoco (ni sacarle lo suyo).
+                const arrastrable = puedeArrastrar && !dia.pasado && !dia.trabada;
+                const traba = trabasTaller?.[claveTraba(lista, dia.fecha)];
                 return (
                   <Fragment key={dia.fecha}>
                     {separador}
@@ -14472,6 +14605,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
+                        {dia.trabada && <span className="dg-dia-taller-trabada" title={`Trabada por ${traba?.por || "la app"}`}><Lock size={12} /> trabada</span>}
                         <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"}</span>
                         {dia.extras > 0 && <span className="dg-dia-taller-extra-chip">+{dia.extras} extra</span>}
                         {dia.sinHacerU > 0 && <span className="dg-dia-taller-vencido-chip">SIN HACER {dia.sinHacerU}</span>}
@@ -14480,8 +14614,16 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                       </button>
                       {abierto && (
                         <div className="dg-dia-taller-body">
-                          {items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && <div className="dg-dia-vacio">{puedeArrastrar ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
-                          {soyEditorUnico && !listasTrabadas && !dia.pasado && (() => {
+                          {puedoTocarElCandado && !dia.pasado && (
+                            <div className="dg-dia-traba">
+                              <button type="button" className={`dg-btn-ghost dg-mini-btn dg-candado ${dia.trabada ? "dg-candado-on" : ""}`} onClick={() => cambiarTraba(dia.fecha, !dia.trabada)}>
+                                {dia.trabada ? <Unlock size={13} /> : <Lock size={13} />}
+                                {dia.trabada ? "Destrabar esta lista" : "Trabar esta lista"}
+                              </button>
+                            </div>
+                          )}
+                          {items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && <div className="dg-dia-vacio">{arrastrable ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
+                          {soyEditorUnico && !dia.pasado && (() => {
                             const yaEnElDia = new Set(dia.items.map((x) => x.pedido.id));
                             const candidatos = pendientesDeLaLista.filter((p) => !yaEnElDia.has(p.id));
                             if (!candidatos.length) return null;
@@ -14522,21 +14664,21 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"} ${tarjetaMarcada === x.pedido.id ? "dg-tarjeta-marcada" : ""}`}
                               id={`taller-${dia.fecha}-${x.pedido.id}`}
                               key={x.pedido.id}
-                              draggable={puedeArrastrar}
-                              onDragStart={puedeArrastrar ? (e) => { e.dataTransfer.setData("text/plain", x.pedido.id); e.dataTransfer.effectAllowed = "move"; } : undefined}
-                              onDragEnd={puedeArrastrar ? () => setDiaDestino(null) : undefined}
+                              draggable={arrastrable}
+                              onDragStart={arrastrable ? (e) => { e.dataTransfer.setData("text/plain", x.pedido.id); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                              onDragEnd={arrastrable ? () => setDiaDestino(null) : undefined}
                             >
                               <div className="dg-dia-item-bar">
-                                {puedeArrastrar && <span className="dg-dia-item-agarre" title="Arrastralo a otro día" aria-hidden="true">⠿</span>}
+                                {arrastrable && <span className="dg-dia-item-agarre" title="Arrastralo a otro día" aria-hidden="true">⠿</span>}
                                 <span className="dg-dia-item-tipo">{x.clase === "simple" ? "Simple" : grupoListaArmar(x.pedido) === "esmerilados_armar" ? "Esmerilado · volvió del grabado" : pedidoProcesoTaller(x.pedido) === "esmerilados" ? "Esmerilado" : "Biselado"}{x.partes > 1 ? ` · ${x.unidades} de ${x.total} u.` : x.unidades > 1 ? ` · ${x.unidades} u.` : ""}</span>
                                 {x.partes > 1 && <span className="dg-dia-item-parte">parte {x.parte} de {x.partes}{x.sigue ? ` · sigue ${nombreDiaTaller(x.sigue, hoyTaller)}` : " · última"}</span>}
                                 {x.extra
                                   ? <span className="dg-dia-item-extra" title={x.pedido.diaTallerPor ? `Lo sumó ${x.pedido.diaTallerPor}` : "Sumado a mano, arriba del cupo"}>EXTRA</span>
                                   : x.fijadoAca && <span className="dg-dia-item-fijo" title={x.pedido.diaTallerPor ? `Lo fijó ${x.pedido.diaTallerPor}` : "Fijado a mano"}>fijado</span>}
-                                {canEdit && !listasTrabadas && (
+                                {canEdit && !dia.trabada && (
                                   <select className="dg-dia-item-mover" value="" onChange={(e) => { const v = e.target.value; if (v) moverADia(x.pedido.id, v === "auto" ? "" : v); }} aria-label="Pasar a otro día">
                                     <option value="">Pasar a otro día…</option>
-                                    {opcionesDias.filter((d) => d !== dia.fecha).map((d) => (<option key={d} value={d}>{nombreDiaTaller(d, hoyTaller)}</option>))}
+                                    {opcionesDias.filter((d) => d !== dia.fecha && !estaTrabado(d)).map((d) => (<option key={d} value={d}>{nombreDiaTaller(d, hoyTaller)}</option>))}
                                     {x.pedido.diaTaller && <option value="auto">Que lo reparta la app</option>}
                                   </select>
                                 )}
@@ -18835,7 +18977,7 @@ function SectorPage({
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "",
   guias = {}, onChangeGuias, turnos = [], onChangeTurnos, misiones = [], onChangeMisiones,
   tareasSector = {}, onChangeTareasSector,
-  listasBloqueadas = false, onCambiarBloqueoListas,
+  trabasTaller = {}, onCambiarTrabas,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
   deudas, onChangeDeudas, notasAnotador, onChangeNotasAnotador,
@@ -19013,7 +19155,7 @@ function SectorPage({
       )}
 
       {subpage === "pedidos" && sector.id === "fabrica" && (
-        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} editorListas={editorListas} listasBloqueadas={listasBloqueadas} onCambiarBloqueoListas={onCambiarBloqueoListas} />
+        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} editorListas={editorListas} trabasTaller={trabasTaller} onCambiarTrabas={onCambiarTrabas} />
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
 
@@ -20363,7 +20505,12 @@ function Style() {
       .dg-dia-taller-vencido-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-accent); background:var(--dg-danger); }
       .dg-dia-taller-extra-chip { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; letter-spacing:.3px; color:var(--dg-on-interior); background:var(--dg-interior); }
       .dg-dia-item-extra { padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; letter-spacing:.4px; color:var(--dg-on-interior); background:var(--dg-interior); }
-      .dg-candado-aviso { display:inline-flex; align-items:center; gap:5px; padding:7px 10px; border-radius:8px; font-size:13px; font-weight:600; color:var(--dg-warning-2); background:rgba(var(--dg-warning-rgb),.10); }
+      /* Un día trabado: el chip en el encabezado lo ve todo el taller; el
+         botón para trabar y destrabar, solo quien puede hacerlo. */
+      .dg-dia-taller-trabada { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:color-mix(in srgb, var(--dg-warning) 45%, var(--dg-text)); background:rgba(var(--dg-warning-rgb),.16); }
+      .dg-dia-traba { display:flex; justify-content:flex-end; margin-bottom:10px; }
+      .dg-candado { display:inline-flex; align-items:center; gap:6px; }
+      .dg-candado-on { color:color-mix(in srgb, var(--dg-warning) 45%, var(--dg-text)); border-color:rgba(var(--dg-warning-rgb),.45); background:rgba(var(--dg-warning-rgb),.10); }
       .dg-montos-grupo { display:flex; flex-direction:column; gap:10px; }
       .dg-montos-total { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; margin:16px 0 6px; padding:11px 13px; border-radius:11px;
         background:rgba(var(--dg-accent-rgb),.09); border:1px solid rgba(var(--dg-accent-rgb),.22); }
