@@ -7950,16 +7950,16 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         <Filter size={14} />
         {quickView === "todos" && (
           <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
-            <option value="todos">Todos los estados</option>
+            <option value="todos">Estado: todos</option>
             {ESTADO_PEDIDO_OPTIONS.map((e) => (<option key={e} value={e}>{e}</option>))}
           </select>
         )}
-        <select value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
-          <option value="todos">Todos los vendedores</option>
+        <select className="dg-filtro-vendedor" value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
+          <option value="todos">Vendedor: todos</option>
           {vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}
         </select>
         <select value={filtroCanal} onChange={(e) => setFiltroCanal(e.target.value)}>
-          <option value="todos">Todos los canales</option>
+          <option value="todos">Canal: todos</option>
           {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
         </select>
         <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
@@ -9131,9 +9131,9 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
                           <span className="dg-interior-orden">{f.ordenes}</span> {f.p.cliente || "Sin nombre"}
                         </td>
                         <td className="dg-envios-dir">{f.destino || <span className="dg-envios-falta">sin destino</span>}</td>
-                        <td className="dg-num">{f.p.codigoPostal || <span className="dg-envios-falta">—</span>}</td>
-                        <td className="dg-num">{f.espejos}</td>
-                        <td className="dg-num">{f.completo ? f.bultos : <span className="dg-envios-falta">—</span>}</td>
+                        <td className="dg-num" data-label="CP">{f.p.codigoPostal || <span className="dg-envios-falta">—</span>}</td>
+                        <td className="dg-num" data-label="Espejos">{f.espejos}</td>
+                        <td className="dg-num" data-label="Bultos">{f.completo ? f.bultos : <span className="dg-envios-falta">—</span>}</td>
                         <td>
                           {f.completo
                             ? <span className="dg-reclamo-estado dg-reclamo-estado-resuelto">Listo</span>
@@ -9657,12 +9657,12 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           </td>
                           <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
-                          <td className="dg-num">
+                          <td className="dg-num" data-label="Saldo">
                             {f.visita
                               ? <span className="dg-envios-falta">—</span>
                               : (f.saldo > 0 ? money(f.saldo) : <span className="dg-envios-pagado">pagado</span>)}
                           </td>
-                          <td className="dg-num">
+                          <td className="dg-num" data-label="Flete">
                             {f.visita
                               ? <span className="dg-envios-falta">—</span>
                               : f.flete > 0
@@ -9926,8 +9926,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                   <tfoot>
                     <tr>
                       <td colSpan={5}>Total a cobrar en las entregas</td>
-                      <td className="dg-num">{money(totalSaldo)}</td>
-                      <td className="dg-num">{money(totalFlete)}</td>
+                      <td className="dg-num" data-label="Saldo">{money(totalSaldo)}</td>
+                      <td className="dg-num" data-label="Flete">{money(totalFlete)}</td>
                       <td />
                     </tr>
                   </tfoot>
@@ -10255,8 +10255,8 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                           </td>
                           <td className="dg-envios-productos">{r.tipo}</td>
                           <td><span className={`dg-reclamo-estado dg-reclamo-estado-${clase}`}>{estadoReclamo(r)}</span></td>
-                          <td className="dg-envios-dir">{r.solucion || <span className="dg-envios-falta">sin respuesta todavía</span>}</td>
-                          <td className="dg-num">{f.dias}</td>
+                          <td className="dg-envios-dir" data-label="Se le dijo">{r.solucion || <span className="dg-envios-falta">sin respuesta todavía</span>}</td>
+                          <td className="dg-num" data-label={vista === "activos" ? "Días abierto" : "Días que llevó"}>{f.dias}</td>
                         </tr>
                         {abierta && (
                           <tr className="dg-envios-detalle">
@@ -15523,12 +15523,12 @@ function CRMPage({ leads, onLeadsChange, vendedores, onVendedoresChange, isAdmin
 
       <div className="dg-crm-filters">
         <Filter size={14} />
-        <select value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
-          <option value="todos">Todos los vendedores</option>
+        <select className="dg-filtro-vendedor" value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
+          <option value="todos">Vendedor: todos</option>
           {vendedores.map((v) => (<option key={v} value={v}>{v}</option>))}
         </select>
         <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
-          <option value="todos">Todos los estados</option>
+          <option value="todos">Estado: todos</option>
           {Object.entries(LEAD_STATES).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
         </select>
         <button className="dg-btn-primary" style={{ marginLeft: "auto" }} onClick={() => setShowForm((v) => !v)}><Plus size={14} /> Nuevo contacto</button>
@@ -19730,20 +19730,11 @@ function Style() {
       .dg-salida-turno:hover:not(:disabled) { background:rgba(var(--dg-line-rgb),.06); }
       .dg-salida-turno-on { background:rgba(var(--dg-accent-rgb),.16); color:color-mix(in srgb, var(--dg-accent) 45%, var(--dg-text)); }
       .dg-salida-horario-libre { flex:1 1 170px; min-width:0; padding:6px 9px; font-size:13px; }
-      /* En el teléfono la tabla se mira de costado, pero el desplegable no:
-         queda pegado al borde izquierdo y en una sola columna, del ancho que
-         realmente se ve. Si no, había que arrastrar la tabla para leer cada
-         bloque. Los 62px son el margen del cuerpo más el borde de la tarjeta;
-         medido, no estimado. */
+      /* En el teléfono las tablas son fichas (ver «EL TELÉFONO» al final), así
+         que el desplegable ya mide lo que se ve: una sola columna y listo. */
       @media (max-width:640px) {
-        .dg-salida-panel {
-          position:sticky; left:0; grid-template-columns:1fr;
-          width:calc(100vw - 62px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-        }
+        .dg-salida-panel { grid-template-columns:1fr; }
         .dg-salida-campos { grid-template-columns:1fr; }
-        /* Sin el margen de la celda, el panel arranca justo en el borde
-           visible y aprovecha los 24px que se perdían. */
-        .dg-envios-detalle > td { padding-left:0; padding-right:0; }
       }
       .dg-envios-tabla tfoot td { font-weight:700; border-top:2px solid rgba(var(--dg-line-rgb),.18); color:var(--dg-text-dim); }
       .dg-envios-tabla tfoot .dg-num { color:var(--dg-text); }
@@ -22185,11 +22176,31 @@ function Style() {
       /* 2) EL ENCABEZADO EN TELÉFONOS ANGOSTOS. A menos de 400px no entraba:
             necesitaba 373px en 296 útiles y empujaba Ajustes y Cerrar sesión
             fuera de la pantalla, sin forma de tocarlos. El nombre se va (queda
-            el escudito que dice que hay sesión) y los íconos se juntan. */
-      @media (max-width:400px) {
+            el escudito que dice que hay sesión) y los íconos se juntan.
+            Va hasta 480 y no 400: entre 401 y ~440 (iPhone Plus/Pro Max)
+            entraba solo porque el logo se aplastaba a 15px y el botón de
+            volver tapaba el de «Claro». */
+      @media (max-width:480px) {
         .dg-header { gap:6px; }
         .dg-session { gap:4px; }
         .dg-session-badge { font-size:0; padding-left:6px; padding-right:6px; gap:0; }
+        /* El logo no se achica: aplastado a 19px, el botón de volver (que va
+           encima del logo) tapaba el de «Claro». El lugar sale de la palabra
+           «Claro/Oscuro», que el sol y la luna ya dicen (y el aria-label). */
+        .dg-brand { flex:0 0 auto; gap:0; }
+        .dg-theme-toggle > span { display:none; }
+        .dg-theme-toggle { padding-left:9px; padding-right:9px; }
+      }
+      /* En tablet (681 a ~750px) el encabezado necesitaba 701px: «Cerrar
+         sesión» quedaba cortado contra el borde y «Claro» aplastado. Se va el
+         cartelito de «Sincronización en vivo», que es lo único que no se toca. */
+      @media (max-width:780px) {
+        .dg-header-context { display:none; }
+      }
+      /* A 320px igual sobraban 11px y Cerrar sesión quedaba afuera. El
+         escudito es solo un cartel (no se toca): es lo que se va. */
+      @media (max-width:340px) {
+        .dg-session-badge { display:none; }
       }
 
       /* 3) BOTONES CHICOS PARA EL DEDO. Los pasos del pedido eran cuadraditos
@@ -22209,6 +22220,91 @@ function Style() {
         .dg-vendedor-chip button { min-width:32px; min-height:32px; display:inline-flex; align-items:center; justify-content:center; }
         /* «Facturar en EcomApp» era un link de 14px de alto. */
         .dg-link-ecomapp { display:inline-flex; align-items:center; min-height:36px; }
+      }
+      /* Los filtros de Pedidos y del CRM van de a dos por renglón, y a 16px
+         (para que no haga zoom) «Todos los vendedores» no entraba en la mitad
+         de un teléfono. Ahora dicen «Vendedor: todos», y en los más angostos
+         (320) el de vendedor va en su propio renglón porque igual perdía una
+         letra: los otros desplegables pasan adelante, de a par, y después de
+         él sigue todo lo demás (buscador, Mes/Semana) en su orden. */
+      @media (max-width:360px) {
+        .dg-crm-filters > select:not(.dg-filtro-vendedor) { order:-1; }
+        .dg-crm-filters > .dg-filtro-vendedor { flex-basis:100%; width:100%; }
+      }
+
+      /* 4) LAS TABLAS DE ENVÍOS, INTERIOR Y RECLAMOS EN EL TELÉFONO. Son de
+            columnas fijas con 700px de mínimo, y la columna que no tiene ancho
+            propio se queda con lo que sobra: en «Dónde» eran 50px. Al abrir
+            la fila la dirección se partía letra por letra, en vertical. Acá
+            cada fila pasa a ser una ficha: el nombre arriba, la dirección a
+            todo el ancho y la plata abajo con su nombre (sale del data-label
+            de la celda, porque el encabezado de la tabla no se ve). Los
+            grid-area van por ORDEN de celda, igual que los anchos de arriba.
+            Va hasta 960 y no solo en el teléfono: en tablet la tabla de
+            columnas fijas le dejaba a «Dónde» 0,62 × ancho − 384px, o sea
+            menos de 170px hasta que el contenedor pasa los ~900. */
+      @media (max-width:960px) {
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) { display:block; width:100%; min-width:0; table-layout:auto; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) thead { display:none; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody,
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot { display:block; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila { display:grid; align-items:center; gap:4px 10px; padding:11px 14px; border-top:1px solid rgba(var(--dg-line-rgb),.08); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody > .dg-envios-fila:first-child { border-top:0; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila > td { display:block; width:auto; height:auto; min-width:0; max-width:none; padding:0; border:0; text-align:left; box-shadow:none; }
+        /* Abierta, el fondo va en la fila: en las celdas dejaba rayas en los
+           huecos de la grilla. */
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-abierta { background:rgba(var(--dg-accent-rgb),.08); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-abierta > td { white-space:normal; overflow:visible; overflow-wrap:break-word; background:transparent; }
+        /* break-word y no anywhere: con anywhere el nombre de una visita (que
+           va en un flex con el chip «A domicilio») se dejaba aplastar hasta
+           una letra por renglón. Y el chip baja abajo si no entra. */
+        .dg-envios-tabla .dg-envios-visita-nombre { display:flex; flex-wrap:wrap; row-gap:4px; min-width:0; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) td[data-label]::before { content:attr(data-label); display:block; margin-bottom:1px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+        /* Las franjas del costado las llevaba la primera celda; ahora la fila. */
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-visita { box-shadow:inset 3px 0 0 var(--dg-warning); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-elegida { box-shadow:inset 3px 0 0 var(--dg-accent); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle { display:block; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle > td { display:block; padding:0 14px 14px; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot tr { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; padding:11px 14px; border-top:2px solid rgba(var(--dg-line-rgb),.18); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot td { display:block; padding:0; border:0; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot td:first-child { flex:1 0 100%; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot td:empty { display:none; }
+        .dg-envios-tabla .dg-sel-check { width:20px; height:20px; }
+        .dg-envios-tabla .dg-envios-hecho { width:36px; height:36px; }
+
+        /* Salidas: casillero · nombre · fecha / dirección · hecho /
+           productos · hecho / saldo · flete. Medido a 320px: con el nombre al
+           lado («SALDO $ 683.000») la plata no entraba en un renglón; con el
+           nombre arriba sí. La fecha y el flete se estiran sobre la columna
+           del botón para dejarle lugar al saldo. */
+        .dg-envios-tabla.dg-salidas-tabla .dg-envios-fila { grid-template-columns:22px minmax(0,1fr) auto 36px; grid-template-areas:"sel nombre fecha fecha" ". dir dir hecho" ". prod prod hecho" ". saldo flete flete"; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(1) { grid-area:sel; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(2) { grid-area:fecha; justify-self:end; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(3) { grid-area:nombre; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(4) { grid-area:dir; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(5) { grid-area:prod; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(6) { grid-area:saldo; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(7) { grid-area:flete; justify-self:end; text-align:right; }
+        .dg-salidas-tabla .dg-envios-fila > td:nth-child(8) { grid-area:hecho; justify-self:end; }
+
+        /* Interior: casillero · pedido · estado / destino / CP · espejos · bultos */
+        .dg-envios-tabla.dg-interior-tabla .dg-envios-fila { grid-template-columns:22px auto auto minmax(0,1fr) auto; grid-template-areas:"sel nombre nombre nombre estado" ". dir dir dir dir" ". cp esp bul bul"; }
+        .dg-interior-tabla .dg-envios-fila > td:nth-child(1) { grid-area:sel; }
+        .dg-interior-tabla .dg-envios-fila > td:nth-child(2) { grid-area:nombre; }
+        .dg-interior-tabla .dg-envios-fila > td:nth-child(3) { grid-area:dir; }
+        .dg-interior-tabla .dg-envios-fila > td:nth-child(4) { grid-area:cp; }
+        .dg-interior-tabla .dg-envios-fila > td:nth-child(5) { grid-area:esp; }
+        .dg-interior-tabla .dg-envios-fila > td:nth-child(6) { grid-area:bul; }
+        .dg-interior-tabla .dg-envios-fila > td:nth-child(7) { grid-area:estado; justify-self:end; }
+
+        /* Reclamos: cliente · estado / motivo / qué se le dijo / fecha · días */
+        .dg-envios-tabla.dg-reclamos-tabla .dg-envios-fila { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"nombre estado" "prod prod" "dir dir" "fecha dias"; }
+        .dg-reclamos-tabla .dg-envios-fila > td:nth-child(1) { grid-area:fecha; }
+        .dg-reclamos-tabla .dg-envios-fila > td:nth-child(2) { grid-area:nombre; }
+        .dg-reclamos-tabla .dg-envios-fila > td:nth-child(3) { grid-area:prod; }
+        .dg-reclamos-tabla .dg-envios-fila > td:nth-child(4) { grid-area:estado; justify-self:end; }
+        .dg-reclamos-tabla .dg-envios-fila > td:nth-child(5) { grid-area:dir; }
+        .dg-reclamos-tabla .dg-envios-fila > td:nth-child(6) { grid-area:dias; justify-self:end; text-align:right; }
       }
     `}</style>
   );
