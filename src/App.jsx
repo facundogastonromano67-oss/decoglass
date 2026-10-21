@@ -3,7 +3,7 @@ import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore,
 import { supabase } from "./lib/supabaseClient";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
-  Lock, Unlock, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
+  Lock, Unlock, Zap, Plus, Trash2, X, ShieldCheck, User, LogOut, Loader2, Wallet,
   Pencil, RotateCcw, Sparkles, Building2, TrendingUp, TrendingDown,
   FileText, Printer, Copy, Settings2, AlertTriangle, Save, ClipboardList, Check,
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
@@ -697,7 +697,8 @@ const PRODUCCION_PASOS = [
 ];
 const ENTREGA_ESTILO = {
   "Interior": { clase: "interior", color: "var(--dg-interior)", icono: "🚚" },
-  "Envío flex": { clase: "flex", color: "var(--dg-warning)", icono: "⚡" },
+  // Con respaldo: la página pública del cliente puede no tener --dg-flex.
+  "Envío flex": { clase: "flex", color: "var(--dg-flex, var(--dg-warning))", icono: "⚡" },
   "Envío": { clase: "envio", color: "var(--dg-accent)", icono: "🚚" },
   "Colocación": { clase: "coloca", color: "var(--dg-estado-grabado)", icono: "🔧" },
   "Retira": { clase: "retira", color: "var(--dg-text-dim)", icono: "🏢" },
@@ -5674,15 +5675,15 @@ const diaDeLaLista = (listaId) => (listaSinTope(listaId) ? diaMovidoAMano : diaP
 // termina algo antes, el lugar queda libre; no se rellena solo.
 //
 // Se traba sola: la de mañana a las 19:00, y la de hoy la primera vez que
-// alguien abre la app en el día, si nadie la trabó la noche anterior. Solo las
-// listas de corte (simples y esmerilados p/cortar): lo de armar es lo que
-// vuelve del grabador y conviene que aparezca. Si se la destraba a mano queda
-// «abierta» y la app no la vuelve a trabar.
+// alguien abre la app en el día, si nadie la trabó la noche anterior. Las tres
+// listas (esmerilados p/armar se sumó el 21/10 a pedido de Facundo: lo que
+// vuelve del grabador a la tarde pasa al día siguiente). Si se la destraba a
+// mano queda «abierta» y la app no la vuelve a trabar.
 //
 // Se guarda aparte, en «trabas-taller», y no en integraciones: la escribe
 // cualquiera que abra la app, y con su propia clave no pisa los ajustes.
 // Clave: «lista|fecha» → { estado: "trabada" | "abierta", ids, por, cuando, auto }.
-const LISTAS_QUE_SE_TRABAN_SOLAS = ["simples", "esm_cortar"];
+const LISTAS_QUE_SE_TRABAN_SOLAS = ["simples", "esm_cortar", "esm_armar"];
 // La misma hora a la que se cierran solos los turnos.
 const HORA_TRABA_LISTAS = 19;
 const claveTraba = (listaId, fecha) => `${listaId}|${fecha}`;
@@ -9700,6 +9701,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
             const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
             return {
               clave: p.grupoId || p.id, p, items, fecha, visita: false,
+              flex: items.some((x) => x.metodo === "Envío flex"),
               cliente: p.cliente || "Sin nombre",
               // Barrio y calle en una sola columna: son el mismo dato para el
               // que maneja, y en dos columnas la tabla no entraba en pantalla.
@@ -9716,7 +9718,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
         // así la tabla no tiene que saber de dónde salió cada fila. Lo único
         // propio es el color y el cartelito.
         const filasVisita = visitas.map((r) => ({
-          clave: `visita-${r.id}`, r, visita: true,
+          clave: `visita-${r.id}`, r, visita: true, flex: false,
           fecha: r.fechaEnvio || "",
           cliente: r.cliente || "Sin nombre",
           donde: [r.barrio, r.detalleEntrega, r.piso].filter(Boolean).join(" · "),
@@ -9762,7 +9764,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       return (
                         <Fragment key={f.clave}>
                         <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
                           onClick={() => setFilaAbierta(abierta ? null : f.clave)}
                           aria-expanded={abierta}>
                           <td className="dg-sel-col">
@@ -9778,7 +9780,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           <td className="dg-envios-nombre">
                             {f.visita
                               ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
-                              : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
+                              : f.flex
+                                ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button><span className="dg-envios-chip-flex"><Zap size={11} /> Flex</span></span>
+                                : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
                           </td>
                           <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
@@ -19284,6 +19288,11 @@ function Style() {
         --dg-accent-solido:var(--dg-accent);
         --dg-success:#5FB79B; --dg-success-rgb:95,183,155;
         --dg-warning:#E7B15A; --dg-warning-rgb:231,177,90; --dg-warning-2:#E7B15A;
+        /* Envío flex: amarillo, para que se vea de una en la tabla de envíos.
+           Las visitas a domicilio pasaron a lavanda: con el ámbar de antes se
+           confundían con los flex. */
+        --dg-flex:#F2CC4E; --dg-flex-rgb:242,204,78;
+        --dg-visita:#B79CE8; --dg-visita-rgb:183,156,232;
         --dg-danger:#E37B6C; --dg-danger-rgb:227,123,108;
         --dg-estado-grabado:#7FB3D4; --dg-estado-bisel:#A99AD6; --dg-estado-biseladora:#E0A96B;
         --dg-interior:#B98CFF; --dg-interior-rgb:185,140,255; --dg-on-interior:#1E1033;
@@ -19310,6 +19319,10 @@ function Style() {
         --dg-accent-solido:color-mix(in srgb, var(--dg-accent) 92%, #000);
         --dg-success:#3C7A62; --dg-success-rgb:60,122,98;
         --dg-warning:#96611A; --dg-warning-rgb:150,97,26; --dg-warning-2:#7A4E12;
+        /* En claro el amarillo de los fondos es vivo (-rgb) y el del texto,
+           oscuro (--dg-flex), para que se lea sobre crema. */
+        --dg-flex:#7A5C00; --dg-flex-rgb:230,184,0;
+        --dg-visita:#5E43A0; --dg-visita-rgb:118,84,196;
         --dg-danger:#B04A3D; --dg-danger-rgb:176,74,61;
         --dg-estado-grabado:#2F6E93; --dg-estado-bisel:#5B4C86; --dg-estado-biseladora:#8A5A2A;
         --dg-interior:#6A2BD0; --dg-interior-rgb:106,43,208; --dg-on-interior:#FFFFFF;
@@ -19684,14 +19697,21 @@ function Style() {
          tienen que leerse distinto de una ojeada: franja amarilla al costado.
          Va DESPUÉS de las reglas de atrasada/semana para que una visita se
          siga viendo como visita aunque esté pasada de fecha. */
-      .dg-envios-fila-visita { background:rgba(var(--dg-warning-rgb),.10); }
-      .dg-envios-fila-visita > td:first-child { box-shadow:inset 3px 0 0 var(--dg-warning); }
+      .dg-envios-fila-visita { background:rgba(var(--dg-visita-rgb),.12); }
+      .dg-envios-fila-visita > td:first-child { box-shadow:inset 3px 0 0 rgb(var(--dg-visita-rgb)); }
+      /* Envío flex: amarillo, para distinguirlo de una ojeada. Va después de
+         atrasada/semana por lo mismo que la visita; la fecha sigue en rojo si
+         está atrasado. */
+      .dg-envios-fila-flex { background:rgba(var(--dg-flex-rgb),.18); }
+      .dg-envios-fila-flex > td:first-child { box-shadow:inset 3px 0 0 rgb(var(--dg-flex-rgb)); }
  /* Una visita atrasada lleva dos fondos encima: el rojo del texto se
          quedaba en 4,45 sobre tema claro. Se lo acerca al color del texto, que
          sube el contraste en los dos temas sin dejar de leerse como atraso. */
       .dg-envios-fila-visita.dg-envios-fila-atrasada .dg-envios-fecha { color:color-mix(in srgb, var(--dg-danger) 70%, var(--dg-text)); }
       .dg-envios-visita-nombre { display:inline-flex; align-items:center; gap:7px; font-weight:600; }
-      .dg-envios-chip-visita { display:inline-flex; align-items:center; gap:3px; padding:1px 7px; border-radius:100px; background:rgba(var(--dg-warning-rgb),.18); color:color-mix(in srgb, var(--dg-warning) 45%, var(--dg-text)); font-size:11px; font-weight:600; white-space:nowrap; }
+      .dg-envios-chip-visita { display:inline-flex; align-items:center; gap:3px; padding:1px 7px; border-radius:100px; background:rgba(var(--dg-visita-rgb),.20); color:color-mix(in srgb, var(--dg-visita) 55%, var(--dg-text)); font-size:11px; font-weight:600; white-space:nowrap; }
+      .dg-envios-chip-flex { display:inline-flex; align-items:center; gap:3px; flex:0 0 auto; padding:1px 7px; border-radius:100px; background:rgba(var(--dg-flex-rgb),.24); color:color-mix(in srgb, var(--dg-flex) 55%, var(--dg-text)); font-size:11px; font-weight:700; white-space:nowrap; }
+      .dg-envios-visita-nombre .dg-envios-nombre-btn { min-width:0; }
       .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
       /* La tabla de reclamos tiene una columna menos y textos más largos. */
       .dg-reclamos-tabla { min-width:700px; }
@@ -19699,11 +19719,11 @@ function Style() {
 
       /* El bloque de visita adentro de la tarjeta del reclamo */
       .dg-reclamo-visita { margin:12px 0; padding:11px 13px; border:1px dashed rgba(var(--dg-line-rgb),.18); border-radius:12px; }
-      .dg-reclamo-visita-on { border-style:solid; border-color:rgba(var(--dg-warning-rgb),.45); background:rgba(var(--dg-warning-rgb),.07); }
+      .dg-reclamo-visita-on { border-style:solid; border-color:rgba(var(--dg-visita-rgb),.45); background:rgba(var(--dg-visita-rgb),.08); }
       .dg-reclamo-visita-check { display:flex; align-items:center; gap:9px; cursor:pointer; font-size:13px; color:var(--dg-text); }
-      .dg-reclamo-visita-check input { width:16px; height:16px; flex:0 0 auto; accent-color:var(--dg-warning); cursor:pointer; }
+      .dg-reclamo-visita-check input { width:16px; height:16px; flex:0 0 auto; accent-color:var(--dg-visita); cursor:pointer; }
       .dg-reclamo-visita-check span { display:inline-flex; align-items:center; gap:6px; }
-      .dg-reclamo-visita-check svg { color:var(--dg-warning); }
+      .dg-reclamo-visita-check svg { color:var(--dg-visita); }
       .dg-reclamo-visita-pie { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 14px; margin-top:10px; }
       .dg-reclamo-visita-pie .dg-envios-pagado { display:inline-flex; align-items:center; gap:5px; font-size:13px; }
 
@@ -20699,7 +20719,7 @@ function Style() {
       .dg-fab-interior .dg-fab-entrega { color:var(--dg-interior); font-weight:800; }
       .dg-fab-btn-interior { background:var(--dg-interior) !important; color:var(--dg-on-interior) !important; border-color:var(--dg-interior) !important; }
       .dg-flag-interior { background:var(--dg-interior) !important; color:var(--dg-on-interior) !important; }
-      .dg-fab-flex { border-left-color:var(--dg-warning); }
+      .dg-fab-flex { border-left-color:rgb(var(--dg-flex-rgb)); }
       .dg-fab-envio { border-left-color:var(--dg-accent); }
       .dg-fab-coloca { border-left-color:var(--dg-estado-grabado); }
       .dg-fab-retira { border-left-color: rgba(var(--dg-line-rgb),0.15); }
@@ -22408,7 +22428,8 @@ function Style() {
         .dg-envios-tabla .dg-envios-visita-nombre { display:flex; flex-wrap:wrap; row-gap:4px; min-width:0; }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) td[data-label]::before { content:attr(data-label); display:block; margin-bottom:1px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
         /* Las franjas del costado las llevaba la primera celda; ahora la fila. */
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-visita { box-shadow:inset 3px 0 0 var(--dg-warning); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-visita { box-shadow:inset 3px 0 0 rgb(var(--dg-visita-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-flex { box-shadow:inset 3px 0 0 rgb(var(--dg-flex-rgb)); }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-elegida { box-shadow:inset 3px 0 0 var(--dg-accent); }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle { display:block; }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle > td { display:block; padding:0 14px 14px; }
