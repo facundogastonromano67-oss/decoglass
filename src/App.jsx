@@ -6628,7 +6628,18 @@ const CAMPOS_DEL_PEDIDO = [
 // factura cubre el pedido completo (el link de seguimiento ya la muestra así).
 // Faltaban en la lista de arriba, así que «Editar cliente y entrega» las
 // descartaba al guardar: subían la factura, tocaban Guardar y desaparecía.
-const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "comision"];
+const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "comision"];
+
+// Un pedido puede tener MÁS DE UNA factura: a veces el cliente la pide en
+// dos partes (24/10/2026). La primera sigue en facturaUrl —así todo lo que ya
+// preguntaba «¿tiene factura?» sigue andando igual— y las demás van en
+// facturasExtra, en orden. El cliente las baja todas desde su link.
+function facturasDelPedido(pedido) {
+  const extra = Array.isArray(pedido?.facturasExtra) ? pedido.facturasExtra : [];
+  return [pedido?.facturaUrl, ...extra].filter(Boolean);
+}
+// Lo inverso: de la lista a los dos campos.
+const camposDeFacturas = (lista) => ({ facturaUrl: lista[0] || "", facturasExtra: lista.slice(1) });
 
 function soloCamposDelPedido(pedido) {
   const patch = {};
@@ -8663,54 +8674,67 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
   );
 }
 
-function SubirFacturaCampo({ pedido, canEdit, onSubido }) {
+// Las facturas del pedido: se ven todas, se quita cualquiera, y se suman de a
+// una o varias juntas (se pueden elegir varios PDF a la vez). onCambiar
+// recibe la lista entera, en orden.
+function SubirFacturaCampo({ pedido, canEdit, onCambiar }) {
   const [subiendo, setSubiendo] = useState(false);
-  const [borrando, setBorrando] = useState(false);
+  const [borrando, setBorrando] = useState("");
   const [error, setError] = useState("");
+  const lista = facturasDelPedido(pedido);
 
   async function handleFile(e) {
-    const archivo = e.target.files?.[0];
-    if (!archivo) return;
+    const archivos = [...(e.target.files || [])];
+    if (!archivos.length) return;
     setError(""); setSubiendo(true);
+    const subidas = [];
     try {
-      const url = await documentosStore.subirFactura(pedido.id, archivo);
-      onSubido(url);
+      for (const archivo of archivos) subidas.push(await documentosStore.subirFactura(pedido.id, archivo));
     } catch (err) {
-      setError("No se pudo subir. Revisá la conexión e intentá de nuevo.");
+      setError(subidas.length
+        ? `Se subieron ${subidas.length} de ${archivos.length}. Revisá la conexión y subí la que falta.`
+        : "No se pudo subir. Revisá la conexión e intentá de nuevo.");
     } finally {
+      // Lo que sí se subió queda en el pedido aunque otra haya fallado.
+      if (subidas.length) onCambiar([...lista, ...subidas]);
       setSubiendo(false);
       e.target.value = "";
     }
   }
 
-  async function handleBorrar() {
-    if (!window.confirm("¿Quitar esta factura? Si la subiste por error, se elimina del pedido.")) return;
-    setError(""); setBorrando(true);
+  async function handleBorrar(ruta, n) {
+    const cual = lista.length > 1 ? `la factura ${n}` : "esta factura";
+    if (!window.confirm(`¿Quitar ${cual}? Si la subiste por error, se elimina del pedido.`)) return;
+    setError(""); setBorrando(ruta);
     try {
-      await documentosStore.borrarFactura(pedido.facturaUrl);
-      onSubido("");
+      await documentosStore.borrarFactura(ruta);
+      onCambiar(lista.filter((x) => x !== ruta));
     } catch (err) {
       setError("No se pudo quitar. Revisá la conexión e intentá de nuevo.");
     } finally {
-      setBorrando(false);
+      setBorrando("");
     }
   }
 
   return (
-    <div className="dg-factura-campo">
-      <BotonArchivo bucket="facturas" valor={pedido.facturaUrl}>
-        <FileText size={13} /> Ver factura cargada
-      </BotonArchivo>
-      {canEdit && pedido.facturaUrl && (
-        <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={handleBorrar} disabled={borrando}>
-          {borrando ? <Loader2 size={13} className="dg-spin" /> : <Trash2 size={13} />} Quitar
-        </button>
-      )}
+    <div className="dg-factura-campo dg-facturas-lista">
+      {lista.map((ruta, i) => (
+        <div className="dg-factura-item" key={ruta}>
+          <BotonArchivo bucket="facturas" valor={ruta}>
+            <FileText size={13} /> {lista.length > 1 ? `Factura ${i + 1}` : "Ver factura cargada"}
+          </BotonArchivo>
+          {canEdit && (
+            <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={() => handleBorrar(ruta, i + 1)} disabled={!!borrando} aria-label={`Quitar la factura ${i + 1}`}>
+              {borrando === ruta ? <Loader2 size={13} className="dg-spin" /> : <Trash2 size={13} />} Quitar
+            </button>
+          )}
+        </div>
+      ))}
       {canEdit && (
         <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
           {subiendo ? <Loader2 size={13} className="dg-spin" /> : <PackagePlus size={13} />}
-          {subiendo ? "Subiendo..." : pedido.facturaUrl ? "Reemplazar" : "Subir factura"}
-          <input type="file" accept="application/pdf" onChange={handleFile} disabled={subiendo} style={{ display: "none" }} />
+          {subiendo ? "Subiendo..." : lista.length ? "Sumar otra factura" : "Subir factura"}
+          <input type="file" accept="application/pdf" multiple onChange={handleFile} disabled={subiendo} style={{ display: "none" }} />
         </label>
       )}
       {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
@@ -9027,8 +9051,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 <FacturarEcomAppBtn pedido={draft} />
               )}
             </Field>
-            <Field label="Comprobante de factura (PDF)">
-              <SubirFacturaCampo pedido={draft} canEdit={canEditFull} onSubido={(url) => set("facturaUrl", url)} />
+            <Field label="Facturas (PDF)">
+              <SubirFacturaCampo pedido={draft} canEdit={canEditFull} onCambiar={(lista) => { const c = camposDeFacturas(lista); set("facturaUrl", c.facturaUrl); set("facturasExtra", c.facturasExtra); }} />
             </Field>
             <Field label="Comisión">
               <div className="dg-comision-info">
@@ -22365,6 +22389,9 @@ function Style() {
       .dg-link-ecomapp { display:inline-flex; align-items:center; gap:5px; margin-top:6px; padding:0; border:0; background:none; font-family:inherit; font-size:11px; line-height:1.3; text-align:left; color:var(--dg-accent); text-decoration:none; cursor:pointer; }
       .dg-link-ecomapp:hover { text-decoration:underline; }
       .dg-factura-campo { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      /* Varias facturas: una por renglón, con su «Quitar» al lado. */
+      .dg-facturas-lista { flex-direction:column; align-items:flex-start; }
+      .dg-factura-item { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
       .dg-factura-actual { display:inline-flex; align-items:center; gap:5px; font-size:13px; color:var(--dg-success); text-decoration:none; }
       .dg-factura-actual:hover { text-decoration:underline; }
       .dg-factura-upload-btn { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
@@ -22534,6 +22561,19 @@ function Style() {
       }
     `}</style>
   );
+}
+
+// Un botón por factura. Con una sola queda como siempre («Descargar
+// factura»); con varias van numeradas. El número viaja a /api/factura (n),
+// que es la que sabe cuál es cuál del lado del servidor.
+function LinksDeFacturas({ pedido, clave }) {
+  const lista = facturasDelPedido(pedido);
+  const base = `/api/factura?pedido=${encodeURIComponent(pedido.id)}${clave ? `&t=${clave}` : ""}`;
+  return lista.map((_, i) => (
+    <a key={i} className="dg-btn-ghost" href={i ? `${base}&n=${i}` : base} target="_blank" rel="noopener noreferrer">
+      <FileText size={14} /> {lista.length > 1 ? `Descargar factura ${i + 1} de ${lista.length}` : "Descargar factura"}
+    </a>
+  ));
 }
 
 // ---- Portal público de seguimiento (sin login) ----
@@ -23626,7 +23666,7 @@ function SeguimientoPublico({ pedidoId }) {
           <div className="dg-seguimiento-docs">
             {puedeDescargarFactura && (
               pedido.facturaUrl
-                ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(pedido.id)}${puerta.clave ? `&t=${puerta.clave}` : ""}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                ? <LinksDeFacturas pedido={pedido} clave={puerta.clave} />
                 : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
             )}
             {pedido.metodo === "Interior" && pedido.remitoUrl && (
@@ -23796,7 +23836,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
             <div className="dg-seguimiento-docs">
               {puedeDescargarFactura && (
                 conFacturaUrl
-                  ? <a className="dg-btn-ghost" href={`/api/factura?pedido=${encodeURIComponent(conFacturaUrl.id)}${puerta.clave ? `&t=${puerta.clave}` : ""}`} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar factura</a>
+                  ? <LinksDeFacturas pedido={conFacturaUrl} clave={puerta.clave} />
                   : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
               )}
               {conRemito?.remitoUrl && (

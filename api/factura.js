@@ -4,6 +4,7 @@
 //   GET /api/factura?pedido=<id>&t=1234&puerta=1   -> { pide, ok: true|false }
 //   GET /api/factura?grupo=<grupoId>&puerta=1      -> idem, para el link de grupo
 //   GET /api/factura?pedido=<id>&t=1234            -> manda la factura
+//   GET /api/factura?pedido=<id>&t=1234&n=1        -> la segunda (si la pidió en partes)
 //
 // POR QUÉ LAS DOS COSAS VIVEN EN EL MISMO ARCHIVO: el plan Hobby de Vercel
 // admite 12 funciones por deploy y ya estábamos justo en 12. Separar esto en
@@ -100,7 +101,13 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: "Para ver la factura hacen falta los últimos 4 dígitos de tu teléfono." });
     }
 
-    const ruta = rutaDelArchivo(pedido.facturaUrl);
+    // Un pedido puede tener varias facturas (el cliente la pidió en partes):
+    // la primera en facturaUrl y las demás en facturasExtra. n elige cuál;
+    // sin n, la primera, como siempre.
+    const extra = Array.isArray(pedido.facturasExtra) ? pedido.facturasExtra : [];
+    const facturas = [pedido.facturaUrl, ...extra].filter(Boolean);
+    const n = Number.parseInt(String(q.n ?? "0"), 10);
+    const ruta = rutaDelArchivo(facturas[Number.isInteger(n) && n >= 0 ? n : 0]);
     if (!ruta) return res.status(404).json({ error: "Ese pedido todavía no tiene factura cargada." });
 
     const { data: firma, error: errorFirma } = await supabase

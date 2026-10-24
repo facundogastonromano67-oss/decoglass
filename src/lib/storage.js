@@ -205,7 +205,9 @@ export const documentosStore = {
   // creado en Supabase Storage (público, para que el link funcione en el
   // portal de seguimiento sin pedir login).
   async subirFactura(pedidoId, archivo) {
-    const ruta = `${pedidoId}/factura-${Date.now()}.pdf`;
+    // Con uid: ahora se pueden subir varias juntas (el cliente la pidió en
+    // partes) y dos en el mismo milisegundo se pisaban.
+    const ruta = `${pedidoId}/factura-${Date.now()}-${uid()}.pdf`;
     const { error } = await supabase.storage.from("facturas").upload(ruta, archivo, {
       contentType: archivo.type || "application/pdf",
       upsert: true,
