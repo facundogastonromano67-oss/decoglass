@@ -6817,6 +6817,68 @@ function funcionesPedido(pedido, incluirPulido = false) {
   return funciones.filter((funcion) => funcion.on && funcion.label);
 }
 
+// ===== BUSCAR UN PEDIDO =====================================================
+// Un solo criterio para todos los buscadores de pedidos (Pedidos, Fábrica,
+// Envíos, Interior y la lupa de arriba). Se puede buscar por:
+//   · cliente y número de pedido («#805» o «805»);
+//   · medida: «80x60», «80 x 60», «80×60», «80*60». Da igual el orden: un
+//     60×80 es el mismo espejo parado. Un número solo («80») trae los que
+//     tienen 80 de ancho o de alto;
+//   · funciones y características: touch, desempañante (o antiempañante),
+//     hora y temperatura, bluetooth, pulido, la forma, el tipo, el tono, lo
+//     que dice el grabado.
+// Cada palabra tiene que estar: «80x60 touch» trae solo los de 80×60 con
+// touch. Sin acentos ni mayúsculas, así «desempanante» también encuentra.
+const sinAcentos = (x) => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// Palabras de relleno que no buscan nada («80x60 con touch»).
+const RELLENO_BUSQUEDA = new Set(["con", "de", "del", "y", "el", "la", "los", "las", "un", "una"]);
+function palabrasDeBusqueda(q) {
+  return sinAcentos(q)
+    .replace(/(\d+(?:[.,]\d+)?)\s*(?:x|×|\*|por)\s*(\d+(?:[.,]\d+)?)/g, "$1x$2")
+    .split(/\s+/)
+    .map((w) => w.replace(/^#/, ""))
+    .filter((w) => w && !RELLENO_BUSQUEDA.has(w));
+}
+function textoBuscablePedido(p) {
+  return sinAcentos([
+    p.cliente, p.forma, p.tipo, p.tono, p.grabado, p.metodo,
+    funcionesPedido(p, true).map((f) => f.label).join(" "),
+    p.touch && p.touch !== "No" ? p.touch : "",
+    p.horaTemp && p.horaTemp !== "No" ? p.horaTemp : "",
+    pedidoTieneDesempanante(p) ? "antiempañante" : "",
+  ].filter(Boolean).join(" "));
+}
+const numeroDeMedida = (x) => Number(String(x ?? "").replace(",", "."));
+function coincidePedido(p, q) {
+  const palabras = palabrasDeBusqueda(q);
+  if (!palabras.length) return true;
+  const texto = textoBuscablePedido(p);
+  const ancho = numeroDeMedida(p.ancho), alto = numeroDeMedida(p.alto);
+  return palabras.every((w) => {
+    const medida = w.match(/^(\d+(?:[.,]\d+)?)x(\d+(?:[.,]\d+)?)$/);
+    if (medida) {
+      const m1 = numeroDeMedida(medida[1]), m2 = numeroDeMedida(medida[2]);
+      return (ancho === m1 && alto === m2) || (ancho === m2 && alto === m1);
+    }
+    if (/^\d+$/.test(w)) {
+      // Un número solo: una de las dos medidas, el número de pedido, o (con 4
+      // cifras o más) parte del teléfono.
+      const n = Number(w);
+      return n === ancho || n === alto || String(p.orden ?? "") === w
+        || (w.length >= 4 && String(p.celular || "").replace(/\D/g, "").includes(w));
+    }
+    return texto.includes(w);
+  });
+}
+// Para las pantallas que muestran el pedido entero (Envíos, Interior): si un
+// espejo coincide, se queda todo su pedido, así no aparece medio envío.
+function filtrarPedidosConSuGrupo(lista, q) {
+  if (!palabrasDeBusqueda(q).length) return lista;
+  const grupos = new Set(lista.filter((p) => coincidePedido(p, q)).map((p) => p.grupoId || p.id));
+  return lista.filter((p) => grupos.has(p.grupoId || p.id));
+}
+const PISTA_BUSCAR_PEDIDO = "Cliente, medida o función…";
+
 function detalleFabrica(pedido) {
   return partesDetallePedido(pedido?.grabado).filter((parte) => !esFuncionDesempanante(parte)).join(" · ");
 }
@@ -7049,7 +7111,7 @@ function buscarGlobal(q, pedidos, reclamos) {
   const digitos = (x) => String(x || "").replace(/\D/g, "");
   const td = digitos(t);
   const mp = (pedidos || []).filter((p) =>
-    norm(p.cliente).includes(t) || String(p.orden || "").includes(t) ||
+    coincidePedido(p, t) || String(p.orden || "").includes(t) ||
     norm(p.dniCuit).includes(t) || (td.length >= 4 && digitos(p.celular).includes(td))
   ).slice(0, 25);
   const mr = (reclamos || []).filter((r) =>
@@ -7069,7 +7131,7 @@ function BuscadorGlobal({ pedidos, reclamos, onClose, onIr }) {
       <div className="dg-modal dg-modal-buscador" onClick={(e) => e.stopPropagation()}>
         <div className="dg-buscador-input">
           <Search size={17} />
-          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cliente, teléfono o N° de pedido..." />
+          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cliente, teléfono, N°, medida o función…" />
           <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="dg-buscador-res">
@@ -7784,7 +7846,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     .filter((p) => !fechaHasta || (p.fecha && p.fecha <= fechaHasta))
     .filter((p) => filtroVendedor === "todos" || p.vendedor === filtroVendedor)
     .filter((p) => filtroCanal === "todos" || (p.canalVenta || "local") === filtroCanal)
-    .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
+    .filter((p) => coincidePedido(p, busqueda))
     .sort((a, b) => {
       if (!a.listo && !b.listo) return (b.orden || 0) - (a.orden || 0);
       if (!a.listo) return 1;
@@ -8088,7 +8150,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           <option value="todos">Canal: todos</option>
           {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
         </select>
-        <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        <input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
         <div className="dg-periodo-toggle">
           <button className={agrupado === "mes" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("mes")}>Mes</button>
           <button className={agrupado === "semana" ? "dg-periodo-on" : ""} onClick={() => setAgrupado("semana")}>Semana</button>
@@ -9153,14 +9215,12 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
     });
   }
 
-  const interior = pedidos
+  const interior = filtrarPedidosConSuGrupo(pedidos
     .filter((p) => p.metodo === "Interior")
-    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado" && p.estado !== "Despachado")
-    .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
+    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado" && p.estado !== "Despachado"), busqueda);
 
-  const despachados = pedidos
-    .filter((p) => p.metodo === "Interior" && p.estado === "Despachado")
-    .filter((p) => !busqueda.trim() || (p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()))
+  const despachados = filtrarPedidosConSuGrupo(pedidos
+    .filter((p) => p.metodo === "Interior" && p.estado === "Despachado"), busqueda)
     .sort((a, b) => (b.despachadoFecha || "").localeCompare(a.despachadoFecha || ""));
 
   function updateGrupo(pedido, patch) {
@@ -9210,7 +9270,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
     <div className="dg-page">
       <div className="dg-crm-filters">
         <Filter size={14} />
-        <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        <input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
       </div>
 
       {filas.length > 0 && (
@@ -9601,10 +9661,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
     });
   }
 
-  const enviosListos = pedidos
+  const enviosListos = filtrarPedidosConSuGrupo(pedidos
     .filter((p) => esPedidoConEnvio(p) && p.metodo !== "Interior")
-    .filter((p) => p.estado !== "Entregado" && pedidoEstaListo(p))
-    .filter((p) => !busqueda.trim() || p.cliente.toLowerCase().includes(busqueda.toLowerCase()));
+    .filter((p) => p.estado !== "Entregado" && pedidoEstaListo(p)), busqueda);
 
   // Un pedido puede tener varios espejos y un solo envío: va una tarjeta por pedido.
   const grupos = (() => {
@@ -9690,7 +9749,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
 
   return (
     <div className="dg-page">
-      <div className="dg-crm-filters"><Filter size={14} /><input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
+      <div className="dg-crm-filters"><Filter size={14} /><input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
       <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((x) => <option key={x} value={x} />)}</datalist>
 
       {(grupos.length > 0 || visitas.length > 0) && (() => {
@@ -13863,8 +13922,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         : filtroEstado === "afuera"
           ? afuera
           : enFabrica;
-  baseVisibles = baseVisibles
-    .filter((p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
+  baseVisibles = baseVisibles.filter((p) => coincidePedido(p, busqueda));
   // Los números del aviso de la mañana, calculados una vez.
   const numerosDelDia = numerosDelDiaTaller(pedidos, hoyTaller);
   const listaCounts = TALLER_PESTANAS.reduce((acc, item) => {
@@ -14445,7 +14503,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <option value="afuera">Afuera del taller ({afuera.length})</option>
           <option value="todos">Todos ({enFabrica.length})</option>
         </select>
-        <input className="dg-pedido-search" placeholder="Buscar cliente..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        <input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
       </div>
 
@@ -14461,7 +14519,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             .sort(compararPrioridadTaller);
           const opcionesDias = plan.filter((d) => !d.pasado).slice(0, 12).map((d) => d.fecha);
           while (opcionesDias.length < 12) opcionesDias.push(siguienteDiaTaller(opcionesDias[opcionesDias.length - 1] || primerDiaTaller(hoyTaller)));
-          const coincide = (p) => !busqueda.trim() || String(p.cliente || "").toLowerCase().includes(busqueda.toLowerCase());
+          const coincide = (p) => coincidePedido(p, busqueda);
           // Un pedido repartido en varios días muestra en cada día solo sus unidades
           // (los simples de varias unidades usan la tarjeta de siempre, con su avance).
           const cartas = (x) => {
