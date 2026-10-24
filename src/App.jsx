@@ -6832,6 +6832,9 @@ function funcionesPedido(pedido, incluirPulido = false) {
 // Un solo criterio para todos los buscadores de pedidos (Pedidos, Fábrica,
 // Envíos, Interior y la lupa de arriba). Se puede buscar por:
 //   · cliente y número de pedido («#805» o «805»);
+//   · teléfono: con 3 cifras ya va trayendo los que las tienen en el número
+//     («4422», «1234»), esté guardado como esté («11 4422-1234»). Escrito
+//     con espacios o guiones («11 4422 1234») se toma como un solo número;
 //   · medida: «80x60», «80 x 60», «80×60», «80*60». Da igual el orden: un
 //     60×80 es el mismo espejo parado. Un número solo («80») trae los que
 //     tienen 80 de ancho o de alto;
@@ -6843,7 +6846,28 @@ function funcionesPedido(pedido, incluirPulido = false) {
 const sinAcentos = (x) => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 // Palabras de relleno que no buscan nada («80x60 con touch»).
 const RELLENO_BUSQUEDA = new Set(["con", "de", "del", "y", "el", "la", "los", "las", "un", "una"]);
+// Desde cuántas cifras se busca en el teléfono (pedido de Facundo, 24/10:
+// «con algunos números ya lo vaya buscando por coincidencias»). Con menos,
+// «60» traería medio listado.
+const MIN_CIFRAS_TELEFONO = 3;
+const soloCifras = (x) => String(x || "").replace(/\D/g, "");
+// Lo escrito es un teléfono (solo números, espacios, guiones, +, paréntesis):
+// devuelve las cifras juntas. Si tiene letras o una «x», no es un teléfono.
+const cifrasSiEsTelefono = (q) => (/^[\d\s\-+().]+$/.test(String(q || "").trim()) ? soloCifras(q) : "");
+function coincideTelefono(guardado, cifras) {
+  if (!cifras || cifras.length < MIN_CIFRAS_TELEFONO) return false;
+  const tel = soloCifras(guardado);
+  if (!tel) return false;
+  if (tel.includes(cifras)) return true;
+  // Lo escribieron con el código del país y el número está guardado sin él.
+  const sinPais = cifras.replace(/^549?/, "");
+  return sinPais.length >= MIN_CIFRAS_TELEFONO && sinPais !== cifras && tel.includes(sinPais);
+}
 function palabrasDeBusqueda(q) {
+  // «11 4422 1234» es un teléfono, no tres números sueltos. Solo si hay
+  // separadores y bastantes cifras: «80 60» siguen siendo dos medidas.
+  const cifras = cifrasSiEsTelefono(q);
+  if (cifras.length >= 6 && /[\s\-+().]/.test(String(q).trim())) return [cifras];
   return sinAcentos(q)
     .replace(/(\d+(?:[.,]\d+)?)\s*(?:x|×|\*|por)\s*(\d+(?:[.,]\d+)?)/g, "$1x$2")
     .split(/\s+/)
@@ -6872,11 +6896,10 @@ function coincidePedido(p, q) {
       return (ancho === m1 && alto === m2) || (ancho === m2 && alto === m1);
     }
     if (/^\d+$/.test(w)) {
-      // Un número solo: una de las dos medidas, el número de pedido, o (con 4
+      // Un número solo: una de las dos medidas, el número de pedido, o (con 3
       // cifras o más) parte del teléfono.
       const n = Number(w);
-      return n === ancho || n === alto || String(p.orden ?? "") === w
-        || (w.length >= 4 && String(p.celular || "").replace(/\D/g, "").includes(w));
+      return n === ancho || n === alto || String(p.orden ?? "") === w || coincideTelefono(p.celular, w);
     }
     return texto.includes(w);
   });
@@ -6888,7 +6911,7 @@ function filtrarPedidosConSuGrupo(lista, q) {
   const grupos = new Set(lista.filter((p) => coincidePedido(p, q)).map((p) => p.grupoId || p.id));
   return lista.filter((p) => grupos.has(p.grupoId || p.id));
 }
-const PISTA_BUSCAR_PEDIDO = "Cliente, medida o función…";
+const PISTA_BUSCAR_PEDIDO = "Cliente, teléfono, medida o función…";
 
 function detalleFabrica(pedido) {
   return partesDetallePedido(pedido?.grabado).filter((parte) => !esFuncionDesempanante(parte)).join(" · ");
@@ -7119,14 +7142,13 @@ function buscarGlobal(q, pedidos, reclamos) {
   const t = String(q || "").trim().toLowerCase();
   if (t.length < 2) return { pedidos: [], reclamos: [] };
   const norm = (x) => String(x || "").toLowerCase();
-  const digitos = (x) => String(x || "").replace(/\D/g, "");
-  const td = digitos(t);
+  const td = cifrasSiEsTelefono(t);
   const mp = (pedidos || []).filter((p) =>
     coincidePedido(p, t) || String(p.orden || "").includes(t) ||
-    norm(p.dniCuit).includes(t) || (td.length >= 4 && digitos(p.celular).includes(td))
+    norm(p.dniCuit).includes(t) || coincideTelefono(p.celular, td)
   ).slice(0, 25);
   const mr = (reclamos || []).filter((r) =>
-    norm(r.cliente).includes(t) || (td.length >= 4 && digitos(r.celular).includes(td))
+    norm(r.cliente).includes(t) || coincideTelefono(r.celular, td)
   ).slice(0, 12);
   return { pedidos: mp, reclamos: mr };
 }
@@ -7142,7 +7164,7 @@ function BuscadorGlobal({ pedidos, reclamos, onClose, onIr }) {
       <div className="dg-modal dg-modal-buscador" onClick={(e) => e.stopPropagation()}>
         <div className="dg-buscador-input">
           <Search size={17} />
-          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cliente, teléfono, N°, medida o función…" />
+          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cliente, teléfono, N°, medida o función…" inputMode="search" />
           <button className="dg-icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="dg-buscador-res">
@@ -9714,7 +9736,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   // coordinar el día e ir. Entra en la misma tabla que los envíos.
   const visitas = (reclamos || [])
     .filter(reclamoVisitaPendiente)
-    .filter((r) => !busqueda.trim() || String(r.cliente || "").toLowerCase().includes(busqueda.toLowerCase()));
+    .filter((r) => !busqueda.trim() || String(r.cliente || "").toLowerCase().includes(busqueda.toLowerCase())
+      || coincideTelefono(r.celular, cifrasSiEsTelefono(busqueda)));
   function updateReclamo(id, patch) {
     if (onChangeReclamos) onChangeReclamos(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
