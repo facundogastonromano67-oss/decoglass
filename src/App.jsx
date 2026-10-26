@@ -2345,12 +2345,13 @@ function App() {
       const bloqueViejo = au ? JSON.parse(au.value) : [];
       setAuditoria((prev) => mezclarRegistro(prev, Array.isArray(bloqueViejo) ? bloqueViejo : []));
     } catch (e) { /* sin bloque viejo */ }
-    // Lo de los últimos 4 días de la tabla: con unas 150 acciones por día son
-    // ~120 KB por cada vez que se abre la app (el egreso del plan es chico, ver
-    // decoglass-egreso). Lo más viejo se pide recién cuando alguien abre ese
-    // turno en el archivo.
+    // Al abrir la app se baja solo lo de AYER Y HOY: alcanza para el turno
+    // abierto y para «Trabajando ahora», y son ~50 KB. Lo más viejo se pide
+    // recién cuando alguien lo mira (un turno del archivo, Ajustes › Actividad).
+    // El plan gratis tiene poco egreso: ver decoglass-egreso.
     try {
-      const filas = await registroStore.desde(new Date(Date.now() - 4 * 86400000).toISOString(), 2000);
+      const ayer = new Date(); ayer.setHours(0, 0, 0, 0); ayer.setDate(ayer.getDate() - 1);
+      const filas = await registroStore.desde(ayer.toISOString(), 1000);
       registroEnTabla.current = true;
       setAuditoria((prev) => mezclarRegistro(filas, prev));
     } catch (e) { if (faltaLaTablaDelRegistro(e)) registroEnTabla.current = false; }
@@ -3529,8 +3530,21 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vende
 
 // Ajustes › Actividad: qué hizo cada uno, día por día y con la hora. Se puede
 // mirar a una sola persona.
-function RegistroActividad({ auditoria }) {
+function RegistroActividad({ auditoria: cargada }) {
   const [persona, setPersona] = useState("");
+  // Al abrir la app solo se baja ayer y hoy. La semana se pide recién acá,
+  // cuando alguien abre esta pantalla (es del administrador y se mira poco).
+  const [semana, setSemana] = useState([]);
+  const [buscando, setBuscando] = useState(true);
+  useEffect(() => {
+    let vivo = true;
+    registroStore.desde(new Date(Date.now() - 7 * 86400000).toISOString(), 3000)
+      .then((filas) => { if (vivo) setSemana(filas); })
+      .catch(() => {})
+      .finally(() => { if (vivo) setBuscando(false); });
+    return () => { vivo = false; };
+  }, []);
+  const auditoria = mezclarRegistro(cargada, semana);
   const nombreDe = (a) => a.persona || String(a.quien || "").split(" · ")[0] || "Sin nombre";
   const personas = [...new Set((auditoria || []).map(nombreDe))].sort((a, b) => a.localeCompare(b));
   const lista = (auditoria || []).filter((a) => !persona || nombreDe(a) === persona).slice(0, 400);
@@ -3542,7 +3556,7 @@ function RegistroActividad({ auditoria }) {
   });
   return (
     <div className="dg-page">
-      <p className="dg-hint" style={{ marginBottom: 10 }}>Todo lo que hace cada uno en la app, con la hora. Se anota solo: estar mirando no cuenta.</p>
+      <p className="dg-hint" style={{ marginBottom: 10 }}>Todo lo que hace cada uno en la app, con la hora, de los últimos 7 días. Se anota solo: estar mirando no cuenta.{buscando ? " Buscando…" : ""}</p>
       <div className="dg-crm-filters">
         <select value={persona} onChange={(e) => setPersona(e.target.value)}>
           <option value="">Todos</option>
@@ -13572,7 +13586,7 @@ function agruparTurnos(turnos) {
 
 function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin }) {
   const carpetas = agruparTurnos(turnos);
-  // Lo cargado son los últimos 4 días. Un turno más viejo se pide a la base
+  // Lo cargado es de ayer y hoy. Un turno más viejo se pide a la base
   // recién cuando alguien lo abre (y una sola vez).
   const [deLaBase, setDeLaBase] = useState({});
   const accionesDe = (t) => {
