@@ -491,6 +491,41 @@ export const chatStore = {
 };
 
 // Seguimiento en vivo de envíos (mapa del flete).
+// ---- Registro de acciones: quién hizo qué y a qué hora ----
+// Una fila por acción (tabla registro_acciones, ver supabase/registro-acciones.sql).
+// Antes era un solo bloque en kv_store con las últimas 500: cada acción lo
+// reescribía entero y cada celular lo volvía a bajar (unos 75 KB por acción y
+// por celular). Con todo lo que se anota ahora eso se comía el egreso del plan.
+export const registroStore = {
+  async agregar(fila) {
+    const { error } = await supabase.from("registro_acciones").insert(fila);
+    if (error) throw error;
+  },
+  // Lo de los últimos días, lo más nuevo primero.
+  async desde(desdeIso, limite = 3000) {
+    const { data, error } = await supabase
+      .from("registro_acciones").select("*")
+      .gte("fecha", desdeIso).order("fecha", { ascending: false }).limit(limite);
+    if (error) throw error;
+    return data || [];
+  },
+  // Lo de un turno viejo, que ya no está en lo cargado.
+  async entre(desdeIso, hastaIso) {
+    const { data, error } = await supabase
+      .from("registro_acciones").select("*")
+      .gte("fecha", desdeIso).lte("fecha", hastaIso).order("fecha", { ascending: true }).limit(2000);
+    if (error) throw error;
+    return data || [];
+  },
+  subscribe(onInsert) {
+    const channel = supabase
+      .channel("registro-" + Math.random().toString(36).slice(2, 8))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "registro_acciones" }, (payload) => onInsert(payload.new))
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch (e) {} };
+  },
+};
+
 export const trackingStore = {
   // El estado de UN envío. Por función: el cliente sigue el suyo sin que
   // quede abierta la lista de todos los recorridos.

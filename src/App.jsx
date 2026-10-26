@@ -1,5 +1,5 @@
 import { Component, Fragment, useState, useEffect, useRef, useMemo } from "react";
-import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore, urlFirmada } from "./lib/storage";
+import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore, urlFirmada, registroStore } from "./lib/storage";
 import { supabase } from "./lib/supabaseClient";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
@@ -1417,6 +1417,205 @@ function breakdownBy(entries, field, labels) {
   return Object.entries(totals).map(([k, v]) => ({ name: labels[k] || k, value: v }));
 }
 
+
+/* ===========================================================================
+   EL REGISTRO DE LO QUE HACE CADA UNO
+   Facundo (26/10/2026): «que el registro me diga a qué hora hacen cada cosa y
+   cada acción que hacen; si están en la app pero no hacen nada, no hace falta
+   que lo anote». Antes solo se anotaban ~30 botones puntuales (cargar,
+   verificar, avisar, marcar cortado…) y todo lo demás —poner fecha de salida,
+   cargar el flete, subir una factura, cerrar un reclamo, mover stock— no
+   quedaba en ningún lado.
+
+   Ahora se anota solo, mirando QUÉ CAMBIÓ cuando alguien guarda: se compara
+   cómo estaba cada pedido, reclamo, salida, stock o turno contra cómo quedó, y
+   se describe en castellano. No hay que acordarse de poner un «registrar» en
+   cada botón nuevo: si cambia un dato, queda anotado.
+
+   Lo que NO se anota: lo que llega de otro celular (eso lo anota el que lo
+   hizo), lo que la app hace sola (el día del taller, las fechas automáticas,
+   el cierre de las 19:00) y estar mirando.
+
+   Los ~30 botones que ya se anotaban a mano siguen igual. Para no anotar dos
+   veces lo mismo, lo automático espera un instante y se saltea los pedidos
+   (#orden) que ya se anotaron a mano en ese mismo momento.
+   =========================================================================== */
+const diaMesCorto = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+  return m ? `${Number(m[3])}/${Number(m[2])}` : "";
+};
+const cambio = (a, b, campo) => String(a?.[campo] ?? "") !== String(b?.[campo] ?? "");
+const prendio = (a, b, campo) => !a?.[campo] && !!b?.[campo];
+const apago = (a, b, campo) => !!a?.[campo] && !b?.[campo];
+const ESTADO_A_ACCION = {
+  "Entregado": "Marcó entregado",
+  "Espejo listo": "Marcó listo",
+  "Cancelado": "Canceló un pedido",
+  "Despachado": "Despachó por Vía Cargo",
+};
+// Lo que cambió en UN pedido, como una lista de { accion, texto }.
+function cambiosDeUnPedido(a, d) {
+  const out = [];
+  const pon = (accion, texto = "") => out.push({ accion, texto });
+  if (cambio(a, d, "estado")) pon(ESTADO_A_ACCION[d.estado] || "Cambió el estado", `pasó a «${d.estado}»`);
+  [["produccionCortadoFecha", "cortado"], ["produccionArmadoFecha", "armado"], ["produccionEmbaladoFecha", "embalado"]].forEach(([c, label]) => {
+    if (prendio(a, d, c)) pon("Actualizó producción", label);
+    if (apago(a, d, c)) pon("Reabrió producción", `deshizo ${label}`);
+  });
+  if (prendio(a, d, "grabadoEnviadoFecha")) pon("Mandó a grabar");
+  if (prendio(a, d, "grabadoRegresoFecha")) pon("Volvió del grabado");
+  if (cambio(a, d, "grabadoRegresoPrometido") && d.grabadoRegresoPrometido) pon("Puso fecha de vuelta del grabado", diaMesCorto(d.grabadoRegresoPrometido));
+  if (prendio(a, d, "biseladoPedidoFecha")) pon("Pidió el biselado");
+  if (prendio(a, d, "biseladoRegresoFecha")) pon("Volvió del biselado");
+  if (cambio(a, d, "biseladoRegresoPrometido") && d.biseladoRegresoPrometido) pon("Puso fecha de vuelta del biselado", diaMesCorto(d.biseladoRegresoPrometido));
+  if (prendio(a, d, "clienteAvisado")) pon("Avisó al cliente");
+  if (prendio(a, d, "envioConfirmado")) pon("Confirmó un envío");
+  if (cambio(a, d, "fechaEnvio")) pon("Puso fecha de salida", d.fechaEnvio ? `para el ${diaMesCorto(d.fechaEnvio)}` : "la sacó");
+  if (cambio(a, d, "horarioEntrega")) pon("Cambió el horario de entrega", d.horarioEntrega || "sin horario");
+  const flete = [];
+  if (cambio(a, d, "fletero")) flete.push(d.fletero ? `lo lleva ${d.fletero}` : "sin flete");
+  if (cambio(a, d, "fletePago")) flete.push(`se lleva ${money(Number(d.fletePago) || 0)}`);
+  if (cambio(a, d, "costoEnvio")) flete.push(`envío ${money(Number(d.costoEnvio) || 0)}`);
+  if (cambio(a, d, "envioCobro")) flete.push(d.envioCobro === "anticipado" ? "lo cobramos nosotros" : d.envioCobro === "entrega" ? "lo cobra el flete" : "sin definir quién cobra");
+  if (flete.length) pon("Cargó datos del flete", flete.join(", "));
+  if (prendio(a, d, "envioPagado")) pon("Marcó el envío pagado");
+  if (prendio(a, d, "facturado")) pon("Facturó");
+  const nFact = (p) => [p?.facturaUrl, ...(Array.isArray(p?.facturasExtra) ? p.facturasExtra : [])].filter(Boolean).length;
+  if (nFact(d) > nFact(a)) pon("Subió una factura");
+  if (nFact(d) < nFact(a)) pon("Quitó una factura");
+  if (["detalleEntrega", "barrio", "piso", "celular", "localidad", "provincia", "codigoPostal"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
+  const plata = [];
+  if (cambio(a, d, "monto")) plata.push(`monto ${money(Number(d.monto) || 0)}`);
+  if (cambio(a, d, "anticipo")) plata.push(`anticipo ${money(Number(d.anticipo) || 0)}`);
+  if (plata.length) pon("Cambió la plata del pedido", plata.join(", "));
+  if (cambio(a, d, "remitoNumeroGuia") && d.remitoNumeroGuia) pon("Cargó la guía de Vía Cargo", d.remitoNumeroGuia);
+  if (cambio(a, d, "remitoUrl") && d.remitoUrl) pon("Subió el remito");
+  if (prendio(a, d, "demorado")) pon("Marcó demorado");
+  if (prendio(a, d, "urgente")) pon("Marcó urgente");
+  if (cambio(a, d, "diaTaller")) pon("Movió un espejo de día", d.diaTaller ? `al ${diaMesCorto(d.diaTaller)}` : "que lo reparta la app");
+  // La fecha de entrega que pone la app sola no es una acción de nadie.
+  if (cambio(a, d, "listo") && !d.listoAutomatica) pon("Cambió la fecha de entrega", diaMesCorto(d.listo) || "la sacó");
+  return out;
+}
+// Todos los cambios entre dos listas de pedidos, uno por pedido y acción.
+function describirCambiosPedidos(antes, despues) {
+  const viejos = new Map((antes || []).map((p) => [p.id, p]));
+  const nuevos = new Map((despues || []).map((p) => [p.id, p]));
+  const porClave = new Map();
+  const juntar = (p, accion, texto) => {
+    const orden = p?.orden ?? "";
+    const clave = `${orden || p?.id}|${accion}`;
+    if (!porClave.has(clave)) porClave.set(clave, { accion, orden: String(orden), cliente: p?.cliente || "Sin nombre", textos: [] });
+    if (texto && !porClave.get(clave).textos.includes(texto)) porClave.get(clave).textos.push(texto);
+  };
+  (despues || []).forEach((d) => {
+    const a = viejos.get(d.id);
+    if (!a) { juntar(d, "Cargó un pedido", ""); return; }
+    if (a === d) return;
+    cambiosDeUnPedido(a, d).forEach((c) => juntar(d, c.accion, c.texto));
+  });
+  (antes || []).forEach((a) => { if (!nuevos.has(a.id)) juntar(a, "Borró un pedido", ""); });
+  return [...porClave.values()].map((e) => ({
+    accion: e.accion, orden: e.orden,
+    detalle: [e.orden ? `#${e.orden}` : "", e.cliente, e.textos.join(" · ")].filter(Boolean).join(" — "),
+  }));
+}
+function describirCambiosReclamos(antes, despues) {
+  const viejos = new Map((antes || []).map((r) => [r.id, r]));
+  const nuevos = new Set((despues || []).map((r) => r.id));
+  const out = [];
+  const quien = (r) => `${r?.cliente || "Sin nombre"}${r?.tipo ? ` — ${r.tipo}` : ""}`;
+  (despues || []).forEach((d) => {
+    const a = viejos.get(d.id);
+    if (!a) { out.push({ accion: "Cargó un reclamo", detalle: quien(d) }); return; }
+    if (a === d) return;
+    const textos = [];
+    let accion = "Editó un reclamo";
+    if (prendio(a, d, "finalizado")) { accion = "Cerró un reclamo"; }
+    else if (apago(a, d, "finalizado")) { accion = "Reabrió un reclamo"; }
+    else if (prendio(a, d, "visitaHecha")) { accion = "Fue al domicilio"; }
+    else if (prendio(a, d, "aDomicilio")) { accion = "Programó una visita"; }
+    else if (cambio(a, d, "solucion") && String(d.solucion || "").trim()) { accion = "Le ofreció una solución"; textos.push(String(d.solucion).trim().slice(0, 80)); }
+    else if (cambio(a, d, "fechaEnvio")) { accion = "Puso fecha de visita"; textos.push(d.fechaEnvio ? `para el ${diaMesCorto(d.fechaEnvio)}` : "la sacó"); }
+    else if (cambio(a, d, "estado")) { textos.push(`pasó a «${d.estado}»`); }
+    out.push({ accion, detalle: [quien(d), ...textos].join(" — ") });
+  });
+  (antes || []).forEach((a) => { if (!nuevos.has(a.id)) out.push({ accion: "Borró un reclamo", detalle: quien(a) }); });
+  return out;
+}
+function describirCambiosSalidas(antes, despues) {
+  const viejas = new Map((antes || []).map((m) => [m.id, m]));
+  const nuevas = new Set((despues || []).map((m) => m.id));
+  const quien = (m) => [tipoDeSalida(m).label, m?.cliente || "Sin nombre", diaMesCorto(m?.fecha)].filter(Boolean).join(" — ");
+  const out = [];
+  (despues || []).forEach((d) => {
+    const a = viejas.get(d.id);
+    if (!a) out.push({ accion: "Cargó una salida", detalle: quien(d) });
+    else if (a !== d && prendio(a, d, "hecho")) out.push({ accion: "Marcó hecha una salida", detalle: quien(d) });
+    else if (a !== d && apago(a, d, "hecho")) out.push({ accion: "Reabrió una salida", detalle: quien(d) });
+    else if (a !== d && JSON.stringify(a) !== JSON.stringify(d)) out.push({ accion: "Editó una salida", detalle: quien(d) });
+  });
+  (antes || []).forEach((a) => { if (!nuevas.has(a.id)) out.push({ accion: "Borró una salida", detalle: quien(a) }); });
+  return out;
+}
+// textos: { nuevo, movio, borro } — «Cargó un material», «Movió el stock de materiales»…
+function describirCambiosStock(antes, despues, textos) {
+  const viejos = new Map((antes || []).map((s) => [s.id, s]));
+  const nombre = (s) => s?.nombre || s?.modelo || s?.descripcion || "sin nombre";
+  const out = [];
+  (despues || []).forEach((d) => {
+    const a = viejos.get(d.id);
+    if (!a) { out.push({ accion: textos.nuevo, detalle: nombre(d) }); return; }
+    if (a !== d && cambio(a, d, "cantidad")) out.push({ accion: textos.movio, detalle: `${nombre(d)}: ${a.cantidad ?? 0} → ${d.cantidad ?? 0}${d.unidad ? ` ${d.unidad}` : ""}` });
+  });
+  const nuevos = new Set((despues || []).map((s) => s.id));
+  (antes || []).forEach((a) => { if (!nuevos.has(a.id)) out.push({ accion: textos.borro, detalle: nombre(a) }); });
+  return out;
+}
+// Los turnos: entrar, tildar tareas y cerrar a mano. El cierre de las 19:00 lo
+// hace la app (lo puede disparar el celular de cualquiera), así que no se anota.
+function describirCambiosTurnos(antes, despues, tituloDeTarea) {
+  const viejos = new Map((antes || []).map((t) => [t.id, t]));
+  const out = [];
+  (despues || []).forEach((d) => {
+    const a = viejos.get(d.id);
+    const sector = (SECTORES_CON_TURNO[sectorDelTurno(d)] || {}).label || "";
+    if (!a) { out.push({ accion: "Entró", detalle: [sector, d.aperturaAutomatica ? "el turno se abrió solo" : ""].filter(Boolean).join(" — "), persona: d.persona }); return; }
+    if (a === d) return;
+    Object.keys(d.tareas || {}).forEach((id) => {
+      if (!(a.tareas || {})[id]) out.push({ accion: "Tildó una tarea", detalle: tituloDeTarea(id) || id, persona: d.persona });
+    });
+    if (!a.fin && d.fin && !d.cierreAutomatico) out.push({ accion: "Cerró el turno", detalle: sector, persona: d.persona });
+  });
+  return out;
+}
+// Juntar lo de la tabla con lo del bloque viejo, sin repetir y más nuevo arriba.
+function mezclarRegistro(a, b, tope = 4000) {
+  const vistos = new Map();
+  [...(a || []), ...(b || [])].forEach((x) => { if (x && x.id && !vistos.has(x.id)) vistos.set(x.id, x); });
+  return [...vistos.values()].sort((x, y) => String(y.fecha).localeCompare(String(x.fecha))).slice(0, tope);
+}
+// La tabla todavía no existe (falta correr supabase/registro-acciones.sql).
+function faltaLaTablaDelRegistro(error) {
+  const t = `${error?.code || ""} ${error?.message || ""}`;
+  return /42P01|PGRST205|does not exist|Could not find the table/i.test(t);
+}
+// Lo que hizo una persona entre dos momentos, en orden, con la hora.
+function accionesDeLaPersona(auditoria, persona, desdeIso, hastaIso) {
+  const desde = new Date(desdeIso).getTime();
+  const hasta = hastaIso ? new Date(hastaIso).getTime() : Date.now();
+  const quien = String(persona || "").trim().toLowerCase();
+  return (auditoria || [])
+    .filter((a) => {
+      const t = new Date(a.fecha).getTime();
+      if (Number.isNaN(t) || t < desde || t > hasta) return false;
+      if (!quien) return true;
+      return String(a.persona || "").trim().toLowerCase() === quien
+        || String(a.quien || "").toLowerCase().split(" · ")[0].trim() === quien;
+    })
+    .sort((x, y) => String(x.fecha).localeCompare(String(y.fecha)));
+}
+
 const SHARED_SYNC_KEYS = [
   "sectors", "payments", "incomes", "quote-config", "quotes", "leads",
   "vendedores", "recursos-venta", "guias-trabajo", "turnos-postventa", "facturas-manuales", "envios-logistica",
@@ -1461,6 +1660,11 @@ function App() {
   const [admins, setAdmins] = useState([]);
   const [integraciones, setIntegraciones] = useState({ kommoSubdominio: "", driveFacturasUrl: "" });
   const [auditoria, setAuditoria] = useState([]);
+  const auditoriaRef = useRef(auditoria);
+  auditoriaRef.current = auditoria;
+  // ¿Existe la tabla registro_acciones? Se da por sí hasta que diga que no.
+  const registroEnTabla = useRef(true);
+  const anotadoAMano = useRef([]);
   const [saveState, setSaveState] = useState({ estado: "idle" });
   const [syncState, setSyncState] = useState("connecting");
   const [loading, setLoading] = useState(true);
@@ -1542,6 +1746,14 @@ function App() {
     const id = window.setInterval(revisar, 5 * 60 * 1000);
     return () => window.clearInterval(id);
   }, [session, pedidos, trabasTaller]);
+
+  // Lo que hacen los demás llega en vivo (si la tabla del registro existe).
+  useEffect(() => {
+    if (!session) return undefined;
+    return registroStore.subscribe((fila) => {
+      if (fila && fila.id) setAuditoria((prev) => mezclarRegistro([fila], prev));
+    });
+  }, [session]);
 
   const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
   const [activeSectorId, setActiveSectorId] = useState(null);
@@ -1667,7 +1879,9 @@ function App() {
       "trabas-taller": (v) => setTrabasTaller(v && typeof v === "object" && !Array.isArray(v) ? v : {}),
       "empleados-sueldo": setEmpleadosSueldo,
       "liquidaciones-sueldo": setLiquidaciones,
-      auditoria: setAuditoria,
+      // Se MEZCLA con lo que ya hay: si pisara, se perderían las acciones que
+      // vinieron de la tabla registro_acciones.
+      auditoria: (v) => setAuditoria((prev) => mezclarRegistro(prev, Array.isArray(v) ? v : [])),
       admins: setAdmins,
       integraciones: setIntegraciones,
       proveedores: setProveedores,
@@ -2128,8 +2342,18 @@ function App() {
     } catch (e) { setLiquidaciones([]); }
     try {
       const au = await storage.get("auditoria", true);
-      setAuditoria(au ? JSON.parse(au.value) : []);
-    } catch (e) { setAuditoria([]); }
+      const bloqueViejo = au ? JSON.parse(au.value) : [];
+      setAuditoria((prev) => mezclarRegistro(prev, Array.isArray(bloqueViejo) ? bloqueViejo : []));
+    } catch (e) { /* sin bloque viejo */ }
+    // Lo de los últimos 4 días de la tabla: con unas 150 acciones por día son
+    // ~120 KB por cada vez que se abre la app (el egreso del plan es chico, ver
+    // decoglass-egreso). Lo más viejo se pide recién cuando alguien abre ese
+    // turno en el archivo.
+    try {
+      const filas = await registroStore.desde(new Date(Date.now() - 4 * 86400000).toISOString(), 2000);
+      registroEnTabla.current = true;
+      setAuditoria((prev) => mezclarRegistro(filas, prev));
+    } catch (e) { if (faltaLaTablaDelRegistro(e)) registroEnTabla.current = false; }
     try {
       const ad = await storage.get("admins", true);
       let lista = ad ? JSON.parse(ad.value) : [];
@@ -2250,6 +2474,22 @@ function App() {
   async function persistTareasSector(next) { guardar("tareas-sector", next, () => setTareasSector(next)); }
   async function persistFacturas(next) { guardar("facturas-manuales", next, () => setFacturas(next)); }
   async function persistEnviosLogistica(next) { guardar("envios-logistica", next, () => setEnviosLogistica(next)); }
+  // Las versiones que anotan en el registro. Son las que se les pasan a las
+  // pantallas: lo que la app hace sola (el día del taller, el cierre de las
+  // 19:00) sigue usando las de arriba y no se anota.
+  const persistPedidosAnotado = conRegistro(persistPedidos, () => pedidosRef.current, describirCambiosPedidos);
+  const persistReclamosAnotado = conRegistro(persistReclamos, () => reclamosRef.current, describirCambiosReclamos);
+  const persistSalidasAnotado = conRegistro(persistEnviosLogistica, () => enviosLogistica, describirCambiosSalidas);
+  const persistStockEspejosAnotado = conRegistro(persistStockEspejos, () => stockEspejosRef.current,
+    (a, b) => describirCambiosStock(a, b, { nuevo: "Cargó un espejo al stock", movio: "Movió el stock de espejos", borro: "Sacó un espejo del stock" }));
+  const persistStockMaterialesAnotado = conRegistro(persistStockMateriales, () => stockMaterialesRef.current,
+    (a, b) => describirCambiosStock(a, b, { nuevo: "Cargó un material", movio: "Movió el stock de materiales", borro: "Borró un material" }));
+  const tituloDeTarea = (id) => {
+    if (id === "auto-pendientes") return "Revisó lo pendiente de días anteriores";
+    const todas = Object.values(tareasSector || {}).flatMap((x) => (Array.isArray(x) ? x : []));
+    return (todas.find((t) => t.id === id) || {}).titulo || "";
+  };
+  const persistTurnosAnotado = conRegistro(persistTurnos, () => turnos, (a, b) => describirCambiosTurnos(a, b, tituloDeTarea));
   async function persistTrabasTaller(next) { guardar("trabas-taller", next, () => setTrabasTaller(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
@@ -2263,7 +2503,10 @@ function App() {
   async function persistLiquidaciones(next) { guardar("liquidaciones-sueldo", next, () => setLiquidaciones(next)); }
 
   // Registro de actividad: queda quién hizo qué y cuándo.
-  async function registrarActividad(accion, detalle) {
+  // El registro (ver «EL REGISTRO DE LO QUE HACE CADA UNO»). Va a la tabla
+  // registro_acciones, una fila por acción; si la tabla todavía no existe (falta
+  // correr el SQL), al bloque viejo de kv, como siempre.
+  async function registrarActividad(accion, detalle, opciones = {}) {
     // Antes el sector quedaba como "PostVenta" a secas y no se sabía si lo
     // había hecho Fran o Dou. Con dos personas en el mismo sector eso no sirve
     // ni para el turno ni para saber quién hizo qué.
@@ -2271,10 +2514,48 @@ function App() {
     const quien = session?.role === "admin" ? (session.nombre || "Admin")
       : session?.role === "sector" ? (session.nombre ? `${session.nombre} · ${nombreSector}` : nombreSector)
       : "Sin sesión";
-    const entrada = { id: uid(), fecha: new Date().toISOString(), quien, accion, detalle };
-    const next = [entrada, ...auditoria].slice(0, 500);
-    setAuditoria(next);
-    try { await storage.set("auditoria", JSON.stringify(next), true); } catch (e) {}
+    const entrada = {
+      id: uid(), fecha: new Date().toISOString(), quien,
+      persona: session?.nombre || "", sector: session?.role === "admin" ? "admin" : (session?.sectorId || ""),
+      accion, detalle: detalle || "",
+    };
+    // Lo que se anota a mano se recuerda unos segundos, para que lo automático
+    // no lo repita (ver anotarCambios).
+    if (!opciones.automatico) {
+      anotadoAMano.current = [...anotadoAMano.current.filter((x) => Date.now() - x.ts < 4000), { ts: Date.now(), detalle: String(detalle || "") }];
+    }
+    setAuditoria((prev) => mezclarRegistro([entrada], prev));
+    if (registroEnTabla.current) {
+      try { await registroStore.agregar(entrada); return; }
+      catch (e) { if (faltaLaTablaDelRegistro(e)) registroEnTabla.current = false; }
+    }
+    const bloqueViejo = mezclarRegistro([entrada], auditoriaRef.current || [], 500);
+    try { await storage.set("auditoria", JSON.stringify(bloqueViejo), true); } catch (e) {}
+  }
+
+  // Lo que cada uno hace se anota solo, mirando qué cambió al guardar. Espera
+  // un instante para que los botones que ya anotan a mano lo hagan primero, y
+  // se saltea los pedidos (#orden) que ya quedaron anotados así.
+  function anotarCambios(cambios) {
+    if (!cambios || !cambios.length) return;
+    window.setTimeout(() => {
+      const recientes = anotadoAMano.current.filter((x) => Date.now() - x.ts < 4000);
+      const yaAnotado = (c) => !!c.orden && recientes.some((x) => new RegExp(`#${c.orden}(?!\\d)`).test(x.detalle));
+      const quedan = cambios.filter((c) => !yaAnotado(c));
+      // Si un solo guardado cambia muchísimas cosas es una tarea masiva: una
+      // línea que lo diga, no cien.
+      if (quedan.length > 20) { registrarActividad("Cambió muchas cosas a la vez", `${quedan.length} cambios`, { automatico: true }); return; }
+      quedan.forEach((c) => registrarActividad(c.accion, c.detalle, { automatico: true }));
+    }, 400);
+  }
+  // Declarada como función (no const) porque los persistidores anotados se
+  // arman más arriba, junto a los demás.
+  function conRegistro(persistir, actual, describir) {
+    return (next) => {
+      const antes = actual();
+      persistir(next);
+      try { anotarCambios(describir(antes || [], next || [])); } catch (e) { /* anotar nunca frena el guardado */ }
+    };
   }
 
   function createIncomeFromPedido(entry) {
@@ -2500,7 +2781,7 @@ function App() {
             onUpdate={(patch) => updateSector(activeSector.id, patch)}
             onRequestLogin={() => setLoginOpen(true)}
             onBack={() => setActiveSectorId(null)}
-            pedidos={pedidos} onChangePedidos={persistPedidos} onRegistrar={registrarActividad}
+            pedidos={pedidos} onChangePedidos={persistPedidosAnotado} onRegistrar={registrarActividad}
             vendedores={vendedores} onChangeVendedores={persistVendedores}
             incomes={incomes} onChangeIncomes={persistIncomes}
             purchases={purchases} onChangePurchases={persistPurchases}
@@ -2519,14 +2800,14 @@ function App() {
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
             guias={guias} onChangeGuias={persistGuias}
-            turnos={turnos || []} onChangeTurnos={persistTurnos}
+            turnos={turnos || []} onChangeTurnos={persistTurnosAnotado}
             misiones={misiones || []} onChangeMisiones={persistMisiones}
             tareasSector={tareasSector || {}} onChangeTareasSector={persistTareasSector}
             facturas={facturas} onChangeFacturas={persistFacturas}
-            enviosLogistica={enviosLogistica} onChangeEnviosLogistica={persistEnviosLogistica}
-            reclamos={reclamos} onChangeReclamos={persistReclamos}
-            stockEspejos={stockEspejos} onChangeStockEspejos={persistStockEspejos}
-            stockMateriales={stockMateriales} onChangeStockMateriales={persistStockMateriales}
+            enviosLogistica={enviosLogistica} onChangeEnviosLogistica={persistSalidasAnotado}
+            reclamos={reclamos} onChangeReclamos={persistReclamosAnotado}
+            stockEspejos={stockEspejos} onChangeStockEspejos={persistStockEspejosAnotado}
+            stockMateriales={stockMateriales} onChangeStockMateriales={persistStockMaterialesAnotado}
             empleadosSueldo={empleadosSueldo} onChangeEmpleadosSueldo={persistEmpleadosSueldo}
             liquidaciones={liquidaciones} onChangeLiquidaciones={persistLiquidaciones}
             proveedores={proveedores} onChangeProveedores={persistProveedores}
@@ -2579,7 +2860,7 @@ function App() {
               onToggle={(pasoId) => {
                 const tareas = { ...(v.turno.tareas || {}) };
                 if (tareas[pasoId]) delete tareas[pasoId]; else tareas[pasoId] = true;
-                persistTurnos((turnos || []).map((t) => (t.id === v.turno.id ? { ...t, tareas } : t)));
+                persistTurnosAnotado((turnos || []).map((t) => (t.id === v.turno.id ? { ...t, tareas } : t)));
               }}
             />
           );
@@ -3240,24 +3521,47 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vende
 
         {tab === "respaldo" && <RespaldoPanel datos={datos} auditoria={[]} />}
 
-        {tab === "actividad" && (
-          <div className="dg-page">
-            <p className="dg-hint" style={{ marginBottom: 14 }}>Últimos movimientos del sistema: quién cargó, editó o borró cada cosa.</p>
-            {auditoria.length === 0 ? <div className="dg-empty">Todavía no hay movimientos registrados.</div> : (
-              <div className="dg-task-list">
-                {auditoria.slice(0, 100).map((a) => (
-                  <div className="dg-task" key={a.id}>
-                    <div className="dg-pago-info">
-                      <span>{a.accion}{a.detalle ? ` — ${a.detalle}` : ""}</span>
-                      <span className="dg-pago-meta">{a.quien} · {new Date(a.fecha).toLocaleString("es-AR")}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {tab === "actividad" && <RegistroActividad auditoria={auditoria} />}
       </div>
+    </div>
+  );
+}
+
+// Ajustes › Actividad: qué hizo cada uno, día por día y con la hora. Se puede
+// mirar a una sola persona.
+function RegistroActividad({ auditoria }) {
+  const [persona, setPersona] = useState("");
+  const nombreDe = (a) => a.persona || String(a.quien || "").split(" · ")[0] || "Sin nombre";
+  const personas = [...new Set((auditoria || []).map(nombreDe))].sort((a, b) => a.localeCompare(b));
+  const lista = (auditoria || []).filter((a) => !persona || nombreDe(a) === persona).slice(0, 400);
+  const porDia = [];
+  lista.forEach((a) => {
+    const dia = isoLocal(new Date(a.fecha));
+    if (!porDia.length || porDia[porDia.length - 1].dia !== dia) porDia.push({ dia, items: [] });
+    porDia[porDia.length - 1].items.push(a);
+  });
+  return (
+    <div className="dg-page">
+      <p className="dg-hint" style={{ marginBottom: 10 }}>Todo lo que hace cada uno en la app, con la hora. Se anota solo: estar mirando no cuenta.</p>
+      <div className="dg-crm-filters">
+        <select value={persona} onChange={(e) => setPersona(e.target.value)}>
+          <option value="">Todos</option>
+          {personas.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+      </div>
+      {porDia.length === 0 ? <div className="dg-empty">Todavía no hay movimientos registrados.</div> : porDia.map((d) => (
+        <div className="dg-registro-dia" key={d.dia}>
+          <div className="dg-salida-tit">{fechaLargaCorta(d.dia)} · {d.items.length} {d.items.length === 1 ? "acción" : "acciones"}</div>
+          <ol className="dg-linea-acciones">
+            {d.items.map((a) => (
+              <li key={a.id}>
+                <time>{horaCorta(a.fecha)}</time>
+                <span><b>{a.accion}</b>{a.detalle ? <small> — {a.detalle}</small> : null}{!persona && <em> · {nombreDe(a)}</em>}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
     </div>
   );
 }
@@ -9550,6 +9854,60 @@ function faltaParaEntregar(espejos) {
 // Los dos horarios de siempre. Se guardan en el MISMO campo que el horario
 // escrito a mano (horarioEntrega), así no hay dos datos diciendo cosas
 // distintas sobre la misma entrega.
+// ===== SALIDAS CARGADAS A MANO =============================================
+// Lo que sale de la empresa y no es la entrega de un pedido (26/10/2026): un
+// envío suelto, un cambio, un arreglo en la casa del cliente, ir a buscar un
+// espejo, una devolución o ir a retirar material a un proveedor. Se cargan
+// desde PostVenta › Envíos y se ven también en Logística: son la misma lista
+// («envios-logistica»), que antes solo tenía «envío» y «colecta».
+//
+// `grupo` es el ORDEN en que se muestran dentro de un mismo día, como lo pidió
+// Facundo: primero las entregas (flex o particulares), después los retiros de
+// espejos, las devoluciones y al final los retiros de material. Los arreglos a
+// domicilio no los nombró: van después de las entregas porque también son ir
+// a la casa del cliente.
+const TIPOS_SALIDA = {
+  envio:           { label: "Envío",               corto: "Envío",      grupo: 1, clase: "",           verbo: "entregado", quien: "Cliente" },
+  cambio:          { label: "Cambio",              corto: "Cambio",     grupo: 1, clase: "cambio",     verbo: "hecho",     quien: "Cliente" },
+  arreglo:         { label: "Arreglo a domicilio", corto: "Arreglo",    grupo: 2, clase: "visita",     verbo: "hecho",     quien: "Cliente" },
+  retiro_espejo:   { label: "Retiro de espejo",    corto: "Retiro",     grupo: 3, clase: "retiro",     verbo: "retirado",  quien: "Cliente" },
+  devolucion:      { label: "Devolución",          corto: "Devolución", grupo: 4, clase: "devolucion", verbo: "hecho",     quien: "Cliente" },
+  retiro_material: { label: "Retiro de material",  corto: "Material",   grupo: 5, clase: "material",   verbo: "retirado",  quien: "Proveedor" },
+};
+// Las «colectas» viejas eran retiros (de reclamos, devoluciones, fallas).
+function tipoDeSalida(m) {
+  const t = m?.tipo === "colecta" ? "retiro_espejo" : m?.tipo;
+  return TIPOS_SALIDA[t] || TIPOS_SALIDA.envio;
+}
+const GRUPOS_SALIDA = {
+  1: ["entrega", "entregas"],
+  2: ["arreglo a domicilio", "arreglos a domicilio"],
+  3: ["retiro de espejo", "retiros de espejos"],
+  4: ["devolución", "devoluciones"],
+  5: ["retiro de material", "retiros de material"],
+};
+// «5 entregas · 2 retiros de espejos · 1 devolución», en el orden de arriba.
+function resumenDeSalidas(filas) {
+  const cuenta = {};
+  (filas || []).forEach((f) => { cuenta[f.grupo] = (cuenta[f.grupo] || 0) + 1; });
+  return Object.keys(GRUPOS_SALIDA).filter((g) => cuenta[g])
+    .map((g) => `${cuenta[g]} ${GRUPOS_SALIDA[g][cuenta[g] === 1 ? 0 : 1]}`).join(" · ");
+}
+function salidaManualVacia(tipo = "envio") {
+  return { tipo, cliente: "", telefono: "", direccion: "", barrio: "", piso: "", fecha: isoLocal(new Date()), horario: "", motivo: "", cobrar: "", flete: "", fletero: "", notas: "" };
+}
+// Una salida cargada a mano en el mensaje para el flete.
+function bloqueSalidaManual(m, i) {
+  const t = tipoDeSalida(m);
+  const cobrar = Number(m.cobrar) || 0;
+  return [
+    `${i + 1}) ${t.label.toUpperCase()}: ${m.cliente || "(sin nombre)"}${m.telefono ? ` — ${m.telefono}` : ""}`,
+    `📍 ${[m.direccion, m.piso].filter(Boolean).join(", ") || "(falta la dirección)"}${m.barrio ? ` — ${m.barrio}` : ""}`,
+    `📦 ${m.motivo || t.label} · 🕐 ${m.horario || "a coordinar"}`,
+    cobrar > 0 ? `💵 COBRAR: ${money(cobrar)}` : "💵 No hay que cobrar nada.",
+  ].join("\n");
+}
+
 const TURNOS_ENVIO = [
   { id: "Por la mañana", label: "Mañana" },
   { id: "Por la tarde", label: "Tarde" },
@@ -9616,19 +9974,9 @@ function mensajeParaElFleteVarias(grupos, nombreFlete) {
   const hola = nombreFlete ? `Hola ${String(nombreFlete).trim()}!` : "Hola!";
   let totalACobrar = 0;
   const bloques = lista.map((items, i) => {
-    const p = items[0] || {};
-    const bultos = items.reduce((t, x) => t + Math.max(1, Number(x.cant) || 0), 0);
-    const medidas = items.map((x) => (x.ancho && x.alto ? `${x.ancho}×${x.alto} cm` : "")).filter(Boolean).join(" · ");
-    const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
-    const aCobrar = items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
-      + items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
-    totalACobrar += aCobrar;
-    return [
-      `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
-      `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
-      `📦 ${bultos} ${bultos === 1 ? "espejo" : "espejos"}${medidas ? ` (${medidas})` : ""} · 🕐 ${p.horarioEntrega || "a coordinar"}`,
-      aCobrar > 0 ? `💵 COBRAR: ${money(aCobrar)}` : "💵 No cobra nada: está pagado.",
-    ].join("\n");
+    const b = bloqueEntregaPedido(items, i);
+    totalACobrar += b.aCobrar;
+    return b.texto;
   });
 
   return [
@@ -9639,6 +9987,49 @@ function mensajeParaElFleteVarias(grupos, nombreFlete) {
     totalACobrar > 0 ? `💰 Total a cobrar en la vuelta: ${money(totalACobrar)}` : "💰 No hay que cobrar nada en esta vuelta.",
     "",
     "¿Qué día las podés hacer?",
+  ].join("\n");
+}
+
+// Una entrega de un pedido dentro de la tanda (puede tener varios espejos).
+function bloqueEntregaPedido(items, i) {
+  const p = items[0] || {};
+  const bultos = items.reduce((t, x) => t + Math.max(1, Number(x.cant) || 0), 0);
+  const medidas = items.map((x) => (x.ancho && x.alto ? `${x.ancho}×${x.alto} cm` : "")).filter(Boolean).join(" · ");
+  const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
+  const aCobrar = items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
+    + items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+  const texto = [
+    `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
+    `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
+    `📦 ${bultos} ${bultos === 1 ? "espejo" : "espejos"}${medidas ? ` (${medidas})` : ""} · 🕐 ${p.horarioEntrega || "a coordinar"}`,
+    aCobrar > 0 ? `💵 COBRAR: ${money(aCobrar)}` : "💵 No cobra nada: está pagado.",
+  ].join("\n");
+  return { texto, aCobrar };
+}
+
+// La tanda con todo lo elegido en la tabla: entregas de pedidos y salidas
+// cargadas a mano (retiros, devoluciones, material…). Si son todas entregas
+// de pedidos queda el mensaje de siempre.
+function mensajeParaElFleteTanda(filas, nombreFlete) {
+  const lista = (filas || []).filter(Boolean);
+  if (!lista.length) return "";
+  if (!lista.some((f) => f.manual)) return mensajeParaElFleteVarias(lista.map((f) => f.items), nombreFlete);
+  const hola = nombreFlete ? `Hola ${String(nombreFlete).trim()}!` : "Hola!";
+  let total = 0;
+  const bloques = lista.map((f, i) => {
+    if (f.manual) { total += Number(f.m.cobrar) || 0; return bloqueSalidaManual(f.m, i); }
+    const b = bloqueEntregaPedido(f.items, i);
+    total += b.aCobrar;
+    return b.texto;
+  });
+  return [
+    `${hola} Te paso ${lista.length} ${lista.length === 1 ? "salida" : "salidas"} para coordinar.`,
+    "",
+    bloques.join("\n\n"),
+    "",
+    total > 0 ? `💰 Total a cobrar en la vuelta: ${money(total)}` : "💰 No hay que cobrar nada en esta vuelta.",
+    "",
+    `¿Qué día ${lista.length === 1 ? "la" : "las"} podés hacer?`,
   ].join("\n");
 }
 
@@ -9681,7 +10072,7 @@ function semanaActual() {
   return { hoy: iso(hoy), lunes: iso(lunes), domingo: iso(domingo) };
 }
 
-function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar }) {
+function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar, salidas = [], onChangeSalidas }) {
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
@@ -9698,6 +10089,40 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
     });
   }
   const [mapaPedido, setMapaPedido] = useState(null);
+  // Las salidas cargadas a mano (ver «SALIDAS CARGADAS A MANO»). Lo que se
+  // anota en el registro sale solo de lo que cambia en la lista.
+  const [formSalida, setFormSalida] = useState(null);
+  const listaSalidas = Array.isArray(salidas) ? salidas : [];
+  const manualesPendientes = listaSalidas.filter((m) => !m.hecho).filter((m) => {
+    const palabras = palabrasDeBusqueda(busqueda);
+    if (!palabras.length) return true;
+    const texto = sinAcentos([m.cliente, m.motivo, m.direccion, m.barrio, m.notas, tipoDeSalida(m).label].join(" "));
+    return palabras.every((w) => texto.includes(w) || coincideTelefono(m.telefono, w));
+  });
+  const puedeCargarSalidas = canEdit && !!onChangeSalidas;
+  function guardarSalida() {
+    const f = formSalida;
+    if (!f || !onChangeSalidas) return;
+    if (![f.cliente, f.direccion, f.motivo].some((x) => String(x || "").trim())) {
+      window.alert("Poné al menos el nombre, la dirección o qué hay que llevar o traer.");
+      return;
+    }
+    const limpio = { ...f, cliente: String(f.cliente || "").trim(), motivo: String(f.motivo || "").trim() };
+    if (f.id) onChangeSalidas(listaSalidas.map((m) => (m.id === f.id ? { ...m, ...limpio } : m)));
+    else onChangeSalidas([{ ...limpio, id: uid(), hecho: false, creado: new Date().toISOString() }, ...listaSalidas]);
+    setFormSalida(null);
+  }
+  function marcarSalidaHecha(m) {
+    const t = tipoDeSalida(m);
+    if (!window.confirm(`¿Marcás como ${t.verbo} «${t.label} — ${m.cliente || "sin nombre"}»?`)) return;
+    onChangeSalidas(listaSalidas.map((x) => (x.id === m.id ? { ...x, hecho: true, hechoFecha: isoLocal(new Date()) } : x)));
+    setFilaAbierta(null);
+  }
+  function borrarSalida(m) {
+    if (!window.confirm(`¿Borrás «${tipoDeSalida(m).label} — ${m.cliente || "sin nombre"}»? No se puede deshacer.`)) return;
+    onChangeSalidas(listaSalidas.filter((x) => x.id !== m.id));
+    setFilaAbierta(null);
+  }
   // Copiar cualquier texto dejando la marca de "copiado" dos segundos.
   function copiarTexto(texto, clave) {
     if (!navigator.clipboard) return;
@@ -9796,17 +10221,69 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
 
   return (
     <div className="dg-page">
-      <div className="dg-crm-filters"><Filter size={14} /><input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        {puedeCargarSalidas && !formSalida && (
+          <button type="button" className="dg-btn-primary dg-mini-btn dg-cargar-salida" onClick={() => setFormSalida(salidaManualVacia())}>
+            <Plus size={14} /> Cargar salida
+          </button>
+        )}
+      </div>
       <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((x) => <option key={x} value={x} />)}</datalist>
 
-      {(grupos.length > 0 || visitas.length > 0) && (() => {
+      {formSalida && (() => {
+        const t = tipoDeSalida(formSalida);
+        const set = (campo, valor) => setFormSalida((f) => ({ ...f, [campo]: valor }));
+        const que = formSalida.tipo === "retiro_material" ? "Qué hay que retirar"
+          : formSalida.tipo === "retiro_espejo" || formSalida.tipo === "devolucion" ? "Qué hay que traer"
+          : formSalida.tipo === "arreglo" ? "Qué hay que arreglar"
+          : "Qué hay que llevar";
+        return (
+          <div className="dg-section-card dg-salida-form">
+            <div className="dg-section-header"><Truck size={14} /> {formSalida.id ? "Editar la salida" : "Cargar una salida"}</div>
+            <EnterFlow onSubmit={guardarSalida} autoFocus={false}>
+              <div className="dg-field-grid">
+                <Field label="Qué es">
+                  <select value={formSalida.tipo === "colecta" ? "retiro_espejo" : formSalida.tipo} onChange={(e) => set("tipo", e.target.value)}>
+                    {Object.entries(TIPOS_SALIDA).map(([id, x]) => <option key={id} value={id}>{x.label}</option>)}
+                  </select>
+                </Field>
+                <Field label={t.quien}><input value={formSalida.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+                <Field label="Teléfono"><input inputMode="tel" value={formSalida.telefono} onChange={(e) => set("telefono", e.target.value)} placeholder="Ej: 11 2233 4455" /></Field>
+                <Field label="Día"><input type="date" value={formSalida.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+                <Field label="Horario">
+                  <select value={formSalida.horario} onChange={(e) => set("horario", e.target.value)}>
+                    <option value="">A coordinar</option>
+                    {TURNOS_ENVIO.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Barrio"><input value={formSalida.barrio} onChange={(e) => set("barrio", e.target.value)} /></Field>
+                <Field label="Dirección (calle y número)"><input value={formSalida.direccion} onChange={(e) => set("direccion", e.target.value)} /></Field>
+                <Field label="Piso / depto"><input value={formSalida.piso} onChange={(e) => set("piso", e.target.value)} /></Field>
+                <Field label={que}><input value={formSalida.motivo} onChange={(e) => set("motivo", e.target.value)} /></Field>
+                <Field label="A cobrar ($)"><input type="number" inputMode="decimal" value={formSalida.cobrar} onChange={(e) => set("cobrar", e.target.value)} placeholder="0" /></Field>
+                <Field label="Se lleva el flete ($)"><input type="number" inputMode="decimal" value={formSalida.flete} onChange={(e) => set("flete", e.target.value)} placeholder="0" /></Field>
+                <Field label="Lo lleva"><input list="dg-fleteros" value={formSalida.fletero} onChange={(e) => set("fletero", e.target.value)} placeholder="Nombre del flete" /></Field>
+                <Field label="Notas"><input value={formSalida.notas} onChange={(e) => set("notas", e.target.value)} /></Field>
+              </div>
+              <div className="dg-form-actions" style={{ marginTop: 10 }}>
+                <button type="button" className="dg-btn-ghost" onClick={() => setFormSalida(null)}>Cancelar</button>
+                <button type="button" className="dg-btn-primary" onClick={guardarSalida}><Check size={14} /> {formSalida.id ? "Guardar" : "Agregar a la lista"}</button>
+              </div>
+            </EnterFlow>
+          </div>
+        );
+      })()}
+
+      {(grupos.length > 0 || visitas.length > 0 || manualesPendientes.length > 0) && (() => {
         const semana = semanaActual();
         const filasEnvio = grupos
           .map((items) => {
             const p = items[0];
             const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
             return {
-              clave: p.grupoId || p.id, p, items, fecha, visita: false,
+              clave: p.grupoId || p.id, p, items, fecha, visita: false, grupo: 1,
               flex: items.some((x) => x.metodo === "Envío flex"),
               cliente: p.cliente || "Sin nombre",
               // Barrio y calle en una sola columna: son el mismo dato para el
@@ -9824,19 +10301,34 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
         // así la tabla no tiene que saber de dónde salió cada fila. Lo único
         // propio es el color y el cartelito.
         const filasVisita = visitas.map((r) => ({
-          clave: `visita-${r.id}`, r, visita: true, flex: false,
+          clave: `visita-${r.id}`, r, visita: true, flex: false, grupo: 2,
           fecha: r.fechaEnvio || "",
           cliente: r.cliente || "Sin nombre",
           donde: [r.barrio, r.detalleEntrega, r.piso].filter(Boolean).join(" · "),
           productos: r.tipo || "Reclamo",
           saldo: 0, flete: 0, fletePagado: false, falta: "",
         }));
-        const filas = [...filasEnvio, ...filasVisita]
-          // Por fecha; los que no tienen fecha, al final.
-          .sort((a, b) => (a.fecha || "9999") < (b.fecha || "9999") ? -1 : (a.fecha || "9999") > (b.fecha || "9999") ? 1 : 0);
+        const filasManual = manualesPendientes.map((m) => {
+          const t = tipoDeSalida(m);
+          return {
+            clave: `salida-${m.id}`, m, manual: true, tipo: t, grupo: t.grupo, visita: false, flex: false,
+            fecha: m.fecha || "",
+            cliente: m.cliente || t.quien,
+            donde: [m.barrio, m.direccion, m.piso].filter(Boolean).join(" · "),
+            productos: m.motivo || t.label,
+            saldo: Number(m.cobrar) || 0, flete: Number(m.flete) || 0, fletePagado: !!m.fletePagado, falta: "",
+          };
+        });
+        const filas = [...filasEnvio, ...filasVisita, ...filasManual]
+          // Por fecha (los que no tienen, al final) y, dentro del día, en el
+          // orden de GRUPOS_SALIDA: entregas, arreglos, retiros de espejos,
+          // devoluciones y retiros de material.
+          .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo);
         const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
         const atrasadas = filas.filter((f) => f.fecha && f.fecha < semana.hoy).length;
-        const elegidos = filas.filter((f) => !f.visita && seleccion.has(f.clave));
+        // Las visitas y los arreglos a domicilio los hacemos nosotros, no el
+        // flete: no entran en la tanda.
+        const elegidos = filas.filter((f) => f.grupo !== 2 && seleccion.has(f.clave));
         const totalSaldo = filas.reduce((t, f) => t + f.saldo, 0);
         const totalFlete = filas.reduce((t, f) => t + (f.fletePagado ? 0 : f.flete), 0);
         return (
@@ -9847,6 +10339,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                 <small>
                   {filasEnvio.length} {filasEnvio.length === 1 ? "pedido" : "pedidos"}
                   {filasVisita.length > 0 && ` · ${filasVisita.length} ${filasVisita.length === 1 ? "visita por reclamo" : "visitas por reclamo"}`}
+                  {filasManual.length > 0 && ` · ${filasManual.length} ${filasManual.length === 1 ? "cargada a mano" : "cargadas a mano"}`}
                   {estaSemana > 0 && ` · ${estaSemana} esta semana`}
                   {atrasadas > 0 && <span className="dg-envios-tabla-atraso"> · {atrasadas} pasados de fecha</span>}
                 </small>
@@ -9863,20 +10356,31 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                     </tr>
                   </thead>
                   <tbody>
-                    {filas.map((f) => {
+                    {filas.map((f, i) => {
                       const atrasada = f.fecha && f.fecha < semana.hoy;
                       const deSemana = f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo;
                       const abierta = filaAbierta === f.clave;
+                      // Un renglón por día con qué sale: «5 entregas · 2 retiros…».
+                      const empiezaDia = i === 0 || (filas[i - 1].fecha || "") !== (f.fecha || "");
+                      const delDia = empiezaDia ? filas.filter((x) => (x.fecha || "") === (f.fecha || "")) : [];
                       return (
                         <Fragment key={f.clave}>
+                        {empiezaDia && (
+                          <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""}`}>
+                            <td colSpan={8}>
+                              <b>{f.fecha ? fechaLargaCorta(f.fecha) : "A coordinar"}</b>
+                              <small>{delDia.length} {delDia.length === 1 ? "salida" : "salidas"} · {resumenDeSalidas(delDia)}</small>
+                            </td>
+                          </tr>
+                        )}
                         <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${f.manual && f.tipo.clase ? `dg-envios-fila-${f.tipo.clase}` : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
                           onClick={() => setFilaAbierta(abierta ? null : f.clave)}
                           aria-expanded={abierta}>
                           <td className="dg-sel-col">
                             {/* Las visitas por reclamo las hacemos nosotros, no el
                                 flete: no entran en la tanda. */}
-                            <input type="checkbox" className="dg-sel-check" disabled={f.visita}
+                            <input type="checkbox" className="dg-sel-check" disabled={f.grupo === 2}
                               checked={seleccion.has(f.clave)}
                               aria-label={`Elegir el envío de ${f.cliente}`}
                               onClick={(ev) => ev.stopPropagation()}
@@ -9884,7 +10388,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           </td>
                           <td className="dg-envios-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : <span className="dg-envios-falta">a coordinar</span>}</td>
                           <td className="dg-envios-nombre">
-                            {f.visita
+                            {f.manual
+                              ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver la salida"}>{f.cliente}</button><span className={`dg-envios-chip-tipo ${f.tipo.clase ? `dg-chip-${f.tipo.clase}` : ""}`}>{f.tipo.corto}</span></span>
+                              : f.visita
                               ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
                               : f.flex
                                 ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button><span className="dg-envios-chip-flex"><Zap size={11} /> Flex</span></span>
@@ -9893,12 +10399,12 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
                           <td className="dg-num" data-label="Saldo">
-                            {f.visita
+                            {f.visita || (f.manual && !f.saldo)
                               ? <span className="dg-envios-falta">—</span>
                               : (f.saldo > 0 ? money(f.saldo) : <span className="dg-envios-pagado">pagado</span>)}
                           </td>
                           <td className="dg-num" data-label="Flete">
-                            {f.visita
+                            {f.visita || (f.manual && !f.flete)
                               ? <span className="dg-envios-falta">—</span>
                               : f.flete > 0
                                 ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)}</span> : money(f.flete))
@@ -9912,8 +10418,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                               type="button"
                               className={`dg-envios-hecho ${f.falta ? "dg-envios-hecho-off" : ""}`}
                               disabled={!canEdit}
-                              title={f.visita ? "Ya fuimos al domicilio" : (f.falta || "Marcar este pedido como entregado")}
-                              onClick={(ev) => { ev.stopPropagation(); f.visita ? marcarVisitaHecha(f.r) : entregarDesdeLaTabla(f); }}>
+                              title={f.manual ? `Marcar como ${f.tipo.verbo}` : f.visita ? "Ya fuimos al domicilio" : (f.falta || "Marcar este pedido como entregado")}
+                              onClick={(ev) => { ev.stopPropagation(); if (f.manual) marcarSalidaHecha(f.m); else if (f.visita) marcarVisitaHecha(f.r); else entregarDesdeLaTabla(f); }}>
                               <Check size={15} />
                             </button>
                           </td>
@@ -9921,7 +10427,32 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                         {abierta && (
                           <tr className="dg-envios-detalle">
                             <td colSpan={8}>
-                              {f.visita ? (
+                              {f.manual ? (
+                                <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">{f.tipo.label}</div>
+                                    <ul className="dg-salida-plata">
+                                      <li><span>{f.tipo.quien}</span><b className="dg-salida-dato">{f.m.cliente || "—"}</b></li>
+                                      <li><span>Teléfono</span><b className="dg-salida-dato">{f.m.telefono || "—"}</b></li>
+                                      <li><span>Dónde</span><b className="dg-salida-dato">{f.donde || "—"}</b></li>
+                                      <li><span>Horario</span><b className="dg-salida-dato">{f.m.horario || "a coordinar"}</b></li>
+                                      <li><span>Qué</span><b className="dg-salida-dato">{f.m.motivo || "—"}</b></li>
+                                      {f.saldo > 0 && <li><span>A cobrar</span><b>{money(f.saldo)}</b></li>}
+                                      {f.flete > 0 && <li><span>Se lleva el flete</span><b>{money(f.flete)}</b></li>}
+                                      {f.m.fletero && <li><span>Lo lleva</span><b className="dg-salida-dato">{f.m.fletero}</b></li>}
+                                    </ul>
+                                    {f.m.notas && <p className="dg-salida-nota">{f.m.notas}</p>}
+                                  </div>
+                                  <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                    <div className="dg-form-actions">
+                                      {soloDigitos(f.m.telefono).length >= 6 && <a className="dg-btn-ghost dg-mini-btn" href={`tel:${soloDigitos(f.m.telefono)}`}><Phone size={13} /> Llamar</a>}
+                                      {waLink(f.m.telefono) && <a className="dg-btn-ghost dg-mini-btn" href={waLink(f.m.telefono)} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> WhatsApp</a>}
+                                      {puedeCargarSalidas && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFormSalida({ ...salidaManualVacia(), ...f.m })}><Pencil size={13} /> Editar</button>}
+                                      {puedeCargarSalidas && <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={() => borrarSalida(f.m)}><Trash2 size={13} /> Borrar</button>}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : f.visita ? (
                                 <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
                                   <label className="dg-envios-detalle-fecha">
                                     <span>Fecha de la visita</span>
@@ -10173,18 +10704,21 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                 hacen de verdad: no mandan los envíos de a uno, mandan la
                 vuelta del día. */}
             {elegidos.length > 0 && (() => {
-              const gruposElegidos = elegidos.map((f) => f.items);
+              // Las salidas a mano entran con su flete (si lo tienen) para
+              // saber si toda la tanda la lleva el mismo.
+              const gruposElegidos = elegidos.map((f) => (f.manual ? [{ fletero: f.m.fletero || "" }] : f.items));
               const nombre = fleteEnComun(gruposElegidos);
               const tel = nombre ? telDeFletero(pedidos, nombre) : "";
               const wa = waLink(tel);
-              const texto = mensajeParaElFleteVarias(gruposElegidos, nombre);
-              const aCobrar = elegidos.reduce((t, f) => t
-                + f.items.reduce((x, i) => x + Math.max(0, pedidoSaldo(i)), 0)
-                + f.items.reduce((mayor, i) => Math.max(mayor, envioPendientePedido(i)), 0), 0);
+              const texto = mensajeParaElFleteTanda(elegidos, nombre);
+              const aCobrar = elegidos.reduce((t, f) => t + (f.manual
+                ? (Number(f.m.cobrar) || 0)
+                : f.items.reduce((x, i) => x + Math.max(0, pedidoSaldo(i)), 0)
+                  + f.items.reduce((mayor, i) => Math.max(mayor, envioPendientePedido(i)), 0)), 0);
               return (
                 <div className="dg-sel-barra">
                   <span className="dg-sel-cuenta">
-                    <strong>{elegidos.length}</strong> {elegidos.length === 1 ? "envío elegido" : "envíos elegidos"}
+                    <strong>{elegidos.length}</strong> {elegidos.some((f) => f.manual) ? (elegidos.length === 1 ? "salida elegida" : "salidas elegidas") : (elegidos.length === 1 ? "envío elegido" : "envíos elegidos")}
                     {aCobrar > 0 && <small> · {money(aCobrar)} a cobrar</small>}
                     {!nombre && <small className="dg-sel-aviso"> · son de fletes distintos</small>}
                   </span>
@@ -10206,7 +10740,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
         );
       })()}
 
-      {grupos.length === 0 && visitas.length === 0 && <div className="dg-empty">No hay pedidos con envío pendientes.</div>}
+      {grupos.length === 0 && visitas.length === 0 && manualesPendientes.length === 0 && <div className="dg-empty">No hay salidas pendientes.</div>}
 
       {mapaPedido && (
         <ModalDestinoRecorrido
@@ -10994,7 +11528,10 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     onChangeExtra(listaExtra.map((e) => (e.id === id ? { ...e, hecho: !e.hecho, hechoFecha: !e.hecho ? new Date().toISOString().slice(0, 10) : "" } : e)));
   }
   function borrarExtra(id) { onChangeExtra(listaExtra.filter((e) => e.id !== id)); }
-  const extraPend = listaExtra.filter((e) => !e.hecho);
+  // En el orden de la tabla de PostVenta: por día y, en el día, entregas,
+  // arreglos, retiros, devoluciones y material.
+  const extraPend = listaExtra.filter((e) => !e.hecho)
+    .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || tipoDeSalida(a).grupo - tipoDeSalida(b).grupo);
   const extraHechos = listaExtra.filter((e) => e.hecho);
 
   const hoyIso = isoLocal(new Date());
@@ -11144,19 +11681,18 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
 
       {canEdit && (
         <div className="dg-section-card">
-          <div className="dg-section-header"><Truck size={14} /> Agregar envío / colecta particular</div>
+          <div className="dg-section-header"><Truck size={14} /> Agregar una salida (envío, cambio, retiro, devolución, material)</div>
           {!form ? (
             <div className="dg-form-actions">
               <button className="dg-btn-ghost" onClick={() => nuevoForm("envio")}><Plus size={14} /> Envío particular</button>
-              <button className="dg-btn-ghost" onClick={() => nuevoForm("colecta")}><Plus size={14} /> Colecta / retiro (reclamo, devolución, falla)</button>
+              <button className="dg-btn-ghost" onClick={() => nuevoForm("retiro_espejo")}><Plus size={14} /> Retiro, devolución o material</button>
             </div>
           ) : (
             <EnterFlow onSubmit={guardarExtra} autoFocus={false}>
               <div className="dg-field-grid">
                 <Field label="Tipo">
-                  <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
-                    <option value="envio">Envío particular</option>
-                    <option value="colecta">Colecta / retiro</option>
+                  <select value={form.tipo === "colecta" ? "retiro_espejo" : form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+                    {Object.entries(TIPOS_SALIDA).map(([id, x]) => <option key={id} value={id}>{x.label}</option>)}
                   </select>
                 </Field>
                 <Field label="Cliente"><input value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} /></Field>
@@ -11164,7 +11700,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                 <Field label="Fecha"><input type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} /></Field>
                 <Field label="Barrio"><input value={form.barrio} onChange={(e) => setForm({ ...form, barrio: e.target.value })} /></Field>
                 <Field label="Dirección (calle y número)"><input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} /></Field>
-                <Field label={form.tipo === "colecta" ? "Motivo (reclamo / devolución / falla)" : "Motivo / referencia"}><input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} /></Field>
+                <Field label="Qué hay que llevar o traer"><input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} /></Field>
                 <Field label="Notas"><input value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} /></Field>
               </div>
               <div className="dg-form-actions" style={{ marginTop: 10 }}>
@@ -11181,7 +11717,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
           {extraPend.map((e) => (
             <article className="dg-section-card dg-logistics-card dg-logistics-extra" key={e.id}>
               <div className="dg-logistics-head">
-                <span><Truck size={15} /> {e.tipo === "colecta" ? "Colecta / retiro" : "Envío particular"}</span>
+                <span className={`dg-logistics-tipo ${tipoDeSalida(e).clase ? `dg-chip-${tipoDeSalida(e).clase}` : ""}`}><Truck size={15} /> {tipoDeSalida(e).label}</span>
                 <time>{e.fecha || ""}</time>
               </div>
               <div className="dg-logistics-data">
@@ -11199,7 +11735,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                 <div className="dg-form-actions" style={{ marginTop: 8 }}>
                   {soloDigitos(e.telefono).length >= 6 && <a className="dg-btn-ghost dg-mini-btn" href={`tel:${soloDigitos(e.telefono)}`}><Phone size={13} /> Llamar</a>}
                   {waLink(e.telefono) && <a className="dg-btn-ghost dg-mini-btn" href={waLink(e.telefono)} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> WhatsApp</a>}
-                  <button className="dg-btn-primary dg-mini-btn" onClick={() => toggleHechoExtra(e.id)}><CheckCircle2 size={13} /> Marcar {e.tipo === "colecta" ? "retirado" : "entregado"}</button>
+                  <button className="dg-btn-primary dg-mini-btn" onClick={() => toggleHechoExtra(e.id)}><CheckCircle2 size={13} /> Marcar {tipoDeSalida(e).verbo}</button>
                   <button className="dg-icon-btn dg-task-del" onClick={() => borrarExtra(e.id)}><Trash2 size={14} /></button>
                 </div>
               )}
@@ -11334,7 +11870,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
           <div style={{ marginTop: 6 }}>
             {extraHechos.map((e) => (
               <div className="dg-pago-meta" key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0" }}>
-                <span style={{ flex: 1 }}>✓ {e.tipo === "colecta" ? "Colecta" : "Envío"} — {e.cliente || "—"}{e.direccion ? ` · ${e.direccion}` : ""}{e.hechoFecha ? ` · ${e.hechoFecha}` : ""}</span>
+                <span style={{ flex: 1 }}>✓ {tipoDeSalida(e).label} — {e.cliente || "—"}{e.direccion ? ` · ${e.direccion}` : ""}{e.hechoFecha ? ` · ${e.hechoFecha}` : ""}</span>
                 {canEdit && <button className="dg-icon-btn dg-task-del" onClick={() => borrarExtra(e.id)}><Trash2 size={13} /></button>}
               </div>
             ))}
@@ -12554,13 +13090,6 @@ const PARTE_TITULOS = [
   { id: "promesas", label: "Promesas con fecha que caen en los días del otro", pista: "" },
 ];
 
-// Las acciones del registro que son trabajo de PostVenta. El resto (fábrica,
-// finanzas) no se cuenta: ensucia el resumen del turno.
-const ACCIONES_POSTVENTA = [
-  "Avisó al cliente", "Confirmó un envío", "Marcó entregado",
-  "Facturó un pedido completo", "Verificó un pedido", "Editó los datos de entrega",
-];
-
 /* ===========================================================================
    MISIONES DEL SISTEMA
    Tareas que Facundo escribe para un día, normalmente el día anterior. Le
@@ -12752,13 +13281,19 @@ function quienLaHizo(m) {
    porque hasta el 13/10/2026 no había otros.
    =========================================================================== */
 
+// Desde el 26/10/2026 el ingreso es automático para todos (lo pidió Facundo):
+// el turno se abre solo la primera vez que entran a su sector en el día. Antes
+// PostVenta y Ventas tenían que tocar «Marcar ingreso» y no podían trabajar
+// hasta hacerlo. Lo que hacen después queda en el registro, con la hora.
 const SECTORES_CON_TURNO = {
-  postventa: { label: "PostVenta", entrada: "manual" },
-  ventas: { label: "Ventas", entrada: "manual" },
-  // En fábrica no se ficha a mano: el turno se abre solo la primera vez que
-  // entran a la app. Están con las manos en el vidrio, no mirando la pantalla.
+  postventa: { label: "PostVenta", entrada: "automatica" },
+  ventas: { label: "Ventas", entrada: "automatica" },
   fabrica: { label: "Fábrica", entrada: "automatica" },
 };
+// Desde qué hora se abre solo. Antes de las 6 o después del cierre (19:00)
+// no: alguien que mira la app desde la casa a la noche no está entrando a
+// trabajar.
+const HORA_APERTURA_AUTOMATICA = 6;
 const HORA_CIERRE_AUTOMATICO = 19;
 
 // La bajada del parte. En PostVenta y Ventas lo que importa son las promesas;
@@ -12769,12 +13304,8 @@ const INTRO_DEL_PARTE = {
   fabrica: "Esto lo lee el que entra mañana. Contá cómo queda el taller.",
 };
 
-// Qué cosas se le anotan solas a cada sector, para explicarlo en su idioma.
-const LO_QUE_SE_ANOTA = {
-  postventa: "cuando avisás a un cliente, confirmás un envío, facturás o marcás una entrega",
-  ventas: "cuando cargás o editás un pedido, o cuando lo verificás",
-  fabrica: "cuando movés un espejo de paso en las listas del taller",
-};
+// Desde el 26/10 se anota todo lo que cambia un dato, en todos los sectores.
+const LO_QUE_SE_ANOTA = "todo lo que cambiás en la app, con la hora";
 
 function sectorDelTurno(t) { return t?.sector || "postventa"; }
 
@@ -12849,14 +13380,6 @@ const PARTE_POR_SECTOR = {
   ],
 };
 
-// Las acciones del registro que cuentan como trabajo de cada sector. El resto
-// no se suma: ensucia el resumen del turno con cosas de otro.
-const ACCIONES_POR_SECTOR = {
-  postventa: ACCIONES_POSTVENTA,
-  ventas: ["Cargó un pedido", "Editó un pedido", "Verificó un pedido", "Facturó un pedido completo"],
-  fabrica: ["Actualizó producción", "Reabrió producción"],
-};
-
 function minutosEntre(desde, hasta) {
   const a = new Date(desde).getTime(), b = new Date(hasta).getTime();
   if (Number.isNaN(a) || Number.isNaN(b) || b < a) return 0;
@@ -12871,22 +13394,39 @@ function horaCorta(iso) {
   return Number.isNaN(d.getTime()) ? "--:--" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// Qué hizo esta persona mientras estuvo el turno abierto. Sale del registro
-// de actividad, que ya guardaba quién y a qué hora: no hay que anotar nada.
-function loHechoEnElTurno(auditoria, turno) {
-  if (!turno) return [];
-  const desde = new Date(turno.inicio).getTime();
-  const hasta = turno.fin ? new Date(turno.fin).getTime() : Date.now();
-  const mio = (a) => String(a.quien || "").toLowerCase().includes(String(turno.persona || "").toLowerCase());
+// Lo que hizo esta persona mientras estuvo el turno abierto, contado por tipo
+// de acción. Desde el 26/10 cuenta TODO lo que hizo, no una lista de acciones
+// por sector. Entrar, tildar tareas y cerrar no se cuentan acá: las tareas ya
+// van aparte en el parte.
+const ACCIONES_DEL_TURNO = new Set(["Entró", "Cerró el turno", "Tildó una tarea"]);
+function contarAcciones(acciones) {
   const cuenta = new Map();
-  (auditoria || []).forEach((a) => {
-    const t = new Date(a.fecha).getTime();
-    if (Number.isNaN(t) || t < desde || t > hasta) return;
-    if (!(ACCIONES_POR_SECTOR[sectorDelTurno(turno)] || ACCIONES_POSTVENTA).includes(a.accion)) return;
-    if (turno.persona && !mio(a)) return;
+  (acciones || []).forEach((a) => {
+    if (ACCIONES_DEL_TURNO.has(a.accion)) return;
     cuenta.set(a.accion, (cuenta.get(a.accion) || 0) + 1);
   });
   return [...cuenta.entries()].map(([accion, n]) => ({ accion, n })).sort((a, b) => b.n - a.n);
+}
+function accionesDelTurno(auditoria, turno) {
+  return turno ? accionesDeLaPersona(auditoria, turno.persona, turno.inicio, turno.fin) : [];
+}
+function loHechoEnElTurno(auditoria, turno) {
+  return contarAcciones(accionesDelTurno(auditoria, turno));
+}
+// Lo que hizo, hora por hora. Se usa en el turno abierto y en el archivo.
+function LineaDeAcciones({ acciones, cargando }) {
+  if (cargando) return <p className="dg-hint" style={{ margin: "8px 0 0" }}>Buscando lo que hizo…</p>;
+  if (!acciones || !acciones.length) return <p className="dg-hint" style={{ margin: "8px 0 0" }}>No quedó ninguna acción anotada en este turno.</p>;
+  return (
+    <ol className="dg-linea-acciones">
+      {acciones.map((a) => (
+        <li key={a.id}>
+          <time>{horaCorta(a.fecha)}</time>
+          <span><b>{a.accion}</b>{a.detalle ? <small> — {a.detalle}</small> : null}</span>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 // El turno que está abierto ahora para esta persona. Si se pasa un sector,
@@ -12927,33 +13467,6 @@ function textoDelParte(turno, pasos, hecho) {
   });
   return lineas.join("\n").trim();
 }
-// PostVenta no se abre sin marcar el ingreso. Es la única forma de saber a qué
-// hora arrancaron y de que el parte del turno signifique algo. El
-// administrador no pasa por acá: tiene que poder mirar sin fichar.
-function PuertaDeTurno({ persona, onIngreso, onBack, sectorNombre }) {
-  return (
-    <div className="dg-page">
-      <div className="dg-section-card dg-puerta-turno">
-        <div className="dg-puerta-icono"><CalendarClock size={26} /></div>
-        <div>
-          <strong>Hola {persona}. Marcá tu ingreso para entrar{sectorNombre ? ` a ${sectorNombre}` : ""}.</strong>
-          <span>
-            Desde que lo tocás, la app empieza a anotar sola lo que vas haciendo y arma el parte
-            para el que entra después. Sin esto, el turno no queda registrado y tu compañero
-            arranca a ciegas.
-          </span>
-          <div className="dg-puerta-botones">
-            <button type="button" className="dg-btn-primary" onClick={onIngreso}>
-              <CalendarClock size={15} /> Marcar ingreso y entrar
-            </button>
-            <button type="button" className="dg-btn-ghost" onClick={onBack}>Volver al edificio</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // El panel de tareas que se abre desde el botón redondo, igual que el chat.
 // Sirve para ir tildando mientras trabajan en cualquier pantalla, sin tener
 // que volver a «Mi turno».
@@ -13059,6 +13572,20 @@ function agruparTurnos(turnos) {
 
 function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin }) {
   const carpetas = agruparTurnos(turnos);
+  // Lo cargado son los últimos 4 días. Un turno más viejo se pide a la base
+  // recién cuando alguien lo abre (y una sola vez).
+  const [deLaBase, setDeLaBase] = useState({});
+  const accionesDe = (t) => {
+    const cargadas = accionesDelTurno(auditoria, t);
+    return cargadas.length ? cargadas : (deLaBase[t.id] || []);
+  };
+  function buscarSiHaceFalta(t) {
+    if (deLaBase[t.id] || accionesDelTurno(auditoria, t).length) return;
+    setDeLaBase((prev) => ({ ...prev, [t.id]: "cargando" }));
+    registroStore.entre(t.inicio, t.fin || new Date().toISOString())
+      .then((filas) => setDeLaBase((prev) => ({ ...prev, [t.id]: accionesDeLaPersona(filas, t.persona, t.inicio, t.fin) })))
+      .catch(() => setDeLaBase((prev) => ({ ...prev, [t.id]: [] })));
+  }
   // Si es uno solo el que tiene turnos, no tiene sentido hacerlo abrir carpetas.
   const [personasAbiertas, setPersonasAbiertas] = useState(() => new Set(carpetas.length === 1 ? [carpetas[0].persona] : []));
   const [mesesAbiertos, setMesesAbiertos] = useState(() => new Set());
@@ -13110,7 +13637,7 @@ function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin })
                           return (
                             <li key={t.id}>
                               <div className="dg-archivo-dia">
-                                <button type="button" className="dg-archivo-dia-btn" onClick={() => alternar(turnosAbiertos, setTurnosAbiertos, t.id)} aria-expanded={verParte}>
+                                <button type="button" className="dg-archivo-dia-btn" onClick={() => { if (!verParte) buscarSiHaceFalta(t); alternar(turnosAbiertos, setTurnosAbiertos, t.id); }} aria-expanded={verParte}>
                                   <ChevronRight size={12} className={verParte ? "dg-presu-chevron-on" : ""} />
                                   <b>{diaYmes(t.fecha || t.inicio)}</b>
                                   <span>{horaCorta(t.inicio)} a {horaCorta(t.fin)}</span>
@@ -13121,7 +13648,20 @@ function ArchivoDeTurnos({ turnos, pasos, auditoria, onCopiar, yoSoy, isAdmin })
                                 {t.aperturaAutomatica && <span className="dg-archivo-auto" title="Se abrió solo al entrar a la app">abrió solo</span>}
                                 <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => onCopiar(t)}><Copy size={12} /> Copiar</button>
                               </div>
-                              {verParte && <pre className="dg-turno-parte">{textoDelParte(t, pasos, loHechoEnElTurno(auditoria, t))}</pre>}
+                              {verParte && (() => {
+                                const acciones = accionesDe(t);
+                                const cargando = acciones === "cargando";
+                                const lista = cargando ? [] : acciones;
+                                return (
+                                  <>
+                                    <pre className="dg-turno-parte">{textoDelParte(t, pasos, contarAcciones(lista))}</pre>
+                                    <div className="dg-turno-linea dg-turno-linea-archivo">
+                                      <div className="dg-salida-tit">Hora por hora</div>
+                                      <LineaDeAcciones acciones={lista} cargando={cargando} />
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </li>
                           );
                         })}
@@ -13491,7 +14031,9 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
 
   // Los turnos de otros que están abiertos en este momento.
   const otrosAdentro = lista.filter((t) => !t.fin && String(t.persona || "") !== String(persona || ""));
-  const hecho = loHechoEnElTurno(auditoria, abierto);
+  const accionesAbierto = accionesDelTurno(auditoria, abierto);
+  const hecho = contarAcciones(accionesAbierto);
+  const cerroHoy = lista.some((t) => t.fin && String(t.persona || "") === String(persona || "") && t.fecha === isoLocal(new Date()));
   // Los pasos de ESTA persona: los generales más los que tienen su nombre.
   const misPasos = pasosDePersona(pasos, persona);
   // Y lo que la app ve que hay para hacer hoy, mirando los pedidos de verdad.
@@ -13521,12 +14063,15 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
             {otrosAdentro.map((t) => {
               const suyos = pasosDePersona(pasos, t.persona);
               const hechas = suyos.filter((p) => (t.tareas || {})[p.id]).length;
+              const suyas = accionesDelTurno(auditoria, t).filter((a) => !ACCIONES_DEL_TURNO.has(a.accion));
+              const ultima = suyas[suyas.length - 1];
               return (
                 <li key={t.id}>
                   <span className="dg-turno-punto" aria-hidden="true" />
                   <b>{t.persona || "Sin nombre"}</b>
                   <span>entró a las {horaCorta(t.inicio)} · lleva {horasYminutos(minutosEntre(t.inicio, new Date().toISOString()))}</span>
                   <span className="dg-turno-cuenta">{hechas} de {suyos.length} tareas</span>
+                  <span className="dg-turno-cuenta">{suyas.length ? `${suyas.length} ${suyas.length === 1 ? "acción" : "acciones"} · la última a las ${horaCorta(ultima.fecha)}` : "sin acciones todavía"}</span>
                 </li>
               );
             })}
@@ -13537,11 +14082,13 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
       {!abierto ? (
         <div className="dg-section-card dg-turno-entrar">
           <div>
-            <strong>Hola {persona}. Marcá tu ingreso para arrancar.</strong>
-            <span>Desde ese momento la app va anotando sola lo que vas haciendo, y al salir te arma el parte para el que entra después.</span>
+            <strong>{cerroHoy ? `Ya cerraste tu turno de hoy, ${persona}.` : `Hola ${persona}. Tu turno no está abierto.`}</strong>
+            <span>{cerroHoy
+              ? "Si volviste a trabajar, abrilo de nuevo."
+              : "Se abre solo cuando entrás a tu sector, de 6 a 19. Si estás trabajando fuera de ese horario, abrilo vos."}</span>
           </div>
           <button type="button" className="dg-btn-primary" onClick={marcarIngreso}>
-            <CalendarClock size={15} /> Marcar ingreso
+            <CalendarClock size={15} /> Abrir mi turno
           </button>
         </div>
       ) : (
@@ -13560,8 +14107,14 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
               </div>
             ) : (
               <p className="dg-hint" style={{ margin: "10px 0 0" }}>
-                Todavía no quedó registrada ninguna acción en este turno. Se anotan solas: {LO_QUE_SE_ANOTA[sectorId] || LO_QUE_SE_ANOTA.postventa}.
+                Todavía no quedó registrada ninguna acción en este turno. Se anota solo {LO_QUE_SE_ANOTA}.
               </p>
+            )}
+            {accionesAbierto.length > 0 && (
+              <details className="dg-turno-linea">
+                <summary>Lo que hiciste, hora por hora ({accionesAbierto.length})</summary>
+                <LineaDeAcciones acciones={accionesAbierto} />
+              </details>
             )}
           </div>
 
@@ -19118,19 +19671,30 @@ function SectorPage({
     onChangeMisiones((misiones || []).map((x) => (x.id === m.id ? { ...x, hecha, hechaPor } : x)));
   }
 
-  // En fábrica no se ficha a mano: apenas entran a la pantalla se les abre el
-  // turno. El cierre sí lo hacen ellos a la tarde, y si se olvidan se cierra
-  // solo a las 19:00. El administrador no ficha: entra a mirar.
+  // Nadie ficha a mano: apenas entran a la pantalla se les abre el turno. El
+  // cierre sí lo hacen ellos a la tarde, y si se olvidan se cierra solo a las
+  // 19:00. El administrador no ficha: entra a mirar.
+  //   · Solo en SU sector: un encargado de PostVenta que se asoma a Ventas no
+  //     abre un turno de Ventas.
+  //   · Solo de 6 a 19: mirar la app a la noche no es entrar a trabajar.
+  //   · Una vez por día: si ya cerró el turno de hoy no se le vuelve a abrir
+  //     al instante (se reabría solo apenas lo cerraba). Si volvió, lo abre él
+  //     desde «Mi turno».
   const entradaAuto = (SECTORES_CON_TURNO[sector.id] || {}).entrada === "automatica";
   const personaAuto = session?.role === "sector" ? (session?.nombre || "") : "";
+  const esSuSector = !session?.sectorId || session.sectorId === sector.id || !tieneTurno(session.sectorId);
   const yaTieneTurno = !!turnoAbiertoDe(turnos, personaAuto, sector.id);
+  const hoyTurno = isoLocal(new Date());
+  const yaTuvoHoy = (Array.isArray(turnos) ? turnos : []).some((t) => String(t.persona || "") === personaAuto && sectorDelTurno(t) === sector.id && t.fecha === hoyTurno);
+  const horaAhora = new Date().getHours();
+  const enHorario = horaAhora >= HORA_APERTURA_AUTOMATICA && horaAhora < HORA_CIERRE_AUTOMATICO;
   useEffect(() => {
-    if (!entradaAuto || !personaAuto || yaTieneTurno) return;
+    if (!entradaAuto || !personaAuto || !esSuSector || yaTieneTurno || yaTuvoHoy || !enHorario) return;
     onChangeTurnos([nuevoTurno(personaAuto, sector.id, true), ...(Array.isArray(turnos) ? turnos : [])]);
     // La lista de turnos queda fuera de las dependencias a propósito: con ella
     // adentro el efecto se volvería a disparar y abriría un segundo turno.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entradaAuto, personaAuto, yaTieneTurno, sector.id]);
+  }, [entradaAuto, personaAuto, esSuSector, yaTieneTurno, yaTuvoHoy, enHorario, sector.id]);
   const Icon = ICONS[sector.icon];
   const { key } = getStatus(sector.tasks);
   const glow = STATUS[key].glow;
@@ -19148,22 +19712,6 @@ function SectorPage({
   const restringidoAFabrica = session?.role === "sector" && session.sectorId === "fabrica";
   if (restringidoAFabrica && sector.id !== "fabrica") {
     return <SinAccesoSector nombre={sector.name} motivo="Tu usuario de Fábrica solo puede ver y trabajar dentro de Fábrica." onBack={onBack} />;
-  }
-  // PostVenta y Ventas piden el ingreso antes de dejar entrar. Solo a la gente
-  // del sector: el administrador mira sin fichar. Y si el usuario no tiene
-  // nombre cargado no se traba, porque no habría a quién atribuirle el turno.
-  // Fábrica no pasa por acá: su turno se abre solo (más arriba, en el efecto).
-  const personaTurno = session?.nombre || "";
-  const pideFichar = (SECTORES_CON_TURNO[sector.id] || {}).entrada === "manual";
-  if (pideFichar && session?.role === "sector" && personaTurno && !turnoAbiertoDe(turnos, personaTurno, sector.id)) {
-    return (
-      <PuertaDeTurno
-        persona={personaTurno}
-        sectorNombre={sector.name}
-        onBack={onBack}
-        onIngreso={() => onChangeTurnos([nuevoTurno(personaTurno, sector.id), ...(Array.isArray(turnos) ? turnos : [])])}
-      />
-    );
   }
   // Administración es solo para administradores: nadie más entra, ni a mirar.
   if (sector.id === "administracion" && !isAdmin) {
@@ -19339,7 +19887,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "postventa" && (
-        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
+        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
       )}
 
@@ -19398,6 +19946,11 @@ function Style() {
            confundían con los flex. */
         --dg-flex:#F2CC4E; --dg-flex-rgb:242,204,78;
         --dg-visita:#B79CE8; --dg-visita-rgb:183,156,232;
+        /* Las salidas cargadas a mano, cada tipo con su color. */
+        --dg-cambio:#5FC9C0; --dg-cambio-rgb:95,201,192;
+        --dg-retiro:#7DA7F5; --dg-retiro-rgb:125,167,245;
+        --dg-devolucion:#F0955A; --dg-devolucion-rgb:240,149,90;
+        --dg-material:#B9A58C; --dg-material-rgb:185,165,140;
         --dg-danger:#E37B6C; --dg-danger-rgb:227,123,108;
         --dg-estado-grabado:#7FB3D4; --dg-estado-bisel:#A99AD6; --dg-estado-biseladora:#E0A96B;
         --dg-interior:#B98CFF; --dg-interior-rgb:185,140,255; --dg-on-interior:#1E1033;
@@ -19428,6 +19981,10 @@ function Style() {
            oscuro (--dg-flex), para que se lea sobre crema. */
         --dg-flex:#7A5C00; --dg-flex-rgb:230,184,0;
         --dg-visita:#5E43A0; --dg-visita-rgb:118,84,196;
+        --dg-cambio:#14665F; --dg-cambio-rgb:32,150,140;
+        --dg-retiro:#244F9E; --dg-retiro-rgb:60,110,210;
+        --dg-devolucion:#8F4512; --dg-devolucion-rgb:215,110,40;
+        --dg-material:#5C4D3A; --dg-material-rgb:140,120,92;
         --dg-danger:#B04A3D; --dg-danger-rgb:176,74,61;
         --dg-estado-grabado:#2F6E93; --dg-estado-bisel:#5B4C86; --dg-estado-biseladora:#8A5A2A;
         --dg-interior:#6A2BD0; --dg-interior-rgb:106,43,208; --dg-on-interior:#FFFFFF;
@@ -19817,6 +20374,45 @@ function Style() {
       .dg-envios-chip-visita { display:inline-flex; align-items:center; gap:3px; padding:1px 7px; border-radius:100px; background:rgba(var(--dg-visita-rgb),.20); color:color-mix(in srgb, var(--dg-visita) 55%, var(--dg-text)); font-size:11px; font-weight:600; white-space:nowrap; }
       .dg-envios-chip-flex { display:inline-flex; align-items:center; gap:3px; flex:0 0 auto; padding:1px 7px; border-radius:100px; background:rgba(var(--dg-flex-rgb),.24); color:color-mix(in srgb, var(--dg-flex) 55%, var(--dg-text)); font-size:11px; font-weight:700; white-space:nowrap; }
       .dg-envios-visita-nombre .dg-envios-nombre-btn { min-width:0; }
+      /* Las salidas cargadas a mano: fondo, franja y cartelito de su color.
+         Van después de atrasada/semana, igual que flex y las visitas. */
+      .dg-envios-fila-cambio { background:rgba(var(--dg-cambio-rgb),.14); }
+      .dg-envios-fila-cambio > td:first-child { box-shadow:inset 3px 0 0 rgb(var(--dg-cambio-rgb)); }
+      .dg-envios-fila-retiro { background:rgba(var(--dg-retiro-rgb),.14); }
+      .dg-envios-fila-retiro > td:first-child { box-shadow:inset 3px 0 0 rgb(var(--dg-retiro-rgb)); }
+      .dg-envios-fila-devolucion { background:rgba(var(--dg-devolucion-rgb),.14); }
+      .dg-envios-fila-devolucion > td:first-child { box-shadow:inset 3px 0 0 rgb(var(--dg-devolucion-rgb)); }
+      .dg-envios-fila-material { background:rgba(var(--dg-material-rgb),.16); }
+      .dg-envios-fila-material > td:first-child { box-shadow:inset 3px 0 0 rgb(var(--dg-material-rgb)); }
+      .dg-envios-chip-tipo { display:inline-flex; align-items:center; flex:0 0 auto; padding:1px 7px; border-radius:100px; background:rgba(var(--dg-line-rgb),.12); color:var(--dg-text-dim); font-size:11px; font-weight:700; white-space:nowrap; }
+      .dg-chip-cambio { background:rgba(var(--dg-cambio-rgb),.24); color:color-mix(in srgb, var(--dg-cambio) 55%, var(--dg-text)); }
+      .dg-chip-visita { background:rgba(var(--dg-visita-rgb),.24); color:color-mix(in srgb, var(--dg-visita) 55%, var(--dg-text)); }
+      .dg-chip-retiro { background:rgba(var(--dg-retiro-rgb),.24); color:color-mix(in srgb, var(--dg-retiro) 55%, var(--dg-text)); }
+      .dg-chip-devolucion { background:rgba(var(--dg-devolucion-rgb),.24); color:color-mix(in srgb, var(--dg-devolucion) 55%, var(--dg-text)); }
+      .dg-chip-material { background:rgba(var(--dg-material-rgb),.26); color:color-mix(in srgb, var(--dg-material) 55%, var(--dg-text)); }
+      /* El renglón de cada día: qué sale ese día, contado por tipo. */
+      .dg-envios-tabla tbody tr.dg-envios-dia { cursor:default; }
+      .dg-envios-tabla tbody tr.dg-envios-dia:hover { background:transparent; }
+      .dg-envios-dia > td { padding:10px 12px 6px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.05); white-space:normal; }
+      .dg-envios-dia b { font-size:13px; font-weight:700; color:var(--dg-text); text-transform:capitalize; }
+      .dg-envios-dia small { margin-left:10px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-envios-dia-atrasado b { color:color-mix(in srgb, var(--dg-danger) 70%, var(--dg-text)); }
+      .dg-cargar-salida { margin-left:auto; }
+      .dg-salida-form { margin-bottom:14px; }
+      /* Lo que hizo cada uno, hora por hora (Mi turno, archivo y Ajustes). */
+      .dg-linea-acciones { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:3px; font-size:13px; }
+      .dg-linea-acciones li { display:grid; grid-template-columns:44px minmax(0,1fr); gap:8px; align-items:baseline; padding:3px 0; border-top:1px solid rgba(var(--dg-line-rgb),.07); }
+      .dg-linea-acciones li:first-child { border-top:0; }
+      .dg-linea-acciones time { font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; }
+      .dg-linea-acciones b { font-weight:600; color:var(--dg-text); }
+      .dg-linea-acciones small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-linea-acciones em { font-style:normal; font-size:12px; color:var(--dg-text-dim); }
+      .dg-turno-linea { margin-top:12px; }
+      .dg-turno-linea > summary { cursor:pointer; font-size:13px; font-weight:600; color:var(--dg-text-dim); }
+      .dg-turno-linea-archivo { margin:8px 0 4px; }
+      .dg-registro-dia { margin-bottom:16px; }
+      /* En Logística, el tipo de la salida con su color. */
+      .dg-logistics-tipo { display:inline-flex; align-items:center; gap:6px; padding:2px 9px; border-radius:100px; }
       .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
       /* La tabla de reclamos tiene una columna menos y textos más largos. */
       .dg-reclamos-tabla { min-width:700px; }
@@ -20454,14 +21050,10 @@ function Style() {
       /* Los números de PostVenta: lo de "ahora mismo" va aparte porque no
          depende del período que estén mirando. */
       /* --- Mi turno (PostVenta) --- */
-      /* La puerta del turno */
-      .dg-puerta-turno { display:flex; align-items:flex-start; gap:18px; max-width:620px; margin:40px auto 0; padding:26px; }
+      /* El ícono redondo de la puerta (hoy solo la del link de seguimiento: la
+         del turno se fue el 26/10, cuando el ingreso pasó a ser automático). */
       .dg-puerta-icono { flex:none; width:54px; height:54px; border-radius:50%; display:flex; align-items:center; justify-content:center;
         background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-accent-2); }
-      .dg-puerta-turno > div:last-child { display:flex; flex-direction:column; gap:8px; min-width:0; }
-      .dg-puerta-turno strong { font-family:'Jost',sans-serif; font-size:20px; font-weight:600; color:var(--dg-text); }
-      .dg-puerta-turno span { font-size:14px; line-height:1.55; color:var(--dg-text-dim); }
-      .dg-puerta-botones { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
       /* El botón redondo de tareas, arriba del chat */
       .dg-fab-tareas { position:fixed; z-index:45;
         left:calc(18px + env(safe-area-inset-left, 0px)); bottom:calc(82px + env(safe-area-inset-bottom, 0px));
@@ -22538,6 +23130,15 @@ function Style() {
         /* Las franjas del costado las llevaba la primera celda; ahora la fila. */
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-visita { box-shadow:inset 3px 0 0 rgb(var(--dg-visita-rgb)); }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-flex { box-shadow:inset 3px 0 0 rgb(var(--dg-flex-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-cambio { box-shadow:inset 3px 0 0 rgb(var(--dg-cambio-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-retiro { box-shadow:inset 3px 0 0 rgb(var(--dg-retiro-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-devolucion { box-shadow:inset 3px 0 0 rgb(var(--dg-devolucion-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-material { box-shadow:inset 3px 0 0 rgb(var(--dg-material-rgb)); }
+        /* El renglón del día también es ficha: a todo el ancho. */
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody > .dg-envios-dia { display:block; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody > .dg-envios-dia > td { display:block; padding:10px 14px 6px; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-dia small { display:block; margin:2px 0 0; }
+        .dg-cargar-salida { margin-left:0; flex:1 1 100%; justify-content:center; }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-elegida { box-shadow:inset 3px 0 0 var(--dg-accent); }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle { display:block; }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle > td { display:block; padding:0 14px 14px; }
