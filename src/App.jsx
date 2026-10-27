@@ -8214,7 +8214,10 @@ function validarPedido(p) {
   return errores;
 }
 
-function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio, stockEspejos, onChangeStockEspejos }) {
+function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio, stockEspejos, onChangeStockEspejos, desdePresupuesto, onPresupuestoUsado }) {
+  // Los espejos de un presupuesto que faltan cargar: cada «Guardar y cargar
+  // otro espejo» toma el siguiente.
+  const colaPresupuesto = useRef([]);
   // El pedido al que se le está cargando un pago (ver «PAGOS DEL PEDIDO»).
   const [pagandoGrupo, setPagandoGrupo] = useState(null);
   function registrarPago(espejos, pago) {
@@ -8245,6 +8248,18 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   const [openPedido, setOpenPedido] = useState(null);
   const [creating, setCreating] = useState(false);
   const [nuevoTipoAbierto, setNuevoTipoAbierto] = useState(false);
+  // Llegó un presupuesto para pasar a pedido: se abre el pedido nuevo con el
+  // cliente y el primer espejo; los demás quedan en la cola.
+  useEffect(() => {
+    if (!desdePresupuesto || !canEditFull) return;
+    const [primero, ...resto] = desdePresupuesto.espejos || [];
+    colaPresupuesto.current = resto;
+    setAvisoEspejo(null);
+    setNextDraft({ ...emptyPedido({ tipoPedido: "venta", cliente: desdePresupuesto.cliente, celular: desdePresupuesto.celular, tipoFactura: desdePresupuesto.tipoFactura }), ...(primero || {}) });
+    setCreating(true);
+    if (onPresupuestoUsado) onPresupuestoUsado();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desdePresupuesto]);
   const [verificando, setVerificando] = useState(null);
   const [nextDraft, setNextDraft] = useState(null);
   // Cuando venís de "guardar y cargar otro", esto avisa cuál ya quedó guardado.
@@ -8354,6 +8369,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     }
 
     if (opts?.addAnother) {
+      const delPresupuesto = colaPresupuesto.current.shift() || {};
       // Cuántos espejos tiene ya este pedido, para numerar el que sigue.
       const yaGuardados = pedidosActualizados.filter((p) => p.grupoId === toSave.grupoId).length;
       setOpenPedido(null);
@@ -8364,7 +8380,9 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         vendedor: toSave.vendedor, tipoFactura: toSave.tipoFactura, metodo: toSave.metodo, barrio: toSave.barrio, detalleEntrega: toSave.detalleEntrega, piso: toSave.piso,
         tipoPedido: toSave.tipoPedido, urgente: toSave.urgente, reclamoId: toSave.reclamoId, sinCargo: toSave.sinCargo,
       }));
+      if (Object.keys(delPresupuesto).length) setNextDraft((d) => ({ ...d, ...delPresupuesto }));
     } else {
+      colaPresupuesto.current = [];
       setOpenPedido(null); setCreating(false); setNextDraft(null); setAvisoEspejo(null);
     }
   }
@@ -8824,7 +8842,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           vendedores={vendedores}
           canEditFull={canEditFull}
           canEditEstadoOnly={canEditEstadoOnly}
-          onClose={() => { setOpenPedido(null); setCreating(false); setNextDraft(null); setAvisoEspejo(null); }}
+          onClose={() => { setOpenPedido(null); setCreating(false); setNextDraft(null); setAvisoEspejo(null); colaPresupuesto.current = []; }}
           onSave={savePedido}
           onDelete={openPedido && puedeBorrar ? () => removePedido(openPedido.id) : null}
           stockEspejos={stockEspejos}
@@ -19546,6 +19564,60 @@ function MovimientoRapidoModal({ onClose, onGuardar, driveUrl }) {
   );
 }
 
+// ===== PRESUPUESTOS QUE SE SIGUEN (27/10/2026) ===============================
+// Antes un presupuesto guardado solo se podía mirar (los últimos 12) o borrar.
+// Ahora tiene estado, avisa cuando lleva días sin respuesta, se puede volver a
+// abrir tal cual y pasar a pedido sin cargar todo de nuevo.
+const ESTADOS_PRESUPUESTO = {
+  esperando: { label: "Esperando respuesta", corto: "Esperando" },
+  aceptado: { label: "Aceptado", corto: "Aceptado" },
+  perdido: { label: "No se cerró", corto: "Perdido" },
+};
+// A los cuántos días sin respuesta se avisa.
+const DIAS_PRESUPUESTO_SIN_RESPUESTA = 2;
+const FORMA_DESDE_PRESUPUESTO = {
+  Rectangular: "Rectangular", Redondo: "Circular", "Pastilla/Oval": "Pastilla", Pastilla: "Pastilla",
+  Ovalado: "Ovalado", "Puntas Curvas": "P. Curvas", "Orgánico": "Orgánico", Soft: "Soft Orgánico", Irregular: "Otro",
+};
+// Un espejo del presupuesto con los campos de un pedido. `monto` es el de esa
+// línea (precio × cantidad), ya redondeado como en el presupuesto.
+function espejoDePresupuestoAPedido(e, monto) {
+  const fila = TIPO_PRODUCTO_TABLE[e?.tipoProducto] || TIPO_PRODUCTO_TABLE["Rectangular Simple"];
+  let forma = FORMA_DESDE_PRESUPUESTO[fila.display] || "Otro";
+  let aclaracionTaller = "";
+  if (fila.display === "Capilla") {
+    forma = e.capillaCurva === "Curva abajo" ? "Capilla Abajo" : e.capillaCurva === "Curva a la izquierda" ? "Capilla Izquierda" : e.capillaCurva === "Curva arriba" ? "Capilla Arriba" : "Otro";
+    if (forma === "Otro") aclaracionTaller = `Capilla: ${String(e.capillaCurva || "").toLowerCase()}`;
+  }
+  if (fila.display === "Irregular") aclaracionTaller = "Forma irregular: ver el presupuesto";
+  const bt = String(e?.bluetoothSel || "");
+  return {
+    ancho: e?.ancho ?? "", alto: e?.alto ?? "",
+    cant: Math.max(1, Number(e?.cantidad) || 1),
+    forma,
+    tipo: fila.esmerilado !== "Ninguno" ? "Esm." : e?.sinLed ? "Sin led" : "Simple",
+    touch: e?.touch === "Doble" ? "Doble touch (frontal + perimetral)" : e?.touch === "Sí" ? "Touch" : "No",
+    desemp: e?.desemp === "Sí" ? "Desempañante" : "No",
+    desempTipo: e?.desempTipo || "Touch",
+    desempCantidad: 1 + (Number(e?.panelesAdicionales) || 0),
+    horaTemp: e?.horaTemp === "Sí" ? "Hora y Temperatura" : "No",
+    bluetooth: bt === "Bluetooth 2 parlantes" ? "Bluetooth 2 parlantes" : bt === "Bluetooth 1 parlante" ? "Bluetooth 1 parlante" : "No",
+    tono: e?.sinLed ? "Sin led" : "3 tonos",
+    monto: monto ? String(Math.round(monto)) : "",
+    ...(aclaracionTaller ? { aclaracionTaller } : {}),
+  };
+}
+// Días de calendario (no horas): el de ayer es «hace 1 día» a cualquier hora.
+function diasDesdeIso(iso) {
+  const [y, m, d] = String(iso || "").slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return 0;
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round((hoy.getTime() - new Date(y, m - 1, d).getTime()) / 86400000));
+}
+function mensajeSeguimientoPresupuesto(q) {
+  return `Hola${q.cliente && q.cliente !== "Sin nombre" ? ` ${q.cliente}` : ""}! 👋 ¿Pudiste ver el presupuesto que te pasamos (${q.resumen})? Si tenés alguna duda o querés cambiar algo, escribinos y lo vemos.`;
+}
+
 function nuevoEspejoPresupuesto(base) {
   return {
     id: uid(),
@@ -19597,7 +19669,7 @@ function etiquetaEspejo(espejo, i) {
 // De menor a mayor demora: para un presupuesto con varios espejos vale el más lento.
 const ORDEN_TIEMPOS = ["5 a 7 días hábiles", "10 a 12 días hábiles", "25 días hábiles"];
 
-function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) {
+function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin, onPasarAPedido }) {
   const [cliente, setCliente] = useState("");
   const [celular, setCelular] = useState("");
   const [tipoCliente, setTipoCliente] = useState("Consumidor Final");
@@ -19689,11 +19761,51 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
       })),
       cantidad: unidades,
       precioTransferencia: totalTransferencia, precio3Cuotas: total3Cuotas,
+      // Desde el 27/10: el estado, todo lo cargado (para volver a abrirlo) y
+      // cada espejo ya traducido a pedido (para pasarlo sin cargar de nuevo).
+      estado: "esperando",
+      entradas: { tipoCliente, envioInterior, efectivoSinFactura, espejos },
+      paraPedido: {
+        efectivo: efectivoSinFactura,
+        espejos: lineas.map((l) => espejoDePresupuestoAPedido(l.espejo, efectivoSinFactura
+          ? roundTo1000(l.result.precioEfectivoSinIva * cant(l.espejo))
+          : roundTo1000(l.result.totalPedidoTransferencia))),
+      },
     };
     onQuotesChange([q, ...quotes]);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
   function removeQuote(id) { onQuotesChange(quotes.filter((q) => q.id !== id)); }
+  function cambiarEstadoQuote(id, estado) {
+    onQuotesChange(quotes.map((q) => (q.id === id ? { ...q, estado, estadoFecha: new Date().toISOString().slice(0, 10) } : q)));
+  }
+  // Vuelve a cargar el presupuesto tal cual en la calculadora de arriba.
+  function reabrirQuote(q) {
+    const en = q.entradas;
+    if (!en) return;
+    setCliente(q.cliente === "Sin nombre" ? "" : q.cliente || "");
+    setCelular(q.celular || "");
+    setTipoCliente(en.tipoCliente || "Consumidor Final");
+    setEnvioInterior(en.envioInterior || "No");
+    setEfectivoSinFactura(!!en.efectivoSinFactura);
+    setEspejos((en.espejos || []).map((e) => ({ ...nuevoEspejoPresupuesto(e), id: uid() })));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function pasarAPedido(q) {
+    if (!onPasarAPedido || !q.paraPedido) return;
+    cambiarEstadoQuote(q.id, "aceptado");
+    onPasarAPedido({
+      cliente: q.cliente === "Sin nombre" ? "" : q.cliente || "",
+      celular: q.celular || "",
+      tipoFactura: q.paraPedido.efectivo ? "Efectivo / No" : "Cons. Final / B",
+      espejos: q.paraPedido.espejos || [],
+    });
+  }
+  // La lista: primero los que esperan respuesta (todos), después los últimos
+  // 12 del resto. Los viejos (de antes del 27/10) no tienen estado.
+  const esperando = quotes.filter((q) => q.estado === "esperando");
+  const sinRespuesta = esperando.filter((q) => diasDesdeIso(q.fecha) >= DIAS_PRESUPUESTO_SIN_RESPUESTA);
+  const listaQuotes = [...esperando, ...quotes.filter((q) => q.estado !== "esperando").slice(0, 12)];
 
   return (
     <div className="dg-page">
@@ -19923,17 +20035,40 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin }) 
       {quotes.length > 0 && (
         <div className="dg-quotes-history">
           <div className="dg-quote-section-title"><ClipboardList size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />Cotizaciones guardadas</div>
-          <div className="dg-task-list">
-            {quotes.slice(0, 12).map((q) => (
-              <div className="dg-task dg-pago-row" key={q.id}>
-                <div className="dg-pago-info">
-                  <span>{q.cliente} — {q.resumen || `${q.tipoProducto} ${q.medida} cm${q.cantidad > 1 ? ` ×${q.cantidad}` : ""}`}</span>
-                  <span className="dg-pago-meta">{q.fecha}</span>
+          {sinRespuesta.length > 0 && (
+            <p className="dg-presu-aviso"><AlertTriangle size={13} /> {sinRespuesta.length} {sinRespuesta.length === 1 ? "presupuesto lleva" : "presupuestos llevan"} {DIAS_PRESUPUESTO_SIN_RESPUESTA} días o más sin respuesta. Escribiles para saber si siguen interesados.</p>
+          )}
+          <div className="dg-presu-guardados">
+            {listaQuotes.map((q) => {
+              const dias = diasDesdeIso(q.fecha);
+              const tarde = q.estado === "esperando" && dias >= DIAS_PRESUPUESTO_SIN_RESPUESTA;
+              const wa = waLink(q.celular);
+              return (
+                <div className={`dg-presu-guardado ${tarde ? "dg-presu-guardado-tarde" : ""} ${q.estado ? `dg-presu-${q.estado}` : ""}`} key={q.id}>
+                  <div className="dg-presu-guardado-fila">
+                    <div className="dg-pago-info">
+                      <span>{q.cliente} — {q.resumen || `${q.tipoProducto} ${q.medida} cm${q.cantidad > 1 ? ` ×${q.cantidad}` : ""}`}</span>
+                      <span className="dg-pago-meta">{fechaEntregaCorta(q.fecha) || q.fecha}{dias > 0 ? ` · hace ${dias} ${dias === 1 ? "día" : "días"}` : " · hoy"}{tarde ? " · sin respuesta" : ""}</span>
+                    </div>
+                    <span className="dg-pago-monto">{fmtMoney(roundTo1000(q.precioTransferencia))}</span>
+                  </div>
+                  <div className="dg-presu-guardado-acciones">
+                    <select value={q.estado || ""} onChange={(e) => cambiarEstadoQuote(q.id, e.target.value)} aria-label="Estado del presupuesto">
+                      {!q.estado && <option value="">Sin estado</option>}
+                      {Object.entries(ESTADOS_PRESUPUESTO).map(([id, x]) => <option key={id} value={id}>{x.label}</option>)}
+                    </select>
+                    {q.estado === "esperando" && wa && (
+                      <a className="dg-btn-ghost dg-mini-btn" href={`${wa}?text=${encodeURIComponent(mensajeSeguimientoPresupuesto(q))}`} target="_blank" rel="noopener noreferrer">
+                        <MessageCircle size={13} /> Escribirle
+                      </a>
+                    )}
+                    {q.entradas && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => reabrirQuote(q)}><RotateCcw size={13} /> Reabrir</button>}
+                    {q.paraPedido && onPasarAPedido && <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => pasarAPedido(q)}><ShoppingCart size={13} /> Pasar a pedido</button>}
+                    <button className="dg-icon-btn dg-task-del" onClick={() => removeQuote(q.id)} aria-label="Borrar el presupuesto"><Trash2 size={14} /></button>
+                  </div>
                 </div>
-                <span className="dg-pago-monto">{fmtMoney(roundTo1000(q.precioTransferencia))}</span>
-                <button className="dg-icon-btn dg-task-del" onClick={() => removeQuote(q.id)}><Trash2 size={14} /></button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -20331,6 +20466,9 @@ function SectorPage({
 }) {
   const tabs = (SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }]).filter((t) => !t.soloAdmin || isAdmin);
   const [subpage, setSubpage] = useState(tabs[0].id);
+  // Un presupuesto que se está pasando a pedido (ver «PRESUPUESTOS QUE SE
+  // SIGUEN»): el presupuestador lo deja acá y Pedidos lo abre.
+  const [presupuestoAPedido, setPresupuestoAPedido] = useState(null);
   // Las misiones de hoy que esta persona todavía no vio. El cartel sale una
   // sola vez; después quedan en «Mi turno» hasta marcarlas hechas.
   const personaMision = session?.nombre || "";
@@ -20458,7 +20596,8 @@ function SectorPage({
       )}
 
       {subpage === "presupuestador" && (
-        canQuote ? <QuotePage config={quoteConfig} onConfigChange={onChangeQuoteConfig} quotes={quotes} onQuotesChange={onChangeQuotes} isAdmin={isAdmin} />
+        canQuote ? <QuotePage config={quoteConfig} onConfigChange={onChangeQuoteConfig} quotes={quotes} onQuotesChange={onChangeQuotes} isAdmin={isAdmin}
+          onPasarAPedido={canSeePedidos ? (datos) => { setPresupuestoAPedido(datos); setSubpage("pedidos"); } : undefined} />
           : <LockedPage label="El Presupuestador" onLogin={onRequestLogin} />
       )}
 
@@ -20492,7 +20631,8 @@ function SectorPage({
 
       {subpage === "pedidos" && sector.id !== "fabrica" && (
         canSeePedidos ? (
-          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} kommoSubdominio={kommoSubdominio} stockEspejos={stockEspejos} onChangeStockEspejos={onChangeStockEspejos} />
+          <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} kommoSubdominio={kommoSubdominio} stockEspejos={stockEspejos} onChangeStockEspejos={onChangeStockEspejos}
+            desdePresupuesto={presupuestoAPedido} onPresupuestoUsado={() => setPresupuestoAPedido(null)} />
         ) : <LockedPage label="Pedidos" onLogin={onRequestLogin} />
       )}
 
@@ -22221,6 +22361,18 @@ function Style() {
       .dg-aclaracion-campo textarea { width:100%; box-sizing:border-box; }
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+      /* Los presupuestos guardados, con su estado y lo que se puede hacer. */
+      .dg-presu-aviso { display:flex; align-items:center; gap:6px; margin:0 0 10px; padding:8px 11px; border-radius:10px; font-size:13px; font-weight:600; background:rgba(var(--dg-warning-rgb),.14); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
+      .dg-presu-guardados { display:flex; flex-direction:column; gap:8px; }
+      .dg-presu-guardado { padding:10px 12px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:12px; background:var(--dg-surface); }
+      .dg-presu-guardado-tarde { border-color:rgba(var(--dg-warning-rgb),.5); box-shadow:inset 3px 0 0 var(--dg-warning); }
+      .dg-presu-aceptado { box-shadow:inset 3px 0 0 var(--dg-success); }
+      .dg-presu-perdido { opacity:.7; }
+      .dg-presu-guardado-fila { display:flex; align-items:center; gap:10px; }
+      .dg-presu-guardado-fila .dg-pago-info { flex:1 1 auto; min-width:0; }
+      .dg-presu-guardado-acciones { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:8px; }
+      .dg-presu-guardado-acciones select { padding:5px 8px; border-radius:8px; border:1px solid rgba(var(--dg-line-rgb),.18); background:var(--dg-surface-2); color:var(--dg-text); font-size:13px; }
+      .dg-presu-guardado-acciones .dg-task-del { margin-left:auto; }
       /* El historial de pagos de la venta. */
       .dg-order-entrega-btn { display:flex; flex-wrap:wrap; gap:8px; }
       .dg-pagos { margin:10px 0 12px; padding:10px 12px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:12px; }
