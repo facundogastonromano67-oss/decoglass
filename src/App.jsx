@@ -850,6 +850,7 @@ const SECTOR_SUBPAGES = {
     { id: "reclamos", label: "Reclamos" },
     { id: "envios", label: "Envíos" },
     { id: "interior", label: "Envíos al interior" },
+    { id: "retiros", label: "Retiros en el local" },
     { id: "numeros", label: "Números" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "guia", label: "Guía y tareas" },
@@ -10859,6 +10860,263 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   );
 }
 
+/* ===========================================================================
+   RETIROS EN EL LOCAL (PostVenta › Retiros en el local, 27/10/2026)
+   Los pedidos que el cliente pasa a buscar. Hasta ahora no tenían lista en
+   PostVenta: solo un filtro en Pedidos, y nadie veía de un vistazo a quién
+   había que avisar ni quién venía hoy. Es la misma tabla que Envíos: una fila
+   por pedido (aunque tenga varios espejos), se abre tocándola y el ✓ lo da por
+   retirado con la MISMA regla que una entrega (avisado y cobrando el saldo).
+   =========================================================================== */
+const DIRECCION_LOCAL = "José Mármol 1660, Capital Federal";
+
+// El aviso de «ya está listo» para un pedido que se retira, con todos sus
+// espejos y lo que queda por pagar.
+function mensajeRetiro(items) {
+  const lista = items || [];
+  const p = lista[0] || {};
+  const espejos = lista
+    .map((e) => `• ${Number(e.cant) > 1 ? `${e.cant}× ` : ""}${e.ancho && e.alto ? `${e.ancho}×${e.alto} cm` : "espejo"}${e.forma ? ` ${String(e.forma).toLowerCase()}` : ""}`)
+    .join("\n");
+  const cuando = p.fechaEnvio
+    ? `Te esperamos el ${fechaLargaCorta(p.fechaEnvio)}${p.horarioEntrega ? ` (${String(p.horarioEntrega).toLowerCase()})` : ""}.`
+    : "¿Qué día y en qué horario pasás a buscarlo?";
+  return [
+    `Hola${p.cliente ? ` ${p.cliente}` : ""}! 👋 ${lista.length > 1 ? "Tus espejos ya están listos" : "Tu espejo ya está listo"} para retirar:`,
+    "",
+    espejos,
+    "",
+    `📍 ${DIRECCION_LOCAL}`,
+    cuando,
+    "",
+    detalleCobroEntregaGrupo(lista),
+  ].join("\n");
+}
+
+function RetirosPanel({ pedidos, onChange, canEdit, onCreateIncome, onRegistrar }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [filaAbierta, setFilaAbierta] = useState(null);
+  const [copiado, setCopiado] = useState(null);
+
+  const deRetiro = (pedidos || []).filter((p) => p.metodo === "Retira" && p.estado !== "Entregado" && p.estado !== "Cancelado");
+  // Un pedido = una fila, aunque tenga varios espejos.
+  const agrupar = (lista) => {
+    const m = new Map();
+    lista.forEach((p) => {
+      const clave = p.grupoId || p.id;
+      if (!m.has(clave)) m.set(clave, []);
+      m.get(clave).push(p);
+    });
+    return [...m.values()].map((items) => items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0)));
+  };
+  // Para retirar: los que tienen TODO listo. Los que todavía tienen algo en
+  // fábrica se cuentan arriba, pero no se avisan: el cliente vendría a buscar
+  // la mitad.
+  const grupos = agrupar(filtrarPedidosConSuGrupo(deRetiro, busqueda));
+  const listos = grupos.filter((items) => items.every(pedidoEstaListo));
+  const enFabrica = grupos.length - listos.length;
+
+  function updateGrupo(p, patch) {
+    const grupo = p.grupoId || p.id;
+    onChange(pedidos.map((x) => ((x.grupoId || x.id) === grupo ? { ...x, ...patch } : x)));
+  }
+  function marcarAvisado(items) {
+    updateGrupo(items[0], { clienteAvisado: true, clienteAvisadoFecha: new Date().toISOString() });
+  }
+  function retiro(items) {
+    const prep = prepararEntregaDelGrupo(items);
+    if (prep.error) { window.alert(prep.error); return; }
+    if (prep.ingresos.length && !onCreateIncome) {
+      window.alert("No se puede registrar el cobro desde acá. Entregalo desde la tarjeta del pedido en Pedidos.");
+      return;
+    }
+    if (!window.confirm(`Lo retira ${items[0].cliente || "el cliente"}.
+
+${preguntaDeEntrega(prep)}`)) return;
+    if (prep.ingresos.length) onCreateIncome(prep.ingresos);
+    onChange(aplicarEntregaDelGrupo(pedidos, prep.ids));
+    if (onRegistrar) onRegistrar("Marcó retirado", `#${items[0].orden} — ${items[0].cliente} — ${prep.cuantos} espejo(s)`);
+    setFilaAbierta(null);
+  }
+  function copiarMensaje(items) {
+    const texto = mensajeRetiro(items);
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(texto).then(() => {
+      setCopiado(items[0].grupoId || items[0].id);
+      window.setTimeout(() => setCopiado(null), 2000);
+    });
+  }
+
+  const hoy = isoLocal(new Date());
+  const filas = listos.map((items) => {
+    const p = items[0];
+    return {
+      clave: p.grupoId || p.id, p, items,
+      cliente: p.cliente || "Sin nombre",
+      listoDesde: items.map((x) => String(x.produccionListaFecha || "").slice(0, 10)).filter(Boolean).sort().pop() || "",
+      productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
+      avisado: items.every((x) => x.clienteAvisado),
+      viene: p.fechaEnvio || "",
+      saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
+    };
+  })
+    // Primero los que vienen (por día), después los que todavía no dijeron cuándo.
+    .sort((a, b) => (a.viene || "9999").localeCompare(b.viene || "9999") || a.listoDesde.localeCompare(b.listoDesde));
+  const sinAvisar = filas.filter((f) => !f.avisado).length;
+  const vienenHoy = filas.filter((f) => f.viene === hoy).length;
+  const totalSaldo = filas.reduce((t, f) => t + f.saldo, 0);
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+      </div>
+
+      <div className="dg-section-card dg-envios-tabla-card dg-envios-tabla-abierta">
+        <div className="dg-envios-tabla-head dg-retiros-head">
+          <span className="dg-envios-tabla-tit">
+            <strong><Building2 size={14} /> Para retirar en el local</strong>
+            <small>
+              {filas.length} {filas.length === 1 ? "pedido listo" : "pedidos listos"}
+              {sinAvisar > 0 && <span className="dg-envios-tabla-atraso"> · {sinAvisar} sin avisar</span>}
+              {vienenHoy > 0 && ` · ${vienenHoy} ${vienenHoy === 1 ? "viene" : "vienen"} hoy`}
+              {enFabrica > 0 && ` · ${enFabrica} todavía en fábrica`}
+            </small>
+          </span>
+        </div>
+        {filas.length === 0 ? (
+          <div className="dg-empty" style={{ margin: 14 }}>{enFabrica > 0 ? "Ninguno está listo todavía: los que se retiran siguen en fábrica." : "No hay pedidos para retirar."}</div>
+        ) : (
+          <div className="dg-envios-tabla-scroll">
+            <table className="dg-envios-tabla dg-retiros-tabla">
+              <thead>
+                <tr>
+                  <th>Listo</th><th>Nombre</th><th>Teléfono</th><th>Productos</th>
+                  <th>Avisado</th><th>Viene</th><th className="dg-num">Saldo</th><th className="dg-envios-hecho-col">Retiró</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map((f) => {
+                  const abierta = filaAbierta === f.clave;
+                  const wa = waLink(f.p.celular);
+                  const vieneHoy = f.viene === hoy;
+                  const vencido = f.viene && f.viene < hoy;
+                  return (
+                    <Fragment key={f.clave}>
+                      <tr
+                        className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${vencido ? "dg-envios-fila-atrasada" : vieneHoy ? "dg-envios-fila-semana" : ""}`}
+                        onClick={() => setFilaAbierta(abierta ? null : f.clave)}
+                        aria-expanded={abierta}>
+                        <td className="dg-envios-fecha" data-label="Listo">{f.listoDesde ? fechaEntregaCorta(f.listoDesde) : <span className="dg-envios-falta">listo</span>}</td>
+                        <td className="dg-envios-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el retiro"}>{f.cliente}</button></td>
+                        <td className="dg-retiros-tel">{f.p.celular || <span className="dg-envios-falta">sin teléfono</span>}</td>
+                        <td className="dg-envios-productos">{f.productos}</td>
+                        <td>{f.avisado
+                          ? <span className="dg-retiro-chip dg-retiro-chip-ok"><Check size={11} /> avisado</span>
+                          : <span className="dg-retiro-chip dg-retiro-chip-falta">sin avisar</span>}</td>
+                        <td className="dg-envios-fecha" data-label="Viene">{f.viene
+                          ? `${vieneHoy ? "hoy" : fechaEntregaCorta(f.viene)}${f.p.horarioEntrega ? ` · ${TURNOS_ENVIO.find((t) => t.id === f.p.horarioEntrega)?.label || f.p.horarioEntrega}` : ""}`
+                          : <span className="dg-envios-falta">a coordinar</span>}</td>
+                        <td className="dg-num" data-label="Saldo">{f.saldo > 0 ? money(f.saldo) : <span className="dg-envios-pagado">pagado</span>}</td>
+                        <td className="dg-envios-hecho-col">
+                          <button
+                            type="button"
+                            className={`dg-envios-hecho ${f.avisado ? "" : "dg-envios-hecho-off"}`}
+                            disabled={!canEdit}
+                            title={f.avisado ? "Lo retiró" : "Antes de entregar, avisá al cliente que el pedido está listo."}
+                            onClick={(ev) => { ev.stopPropagation(); retiro(f.items); }}>
+                            <Check size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                      {abierta && (
+                        <tr className="dg-envios-detalle">
+                          <td colSpan={8}>
+                            <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
+                              <div className="dg-salida-bloque">
+                                <div className="dg-salida-tit">En qué anda</div>
+                                <ul className="dg-salida-checks">
+                                  <li className="dg-salida-ok">
+                                    <span className="dg-salida-marca" aria-hidden="true"><Check size={13} /></span>
+                                    {f.items.length > 1 ? `Los ${f.items.length} espejos listos` : "Espejo listo"}{f.listoDesde && <small> · {fechaEntregaCorta(f.listoDesde)}</small>}
+                                  </li>
+                                  <li className={f.avisado ? "dg-salida-ok" : ""}>
+                                    <span className="dg-salida-marca" aria-hidden="true">{f.avisado ? <Check size={13} /> : null}</span>
+                                    Cliente avisado{f.avisado && f.p.clienteAvisadoFecha && <small> · {fechaEntregaCorta(String(f.p.clienteAvisadoFecha).slice(0, 10))}</small>}
+                                  </li>
+                                  <li>
+                                    <span className="dg-salida-marca" aria-hidden="true" />
+                                    Retirado
+                                  </li>
+                                </ul>
+                              </div>
+                              <div className="dg-salida-bloque">
+                                <div className="dg-salida-tit">Cuándo viene</div>
+                                <div className="dg-salida-campos">
+                                  <label>
+                                    <span>Día</span>
+                                    <input type="date" disabled={!canEdit} value={f.p.fechaEnvio || ""} onChange={(e) => updateGrupo(f.p, { fechaEnvio: e.target.value })} />
+                                  </label>
+                                  <label>
+                                    <span>Horario</span>
+                                    <select disabled={!canEdit} value={TURNOS_ENVIO.some((t) => t.id === f.p.horarioEntrega) ? f.p.horarioEntrega : ""} onChange={(e) => updateGrupo(f.p, { horarioEntrega: e.target.value })}>
+                                      <option value="">A coordinar</option>
+                                      {TURNOS_ENVIO.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                                    </select>
+                                  </label>
+                                </div>
+                              </div>
+                              <div className="dg-salida-bloque">
+                                <div className="dg-salida-tit">La plata</div>
+                                <ul className="dg-salida-plata">
+                                  <li><span>Total</span><b>{money(f.items.reduce((t, x) => t + (Number(x.monto) || 0), 0))}</b></li>
+                                  <li><span>Pagó</span><b>{money(f.items.reduce((t, x) => t + (Number(x.anticipo) || 0), 0))}</b></li>
+                                  <li className="dg-salida-plata-total"><span>Cobrar cuando retira</span><b>{money(f.saldo)}</b></li>
+                                </ul>
+                              </div>
+                              <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                <div className="dg-form-actions">
+                                  {wa && (
+                                    <a className="dg-btn-primary dg-mini-btn" href={`${wa}?text=${encodeURIComponent(mensajeRetiro(f.items))}`} target="_blank" rel="noopener noreferrer"
+                                      onClick={() => { if (canEdit && !f.avisado) marcarAvisado(f.items); }}>
+                                      <MessageCircle size={13} /> {f.avisado ? "Mandarle el mensaje de nuevo" : "Avisarle que está listo"}
+                                    </a>
+                                  )}
+                                  {canEdit && !f.avisado && (
+                                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => marcarAvisado(f.items)}>
+                                      <Check size={13} /> Ya le avisé por otro lado
+                                    </button>
+                                  )}
+                                  {soloDigitos(f.p.celular).length >= 6 && <a className="dg-btn-ghost dg-mini-btn" href={`tel:${soloDigitos(f.p.celular)}`}><Phone size={13} /> Llamar</a>}
+                                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarMensaje(f.items)}>
+                                    {copiado === f.clave ? <Check size={13} /> : <Copy size={13} />} {copiado === f.clave ? "Copiado" : "Copiar el mensaje"}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={6}>Total a cobrar en los retiros</td>
+                  <td className="dg-num" data-label="Saldo">{money(totalSaldo)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FacturasManualesPanel({ facturas, onChange, isAdmin }) {
   const [nombre, setNombre] = useState("");
   const [monto, setMonto] = useState("");
@@ -20001,6 +20259,11 @@ function SectorPage({
           : <LockedPage label="Envíos al interior" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "retiros" && sector.id === "postventa" && (
+        canSeePedidos ? <RetirosPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
+          : <LockedPage label="Retiros en el local" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "envios" && sector.id === "logistica" && (
         canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} session={session} />
           : <LockedPage label="Envíos confirmados" onLogin={onRequestLogin} />
@@ -20504,6 +20767,22 @@ function Style() {
       .dg-envios-dia-atrasado b { color:color-mix(in srgb, var(--dg-danger) 70%, var(--dg-text)); }
       .dg-cargar-salida { margin-left:auto; }
       .dg-salida-form { margin-bottom:14px; }
+      /* Retiros en el local: misma tabla que Envíos, columnas propias. Los
+         nth-child son el ORDEN de las columnas. */
+      .dg-retiros-head { cursor:default; grid-template-columns:minmax(0,1fr); }
+      .dg-envios-tabla.dg-retiros-tabla { table-layout:fixed; min-width:720px; }
+      .dg-retiros-tabla thead th:nth-child(1) { width:72px; }
+      .dg-retiros-tabla thead th:nth-child(2) { width:20%; }
+      .dg-retiros-tabla thead th:nth-child(3) { width:118px; }
+      .dg-retiros-tabla thead th:nth-child(5) { width:104px; }
+      .dg-retiros-tabla thead th:nth-child(6) { width:118px; }
+      .dg-retiros-tabla thead th:nth-child(7) { width:104px; }
+      .dg-retiros-tabla thead th:nth-child(8) { width:62px; }
+      .dg-retiros-tabla .dg-envios-fila > td { max-width:none; }
+      .dg-retiros-tel { font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--dg-text-dim); }
+      .dg-retiro-chip { display:inline-flex; align-items:center; gap:3px; padding:1px 8px; border-radius:100px; font-size:11px; font-weight:700; white-space:nowrap; }
+      .dg-retiro-chip-ok { background:rgba(var(--dg-success-rgb),.16); color:color-mix(in srgb, var(--dg-success) 55%, var(--dg-text)); }
+      .dg-retiro-chip-falta { background:rgba(var(--dg-warning-rgb),.18); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
       /* Lo que hizo cada uno, hora por hora (Mi turno, archivo y Ajustes). */
       .dg-linea-acciones { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:3px; font-size:13px; }
       .dg-linea-acciones li { display:grid; grid-template-columns:44px minmax(0,1fr); gap:8px; align-items:baseline; padding:3px 0; border-top:1px solid rgba(var(--dg-line-rgb),.07); }
@@ -23216,41 +23495,41 @@ function Style() {
             columnas fijas le dejaba a «Dónde» 0,62 × ancho − 384px, o sea
             menos de 170px hasta que el contenedor pasa los ~900. */
       @media (max-width:960px) {
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) { display:block; width:100%; min-width:0; table-layout:auto; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) thead { display:none; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody,
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot { display:block; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila { display:grid; align-items:center; gap:4px 10px; padding:11px 14px; border-top:1px solid rgba(var(--dg-line-rgb),.08); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody > .dg-envios-fila:first-child { border-top:0; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila > td { display:block; width:auto; height:auto; min-width:0; max-width:none; padding:0; border:0; text-align:left; box-shadow:none; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) { display:block; width:100%; min-width:0; table-layout:auto; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) thead { display:none; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tbody,
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tfoot { display:block; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila { display:grid; align-items:center; gap:4px 10px; padding:11px 14px; border-top:1px solid rgba(var(--dg-line-rgb),.08); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tbody > .dg-envios-fila:first-child { border-top:0; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila > td { display:block; width:auto; height:auto; min-width:0; max-width:none; padding:0; border:0; text-align:left; box-shadow:none; }
         /* Abierta, el fondo va en la fila: en las celdas dejaba rayas en los
            huecos de la grilla. */
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-abierta { background:rgba(var(--dg-accent-rgb),.08); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-abierta > td { white-space:normal; overflow:visible; overflow-wrap:break-word; background:transparent; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-abierta { background:rgba(var(--dg-accent-rgb),.08); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-abierta > td { white-space:normal; overflow:visible; overflow-wrap:break-word; background:transparent; }
         /* break-word y no anywhere: con anywhere el nombre de una visita (que
            va en un flex con el chip «A domicilio») se dejaba aplastar hasta
            una letra por renglón. Y el chip baja abajo si no entra. */
         .dg-envios-tabla .dg-envios-visita-nombre { display:flex; flex-wrap:wrap; row-gap:4px; min-width:0; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) td[data-label]::before { content:attr(data-label); display:block; margin-bottom:1px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) td[data-label]::before { content:attr(data-label); display:block; margin-bottom:1px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
         /* Las franjas del costado las llevaba la primera celda; ahora la fila. */
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-visita { box-shadow:inset 3px 0 0 rgb(var(--dg-visita-rgb)); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-flex { box-shadow:inset 3px 0 0 rgb(var(--dg-flex-rgb)); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-cambio { box-shadow:inset 3px 0 0 rgb(var(--dg-cambio-rgb)); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-retiro { box-shadow:inset 3px 0 0 rgb(var(--dg-retiro-rgb)); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-devolucion { box-shadow:inset 3px 0 0 rgb(var(--dg-devolucion-rgb)); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-material { box-shadow:inset 3px 0 0 rgb(var(--dg-material-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-visita { box-shadow:inset 3px 0 0 rgb(var(--dg-visita-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-flex { box-shadow:inset 3px 0 0 rgb(var(--dg-flex-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-cambio { box-shadow:inset 3px 0 0 rgb(var(--dg-cambio-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-retiro { box-shadow:inset 3px 0 0 rgb(var(--dg-retiro-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-devolucion { box-shadow:inset 3px 0 0 rgb(var(--dg-devolucion-rgb)); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-material { box-shadow:inset 3px 0 0 rgb(var(--dg-material-rgb)); }
         /* El renglón del día también es ficha: a todo el ancho. */
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody > .dg-envios-dia { display:block; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tbody > .dg-envios-dia > td { display:block; padding:10px 14px 6px; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-dia small { display:block; margin:2px 0 0; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tbody > .dg-envios-dia { display:block; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tbody > .dg-envios-dia > td { display:block; padding:10px 14px 6px; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-dia small { display:block; margin:2px 0 0; }
         .dg-cargar-salida { margin-left:0; flex:1 1 100%; justify-content:center; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-fila-elegida { box-shadow:inset 3px 0 0 var(--dg-accent); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle { display:block; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) .dg-envios-detalle > td { display:block; padding:0 14px 14px; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot tr { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; padding:11px 14px; border-top:2px solid rgba(var(--dg-line-rgb),.18); }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot td { display:block; padding:0; border:0; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot td:first-child { flex:1 0 100%; }
-        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla) tfoot td:empty { display:none; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-elegida { box-shadow:inset 3px 0 0 var(--dg-accent); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-detalle { display:block; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-detalle > td { display:block; padding:0 14px 14px; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tfoot tr { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 16px; padding:11px 14px; border-top:2px solid rgba(var(--dg-line-rgb),.18); }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tfoot td { display:block; padding:0; border:0; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tfoot td:first-child { flex:1 0 100%; }
+        .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tfoot td:empty { display:none; }
         .dg-envios-tabla .dg-sel-check { width:20px; height:20px; }
         .dg-envios-tabla .dg-envios-hecho { width:36px; height:36px; }
 
@@ -23278,6 +23557,18 @@ function Style() {
         .dg-interior-tabla .dg-envios-fila > td:nth-child(5) { grid-area:esp; }
         .dg-interior-tabla .dg-envios-fila > td:nth-child(6) { grid-area:bul; }
         .dg-interior-tabla .dg-envios-fila > td:nth-child(7) { grid-area:estado; justify-self:end; }
+
+        /* Retiros: nombre · viene · retiró / teléfono · avisado / productos /
+           listo · saldo */
+        .dg-envios-tabla.dg-retiros-tabla .dg-envios-fila { grid-template-columns:minmax(0,1fr) auto 36px; grid-template-areas:"nombre viene retiro" "tel avisado retiro" "prod prod prod" "listo saldo saldo"; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(1) { grid-area:listo; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(2) { grid-area:nombre; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(3) { grid-area:tel; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(4) { grid-area:prod; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(5) { grid-area:avisado; justify-self:end; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(6) { grid-area:viene; justify-self:end; text-align:right; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(7) { grid-area:saldo; justify-self:end; text-align:right; }
+        .dg-retiros-tabla .dg-envios-fila > td:nth-child(8) { grid-area:retiro; justify-self:end; }
 
         /* Reclamos: cliente · estado / motivo / qué se le dijo / fecha · días */
         .dg-envios-tabla.dg-reclamos-tabla .dg-envios-fila { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"nombre estado" "prod prod" "dir dir" "fecha dias"; }
