@@ -216,6 +216,20 @@ export const documentosStore = {
     return ruta;
   },
 
+  // La foto de la orden en papel de una venta del local (27/10/2026). Va al
+  // mismo bucket privado que las facturas, en la carpeta del pedido. Llega ya
+  // achicada (comprimirImagen en App.jsx): unos 200 KB por foto.
+  async subirOrdenPapel(pedidoId, archivo) {
+    const ext = String(archivo.type || "").includes("png") ? "png" : "jpg";
+    const ruta = `${pedidoId}/orden-papel-${Date.now()}-${uid()}.${ext}`;
+    const { error } = await supabase.storage.from("facturas").upload(ruta, archivo, {
+      contentType: archivo.type || "image/jpeg",
+      upsert: true,
+    });
+    if (error) throw error;
+    return ruta;
+  },
+
   // Sube la foto/PDF de una factura de COMPRA, organizada por mes (según la
   // fecha de la factura) dentro del bucket "facturas": compras/YYYY-MM/...
   async subirFacturaCompra(archivo, mesISO) {

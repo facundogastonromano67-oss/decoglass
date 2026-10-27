@@ -1484,6 +1484,8 @@ function cambiosDeUnPedido(a, d) {
   const nFact = (p) => [p?.facturaUrl, ...(Array.isArray(p?.facturasExtra) ? p.facturasExtra : [])].filter(Boolean).length;
   if (nFact(d) > nFact(a)) pon("Subió una factura");
   if (nFact(d) < nFact(a)) pon("Quitó una factura");
+  if (ordenesPapelDe(d).length > ordenesPapelDe(a).length) pon("Subió la foto de la orden");
+  if (ordenesPapelDe(d).length < ordenesPapelDe(a).length) pon("Quitó la foto de la orden");
   if (["detalleEntrega", "barrio", "piso", "celular", "localidad", "provincia", "codigoPostal"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
   const plata = [];
   if (cambio(a, d, "monto")) plata.push(`monto ${money(Number(d.monto) || 0)}`);
@@ -6951,7 +6953,7 @@ const CAMPOS_DEL_PEDIDO = [
 // factura cubre el pedido completo (el link de seguimiento ya la muestra así).
 // Faltaban en la lista de arriba, así que «Editar cliente y entrega» las
 // descartaba al guardar: subían la factura, tocaban Guardar y desaparecía.
-const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "comision"];
+const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "comision"];
 
 // Un pedido puede tener MÁS DE UNA factura: a veces el cliente la pide en
 // dos partes (24/10/2026). La primera sigue en facturaUrl —así todo lo que ya
@@ -7696,6 +7698,7 @@ function FichaEspejoPaso({ pedido }) {
       )}
       {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
       <AclaracionesDelPedido pedido={pedido} />
+      <LinksOrdenPapel pedido={pedido} />
     </div>
   );
 }
@@ -7747,6 +7750,7 @@ function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio, onEd
           )}
           {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
           <AclaracionesDelPedido pedido={pedido} />
+          <LinksOrdenPapel pedido={pedido} />
           {tieneDesemp && onEditarCantidadDesemp && (
             <div className="dg-verif-desemp-cantidad">
               <span>¿Cuántos paneles desempañante lleva?</span>
@@ -9055,6 +9059,87 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
   );
 }
 
+// ===== LA ORDEN EN PAPEL (27/10/2026) ========================================
+// Las ventas del local se hacen en una orden de papel. Se le saca una foto y
+// queda guardada con el pedido: sirve para verificarlo antes de pasarlo a
+// fábrica, para que el taller la mire si tiene dudas y para cualquier reclamo.
+// Puede ser más de una foto (frente y dorso). Se achican antes de subir.
+const ordenesPapelDe = (p) => (Array.isArray(p?.ordenPapel) ? p.ordenPapel.filter(Boolean) : []);
+function OrdenPapelCampo({ pedido, canEdit, onCambiar }) {
+  const [subiendo, setSubiendo] = useState(false);
+  const [borrando, setBorrando] = useState("");
+  const [error, setError] = useState("");
+  const lista = ordenesPapelDe(pedido);
+  async function handleFile(e) {
+    const archivos = [...(e.target.files || [])];
+    if (!archivos.length) return;
+    setError(""); setSubiendo(true);
+    const subidas = [];
+    try {
+      for (const archivo of archivos) {
+        const chica = await comprimirImagen(archivo, 1600, 0.7);
+        subidas.push(await documentosStore.subirOrdenPapel(pedido.id, chica));
+      }
+    } catch (err) {
+      setError(subidas.length ? "Se subió una parte. Revisá la conexión y subí la que falta." : "No se pudo subir. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      if (subidas.length) onCambiar([...lista, ...subidas]);
+      setSubiendo(false);
+      e.target.value = "";
+    }
+  }
+  async function quitar(ruta, n) {
+    if (!window.confirm(lista.length > 1 ? `¿Quitar la foto ${n} de la orden?` : "¿Quitar la foto de la orden?")) return;
+    setError(""); setBorrando(ruta);
+    try {
+      await documentosStore.borrarFactura(ruta);
+      onCambiar(lista.filter((x) => x !== ruta));
+    } catch (err) {
+      setError("No se pudo quitar. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      setBorrando("");
+    }
+  }
+  return (
+    <div className="dg-factura-campo dg-facturas-lista">
+      {lista.map((ruta, i) => (
+        <div className="dg-factura-item" key={ruta}>
+          <BotonArchivo bucket="facturas" valor={ruta}>
+            <FileText size={13} /> {lista.length > 1 ? `Orden en papel · foto ${i + 1}` : "Ver la orden en papel"}
+          </BotonArchivo>
+          {canEdit && (
+            <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={() => quitar(ruta, i + 1)} disabled={!!borrando} aria-label={`Quitar la foto ${i + 1} de la orden`}>
+              {borrando === ruta ? <Loader2 size={13} className="dg-spin" /> : <Trash2 size={13} />} Quitar
+            </button>
+          )}
+        </div>
+      ))}
+      {canEdit && (
+        <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
+          {subiendo ? <Loader2 size={13} className="dg-spin" /> : <Camera size={13} />}
+          {subiendo ? "Subiendo..." : lista.length ? "Sumar otra foto" : "Sacar o subir la foto"}
+          <input type="file" accept="image/*" multiple onChange={handleFile} disabled={subiendo} style={{ display: "none" }} />
+        </label>
+      )}
+      {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
+    </div>
+  );
+}
+// Para mirarla desde Ventas y Fábrica, sin poder tocarla.
+function LinksOrdenPapel({ pedido }) {
+  const lista = ordenesPapelDe(pedido);
+  if (!lista.length) return null;
+  return (
+    <div className="dg-orden-papel">
+      {lista.map((ruta, i) => (
+        <BotonArchivo key={ruta} bucket="facturas" valor={ruta} className="dg-btn-ghost dg-mini-btn">
+          <FileText size={13} /> {lista.length > 1 ? `Orden en papel ${i + 1}` : "Ver la orden en papel"}
+        </BotonArchivo>
+      ))}
+    </div>
+  );
+}
+
 // Las facturas del pedido: se ven todas, se quita cualquiera, y se suman de a
 // una o varias juntas (se pueden elegir varios PDF a la vez). onCambiar
 // recibe la lista entera, en orden.
@@ -9439,6 +9524,9 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             </Field>
             <Field label="Facturas (PDF)">
               <SubirFacturaCampo pedido={draft} canEdit={canEditFull} onCambiar={(lista) => { const c = camposDeFacturas(lista); set("facturaUrl", c.facturaUrl); set("facturasExtra", c.facturasExtra); }} />
+            </Field>
+            <Field label="Orden en papel (foto)">
+              <OrdenPapelCampo pedido={draft} canEdit={canEditFull} onCambiar={(lista) => set("ordenPapel", lista)} />
             </Field>
             <Field label="Comisión">
               <div className="dg-comision-info">
@@ -15274,6 +15362,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
           {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
+          <LinksOrdenPapel pedido={p} />
         </div>
 
         <div className="dg-fab-zona-proceso">
@@ -15403,6 +15492,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             )}
             {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
+          <LinksOrdenPapel pedido={p} />
 
             <div className="dg-fab-multi-pasos">
               {PASOS.map((paso, k) => {
@@ -21964,6 +22054,7 @@ function Style() {
       .dg-aclaracion-campo small { font-weight:400; }
       .dg-aclaracion-campo textarea { width:100%; box-sizing:border-box; }
       .dg-field-ancho { grid-column:1 / -1; }
+      .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
       .dg-tdia-aclaracion { display:inline-block; margin-left:6px; padding:0 6px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.3px; background:rgba(var(--dg-warning-rgb),.22); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
       .dg-tdia-detalle-aclaracion { flex-basis:100%; padding:6px 9px; border-left:3px solid var(--dg-warning); border-radius:8px; background:rgba(var(--dg-warning-rgb),.10); }
       .dg-chip-nota { margin-left:6px; background:rgba(var(--dg-retiro-rgb),.22); color:color-mix(in srgb, var(--dg-retiro) 55%, var(--dg-text)); }
