@@ -1485,6 +1485,7 @@ function cambiosDeUnPedido(a, d) {
   if (nFact(d) > nFact(a)) pon("Subió una factura");
   if (nFact(d) < nFact(a)) pon("Quitó una factura");
   if (ordenesPapelDe(d).length > ordenesPapelDe(a).length) pon("Subió la foto de la orden");
+  if ((Array.isArray(d.pagos) ? d.pagos.length : 0) > (Array.isArray(a.pagos) ? a.pagos.length : 0)) pon("Registró un pago");
   if (ordenesPapelDe(d).length < ordenesPapelDe(a).length) pon("Quitó la foto de la orden");
   if (["detalleEntrega", "barrio", "piso", "celular", "localidad", "provincia", "codigoPostal"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
   const plata = [];
@@ -6953,7 +6954,7 @@ const CAMPOS_DEL_PEDIDO = [
 // factura cubre el pedido completo (el link de seguimiento ya la muestra así).
 // Faltaban en la lista de arriba, así que «Editar cliente y entrega» las
 // descartaba al guardar: subían la factura, tocaban Guardar y desaparecía.
-const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "comision"];
+const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "pagos", "comision"];
 
 // Un pedido puede tener MÁS DE UNA factura: a veces el cliente la pide en
 // dos partes (24/10/2026). La primera sigue en facturaUrl —así todo lo que ya
@@ -7409,18 +7410,25 @@ function pedidoSaldo(p) { return (Number(p.monto) || 0) - (Number(p.anticipo) ||
 // veces. Devuelve null cuando no cambió nada.
 // Es LA regla: la usan tanto guardar un espejo como editar los montos del
 // pedido entero. Si se toca acá, se toca en los dos lados a la vez.
-function ingresoPorCambioDeMonto(pedido) {
+// `medio` (opcional): con qué pagó. Si se sabe, manda sobre lo que dice el
+// tipo de factura: un pago en efectivo va a la caja aunque el pedido se
+// facture (los importados siguen yendo a su ahorro, como siempre).
+function ingresoPorCambioDeMonto(pedido, medioPedido = "") {
+  // Solo un medio conocido: si alguien la usa en un .map, el segundo dato es la
+  // posición en la lista y no tiene que cambiar nada.
+  const medio = medioPedido && typeof medioPedido === "string" && MEDIOS_PAGO[medioPedido] ? medioPedido : "";
   const cobrado = pedido?.estado === "Entregado" ? Number(pedido.monto) || 0 : Number(pedido?.anticipo) || 0;
   const yaRegistrado = Number(pedido?.montoRegistrado) || 0;
   const delta = cobrado - yaRegistrado;
   if (delta === 0) return null;
-  const cuenta = determineCuentaPedido(pedido);
+  let cuenta = determineCuentaPedido(pedido);
+  if (medio && cuenta !== "ahorro_importados") cuenta = medio === "efectivo" ? "caja_efectivo" : "ingresos_bancarios";
   const etiqueta = delta < 0 ? "Ajuste" : (yaRegistrado > 0 ? "Saldo" : "Anticipo");
   return {
     cobrado,
     ingreso: {
       id: uid(),
-      concepto: `${etiqueta} pedido #${pedido?.orden || "?"} — ${pedido?.cliente || "Sin nombre"}`,
+      concepto: `${etiqueta} pedido #${pedido?.orden || "?"} — ${pedido?.cliente || "Sin nombre"}${medio ? ` (${MEDIOS_PAGO[medio].toLowerCase()})` : ""}`,
       monto: delta,
       canal: canalDelPedido(pedido),
       cuenta, cliente: pedido?.cliente || "",
@@ -8207,6 +8215,26 @@ function validarPedido(p) {
 }
 
 function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio, stockEspejos, onChangeStockEspejos }) {
+  // El pedido al que se le está cargando un pago (ver «PAGOS DEL PEDIDO»).
+  const [pagandoGrupo, setPagandoGrupo] = useState(null);
+  function registrarPago(espejos, pago) {
+    const activos = espejos.filter((e) => e.estado !== "Entregado" && e.estado !== "Cancelado");
+    const conPago = new Map(repartirPago(activos, pago.monto).map((e) => [e.id, e]));
+    const pagos = [...pagosDeLaVenta(espejos), pago];
+    const ingresos = [];
+    const ids = new Set(espejos.map((e) => e.id));
+    const next = pedidos.map((x) => {
+      if (!ids.has(x.id)) return x;
+      let nuevo = { ...(conPago.get(x.id) || x), pagos };
+      const c = conPago.has(x.id) ? ingresoPorCambioDeMonto(nuevo, pago.medio) : null;
+      if (c && onCreateIncome) { ingresos.push(c.ingreso); nuevo = { ...nuevo, montoRegistrado: c.cobrado }; }
+      return nuevo;
+    });
+    if (ingresos.length) onCreateIncome(ingresos);
+    onChange(next);
+    if (onRegistrar) onRegistrar("Registró un pago", `#${espejos[0].orden} — ${espejos[0].cliente} — ${money(pago.monto)} en ${(MEDIOS_PAGO[pago.medio] || pago.medio).toLowerCase()}`);
+    setPagandoGrupo(null);
+  }
   const [quickView, setQuickView] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [filtroVendedor, setFiltroVendedor] = useState("todos");
@@ -8700,8 +8728,14 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                     <button className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoEntrega(espejos)}>
                       <Pencil size={13} /> Editar cliente y entrega{espejos.length > 1 ? ` (los ${espejos.length} espejos)` : ""}
                     </button>
+                    {espejos.some((e) => e.estado !== "Entregado" && e.estado !== "Cancelado" && pedidoSaldo(e) > 0) && (
+                      <button className="dg-btn-ghost dg-mini-btn" onClick={() => setPagandoGrupo(espejos)}>
+                        <CircleDollarSign size={13} /> Registrar pago
+                      </button>
+                    )}
                   </div>
                 )}
+                <PagosDeLaVenta espejos={espejos} />
                 <div className="dg-order-mirror-list">
                   {espejos.map((espejo, index) => {
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
@@ -8800,6 +8834,9 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
         />
       )}
 
+      {pagandoGrupo && (
+        <ModalPago espejos={pagandoGrupo} onCerrar={() => setPagandoGrupo(null)} onConfirmar={(pago) => registrarPago(pagandoGrupo, pago)} />
+      )}
       {editandoEntrega && (
         <PedidoModal
           key={`entrega-${editandoEntrega[0]?.id}`}
@@ -9055,6 +9092,135 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
           <ExternalLink size={12} /> Ver seguimiento en Vía Cargo
         </a>
       )}
+    </div>
+  );
+}
+
+// ===== PAGOS DEL PEDIDO (27/10/2026) =========================================
+// Hasta ahora había un solo número de «anticipo» por espejo: no quedaba ni la
+// fecha, ni con qué pagó, ni el comprobante. Ahora cada pago se anota aparte.
+// La plata sigue entrando a Finanzas por el MISMO camino de siempre, para no
+// contar nada dos veces: el pago se suma a los anticipos (espejo por espejo,
+// hasta cubrir lo que debe cada uno) y ingresoPorCambioDeMonto registra la
+// diferencia. Los pagos son de la venta entera: se guardan en todos sus
+// espejos, como la factura.
+const MEDIOS_PAGO = { efectivo: "Efectivo", transferencia: "Transferencia", mercado_pago: "Mercado Pago", tarjeta: "Tarjeta" };
+const pagosDeLaVenta = (espejos) => {
+  const con = (espejos || []).find((e) => Array.isArray(e?.pagos) && e.pagos.length);
+  return con ? con.pagos : [];
+};
+// Reparte un pago entre los espejos que todavía deben, en orden.
+function repartirPago(espejos, monto) {
+  let resto = Math.max(0, Number(monto) || 0);
+  return (espejos || []).map((e) => {
+    const debe = Math.max(0, (Number(e.monto) || 0) - (Number(e.anticipo) || 0));
+    const pone = Math.min(debe, resto);
+    resto -= pone;
+    return pone > 0 ? { ...e, anticipo: (Number(e.anticipo) || 0) + pone } : e;
+  });
+}
+// Lo que se ve en el historial: lo que se pagó antes de que existiera esto
+// (el anticipo «sin detalle»), cada pago anotado, y lo cobrado al entregar.
+function historialDePagos(espejos) {
+  const lista = (espejos || []).filter((e) => e.estado !== "Cancelado");
+  const pagos = pagosDeLaVenta(lista).slice().sort((a, b) => String(a.fecha || "").localeCompare(String(b.fecha || "")));
+  const anotado = pagos.reduce((t, p) => t + (Number(p.monto) || 0), 0);
+  const anticipos = lista.reduce((t, e) => t + (Number(e.anticipo) || 0), 0);
+  const filas = [];
+  if (anticipos - anotado > 0) filas.push({ id: "previo", fecha: "", medio: "", monto: anticipos - anotado, nota: "Anticipo (antes de anotar los pagos)" });
+  pagos.forEach((p) => filas.push(p));
+  const entregados = lista.filter((e) => e.estado === "Entregado");
+  const alEntregar = entregados.reduce((t, e) => t + Math.max(0, (Number(e.monto) || 0) - (Number(e.anticipo) || 0)), 0);
+  if (alEntregar > 0) filas.push({ id: "entrega", fecha: String(entregados[0].entregadoFecha || "").slice(0, 10), medio: "", monto: alEntregar, nota: "Cobrado al entregar" });
+  return filas;
+}
+function ModalPago({ espejos, onConfirmar, onCerrar }) {
+  const activos = (espejos || []).filter((e) => e.estado !== "Entregado" && e.estado !== "Cancelado");
+  const debe = activos.reduce((t, e) => t + Math.max(0, pedidoSaldo(e)), 0);
+  const p = (espejos || [])[0] || {};
+  const [monto, setMonto] = useState(String(debe || ""));
+  const [medio, setMedio] = useState(p.tipoFactura === "Efectivo / No" ? "efectivo" : "transferencia");
+  const [fecha, setFecha] = useState(isoLocal(new Date()));
+  const [nota, setNota] = useState("");
+  const [comprobante, setComprobante] = useState("");
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+  const n = Number(monto) || 0;
+  async function subir(e) {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    setError(""); setSubiendo(true);
+    try {
+      const chica = await comprimirImagen(archivo, 1600, 0.7);
+      setComprobante(await documentosStore.subirOrdenPapel(p.id, chica, "comprobante"));
+    } catch (err) {
+      setError("No se pudo subir el comprobante. Revisá la conexión.");
+    } finally {
+      setSubiendo(false);
+      e.target.value = "";
+    }
+  }
+  function confirmar() {
+    if (n <= 0) { setError("Poné cuánto pagó."); return; }
+    if (n > debe) { setError(`Debe ${money(debe)}: no puede pagar más que eso.`); return; }
+    onConfirmar({ id: uid(), fecha, monto: n, medio, comprobante, nota: nota.trim(), cargado: new Date().toISOString() });
+  }
+  return (
+    <div className="dg-overlay" onClick={onCerrar}>
+      <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title">Registrar un pago · #{p.orden} {p.cliente}</div>
+          <button className="dg-icon-btn" onClick={onCerrar}><X size={18} /></button>
+        </div>
+        <div className="dg-form">
+          <p className="dg-hint" style={{ marginTop: 0 }}>Debe <strong>{money(debe)}</strong>. El pago se descuenta del saldo y entra a Finanzas.</p>
+          <div className="dg-field-grid">
+            <Field label="Cuánto pagó"><input type="number" inputMode="decimal" value={monto} onChange={(e) => setMonto(e.target.value)} /></Field>
+            <Field label="Con qué pagó">
+              <select value={medio} onChange={(e) => setMedio(e.target.value)}>
+                {Object.entries(MEDIOS_PAGO).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </Field>
+            <Field label="Fecha"><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></Field>
+            <Field label="Nota (opcional)"><input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Ej: seña, segunda cuota…" /></Field>
+          </div>
+          <div className="dg-factura-campo" style={{ marginTop: 10 }}>
+            {comprobante
+              ? <BotonArchivo bucket="facturas" valor={comprobante}><FileText size={13} /> Ver el comprobante</BotonArchivo>
+              : (
+                <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
+                  {subiendo ? <Loader2 size={13} className="dg-spin" /> : <Camera size={13} />}
+                  {subiendo ? "Subiendo..." : "Foto del comprobante (opcional)"}
+                  <input type="file" accept="image/*" onChange={subir} disabled={subiendo} style={{ display: "none" }} />
+                </label>
+              )}
+          </div>
+          {error && <div className="dg-error" style={{ marginTop: 8 }}>{error}</div>}
+          <div className="dg-form-actions" style={{ marginTop: 14 }}>
+            <button type="button" className="dg-btn-ghost" onClick={onCerrar}>Cancelar</button>
+            <button type="button" className="dg-btn-primary" onClick={confirmar} disabled={subiendo}><Check size={14} /> Registrar {n > 0 ? money(n) : "el pago"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function PagosDeLaVenta({ espejos }) {
+  const filas = historialDePagos(espejos);
+  if (!filas.length) return null;
+  return (
+    <div className="dg-pagos">
+      <div className="dg-salida-tit">Pagos</div>
+      <ul>
+        {filas.map((f) => (
+          <li key={f.id}>
+            <span className="dg-pagos-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : "—"}</span>
+            <span className="dg-pagos-que">{f.medio ? MEDIOS_PAGO[f.medio] || f.medio : f.nota}{f.medio && f.nota ? <small> · {f.nota}</small> : null}</span>
+            {f.comprobante && <BotonArchivo bucket="facturas" valor={f.comprobante} className="dg-btn-ghost dg-mini-btn"><FileText size={12} /> Comprobante</BotonArchivo>}
+            <b>{money(f.monto)}</b>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -22055,6 +22221,15 @@ function Style() {
       .dg-aclaracion-campo textarea { width:100%; box-sizing:border-box; }
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+      /* El historial de pagos de la venta. */
+      .dg-order-entrega-btn { display:flex; flex-wrap:wrap; gap:8px; }
+      .dg-pagos { margin:10px 0 12px; padding:10px 12px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:12px; }
+      .dg-pagos ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+      .dg-pagos li { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:13px; }
+      .dg-pagos-fecha { font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--dg-text-dim); min-width:48px; }
+      .dg-pagos-que { flex:1 1 140px; min-width:0; color:var(--dg-text); }
+      .dg-pagos-que small { color:var(--dg-text-dim); }
+      .dg-pagos b { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; margin-left:auto; }
       .dg-tdia-aclaracion { display:inline-block; margin-left:6px; padding:0 6px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.3px; background:rgba(var(--dg-warning-rgb),.22); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
       .dg-tdia-detalle-aclaracion { flex-basis:100%; padding:6px 9px; border-left:3px solid var(--dg-warning); border-radius:8px; background:rgba(var(--dg-warning-rgb),.10); }
       .dg-chip-nota { margin-left:6px; background:rgba(var(--dg-retiro-rgb),.22); color:color-mix(in srgb, var(--dg-retiro) 55%, var(--dg-text)); }
