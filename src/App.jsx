@@ -1500,6 +1500,7 @@ function cambiosDeUnPedido(a, d) {
     if (cambio(a, d, x.campo)) pon("Cambió una aclaración", `${x.label.toLowerCase()}: ${String(d[x.campo] || "").trim().slice(0, 60) || "la borró"}`);
   });
   if (prendio(a, d, "resenaPedida")) pon("Pidió una reseña");
+  if ((Array.isArray(d.fotosTerminado) ? d.fotosTerminado.length : 0) > (Array.isArray(a.fotosTerminado) ? a.fotosTerminado.length : 0)) pon("Sacó la foto del espejo terminado");
   if (prendio(a, d, "demorado")) pon("Marcó demorado");
   if (prendio(a, d, "urgente")) pon("Marcó urgente");
   if (cambio(a, d, "diaTaller")) pon("Movió un espejo de día", d.diaTaller ? `al ${diaMesCorto(d.diaTaller)}` : "que lo reparta la app");
@@ -15835,6 +15836,16 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
           <LinksOrdenPapel pedido={p} />
+          {/* La foto del espejo terminado (27/10/2026): control antes de
+              embalar, y el cliente la ve en su link. Aparece cuando ya está
+              armado. */}
+          {canEdit && (p.produccionArmadoFecha || pedidoEstaListo(p)) && (
+            <div className="dg-entrega-foto">
+              <span>Foto del espejo terminado</span>
+              <FotosCampo lista={p.fotosTerminado} carpeta={p.id} prefijo="terminado" canEdit={canEdit}
+                onCambiar={(l) => onChange(pedidos.map((x) => (x.id === p.id ? { ...x, fotosTerminado: l } : x)))} textoSubir="Sacar foto antes de embalar" />
+            </div>
+          )}
         </div>
 
         <div className="dg-fab-zona-proceso">
@@ -15965,6 +15976,16 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
           <LinksOrdenPapel pedido={p} />
+          {/* La foto del espejo terminado (27/10/2026): control antes de
+              embalar, y el cliente la ve en su link. Aparece cuando ya está
+              armado. */}
+          {canEdit && (p.produccionArmadoFecha || pedidoEstaListo(p)) && (
+            <div className="dg-entrega-foto">
+              <span>Foto del espejo terminado</span>
+              <FotosCampo lista={p.fotosTerminado} carpeta={p.id} prefijo="terminado" canEdit={canEdit}
+                onCambiar={(l) => onChange(pedidos.map((x) => (x.id === p.id ? { ...x, fotosTerminado: l } : x)))} textoSubir="Sacar foto antes de embalar" />
+            </div>
+          )}
 
             <div className="dg-fab-multi-pasos">
               {PASOS.map((paso, k) => {
@@ -22664,6 +22685,7 @@ function Style() {
       .dg-fotos-campo { align-items:center; }
       .dg-resena { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:6px 0 10px; }
       .dg-resena small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-seguimiento-foto { margin-top:10px; }
       .dg-entrega-foto { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
       .dg-entrega-foto > span { font-size:12px; font-weight:600; color:var(--dg-text-dim); }
       .dg-foto-entrega-link { margin-left:6px; padding:2px 8px; min-height:0; }
@@ -25514,6 +25536,9 @@ function SeguimientoPublico({ pedidoId }) {
               </div>
             )}
             {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+            {Array.isArray(pedido.fotosTerminado) && pedido.fotosTerminado.length > 0 && (
+              <a className="dg-btn-ghost dg-mini-btn dg-seguimiento-foto" href={`/api/factura?pedido=${encodeURIComponent(pedido.id)}&foto=0${puerta.clave ? `&t=${puerta.clave}` : ""}`} target="_blank" rel="noopener noreferrer"><Camera size={14} /> Ver la foto de tu espejo terminado</a>
+            )}
           </div>
 
           <div className="dg-seguimiento-docs">
@@ -25658,6 +25683,9 @@ function SeguimientoGrupoPublico({ grupoId }) {
                       </div>
                     )}
                     {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+                    {Array.isArray(pedido.fotosTerminado) && pedido.fotosTerminado.length > 0 && (
+                      <a className="dg-btn-ghost dg-mini-btn dg-seguimiento-foto" href={`/api/factura?pedido=${encodeURIComponent(pedido.id)}&foto=0${puerta.clave ? `&t=${puerta.clave}` : ""}`} target="_blank" rel="noopener noreferrer"><Camera size={14} /> Ver la foto de tu espejo terminado</a>
+                    )}
                   </div>
 
                   <div className="dg-seguimiento-pasos" style={{ marginTop: 10 }}>

@@ -5,6 +5,7 @@
 //   GET /api/factura?grupo=<grupoId>&puerta=1      -> idem, para el link de grupo
 //   GET /api/factura?pedido=<id>&t=1234            -> manda la factura
 //   GET /api/factura?pedido=<id>&t=1234&n=1        -> la segunda (si la pidió en partes)
+//   GET /api/factura?pedido=<id>&t=1234&foto=0     -> la foto del espejo terminado
 //
 // POR QUÉ LAS DOS COSAS VIVEN EN EL MISMO ARCHIVO: el plan Hobby de Vercel
 // admite 12 funciones por deploy y ya estábamos justo en 12. Separar esto en
@@ -99,6 +100,19 @@ export default async function handler(req, res) {
     // puede pedir nada (coincide() da true) y queda como estaba.
     if (!coincide(pedido.celular, escrito)) {
       return res.status(403).json({ error: "Para ver la factura hacen falta los últimos 4 dígitos de tu teléfono." });
+    }
+
+    // La foto del espejo terminado (27/10/2026). Va por acá porque el bucket es
+    // privado y el cliente no tiene login: el link firmado se arma en el
+    // servidor, con el mismo control de los 4 dígitos que la factura.
+    if (q.foto !== undefined) {
+      const fotos = Array.isArray(pedido.fotosTerminado) ? pedido.fotosTerminado.filter(Boolean) : [];
+      const k = Number.parseInt(String(q.foto), 10);
+      const rutaFoto = rutaDelArchivo(fotos[Number.isInteger(k) && k >= 0 ? k : 0]);
+      if (!rutaFoto) return res.status(404).json({ error: "Todavía no hay foto de ese espejo." });
+      const { data: firmaFoto, error: errorFoto } = await supabase.storage.from(BUCKET).createSignedUrl(rutaFoto, VENCE_EN);
+      if (errorFoto || !firmaFoto?.signedUrl) return res.status(404).json({ error: "No se encontró la foto." });
+      return res.redirect(302, firmaFoto.signedUrl);
     }
 
     // Un pedido puede tener varias facturas (el cliente la pidió en partes):
