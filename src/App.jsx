@@ -11328,6 +11328,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       <MessageCircle size={13} /> Pasarle la tanda a {nombre}
                     </a>
                   )}
+                  {(() => {
+                    const lugares = elegidos.map((f) => lugarParaMapa(f.manual ? f.m : f.p));
+                    return <BotonesRecorrido lugares={lugares} sinDireccion={lugares.filter((x) => !x).length} />;
+                  })()}
                   <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTexto(texto, "tanda")}>
                     {copiadoQue === "tanda" ? <Check size={13} /> : <Copy size={13} />} {copiadoQue === "tanda" ? "Copiado" : "Copiar el mensaje"}
                   </button>
@@ -11386,6 +11390,52 @@ function mensajeRetiro(items) {
     "",
     detalleCobroEntregaGrupo(lista),
   ].join("\n");
+}
+
+// ===== EL RECORRIDO EN GOOGLE MAPS (27/10/2026) ==============================
+// Abre Google Maps con la ruta desde el local pasando por cada parada, en el
+// orden en que están en la lista. Google acepta hasta 10 lugares por link (9
+// paradas en el medio y el destino): si hay más, se arma en tramos y cada
+// tramo arranca donde terminó el anterior. Ojo: en el navegador del celular
+// (sin la app de Google Maps) Google muestra menos paradas; con la app, todas.
+const PARADAS_POR_TRAMO = 10;
+// Dónde queda una parada. Si en PostVenta marcaron el pin en el mapa, va el
+// pin (es exacto); si no, la dirección escrita.
+function lugarParaMapa(x) {
+  if (!x) return "";
+  if (x.destinoLat != null && x.destinoLng != null && x.destinoLat !== "" && x.destinoLng !== "") return `${x.destinoLat},${x.destinoLng}`;
+  const calle = String(x.detalleEntrega || x.direccion || "").trim();
+  if (!calle) return "";
+  return [calle, x.localidad || x.barrio, "Buenos Aires, Argentina"].filter(Boolean).join(", ");
+}
+function linksDeRecorrido(lugares) {
+  const paradas = (lugares || []).filter(Boolean);
+  if (!paradas.length) return [];
+  const enc = encodeURIComponent;
+  const links = [];
+  let origen = `${DIRECCION_LOCAL}, Argentina`;
+  for (let i = 0; i < paradas.length; i += PARADAS_POR_TRAMO) {
+    const tramo = paradas.slice(i, i + PARADAS_POR_TRAMO);
+    const destino = tramo[tramo.length - 1];
+    const medio = tramo.slice(0, -1);
+    links.push(`https://www.google.com/maps/dir/?api=1&origin=${enc(origen)}&destination=${enc(destino)}${medio.length ? `&waypoints=${medio.map(enc).join("%7C")}` : ""}&travelmode=driving`);
+    origen = destino;
+  }
+  return links;
+}
+function BotonesRecorrido({ lugares, sinDireccion = 0 }) {
+  const links = linksDeRecorrido(lugares);
+  if (!links.length) return null;
+  return (
+    <span className="dg-recorrido-maps">
+      {links.map((url, i) => (
+        <a key={url} className="dg-btn-ghost dg-mini-btn" href={url} target="_blank" rel="noopener noreferrer">
+          <MapPin size={13} /> {links.length > 1 ? `Recorrido · tramo ${i + 1}` : "Recorrido en Google Maps"}
+        </a>
+      ))}
+      {sinDireccion > 0 && <small className="dg-sel-aviso">{sinDireccion} sin dirección no {sinDireccion === 1 ? "entra" : "entran"}</small>}
+    </span>
+  );
 }
 
 function RetirosPanel({ pedidos, onChange, canEdit, onCreateIncome, onRegistrar }) {
@@ -12495,6 +12545,18 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
         })}
       </div>
       <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((f) => <option key={f} value={f} />)}</datalist>
+      {(() => {
+        // El recorrido de lo que se está mirando (hoy, mañana…): las
+        // entregas y las salidas cargadas a mano de esos mismos días.
+        const extras = extraPend.filter((e) => cuando === "todos" || cuandoSale({ fechaEnvio: e.fecha || "" }) === cuando);
+        const lugares = [...entregas.map((g) => lugarParaMapa(g.pedidos[0])), ...extras.map(lugarParaMapa)];
+        if (!lugares.length) return null;
+        return (
+          <div className="dg-recorrido-barra">
+            <BotonesRecorrido lugares={lugares} sinDireccion={lugares.filter((x) => !x).length} />
+          </div>
+        );
+      })()}
 
       {(() => {
         const miRecorrido = trackingRows.find((t) => String(t.fletero_token || "").toUpperCase() === miCodigo);
@@ -22550,6 +22612,8 @@ function Style() {
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
       .dg-fotos-campo { align-items:center; }
+      .dg-recorrido-maps { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; }
+      .dg-recorrido-barra { margin:0 0 12px; }
       /* Ventas › Clientes */
       .dg-clientes { display:flex; flex-direction:column; gap:8px; }
       .dg-cliente { border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:12px; background:var(--dg-surface); }
