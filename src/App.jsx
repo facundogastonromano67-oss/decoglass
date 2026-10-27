@@ -1772,6 +1772,8 @@ function App() {
   const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
+  const incomesRef = useRef(null);
+  const colaIngresosRef = useRef(Promise.resolve());
   const syncRefreshingRef = useRef(false);
   const pedidosRefreshingRef = useRef(false);
   const localWritesRef = useRef({});
@@ -2573,10 +2575,33 @@ function App() {
     };
   }
 
+  // Los ingresos son UNA lista que se guarda entera. Antes de sumar uno se
+  // mira si cambió en otro lado (solo la versión, que es una consulta mínima);
+  // si cambió, se baja y se suma sobre esa. Así un celular que estuvo un rato
+  // en el bolsillo (el del flete) no borra lo que cargaron desde otra compu.
+  // Van en fila: dos entregas seguidas no se pisan entre sí. (28/10/2026)
+  incomesRef.current = incomes;
   function createIncomeFromPedido(entry) {
     const arr = Array.isArray(entry) ? entry : [entry];
     if (!arr.length) return;
-    persistIncomes([...arr, ...incomes]);
+    colaIngresosRef.current = colaIngresosRef.current.then(async () => {
+      let base = incomesRef.current || [];
+      try {
+        const [v] = await storage.getVersions(["incomes"]);
+        const conocida = syncVersionsRef.current.incomes;
+        if (v?.updated_at && (!conocida || v.updated_at > conocida)) {
+          const [row] = await storage.getMany(["incomes"]);
+          const fresca = row ? JSON.parse(row.value) : null;
+          if (Array.isArray(fresca)) {
+            base = fresca;
+            if (row.updated_at) syncVersionsRef.current.incomes = row.updated_at;
+          }
+        }
+      } catch (e) { /* sin conexión: se suma sobre lo que hay en pantalla, como antes */ }
+      const next = [...arr, ...base];
+      incomesRef.current = next;
+      await persistIncomes(next);
+    }).catch(() => {});
   }
   function createPurchaseEntry(entry) { persistPurchases([entry, ...purchases]); }
 
@@ -12642,7 +12667,7 @@ function ModalDestinoRecorrido({ direccionTexto, valorInicial, onConfirmar, onCa
   );
 }
 
-function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra, session }) {
+function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra, session, onCreateIncome, onRegistrar }) {
   const listaExtra = Array.isArray(extra) ? extra : [];
   // Arranca en los de mañana: es lo que el flete tiene que preparar hoy.
   const [cuando, setCuando] = useState("manana");
@@ -12769,7 +12794,19 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
       window.alert("PostVenta debe confirmar al cliente y el envío antes de habilitar la entrega.");
       return;
     }
-    onChange(pedidos.map((p) => (p.id === pedido.id ? { ...p, estado: "Entregado", entregadoFecha: new Date().toISOString() } : p)));
+    // Entregar es cobrar el saldo (28/10/2026): se registra en Finanzas igual
+    // que cuando se entrega desde PostVenta. Antes, entregado desde acá, el
+    // saldo no quedaba en ningún lado hasta que alguien volvía a guardar el
+    // pedido. montoRegistrado evita que después se cuente dos veces.
+    const prep = prepararEntregaDelGrupo([pedido]);
+    if (prep.error) { if (!prep.silencioso) window.alert(prep.error); return; }
+    if (prep.saldoTotal > 0 && !window.confirm(`Queda un saldo de ${money(prep.saldoTotal)} que el cliente paga al recibir.\n\nAl marcarlo entregado se registra como cobrado. ¿Confirmás la entrega?`)) return;
+    const registra = prep.ingresos.length > 0 && !!onCreateIncome;
+    if (registra) onCreateIncome(prep.ingresos);
+    onChange(pedidos.map((p) => (p.id === pedido.id
+      ? { ...p, estado: "Entregado", entregadoFecha: new Date().toISOString(), ...(registra ? { montoRegistrado: Number(p.monto) || 0 } : {}) }
+      : p)));
+    if (onRegistrar) onRegistrar("Marcó entregado", `#${pedido.orden} — ${pedido.cliente || "Sin nombre"}${prep.saldoTotal > 0 ? ` — cobró ${money(prep.saldoTotal)}` : ""}`);
     const ids = [pedido.id, pedido.grupoId ? `grupo:${pedido.grupoId}` : null].filter(Boolean);
     if (trackingRows.some((t) => ids.includes(t.id))) terminarRecorrido(ids);
   }
@@ -21270,7 +21307,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "logistica" && (
-        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} session={session} />
+        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} session={session} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
           : <LockedPage label="Envíos confirmados" onLogin={onRequestLogin} />
       )}
 
