@@ -1486,6 +1486,7 @@ function cambiosDeUnPedido(a, d) {
   if (nFact(d) > nFact(a)) pon("Subió una factura");
   if (nFact(d) < nFact(a)) pon("Quitó una factura");
   if (ordenesPapelDe(d).length > ordenesPapelDe(a).length) pon("Subió la foto de la orden");
+  if ((Array.isArray(d.fotosEntrega) ? d.fotosEntrega.length : 0) > (Array.isArray(a.fotosEntrega) ? a.fotosEntrega.length : 0)) pon("Sacó la foto de la entrega");
   if ((Array.isArray(d.pagos) ? d.pagos.length : 0) > (Array.isArray(a.pagos) ? a.pagos.length : 0)) pon("Registró un pago");
   if (ordenesPapelDe(d).length < ordenesPapelDe(a).length) pon("Quitó la foto de la orden");
   if (["detalleEntrega", "barrio", "piso", "celular", "localidad", "provincia", "codigoPostal"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
@@ -7054,7 +7055,7 @@ const CAMPOS_DEL_PEDIDO = [
 // factura cubre el pedido completo (el link de seguimiento ya la muestra así).
 // Faltaban en la lista de arriba, así que «Editar cliente y entrega» las
 // descartaba al guardar: subían la factura, tocaban Guardar y desaparecía.
-const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "pagos", "comision"];
+const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "pagos", "fotosEntrega", "comision"];
 
 // Un pedido puede tener MÁS DE UNA factura: a veces el cliente la pide en
 // dos partes (24/10/2026). La primera sigue en facturaUrl —así todo lo que ya
@@ -8854,6 +8855,12 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                   </div>
                 )}
                 <PagosDeLaVenta espejos={espejos} />
+                {(espejos.find((e) => Array.isArray(e.fotosEntrega) && e.fotosEntrega.length) || {}).fotosEntrega && (
+                  <div className="dg-entrega-foto">
+                    <span>Foto de la entrega</span>
+                    <FotosCampo lista={(espejos.find((e) => Array.isArray(e.fotosEntrega) && e.fotosEntrega.length) || {}).fotosEntrega} carpeta={espejos[0].id} canEdit={false} onCambiar={() => {}} />
+                  </div>
+                )}
                 <div className="dg-order-mirror-list">
                   {espejos.map((espejo, index) => {
                     const espejoSaldo = Math.max(0, pedidoSaldo(espejo));
@@ -12027,6 +12034,9 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                                             <li key={c.id}>
                                               <b>#{c.orden}</b>&nbsp;{c.ancho && c.alto ? `${c.ancho}×${c.alto} cm` : "sin medida"}
                                               {c.forma ? ` · ${c.forma}` : ""}{c.fecha ? ` · ${fechaEntregaCorta(c.fecha)}` : ""}
+                                              {Array.isArray(c.fotosEntrega) && c.fotosEntrega.length > 0 && (
+                                                <BotonArchivo bucket="facturas" valor={c.fotosEntrega[0]} className="dg-btn-ghost dg-mini-btn dg-foto-entrega-link"><Camera size={12} /> cómo se entregó</BotonArchivo>
+                                              )}
                                             </li>
                                           ))}
                                         </ul>
@@ -12790,6 +12800,14 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                     ) : (
                       <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => comenzarRecorrido(items)}><Truck size={13} /> Comenzar recorrido <small style={{ opacity: 0.7 }}>· desde este celular</small></button>
                     )}
+                  </div>
+                  {/* La prueba de entrega (27/10/2026): una foto del espejo ya
+                      entregado, sano. Es lo que se mira cuando alguien dice
+                      «llegó roto». Va con el pedido entero. */}
+                  <div className="dg-entrega-foto">
+                    <span>Foto de la entrega</span>
+                    <FotosCampo lista={items[0].fotosEntrega} carpeta={items[0].id} prefijo="entrega" canEdit={canEdit}
+                      onCambiar={(l) => setCampoGrupo(items, { fotosEntrega: l })} textoSubir="Sacar foto del espejo entregado" />
                   </div>
                   </>
                 );
@@ -22612,6 +22630,9 @@ function Style() {
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
       .dg-fotos-campo { align-items:center; }
+      .dg-entrega-foto { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+      .dg-entrega-foto > span { font-size:12px; font-weight:600; color:var(--dg-text-dim); }
+      .dg-foto-entrega-link { margin-left:6px; padding:2px 8px; min-height:0; }
       .dg-recorrido-maps { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; }
       .dg-recorrido-barra { margin:0 0 12px; }
       /* Ventas › Clientes */
