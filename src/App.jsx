@@ -1545,6 +1545,7 @@ function describirCambiosReclamos(antes, despues) {
     else if (cambio(a, d, "solucion") && String(d.solucion || "").trim()) { accion = "Le ofreció una solución"; textos.push(String(d.solucion).trim().slice(0, 80)); }
     else if (cambio(a, d, "fechaEnvio")) { accion = "Puso fecha de visita"; textos.push(d.fechaEnvio ? `para el ${diaMesCorto(d.fechaEnvio)}` : "la sacó"); }
     else if (cambio(a, d, "estado")) { textos.push(`pasó a «${d.estado}»`); }
+    else if ((Array.isArray(d.fotos) ? d.fotos.length : 0) > (Array.isArray(a.fotos) ? a.fotos.length : 0)) { accion = "Subió fotos de un reclamo"; }
     out.push({ accion, detalle: [quien(d), ...textos].join(" — ") });
   });
   (antes || []).forEach((a) => { if (!nuevos.has(a.id)) out.push({ accion: "Borró un reclamo", detalle: quien(a) }); });
@@ -9309,6 +9310,69 @@ function OrdenPapelCampo({ pedido, canEdit, onCambiar }) {
     </div>
   );
 }
+// Fotos de cualquier cosa (hoy: los reclamos). Se achican antes de subir y van
+// al bucket privado, en la carpeta que se le diga. Se abren con un toque; no
+// se muestran como miniatura a propósito: cada miniatura es una bajada de la
+// foto entera, y el plan de Supabase tiene poco egreso.
+function FotosCampo({ lista: listaProp, carpeta, prefijo = "foto", canEdit, onCambiar, textoSubir = "Sacar o subir fotos" }) {
+  const [subiendo, setSubiendo] = useState(false);
+  const [borrando, setBorrando] = useState("");
+  const [error, setError] = useState("");
+  const lista = Array.isArray(listaProp) ? listaProp.filter(Boolean) : [];
+  async function handleFile(e) {
+    const archivos = [...(e.target.files || [])];
+    if (!archivos.length) return;
+    setError(""); setSubiendo(true);
+    const subidas = [];
+    try {
+      for (const archivo of archivos) {
+        const chica = await comprimirImagen(archivo, 1600, 0.7);
+        subidas.push(await documentosStore.subirOrdenPapel(carpeta, chica, prefijo));
+      }
+    } catch (err) {
+      setError(subidas.length ? "Se subió una parte. Revisá la conexión y subí la que falta." : "No se pudo subir. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      if (subidas.length) onCambiar([...lista, ...subidas]);
+      setSubiendo(false);
+      e.target.value = "";
+    }
+  }
+  async function quitar(ruta, n) {
+    if (!window.confirm(`¿Quitar la foto ${n}?`)) return;
+    setError(""); setBorrando(ruta);
+    try {
+      await documentosStore.borrarFactura(ruta);
+      onCambiar(lista.filter((x) => x !== ruta));
+    } catch (err) {
+      setError("No se pudo quitar. Revisá la conexión e intentá de nuevo.");
+    } finally {
+      setBorrando("");
+    }
+  }
+  return (
+    <div className="dg-factura-campo dg-fotos-campo">
+      {lista.map((ruta, i) => (
+        <span className="dg-foto-item" key={ruta}>
+          <BotonArchivo bucket="facturas" valor={ruta} className="dg-btn-ghost dg-mini-btn"><Camera size={12} /> Foto {i + 1}</BotonArchivo>
+          {canEdit && (
+            <button type="button" className="dg-icon-btn dg-task-del" onClick={() => quitar(ruta, i + 1)} disabled={!!borrando} aria-label={`Quitar la foto ${i + 1}`}>
+              {borrando === ruta ? <Loader2 size={12} className="dg-spin" /> : <Trash2 size={12} />}
+            </button>
+          )}
+        </span>
+      ))}
+      {canEdit && (
+        <label className="dg-btn-ghost dg-mini-btn dg-factura-upload-btn">
+          {subiendo ? <Loader2 size={13} className="dg-spin" /> : <Camera size={13} />}
+          {subiendo ? "Subiendo..." : lista.length ? "Sumar fotos" : textoSubir}
+          <input type="file" accept="image/*" multiple onChange={handleFile} disabled={subiendo} style={{ display: "none" }} />
+        </label>
+      )}
+      {error && <div className="dg-error" style={{ marginTop: 4, flexBasis: "100%" }}>{error}</div>}
+    </div>
+  );
+}
+
 // Para mirarla desde Ventas y Fábrica, sin poder tocarla.
 function LinksOrdenPapel({ pedido }) {
   const lista = ordenesPapelDe(pedido);
@@ -11567,6 +11631,9 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
   const [cliente, setCliente] = useState("");
   const [celular, setCelular] = useState("");
   const [notas, setNotas] = useState("");
+  // Las fotos se pueden subir antes de guardar: el reclamo ya tiene su id.
+  const [idNuevo, setIdNuevo] = useState(() => uid());
+  const [fotosNuevas, setFotosNuevas] = useState([]);
   const [vista, setVista] = useState("activos");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
@@ -11591,10 +11658,12 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
   function addReclamo() {
     if (!tipo) return;
     onChange([{
-      id: uid(), tipo, cliente: cliente.trim(), celular: celular.trim(), notas: notas.trim(),
+      id: idNuevo, tipo, cliente: cliente.trim(), celular: celular.trim(), notas: notas.trim(),
       solucion: "", finalizado: false, fecha: new Date().toISOString().slice(0, 10),
+      ...(fotosNuevas.length ? { fotos: fotosNuevas } : {}),
     }, ...reclamos]);
     setTipo(null); setCliente(""); setCelular(""); setNotas("");
+    setIdNuevo(uid()); setFotosNuevas([]);
   }
   function removeReclamo(id) { onChange(reclamos.filter((r) => r.id !== id)); }
   function setSolucion(id, solucion) { onChange(reclamos.map((r) => (r.id === id ? { ...r, solucion } : r))); }
@@ -11649,6 +11718,9 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
               <Field label="Cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre (opcional)" /></Field>
               <Field label="Celular"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 1122334455" /></Field>
               <Field label="Notas"><input value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <FotosCampo lista={fotosNuevas} carpeta={`reclamo-${idNuevo}`} canEdit onCambiar={setFotosNuevas} textoSubir="Fotos del problema (opcional)" />
             </div>
             <div className="dg-form-actions" style={{ marginTop: 10 }}>
               <button className="dg-btn-ghost" onClick={() => setTipo(null)}>Cancelar</button>
@@ -11716,6 +11788,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                           <td className="dg-envios-fecha">{r.fecha ? fechaEntregaCorta(r.fecha) : <span className="dg-envios-falta">—</span>}</td>
                           <td className="dg-envios-nombre">
                             <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el reclamo"}>{r.cliente || "Sin nombre"}</button>
+                            {Array.isArray(r.fotos) && r.fotos.length > 0 && <span className="dg-envios-chip-tipo" title="Tiene fotos"><Camera size={11} /> {r.fotos.length}</span>}
                             {f.visita && <span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span>}
                           </td>
                           <td className="dg-envios-productos">{r.tipo}</td>
@@ -11789,6 +11862,10 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                                       <label><span>Cliente</span><CampoTextoGuardado value={r.cliente} onGuardar={(v) => setCampoReclamo(r.id, { cliente: v })} placeholder="Nombre" /></label>
                                       <label><span>Teléfono</span><CampoTextoGuardado value={r.celular} onGuardar={(v) => setCampoReclamo(r.id, { celular: v })} placeholder="Ej: 1122334455" /></label>
                                       <label><span>Qué pasó</span><CampoTextoGuardado value={r.notas} onGuardar={(v) => setCampoReclamo(r.id, { notas: v })} placeholder="Detalle del problema" /></label>
+                                    </div>
+                                    <div className="dg-reclamo-fotos">
+                                      <span>Fotos</span>
+                                      <FotosCampo lista={r.fotos} carpeta={`reclamo-${r.id}`} canEdit onCambiar={(l) => setCampoReclamo(r.id, { fotos: l })} textoSubir="Subir fotos del problema" />
                                     </div>
                                   </div>
 
@@ -22361,6 +22438,10 @@ function Style() {
       .dg-aclaracion-campo textarea { width:100%; box-sizing:border-box; }
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+      .dg-fotos-campo { align-items:center; }
+      .dg-foto-item { display:inline-flex; align-items:center; gap:2px; }
+      .dg-reclamo-fotos { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+      .dg-reclamo-fotos > span { font-size:12px; font-weight:600; color:var(--dg-text-dim); }
       /* Los presupuestos guardados, con su estado y lo que se puede hacer. */
       .dg-presu-aviso { display:flex; align-items:center; gap:6px; margin:0 0 10px; padding:8px 11px; border-radius:10px; font-size:13px; font-weight:600; background:rgba(var(--dg-warning-rgb),.14); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
       .dg-presu-guardados { display:flex; flex-direction:column; gap:8px; }
