@@ -1491,6 +1491,9 @@ function cambiosDeUnPedido(a, d) {
   if (plata.length) pon("Cambió la plata del pedido", plata.join(", "));
   if (cambio(a, d, "remitoNumeroGuia") && d.remitoNumeroGuia) pon("Cargó la guía de Vía Cargo", d.remitoNumeroGuia);
   if (cambio(a, d, "remitoUrl") && d.remitoUrl) pon("Subió el remito");
+  ACLARACIONES.forEach((x) => {
+    if (cambio(a, d, x.campo)) pon("Cambió una aclaración", `${x.label.toLowerCase()}: ${String(d[x.campo] || "").trim().slice(0, 60) || "la borró"}`);
+  });
   if (prendio(a, d, "demorado")) pon("Marcó demorado");
   if (prendio(a, d, "urgente")) pon("Marcó urgente");
   if (cambio(a, d, "diaTaller")) pon("Movió un espejo de día", d.diaTaller ? `al ${diaMesCorto(d.diaTaller)}` : "que lo reparta la app");
@@ -6942,6 +6945,7 @@ const CAMPOS_DEL_PEDIDO = [
   "cliente", "celular", "dniCuit", "vendedor", "canalVenta", "fecha", "listo",
   "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
   "provincia", "localidad", "codigoPostal", "costoEnvio", "destinoLat", "destinoLng",
+  "aclaracionEntrega", "aclaracionInterna",
 ];
 // La factura y la comisión son de la venta entera, no de cada espejo: una
 // factura cubre el pedido completo (el link de seguimiento ya la muestra así).
@@ -7196,6 +7200,7 @@ function palabrasDeBusqueda(q) {
 function textoBuscablePedido(p) {
   return sinAcentos([
     p.cliente, p.forma, p.tipo, p.tono, p.grabado, p.metodo,
+    p.aclaracionTaller, p.aclaracionEntrega, p.aclaracionInterna,
     funcionesPedido(p, true).map((f) => f.label).join(" "),
     p.touch && p.touch !== "No" ? p.touch : "",
     p.horaTemp && p.horaTemp !== "No" ? p.horaTemp : "",
@@ -7231,6 +7236,39 @@ function filtrarPedidosConSuGrupo(lista, q) {
   return lista.filter((p) => grupos.has(p.grupoId || p.id));
 }
 const PISTA_BUSCAR_PEDIDO = "Cliente, teléfono, medida o función…";
+
+// ===== ACLARACIONES DEL PEDIDO (27/10/2026) ==================================
+// Lo que no entra en las funciones normales del espejo. Antes se escribía en
+// «Grabado / esmerilado», que Fábrica muestra como «Observaciones», y se
+// mezclaba con el grabado. Ahora son tres, cada una para quien la tiene que
+// leer:
+//   · para el taller: es de cada espejo y sale destacada en Fábrica;
+//   · para la entrega: es del pedido entero y sale en Envíos, Retiros,
+//     Interior, Logística y en el mensaje al flete;
+//   · interna: solo la ve Ventas (en la tarjeta del pedido y al verificar).
+// Nada de esto llega al link de seguimiento del cliente.
+const ACLARACIONES = [
+  { campo: "aclaracionTaller", label: "Para el taller", corto: "taller" },
+  { campo: "aclaracionEntrega", label: "Para la entrega", corto: "entrega" },
+  { campo: "aclaracionInterna", label: "Interna", corto: "interna" },
+];
+const aclaracionDe = (p, campo) => String(p?.[campo] || "").trim();
+// La de la entrega es del pedido entero: la primera que haya entre sus espejos.
+const aclaracionEntregaDe = (items) => (items || []).map((x) => aclaracionDe(x, "aclaracionEntrega")).find(Boolean) || "";
+function AclaracionesDelPedido({ pedido, cuales = ACLARACIONES.map((a) => a.campo), titulo = true }) {
+  const lista = ACLARACIONES.filter((a) => cuales.includes(a.campo) && aclaracionDe(pedido, a.campo));
+  if (!lista.length) return null;
+  return (
+    <div className="dg-aclaraciones">
+      {lista.map((a) => (
+        <div key={a.campo} className={`dg-aclaracion dg-aclaracion-${a.corto}`}>
+          {titulo && <span>{cuales.length > 1 ? `Aclaración · ${a.corto}` : "Aclaración"}</span>}
+          {pedido[a.campo]}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function detalleFabrica(pedido) {
   return partesDetallePedido(pedido?.grabado).filter((parte) => !esFuncionDesempanante(parte)).join(" · ");
@@ -7657,6 +7695,7 @@ function FichaEspejoPaso({ pedido }) {
         </div>
       )}
       {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+      <AclaracionesDelPedido pedido={pedido} />
     </div>
   );
 }
@@ -7707,6 +7746,7 @@ function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio, onEd
             </div>
           )}
           {pedido.grabado && <div className="dg-fab-obs"><span>Observaciones</span> {pedido.grabado}</div>}
+          <AclaracionesDelPedido pedido={pedido} />
           {tieneDesemp && onEditarCantidadDesemp && (
             <div className="dg-verif-desemp-cantidad">
               <span>¿Cuántos paneles desempañante lleva?</span>
@@ -9283,6 +9323,11 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Tipo"><select disabled={!canEditFull} value={draft.tipo} onChange={(e) => set("tipo", e.target.value)}>{TIPO_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Grabado / esmerilado"><input disabled={!canEditFull} placeholder="Ej: 15+30" value={draft.grabado} onChange={(e) => set("grabado", e.target.value)} /></Field>
           </div>
+          <div className="dg-aclaracion-campo">
+            <label>Aclaración para el taller <small>— lo que no entra en las funciones de arriba</small></label>
+            <CampoQueCrece rows={2} disabled={!canEditFull} value={draft.aclaracionTaller || ""} placeholder="Ej: el cliente quiere los bordes sin pulir, lleva perforación para la canilla…"
+              onChange={(e) => set("aclaracionTaller", e.target.value)} />
+          </div>
         </div>}
 
         {verEspejo && <div className="dg-section-card">
@@ -9469,6 +9514,16 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
             <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
             <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
+            <div className="dg-aclaracion-campo dg-field-ancho">
+              <label>Aclaración para la entrega <small>— la ve PostVenta, Logística y el flete</small></label>
+              <CampoQueCrece rows={2} disabled={!canEditFull} value={draft.aclaracionEntrega || ""} placeholder="Ej: tocar timbre 3 B, no hay ascensor, llamar antes de ir…"
+                onChange={(e) => set("aclaracionEntrega", e.target.value)} />
+            </div>
+            <div className="dg-aclaracion-campo dg-field-ancho">
+              <label>Aclaración interna <small>— solo Ventas</small></label>
+              <CampoQueCrece rows={2} disabled={!canEditFull} value={draft.aclaracionInterna || ""} placeholder="Ej: es amiga de Sergio, le hicimos precio"
+                onChange={(e) => set("aclaracionInterna", e.target.value)} />
+            </div>
           </div>
         </div>}
 
@@ -9704,6 +9759,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
                                   <li><span>DNI / CUIT</span><b className="dg-salida-dato">{f.p.dniCuit || "—"}</b></li>
                                   <li><span>Espejos</span><b className="dg-salida-dato">{f.espejos}{f.completo ? "" : ` · ${f.hechos} listos`}</b></li>
                                 </ul>
+                                {aclaracionEntregaDe(f.items) && <div className="dg-aclaracion dg-aclaracion-entrega"><span>Aclaración</span>{aclaracionEntregaDe(f.items)}</div>}
                                 <ul className="dg-interior-espejos">
                                   {f.items.map((e) => (
                                     <li key={e.id} className={pedidoEstaListo(e) ? "dg-salida-ok" : ""}>
@@ -10017,6 +10073,7 @@ function mensajeParaElFlete(items, nombreFlete) {
     `👤 ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
     `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
     `🕐 Horario: ${p.horarioEntrega || "a coordinar con el cliente"}`,
+    ...(aclaracionEntregaDe(lista) ? [`📝 ${aclaracionEntregaDe(lista)}`] : []),
     aCobrar > 0
       ? `💵 COBRAR EN LA ENTREGA: ${money(aCobrar)}`
       : "💵 No hay que cobrar nada: está todo pagado.",
@@ -10069,6 +10126,7 @@ function bloqueEntregaPedido(items, i) {
     `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
     `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
     `📦 ${bultos} ${bultos === 1 ? "espejo" : "espejos"}${medidas ? ` (${medidas})` : ""} · 🕐 ${p.horarioEntrega || "a coordinar"}`,
+    ...(aclaracionEntregaDe(items) ? [`📝 ${aclaracionEntregaDe(items)}`] : []),
     aCobrar > 0 ? `💵 COBRAR: ${money(aCobrar)}` : "💵 No cobra nada: está pagado.",
   ].join("\n");
   return { texto, aCobrar };
@@ -10501,6 +10559,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                               : f.flex
                                 ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button><span className="dg-envios-chip-flex"><Zap size={11} /> Flex</span></span>
                                 : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
+                            {!f.manual && !f.visita && aclaracionEntregaDe(f.items) && <span className="dg-envios-chip-tipo dg-chip-nota" title={aclaracionEntregaDe(f.items)}>Nota</span>}
                           </td>
                           <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
@@ -10675,6 +10734,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                       <li><span>Horario</span><b className="dg-salida-dato">{p.horarioEntrega || "a coordinar"}</b></li>
                                       <li><span>Dónde</span><b className="dg-salida-dato">{f.donde || "sin dirección"}</b></li>
                                     </ul>
+                                    {aclaracionEntregaDe(f.items) && <div className="dg-aclaracion dg-aclaracion-entrega"><span>Aclaración</span>{aclaracionEntregaDe(f.items)}</div>}
                                     <div className="dg-salida-acciones">
                                       {waCliente && (
                                         <a className="dg-btn-ghost dg-mini-btn" href={waCliente} target="_blank" rel="noopener noreferrer">
@@ -11053,6 +11113,7 @@ ${preguntaDeEntrega(prep)}`)) return;
                               </div>
                               <div className="dg-salida-bloque">
                                 <div className="dg-salida-tit">Cuándo viene</div>
+                                {aclaracionEntregaDe(f.items) && <div className="dg-aclaracion dg-aclaracion-entrega" style={{ marginBottom: 8 }}><span>Aclaración</span>{aclaracionEntregaDe(f.items)}</div>}
                                 <div className="dg-salida-campos">
                                   <label>
                                     <span>Día</span>
@@ -12142,6 +12203,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                     : <span className="dg-logistics-tel"><Phone size={16} /> {telefono}</span>}
                   <span className="dg-logistics-direccion"><MapPin size={18} /> {[direccion, barrio, piso].filter(Boolean).join(" · ")}</span>
                   <span className="dg-logistics-meta">{totalUnidades(items)} {totalUnidades(items) === 1 ? "espejo" : "espejos"} · {medidas}</span>
+                  {aclaracionEntregaDe(items) && <div className="dg-aclaracion dg-aclaracion-entrega"><span>Aclaración</span>{aclaracionEntregaDe(items)}</div>}
                 </div>
 
                 <div className="dg-logistics-plata">
@@ -15211,6 +15273,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           )}
 
           {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+          <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
         </div>
 
         <div className="dg-fab-zona-proceso">
@@ -15339,6 +15402,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <div className="dg-fab-funciones">{funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}</div>
             )}
             {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+          <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
 
             <div className="dg-fab-multi-pasos">
               {PASOS.map((paso, k) => {
@@ -15567,6 +15631,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                       <button type="button" className="dg-tdia-orden-btn" onClick={(ev) => irATarjeta(ev, x)} title="Ir a la tarjeta de este espejo">#{p.orden}</button>
                                       {esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}
                                       {estaAtrasadoTaller(p, hoyTaller) && <span className="dg-tdia-atrasado" title="Ya tendría que estar terminado">ATRASADO</span>}
+                                      {aclaracionDe(p, "aclaracionTaller") && <span className="dg-tdia-aclaracion" title={p.aclaracionTaller}>NOTA</span>}
                                     </td>
                                     <td className="dg-num">{x.unidades > 1 ? `${x.unidades}${x.partes > 1 ? ` de ${x.total}` : ""}` : "1"}</td>
                                     <td className="dg-num dg-tdia-medida">{p.ancho} × {p.alto}</td>
@@ -15586,6 +15651,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                           <span><b>Sale por</b> {p.metodo || "—"}</span>
                                           <span><b>Terminar</b> <RelojObjetivoFabrica pedido={p} /></span>
                                           {obs && <span className="dg-tdia-detalle-obs"><b>Observaciones</b> {obs}</span>}
+                                          {aclaracionDe(p, "aclaracionTaller") && <span className="dg-tdia-detalle-obs dg-tdia-detalle-aclaracion"><b>Aclaración</b> {p.aclaracionTaller}</span>}
                                           <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(ev) => irATarjeta(ev, x)}><ChevronRight size={13} /> Ir a la tarjeta</button>
                                         </div>
                                       </td>
@@ -21885,6 +21951,22 @@ function Style() {
 
       .dg-fab-obs { font-size:13px; color:var(--dg-text-dim); margin-bottom:10px; line-height:1.4; }
       .dg-fab-obs span { color:var(--dg-accent); font-weight:600; margin-right:5px; }
+      /* Las aclaraciones: un recuadro con borde a la izquierda, que se vea
+         distinto de las observaciones del grabado. */
+      .dg-aclaraciones { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+      .dg-aclaracion { padding:7px 10px; border-radius:9px; border-left:3px solid var(--dg-accent); background:rgba(var(--dg-accent-rgb),.08); font-size:13px; line-height:1.4; color:var(--dg-text); white-space:pre-wrap; overflow-wrap:break-word; }
+      .dg-aclaracion > span { display:block; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); margin-bottom:2px; }
+      .dg-aclaracion-taller { border-left-color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),.10); }
+      .dg-aclaracion-entrega { border-left-color:rgb(var(--dg-retiro-rgb)); background:rgba(var(--dg-retiro-rgb),.10); margin-top:8px; }
+      .dg-aclaracion-interna { border-left-color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.07); }
+      .dg-aclaracion-campo { display:flex; flex-direction:column; gap:5px; margin-top:12px; }
+      .dg-aclaracion-campo label { font-size:12px; font-weight:600; color:var(--dg-text-dim); }
+      .dg-aclaracion-campo small { font-weight:400; }
+      .dg-aclaracion-campo textarea { width:100%; box-sizing:border-box; }
+      .dg-field-ancho { grid-column:1 / -1; }
+      .dg-tdia-aclaracion { display:inline-block; margin-left:6px; padding:0 6px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.3px; background:rgba(var(--dg-warning-rgb),.22); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
+      .dg-tdia-detalle-aclaracion { flex-basis:100%; padding:6px 9px; border-left:3px solid var(--dg-warning); border-radius:8px; background:rgba(var(--dg-warning-rgb),.10); }
+      .dg-chip-nota { margin-left:6px; background:rgba(var(--dg-retiro-rgb),.22); color:color-mix(in srgb, var(--dg-retiro) 55%, var(--dg-text)); }
 
       .dg-fab-audit { margin-bottom:10px; font-size:11px; }
       .dg-fab-audit summary { cursor:pointer; color:var(--dg-text-faint); font-weight:600; list-style:none; display:flex; align-items:center; gap:5px; }
