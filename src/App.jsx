@@ -852,6 +852,7 @@ const SECTOR_SUBPAGES = {
     { id: "envios", label: "Envíos" },
     { id: "interior", label: "Envíos al interior" },
     { id: "retiros", label: "Retiros en el local" },
+    { id: "rendicion", label: "Rendición del flete" },
     { id: "numeros", label: "Números" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "guia", label: "Guía y tareas" },
@@ -1500,6 +1501,7 @@ function cambiosDeUnPedido(a, d) {
     if (cambio(a, d, x.campo)) pon("Cambió una aclaración", `${x.label.toLowerCase()}: ${String(d[x.campo] || "").trim().slice(0, 60) || "la borró"}`);
   });
   if (prendio(a, d, "resenaPedida")) pon("Pidió una reseña");
+  if (!!a.saldoPorTransferencia !== !!d.saldoPorTransferencia) pon(d.saldoPorTransferencia ? "Anotó que el saldo se pagó por transferencia" : "Anotó que el saldo se pagó en efectivo al flete");
   if ((Array.isArray(d.fotosTerminado) ? d.fotosTerminado.length : 0) > (Array.isArray(a.fotosTerminado) ? a.fotosTerminado.length : 0)) pon("Sacó la foto del espejo terminado");
   if (prendio(a, d, "demorado")) pon("Marcó demorado");
   if (prendio(a, d, "urgente")) pon("Marcó urgente");
@@ -7065,7 +7067,7 @@ const CAMPOS_DEL_PEDIDO = [
 // factura cubre el pedido completo (el link de seguimiento ya la muestra así).
 // Faltaban en la lista de arriba, así que «Editar cliente y entrega» las
 // descartaba al guardar: subían la factura, tocaban Guardar y desaparecía.
-const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "pagos", "fotosEntrega", "comision"];
+const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "pagos", "fotosEntrega", "comision", "saldoPorTransferencia", "rendicionFlete"];
 
 // Un pedido puede tener MÁS DE UNA factura: a veces el cliente la pide en
 // dos partes (24/10/2026). La primera sigue en facturaUrl —así todo lo que ya
@@ -11475,6 +11477,221 @@ function BotonesRecorrido({ lugares, sinDireccion = 0 }) {
       ))}
       {sinDireccion > 0 && <small className="dg-sel-aviso">{sinDireccion} sin dirección no {sinDireccion === 1 ? "entra" : "entran"}</small>}
     </span>
+  );
+}
+
+// ===== RENDICIÓN DEL FLETE (27/10/2026) =====================================
+// Lo que el flete cobró en la puerta y tiene que entregar al volver. Por cada
+// venta entregada: el saldo de los espejos (si lo pagó en efectivo) más el
+// envío si se lo cobró él, menos lo que se queda él por ese envío. Se rinde
+// por flete y por día; quien recibe la plata anota cuánto le dio y queda la
+// diferencia a la vista. NO registra ingresos: el saldo ya entra a Finanzas
+// al marcar entregado. Esto es el control de que la plata llegó.
+//
+// Cuenta desde el día que se agregó: lo entregado antes no aparece como
+// «sin rendir» (ya se rindió a mano).
+const RENDICION_DESDE = "2026-10-27";
+function cuentaDeRendicion(items) {
+  const lista = (items || []).filter((e) => e.estado === "Entregado");
+  const saldo = lista.reduce((t, e) => t + Math.max(0, pedidoSaldo(e)), 0);
+  const porTransferencia = lista.some((e) => e.saldoPorTransferencia);
+  // El envío es uno solo aunque haya varios espejos: va el mayor.
+  const costo = lista.reduce((m, e) => Math.max(m, costoEnvioPedido(e)), 0);
+  const cobro = lista.map((e) => e.envioCobro).find(Boolean) || "";
+  const pagado = lista.some((e) => e.envioPagado);
+  // Sin anotar quién cobró el envío: si no estaba pagado, lo pagó en la puerta.
+  const envioEnLaPuerta = costo > 0 && (cobro === "entrega" || (!cobro && !pagado)) ? costo : 0;
+  const suyo = envioEnLaPuerta ? Math.min(envioEnLaPuerta, lista.reduce((m, e) => Math.max(m, fleteMonto(e)), 0)) : 0;
+  const saldoEnMano = porTransferencia ? 0 : saldo;
+  return { saldo, porTransferencia, envioEnLaPuerta, suyo, entrega: saldoEnMano + envioEnLaPuerta - suyo };
+}
+function ventasEntregadas(pedidos) {
+  const m = new Map();
+  (pedidos || []).forEach((p) => {
+    if (p.estado !== "Entregado" || !METODOS_ENVIO_GENERAL.includes(p.metodo)) return;
+    const dia = diaLocalDe(p.entregadoFecha);
+    if (!dia || dia < RENDICION_DESDE) return;
+    const clave = p.grupoId || p.id;
+    if (!m.has(clave)) m.set(clave, []);
+    m.get(clave).push(p);
+  });
+  return [...m.entries()].map(([clave, items]) => {
+    const orden = items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    return {
+      clave, items: orden,
+      dia: orden.map((e) => diaLocalDe(e.entregadoFecha)).sort().pop(),
+      fletero: String(orden.map((e) => e.fletero).find((f) => String(f || "").trim()) || "").trim(),
+      rendicion: orden.map((e) => e.rendicionFlete).find(Boolean) || null,
+      cuenta: cuentaDeRendicion(orden),
+    };
+  });
+}
+// Lo que falta rendir, por flete y por día (lo más nuevo arriba).
+function tandasParaRendir(pedidos) {
+  const m = new Map();
+  ventasEntregadas(pedidos)
+    .filter((v) => !v.rendicion && (v.cuenta.saldo > 0 || v.cuenta.envioEnLaPuerta > 0))
+    .forEach((v) => {
+      const fletero = v.fletero || "Sin anotar quién lo llevó";
+      const clave = `${fletero}|${v.dia}`;
+      if (!m.has(clave)) m.set(clave, { clave, fletero, dia: v.dia, ventas: [] });
+      m.get(clave).ventas.push(v);
+    });
+  return [...m.values()]
+    .map((t) => ({ ...t, total: t.ventas.reduce((s2, v) => s2 + v.cuenta.entrega, 0) }))
+    .sort((a, b) => b.dia.localeCompare(a.dia) || a.fletero.localeCompare(b.fletero));
+}
+// Las que ya se rindieron, una fila por rendición.
+function rendicionesHechas(pedidos) {
+  const m = new Map();
+  ventasEntregadas(pedidos).filter((v) => v.rendicion).forEach((v) => {
+    const r = v.rendicion;
+    if (!m.has(r.id)) m.set(r.id, { ...r, ventas: [] });
+    m.get(r.id).ventas.push(v);
+  });
+  return [...m.values()].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+}
+function textoDiferencia(esperado, entregado) {
+  const d = (Number(entregado) || 0) - (Number(esperado) || 0);
+  if (d === 0) return { texto: "Justo", clase: "ok" };
+  return d < 0 ? { texto: `Faltan ${money(-d)}`, clase: "falta" } : { texto: `Sobran ${money(d)}`, clase: "sobra" };
+}
+
+function RendicionFletePanel({ pedidos, onChange, canEdit, onRegistrar }) {
+  const [verRendidas, setVerRendidas] = useState(false);
+  const [entrego, setEntrego] = useState({});
+  const [aviso, setAviso] = useState("");
+  const tandas = tandasParaRendir(pedidos);
+  const rendidas = rendicionesHechas(pedidos);
+
+  function marcarVenta(items, patch) {
+    const ids = new Set(items.map((e) => e.id));
+    onChange(pedidos.map((p) => (ids.has(p.id) ? { ...p, ...patch } : p)));
+  }
+  function cuantoEntrego(t) {
+    const crudo = entrego[t.clave];
+    if (crudo === undefined || String(crudo).trim() === "") return t.total;
+    return Number(String(crudo).replace(/[^0-9]/g, "")) || 0;
+  }
+  function rendir(t) {
+    const entregado = cuantoEntrego(t);
+    const dif = textoDiferencia(t.total, entregado);
+    if (dif.clase !== "ok" && !window.confirm(`${t.fletero} tenía que entregar ${money(t.total)} y entregó ${money(entregado)}.\n\n${dif.texto}. ¿Lo anoto así?`)) return;
+    const r = { id: uid(), fecha: new Date().toISOString(), dia: t.dia, fletero: t.fletero, esperado: t.total, entregado };
+    const ids = new Set(t.ventas.flatMap((v) => v.items.map((e) => e.id)));
+    onChange(pedidos.map((p) => (ids.has(p.id) ? { ...p, rendicionFlete: r } : p)));
+    if (onRegistrar) onRegistrar("Recibió la rendición del flete", `${t.fletero} — ${t.ventas.length} entrega(s) — tenía que entregar ${money(t.total)}, entregó ${money(entregado)}`);
+    setEntrego((x) => { const n = { ...x }; delete n[t.clave]; return n; });
+    setAviso(`Listo: ${t.fletero} rindió ${money(entregado)}.${dif.clase !== "ok" ? ` ${dif.texto}.` : ""}`);
+    setTimeout(() => setAviso(""), 5000);
+  }
+  function deshacer(r) {
+    if (!window.confirm(`¿Deshacer la rendición de ${r.fletero} del ${fechaEntregaCorta(r.dia)}? Las entregas vuelven a «Para rendir».`)) return;
+    onChange(pedidos.map((p) => (p.rendicionFlete?.id === r.id ? { ...p, rendicionFlete: null } : p)));
+    if (onRegistrar) onRegistrar("Deshizo una rendición del flete", `${r.fletero} — ${money(r.entregado)}`);
+  }
+
+  return (
+    <div className="dg-page">
+      {aviso && <div className="dg-aviso-ok">{aviso}</div>}
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <div className="dg-periodo-toggle">
+          <button type="button" className={verRendidas ? "" : "dg-periodo-on"} onClick={() => setVerRendidas(false)}>Para rendir ({tandas.length})</button>
+          <button type="button" className={verRendidas ? "dg-periodo-on" : ""} onClick={() => setVerRendidas(true)}>Ya rendidas ({rendidas.length})</button>
+        </div>
+      </div>
+
+      {!verRendidas && tandas.length === 0 && <div className="dg-empty">No hay plata del flete para rendir. Cuando se entregue un pedido con saldo o con el envío cobrado en la puerta, aparece acá.</div>}
+
+      {!verRendidas && tandas.map((t) => {
+        const entregado = cuantoEntrego(t);
+        const dif = textoDiferencia(t.total, entregado);
+        return (
+          <div className="dg-section-card dg-rendicion" key={t.clave}>
+            <div className="dg-section-header"><Truck size={14} /> {t.fletero} <small className="dg-rendicion-dia">· entregas del {fechaLargaCorta(t.dia)}</small></div>
+            <div className="dg-flete-scroll">
+              <table className="dg-flete-tabla">
+                <thead><tr><th>Pedido</th><th className="dg-num">Cobró en la puerta</th><th className="dg-num">Se queda él</th><th className="dg-num">Tiene que entregar</th><th>El saldo lo pagó</th></tr></thead>
+                <tbody>
+                  {t.ventas.map((v) => {
+                    const c = v.cuenta;
+                    const enLaPuerta = (c.porTransferencia ? 0 : c.saldo) + c.envioEnLaPuerta;
+                    return (
+                      <tr key={v.clave}>
+                        <td>
+                          <div className="dg-rendicion-pedido">#{v.items[0].orden} {v.items[0].cliente || "Sin nombre"}</div>
+                          <small className="dg-rendicion-sub">{[v.items[0].barrio, v.items.length > 1 ? `${v.items.length} espejos` : ""].filter(Boolean).join(" · ")}</small>
+                        </td>
+                        <td className="dg-num" data-label="Cobró en la puerta">
+                          {money(enLaPuerta)}
+                          <small className="dg-rendicion-sub">{[c.saldo > 0 ? `saldo ${money(c.saldo)}${c.porTransferencia ? " (transf.)" : ""}` : "", c.envioEnLaPuerta > 0 ? `envío ${money(c.envioEnLaPuerta)}` : ""].filter(Boolean).join(" + ")}</small>
+                        </td>
+                        <td className="dg-num" data-label="Se queda él">{c.suyo > 0 ? money(c.suyo) : "—"}</td>
+                        <td className="dg-num" data-label="Tiene que entregar"><strong>{money(c.entrega)}</strong></td>
+                        <td data-label="El saldo lo pagó">
+                          {c.saldo > 0 ? (
+                            canEdit ? (
+                              <select value={c.porTransferencia ? "transferencia" : "efectivo"} onChange={(e) => marcarVenta(v.items, { saldoPorTransferencia: e.target.value === "transferencia" })}>
+                                <option value="efectivo">En efectivo al flete</option>
+                                <option value="transferencia">Por transferencia</option>
+                              </select>
+                            ) : (c.porTransferencia ? "Por transferencia" : "En efectivo al flete")
+                          ) : <span className="dg-rendicion-sub">No tenía saldo</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="dg-rendicion-pie">
+              <div className="dg-flete-resumen" style={{ margin: 0 }}>
+                <span><small>Tiene que entregar</small><strong>{money(t.total)}</strong></span>
+              </div>
+              {canEdit && (
+                <>
+                  <label className="dg-rendicion-campo">
+                    <small>Entregó</small>
+                    <input inputMode="numeric" value={entrego[t.clave] ?? ""} placeholder={String(t.total)}
+                      onChange={(e) => setEntrego((x) => ({ ...x, [t.clave]: e.target.value }))} />
+                  </label>
+                  <span className={`dg-rendicion-dif dg-rendicion-${dif.clase}`}>{dif.texto}</span>
+                  <button type="button" className="dg-btn-primary" onClick={() => rendir(t)}><CircleDollarSign size={14} /> Recibí la plata</button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {verRendidas && rendidas.length === 0 && <div className="dg-empty">Todavía no se rindió nada.</div>}
+      {verRendidas && rendidas.length > 0 && (
+        <div className="dg-section-card">
+          <div className="dg-flete-scroll">
+            <table className="dg-flete-tabla">
+              <thead><tr><th>Día</th><th>Flete</th><th className="dg-num">Entregas</th><th className="dg-num">Tenía que entregar</th><th className="dg-num">Entregó</th><th>Diferencia</th><th /></tr></thead>
+              <tbody>
+                {rendidas.slice(0, 60).map((r) => {
+                  const dif = textoDiferencia(r.esperado, r.entregado);
+                  return (
+                    <tr key={r.id}>
+                      <td>{fechaLargaCorta(r.dia)}</td>
+                      <td>{r.fletero}</td>
+                      <td className="dg-num">{r.ventas.length}</td>
+                      <td className="dg-num">{money(r.esperado)}</td>
+                      <td className="dg-num">{money(r.entregado)}</td>
+                      <td><span className={`dg-rendicion-dif dg-rendicion-${dif.clase}`}>{dif.texto}</span></td>
+                      <td>{canEdit && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => deshacer(r)}><RotateCcw size={12} /> Deshacer</button>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -21042,6 +21259,11 @@ function SectorPage({
           : <LockedPage label="Envíos al interior" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "rendicion" && sector.id === "postventa" && (
+        canSeePedidos ? <RendicionFletePanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} onRegistrar={onRegistrar} />
+          : <LockedPage label="Rendición del flete" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "retiros" && sector.id === "postventa" && (
         canSeePedidos ? <RetirosPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
           : <LockedPage label="Retiros en el local" onLogin={onRequestLogin} />
@@ -21242,6 +21464,32 @@ function Style() {
       .dg-flete-resumen small { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
       .dg-flete-resumen strong { font-family:'JetBrains Mono', monospace; font-size:20px; line-height:1.1; color:var(--dg-text); }
       .dg-flete-scroll { overflow-x:auto; }
+      .dg-rendicion-dia { font-weight:500; color:var(--dg-text-dim); }
+      .dg-rendicion-pedido { font-weight:600; }
+      .dg-rendicion-sub { display:block; font-size:11px; color:var(--dg-text-dim); white-space:normal; }
+      .dg-flete-tabla .dg-num .dg-rendicion-sub { font-family:inherit; }
+      .dg-rendicion .dg-flete-tabla select { font-size:12px; padding:4px 6px; }
+      .dg-rendicion-pie { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px 16px; margin-top:12px; }
+      .dg-rendicion-campo { display:flex; flex-direction:column; gap:3px; }
+      .dg-rendicion-campo small { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-rendicion-campo input { width:130px; font-family:'JetBrains Mono', monospace; }
+      .dg-rendicion-dif { font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; white-space:nowrap; }
+      .dg-rendicion-ok { color:var(--dg-success); background:rgba(var(--dg-line-rgb),.06); }
+      .dg-rendicion-falta { color:var(--dg-danger); background:rgba(var(--dg-line-rgb),.06); }
+      .dg-rendicion-sobra { color:var(--dg-warning); background:rgba(var(--dg-line-rgb),.06); }
+      /* En el celular cada entrega es una ficha: la tabla no entra a lo ancho. */
+      @media (max-width: 600px) {
+        .dg-rendicion .dg-flete-tabla { min-width:0; }
+        .dg-rendicion .dg-flete-tabla thead { display:none; }
+        .dg-rendicion .dg-flete-tabla tbody, .dg-rendicion .dg-flete-tabla tr { display:block; }
+        .dg-rendicion .dg-flete-tabla tr { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; padding:12px 0; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+        .dg-rendicion .dg-flete-tabla tr:first-child { border-top:0; }
+        .dg-rendicion .dg-flete-tabla td { display:block; border:0; padding:0; white-space:normal; text-align:left; }
+        .dg-rendicion .dg-flete-tabla td:first-child, .dg-rendicion .dg-flete-tabla td:last-child { grid-column:1 / -1; }
+        .dg-rendicion .dg-flete-tabla td[data-label]::before { content:attr(data-label); display:block; margin-bottom:2px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+        .dg-rendicion .dg-flete-tabla select { width:100%; font-size:16px; }
+        .dg-rendicion-campo input { font-size:16px; }
+      }
       .dg-flete-tabla { width:100%; min-width:520px; border-collapse:collapse; font-size:13px; }
       .dg-flete-tabla th { padding:7px 9px; text-align:left; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.05); white-space:nowrap; }
       .dg-flete-tabla td { padding:8px 9px; border-top:1px solid rgba(var(--dg-line-rgb),.08); color:var(--dg-text); white-space:nowrap; }
