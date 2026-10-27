@@ -1499,6 +1499,7 @@ function cambiosDeUnPedido(a, d) {
   ACLARACIONES.forEach((x) => {
     if (cambio(a, d, x.campo)) pon("Cambió una aclaración", `${x.label.toLowerCase()}: ${String(d[x.campo] || "").trim().slice(0, 60) || "la borró"}`);
   });
+  if (prendio(a, d, "resenaPedida")) pon("Pidió una reseña");
   if (prendio(a, d, "demorado")) pon("Marcó demorado");
   if (prendio(a, d, "urgente")) pon("Marcó urgente");
   if (cambio(a, d, "diaTaller")) pon("Movió un espejo de día", d.diaTaller ? `al ${diaMesCorto(d.diaTaller)}` : "que lo reparta la app");
@@ -2805,6 +2806,7 @@ function App() {
             auditoria={auditoria}
             kommoSubdominio={integraciones?.kommoSubdominio}
             editorListas={integraciones?.editorListas || ""}
+            linkResena={integraciones?.linkResena || ""}
             trabasTaller={trabasTaller || {}}
             onCambiarTrabas={persistTrabasTaller}
             driveFacturasUrl={integraciones?.driveFacturasUrl || ""}
@@ -3504,6 +3506,13 @@ function AjustesModal({ onClose, admins, onChangeAdmins, session, sectors, vende
               </p>
               <Field label="Editor único de las listas de fábrica">
                 <input value={integraciones?.editorListas || ""} onChange={(e) => onChangeIntegraciones({ ...integraciones, editorListas: e.target.value })} placeholder="Ej: Facu" />
+              </Field>
+              <p className="dg-pago-meta" style={{ margin: "14px 0 8px" }}>
+                El link para que el cliente deje una reseña en Google (en el perfil de la empresa en Google: «Pedir reseñas» → copiar el link).
+                Con esto, en Ventas › Pedidos aparece «Pedir reseña» en los pedidos ya entregados.
+              </p>
+              <Field label="Link de reseñas de Google">
+                <input value={integraciones?.linkResena || ""} onChange={(e) => onChangeIntegraciones({ ...integraciones, linkResena: e.target.value.trim() })} placeholder="Ej: https://g.page/r/…/review" />
               </Field>
               <Field label="Subdominio de Kommo">
                 <input value={integraciones?.kommoSubdominio || ""} onChange={(e) => onChangeIntegraciones({ ...integraciones, kommoSubdominio: e.target.value })} placeholder="Ej: midecoglass" />
@@ -8315,7 +8324,7 @@ function validarPedido(p) {
   return errores;
 }
 
-function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio, stockEspejos, onChangeStockEspejos, desdePresupuesto, onPresupuestoUsado }) {
+function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio, stockEspejos, onChangeStockEspejos, desdePresupuesto, onPresupuestoUsado, linkResena = "" }) {
   // Los espejos de un presupuesto que faltan cargar: cada «Guardar y cargar
   // otro espejo» toma el siguiente.
   const colaPresupuesto = useRef([]);
@@ -8855,6 +8864,21 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                   </div>
                 )}
                 <PagosDeLaVenta espejos={espejos} />
+                {(() => {
+                  const entregado = espejos.length > 0 && espejos.every((e) => e.estado === "Entregado" || e.estado === "Cancelado") && espejos.some((e) => e.estado === "Entregado");
+                  const wa = waLink(espejos[0].celular);
+                  if (!entregado || !linkResena || !wa) return null;
+                  const pedida = espejos.map((e) => e.resenaPedida).find(Boolean);
+                  return (
+                    <div className="dg-resena">
+                      <a className="dg-btn-ghost dg-mini-btn" href={`${wa}?text=${encodeURIComponent(mensajePedirResena(espejos[0], linkResena))}`} target="_blank" rel="noopener noreferrer"
+                        onClick={() => { if (canEditFull && !pedida) onChange(pedidos.map((x) => (espejos.some((e) => e.id === x.id) ? { ...x, resenaPedida: isoLocal(new Date()) } : x))); }}>
+                        <Sparkles size={13} /> {pedida ? "Pedirle la reseña de nuevo" : "Pedir reseña"}
+                      </a>
+                      {pedida && <small>Se la pedimos el {fechaEntregaCorta(pedida)}</small>}
+                    </div>
+                  );
+                })()}
                 {(espejos.find((e) => Array.isArray(e.fotosEntrega) && e.fotosEntrega.length) || {}).fotosEntrega && (
                   <div className="dg-entrega-foto">
                     <span>Foto de la entrega</span>
@@ -9348,6 +9372,14 @@ function PagosDeLaVenta({ espejos }) {
       </ul>
     </div>
   );
+}
+
+// ===== PEDIR RESEÑA (27/10/2026) =============================================
+// Con el pedido entregado, un WhatsApp con el link de reseñas de Google (se
+// carga en Ajustes). Queda anotado cuándo se le pidió, para no pedírsela dos
+// veces sin querer.
+function mensajePedirResena(p, link) {
+  return `Hola${p?.cliente ? ` ${p.cliente}` : ""}! 👋 Gracias por elegir DECOGLASS. Si te gustó tu espejo, ¿nos dejarías una reseña en Google? Nos ayuda muchísimo y te lleva un minuto: ${link}`;
 }
 
 // ===== LA ORDEN EN PAPEL (27/10/2026) ========================================
@@ -20712,7 +20744,7 @@ function SectorPage({
   facturas, onChangeFacturas, enviosLogistica, onChangeEnviosLogistica, reclamos, onChangeReclamos, stockEspejos, onChangeStockEspejos,
   stockMateriales, onChangeStockMateriales,
   empleadosSueldo, onChangeEmpleadosSueldo, liquidaciones, onChangeLiquidaciones, onCreatePurchase,
-  admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "",
+  admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "", linkResena = "",
   guias = {}, onChangeGuias, turnos = [], onChangeTurnos, misiones = [], onChangeMisiones,
   tareasSector = {}, onChangeTareasSector,
   trabasTaller = {}, onCambiarTrabas,
@@ -20900,7 +20932,7 @@ function SectorPage({
       {subpage === "pedidos" && sector.id !== "fabrica" && (
         canSeePedidos ? (
           <PedidosPage pedidos={pedidos} onChange={onChangePedidos} vendedores={vendedores} canEditFull={canEditPedidoFull} puedeBorrar={puedeBorrar} sessionSectorId={sessionSectorId} incomes={incomes} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} kommoSubdominio={kommoSubdominio} stockEspejos={stockEspejos} onChangeStockEspejos={onChangeStockEspejos}
-            desdePresupuesto={presupuestoAPedido} onPresupuestoUsado={() => setPresupuestoAPedido(null)} />
+            desdePresupuesto={presupuestoAPedido} onPresupuestoUsado={() => setPresupuestoAPedido(null)} linkResena={linkResena} />
         ) : <LockedPage label="Pedidos" onLogin={onRequestLogin} />
       )}
 
@@ -22630,6 +22662,8 @@ function Style() {
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
       .dg-fotos-campo { align-items:center; }
+      .dg-resena { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:6px 0 10px; }
+      .dg-resena small { font-size:12px; color:var(--dg-text-dim); }
       .dg-entrega-foto { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
       .dg-entrega-foto > span { font-size:12px; font-weight:600; color:var(--dg-text-dim); }
       .dg-foto-entrega-link { margin-left:6px; padding:2px 8px; min-height:0; }
