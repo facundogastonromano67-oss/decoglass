@@ -9910,6 +9910,58 @@ function resumenDeSalidas(filas) {
 function salidaManualVacia(tipo = "envio") {
   return { tipo, cliente: "", telefono: "", direccion: "", barrio: "", piso: "", fecha: isoLocal(new Date()), horario: "", motivo: "", cobrar: "", flete: "", fletero: "", notas: "" };
 }
+// Con quién puede ser una salida, para buscarlo mientras se escribe el nombre
+// (27/10/2026): los clientes que ya compraron (con su dirección de entrega),
+// los proveedores cargados en Administración y la gente de salidas anteriores
+// (un proveedor al que ya se fue tiene la dirección de esa vez). Se usa el
+// mismo buscador que al cargar un pedido, así que también encuentra por
+// teléfono. Nunca se completa solo: hay que tocar la opción.
+function contactosParaSalidas(pedidos, salidas, proveedores) {
+  const out = [];
+  clientesDeLosPedidos(pedidos).forEach((c) => out.push({
+    clave: `c|${c.clave}`, tipo: "cliente", nombre: c.nombre, celular: c.celular || "",
+    direccion: c.detalleEntrega || "", barrio: c.barrio || c.localidad || "", piso: c.piso || "",
+    origen: `${c.compras === 1 ? "1 compra" : `${c.compras} compras`}${c.ultima ? ` · última ${fechaEntregaCorta(c.ultima)}` : ""}`,
+    ultima: c.ultima || "",
+  }));
+  (proveedores || []).forEach((p) => {
+    if (!String(p?.nombre || "").trim()) return;
+    out.push({
+      clave: `p|${p.id}`, tipo: "proveedor", nombre: String(p.nombre).trim(), celular: p.telefono || "",
+      direccion: "", barrio: "", piso: "", origen: ["Proveedor", p.rubro].filter(Boolean).join(" · "), ultima: "",
+    });
+  });
+  const ya = new Set(out.map((x) => `${textoComparable(x.nombre)}|${soloNumeros(x.celular)}`));
+  // De la más nueva a la más vieja: la dirección buena es la última que se usó.
+  [...(salidas || [])].sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || ""))).forEach((m) => {
+    const nombre = String(m?.cliente || "").trim();
+    if (!nombre) return;
+    // Un proveedor cargado no tiene dirección: se la da la última salida a él.
+    const prov = out.find((x) => x.tipo === "proveedor" && textoComparable(x.nombre) === textoComparable(nombre));
+    if (prov) {
+      if (!prov.direccion && m.direccion) Object.assign(prov, { direccion: m.direccion, barrio: m.barrio || "", piso: m.piso || "" });
+      if (!prov.celular && m.telefono) prov.celular = m.telefono;
+      return;
+    }
+    const clave = `${textoComparable(nombre)}|${soloNumeros(m.telefono)}`;
+    if (ya.has(clave)) return;
+    ya.add(clave);
+    out.push({
+      clave: `s|${m.id}`, tipo: "salida", nombre, celular: m.telefono || "",
+      direccion: m.direccion || "", barrio: m.barrio || "", piso: m.piso || "",
+      origen: [tipoDeSalida(m).label, diaMesCorto(m.fecha)].filter(Boolean).join(" · "), ultima: m.fecha || "",
+    });
+  });
+  return out;
+}
+// Busca con el mismo criterio que los clientes. Si lo que se carga es un
+// retiro de material, los proveedores van primero.
+function buscarContactosSalida(contactos, texto, tipoSalida) {
+  const hallados = buscarClientes(contactos, texto, 8);
+  if (tipoSalida !== "retiro_material") return hallados.slice(0, 6);
+  return [...hallados.filter((c) => c.tipo === "proveedor"), ...hallados.filter((c) => c.tipo !== "proveedor")].slice(0, 6);
+}
+
 // Una salida cargada a mano en el mensaje para el flete.
 function bloqueSalidaManual(m, i) {
   const t = tipoDeSalida(m);
@@ -10086,7 +10138,7 @@ function semanaActual() {
   return { hoy: iso(hoy), lunes: iso(lunes), domingo: iso(domingo) };
 }
 
-function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar, salidas = [], onChangeSalidas }) {
+function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar, salidas = [], onChangeSalidas, proveedores = [] }) {
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
@@ -10107,6 +10159,23 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   // anota en el registro sale solo de lo que cambia en la lista.
   const [formSalida, setFormSalida] = useState(null);
   const listaSalidas = Array.isArray(salidas) ? salidas : [];
+  // El buscador del nombre: solo mientras el campo tiene el foco.
+  const [buscandoContacto, setBuscandoContacto] = useState(false);
+  const contactos = formSalida ? contactosParaSalidas(pedidos, listaSalidas, proveedores) : [];
+  const sugerenciasContacto = formSalida && buscandoContacto ? buscarContactosSalida(contactos, formSalida.cliente || "", formSalida.tipo) : [];
+  // Trae lo que tiene la ficha y deja lo que ya escribieron si la ficha no lo
+  // tiene. El tipo, el día y qué hay que llevar no se tocan.
+  function elegirContacto(c) {
+    setFormSalida((f) => ({
+      ...f,
+      cliente: c.nombre,
+      telefono: c.celular || f.telefono,
+      direccion: c.direccion || f.direccion,
+      barrio: c.barrio || f.barrio,
+      piso: c.piso || f.piso,
+    }));
+    setBuscandoContacto(false);
+  }
   const manualesPendientes = listaSalidas.filter((m) => !m.hecho).filter((m) => {
     const palabras = palabrasDeBusqueda(busqueda);
     if (!palabras.length) return true;
@@ -10263,7 +10332,29 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                     {Object.entries(TIPOS_SALIDA).map(([id, x]) => <option key={id} value={id}>{x.label}</option>)}
                   </select>
                 </Field>
-                <Field label={t.quien}><input value={formSalida.cliente} onChange={(e) => set("cliente", e.target.value)} /></Field>
+                <Field label={t.quien}>
+                  <div className="dg-cliente-busca">
+                    <input value={formSalida.cliente} autoComplete="off"
+                      onChange={(e) => { set("cliente", e.target.value); setBuscandoContacto(true); }}
+                      onFocus={() => setBuscandoContacto(true)}
+                      onBlur={() => window.setTimeout(() => setBuscandoContacto(false), 150)}
+                      placeholder="Escribí el nombre o el teléfono" />
+                    {sugerenciasContacto.length > 0 && (
+                      <div className="dg-cliente-lista">
+                        <div className="dg-cliente-lista-tit">Ya los tenemos — tocá para traer sus datos</div>
+                        {sugerenciasContacto.map((c) => (
+                          <button type="button" key={c.clave} className="dg-cliente-opcion"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => elegirContacto(c)}>
+                            <strong>{c.nombre}</strong>
+                            <small>{[c.celular, c.barrio, c.direccion].filter(Boolean).join(" · ") || "sin teléfono ni dirección"}</small>
+                            <span>{c.origen}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Field>
                 <Field label="Teléfono"><input inputMode="tel" value={formSalida.telefono} onChange={(e) => set("telefono", e.target.value)} placeholder="Ej: 11 2233 4455" /></Field>
                 <Field label="Día"><input type="date" value={formSalida.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
                 <Field label="Horario">
@@ -19901,7 +19992,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "postventa" && (
-        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} />
+        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} proveedores={proveedores || []} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
       )}
 
