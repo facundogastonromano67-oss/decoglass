@@ -821,6 +821,7 @@ const SECTOR_SUBPAGES = {
   ventas: [
     { id: "presupuestador", label: "Presupuestador" },
     { id: "pedidos", label: "Pedidos" },
+    { id: "clientes", label: "Clientes" },
     { id: "turno", label: "Mi turno" },
     { id: "crm", label: "CRM (Kommo)" },
     { id: "recursos", label: "Catálogos y precios" },
@@ -5574,6 +5575,104 @@ function datosDelCliente(ficha) {
   return patch;
 }
 
+// ===== VENTAS › CLIENTES (27/10/2026) ========================================
+// La ficha de cada cliente: hasta ahora los datos solo aparecían al
+// autocompletar. Sale de los mismos pedidos (no hay tabla aparte), así que
+// está completa hacia atrás. Muestra lo que compró, cuánto gastó, sus
+// reclamos, y deja repetir un espejo en un pedido nuevo con sus datos.
+const CAMPOS_DEL_ESPEJO = ["ancho", "alto", "cant", "forma", "tipo", "tono", "pulido", "grabado", "touch", "desemp", "desempTipo", "desempCantidad", "horaTemp", "bluetooth"];
+function espejoParaRepetir(p) {
+  const out = {};
+  CAMPOS_DEL_ESPEJO.forEach((c) => { if (p?.[c] !== undefined && p?.[c] !== "") out[c] = p[c]; });
+  return out;
+}
+function ClientesPanel({ pedidos, reclamos = [], onRepetir }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [abierto, setAbierto] = useState(null);
+  const todos = clientesDeLosPedidos(pedidos);
+  const lista = busqueda.trim().length >= 2 || soloNumeros(busqueda).length >= 3
+    ? buscarClientes(todos, busqueda, 80)
+    : todos.slice(0, 60);
+  const repitieron = todos.filter((c) => c.compras > 1).length;
+  // La misma regla que usan los reclamos (clienteDelReclamo): por teléfono, y
+  // si no, por nombre solo cuando hay UN cliente con ese nombre. Si hay dos
+  // «Hernán Oliva», no se le cuelga el reclamo a los dos.
+  const reclamosDe = (c) => (reclamos || []).filter((r) => clienteDelReclamo(todos, r)?.clave === c.clave);
+  const gastado = (c) => c.pedidos.filter((p) => p.estado !== "Cancelado").reduce((t, p) => t + (Number(p.monto) || 0), 0);
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <input className="dg-pedido-search" placeholder="Nombre o teléfono…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+      </div>
+      <p className="dg-hint" style={{ margin: "0 0 12px" }}>
+        {todos.length} clientes · {repitieron} volvieron a comprar{!busqueda.trim() && todos.length > 60 ? " · se ven los 60 últimos: buscá para encontrar al resto" : ""}
+      </p>
+      {lista.length === 0 && <div className="dg-empty">No encontré a nadie con «{busqueda.trim()}».</div>}
+      <div className="dg-clientes">
+        {lista.map((c) => {
+          const esteAbierto = abierto === c.clave;
+          const recl = reclamosDe(c);
+          const wa = waLink(c.celular);
+          return (
+            <div className={`dg-cliente ${esteAbierto ? "dg-cliente-abierto" : ""}`} key={c.clave}>
+              <button type="button" className="dg-cliente-cab" onClick={() => setAbierto(esteAbierto ? null : c.clave)} aria-expanded={esteAbierto}>
+                <span className="dg-cliente-nombre">
+                  <strong>{c.nombre}</strong>
+                  <small>{[c.celular, c.barrio || c.localidad].filter(Boolean).join(" · ") || "sin teléfono"}</small>
+                </span>
+                <span className="dg-cliente-dato"><b>{c.compras}</b><small>{c.compras === 1 ? "compra" : "compras"}</small></span>
+                <span className="dg-cliente-dato"><b>{money(gastado(c))}</b><small>en total</small></span>
+                <span className="dg-cliente-dato"><b>{c.ultima ? fechaEntregaCorta(c.ultima) : "—"}</b><small>última</small></span>
+                {recl.length > 0 && <span className="dg-envios-chip-tipo dg-chip-devolucion">{recl.length} {recl.length === 1 ? "reclamo" : "reclamos"}</span>}
+                <ChevronRight size={16} className={esteAbierto ? "dg-presu-chevron-on" : ""} />
+              </button>
+              {esteAbierto && (
+                <div className="dg-cliente-cuerpo">
+                  <ul className="dg-salida-plata">
+                    <li><span>Teléfono</span><b className="dg-salida-dato">{c.celular || "—"}</b></li>
+                    <li><span>DNI / CUIT</span><b className="dg-salida-dato">{c.dniCuit || "—"}</b></li>
+                    <li><span>Dirección</span><b className="dg-salida-dato">{[c.detalleEntrega, c.piso, c.barrio || c.localidad].filter(Boolean).join(" · ") || "—"}</b></li>
+                    <li><span>Cómo lo recibe</span><b className="dg-salida-dato">{c.metodo || "—"}</b></li>
+                  </ul>
+                  {wa && <a className="dg-btn-ghost dg-mini-btn" style={{ marginTop: 8 }} href={wa} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> WhatsApp</a>}
+                  <div className="dg-salida-tit" style={{ marginTop: 14 }}>Lo que compró</div>
+                  <ul className="dg-cliente-compras">
+                    {c.pedidos.map((p) => (
+                      <li key={p.id}>
+                        <span className="dg-cliente-compra">
+                          <b>#{p.orden} · {p.ancho}×{p.alto} cm{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</b>
+                          <small>{[p.forma, p.tipo, funcionesPedido(p).map((f) => f.label.toLowerCase()).join(", ")].filter(Boolean).join(" · ")}</small>
+                          <small>{fechaEntregaCorta(String(p.fecha || "").slice(0, 10))} · {p.estado} · {money(Number(p.monto) || 0)}</small>
+                        </span>
+                        {onRepetir && (
+                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => onRepetir(c, p)}>
+                            <Copy size={13} /> Repetir
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {recl.length > 0 && (
+                    <>
+                      <div className="dg-salida-tit" style={{ marginTop: 14 }}>Reclamos</div>
+                      <ul className="dg-cliente-compras">
+                        {recl.map((r) => (
+                          <li key={r.id}><span className="dg-cliente-compra"><b>{r.tipo}</b><small>{fechaEntregaCorta(r.fecha)} · {estadoReclamo(r)}{r.notas ? ` · ${r.notas}` : ""}</small></span></li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Traduce un pedido real (que usa sus propios nombres de campo) al formato
 // que espera computeQuote (el mismo motor de costos del presupuestador), para
 // poder estimar cuánto costó ese pedido puntual sin duplicar la fórmula.
@@ -8256,7 +8355,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     const [primero, ...resto] = desdePresupuesto.espejos || [];
     colaPresupuesto.current = resto;
     setAvisoEspejo(null);
-    setNextDraft({ ...emptyPedido({ tipoPedido: "venta", cliente: desdePresupuesto.cliente, celular: desdePresupuesto.celular, tipoFactura: desdePresupuesto.tipoFactura }), ...(primero || {}) });
+    setNextDraft({ ...emptyPedido({ tipoPedido: "venta", cliente: desdePresupuesto.cliente, celular: desdePresupuesto.celular, tipoFactura: desdePresupuesto.tipoFactura }), ...(desdePresupuesto.datosCliente || {}), ...(primero || {}) });
     setCreating(true);
     if (onPresupuestoUsado) onPresupuestoUsado();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -20678,6 +20777,18 @@ function SectorPage({
           : <LockedPage label="El Presupuestador" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "clientes" && sector.id === "ventas" && (
+        canSeePedidos ? (
+          <ClientesPanel pedidos={pedidos} reclamos={reclamos}
+            onRepetir={canEditPedidoFull ? (c, p) => {
+              // Mismo camino que «Pasar a pedido» de un presupuesto: Pedidos
+              // abre uno nuevo con los datos del cliente y ese espejo.
+              setPresupuestoAPedido({ cliente: c.nombre, celular: c.celular, tipoFactura: c.tipoFactura || "Cons. Final / B", datosCliente: datosDelCliente(c), espejos: [espejoParaRepetir(p)] });
+              setSubpage("pedidos");
+            } : undefined} />
+        ) : <LockedPage label="Clientes" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "crm" && (
         canQuote ? <AccesoKommoPanel kommoSubdominio={kommoSubdominio} isAdmin={isAdmin} />
           : <LockedPage label="El CRM" onLogin={onRequestLogin} />
@@ -22439,6 +22550,28 @@ function Style() {
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
       .dg-fotos-campo { align-items:center; }
+      /* Ventas › Clientes */
+      .dg-clientes { display:flex; flex-direction:column; gap:8px; }
+      .dg-cliente { border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:12px; background:var(--dg-surface); }
+      .dg-cliente-abierto { border-color:rgba(var(--dg-accent-rgb),.35); }
+      .dg-cliente-cab { width:100%; display:flex; align-items:center; gap:14px; padding:11px 13px; border:0; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+      .dg-cliente-nombre { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }
+      .dg-cliente-nombre strong { font-size:15px; font-weight:600; color:var(--dg-text); }
+      .dg-cliente-nombre small { font-size:12px; color:var(--dg-text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .dg-cliente-dato { display:flex; flex-direction:column; align-items:flex-end; flex:0 0 auto; }
+      .dg-cliente-dato b { font-family:'JetBrains Mono', monospace; font-size:13px; font-variant-numeric:tabular-nums; color:var(--dg-text); }
+      .dg-cliente-dato small { font-size:11px; color:var(--dg-text-dim); }
+      .dg-cliente-cuerpo { padding:0 13px 13px; }
+      .dg-cliente-compras { list-style:none; margin:6px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
+      .dg-cliente-compras li { display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid rgba(var(--dg-line-rgb),.08); }
+      .dg-cliente-compra { display:flex; flex-direction:column; flex:1 1 auto; min-width:0; }
+      .dg-cliente-compra b { font-size:13px; font-weight:600; color:var(--dg-text); }
+      .dg-cliente-compra small { font-size:12px; color:var(--dg-text-dim); }
+      @media (max-width:600px) {
+        .dg-cliente-cab { flex-wrap:wrap; gap:8px 14px; }
+        .dg-cliente-nombre { flex:1 1 100%; }
+        .dg-cliente-dato { align-items:flex-start; }
+      }
       .dg-foto-item { display:inline-flex; align-items:center; gap:2px; }
       .dg-reclamo-fotos { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
       .dg-reclamo-fotos > span { font-size:12px; font-weight:600; color:var(--dg-text-dim); }
