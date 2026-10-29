@@ -776,8 +776,8 @@ function detalleCobroEntregaGrupo(items) {
     return saldoEspejos > 0 ? `💰 Saldo pendiente: ${money(saldoEspejos)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
   }
 
-  const costoEnvio = lista.reduce((mayor, p) => Math.max(mayor, costoEnvioPedido(p)), 0);
-  const envioPendiente = lista.reduce((mayor, p) => Math.max(mayor, envioPendientePedido(p)), 0);
+  const costoEnvio = costoEnvioDeVarios(lista);
+  const envioPendiente = envioPendienteDeVarios(lista);
   const total = saldoEspejos + envioPendiente;
   const lineas = [
     saldoEspejos > 0 ? `🪞 Saldo de los espejos: ${money(saldoEspejos)}` : "🪞 Espejos: saldados",
@@ -10538,6 +10538,53 @@ const TURNOS_ENVIO = [
   { id: "Por la tarde", label: "Tarde" },
 ];
 
+// ===== UN CLIENTE, UNA FILA (29/10/2026) =====================================
+// En Envíos, los pedidos del mismo cliente van en una sola fila aunque tengan
+// direcciones distintas. Al abrirla se elige si salen juntos (un solo envío, a
+// una dirección) o cada uno por su lado. Lo elegido queda en «envioJunto» de
+// cada espejo: un id compartido = van juntos; "no" = se eligió separarlos;
+// vacío = todavía no se decidió.
+//
+// La plata NO se mezcla: cada pedido conserva su saldo y su costo de envío.
+// Por eso el envío se suma pedido por pedido (dentro de un mismo pedido sigue
+// valiendo uno solo aunque tenga varios espejos, como siempre).
+function claveClienteEnvio(p) {
+  const tel = soloNumeros(p?.celular).slice(-8);
+  if (tel.length >= 6) return `tel:${tel}`;
+  const nombre = textoComparable(p?.cliente || "");
+  return nombre ? `nom:${nombre}` : `venta:${p?.grupoId || p?.id}`;
+}
+function gruposDe(items) { return new Set((items || []).map((x) => x.grupoId || x.id)); }
+function ventasDe(items) { return gruposDe(items).size; }
+function ordenesDe(items) { return [...new Set((items || []).map((x) => x.orden).filter(Boolean))].sort((a, b) => Number(a) - Number(b)).map((o) => `#${o}`).join(" + "); }
+function envioJuntoDe(items) { return (items || []).map((x) => x.envioJunto).find((v) => v && v !== "no") || ""; }
+function sumaPorVenta(items, fn) {
+  const m = new Map();
+  (items || []).forEach((x) => { const k = x.grupoId || x.id; m.set(k, Math.max(m.get(k) || 0, Number(fn(x)) || 0)); });
+  let t = 0;
+  m.forEach((v) => { t += v; });
+  return t;
+}
+function costoEnvioDeVarios(items) { return sumaPorVenta(items, costoEnvioPedido); }
+function envioPendienteDeVarios(items) { return sumaPorVenta(items, envioPendientePedido); }
+// Lo que se copia al juntar. Antes de pisarlo se guarda lo que tenía cada
+// pedido («envioAntes»), así separarlos le devuelve su dirección.
+const CAMPOS_DEL_ENVIO_JUNTO = ["barrio", "detalleEntrega", "piso", "localidad", "horarioEntrega", "fechaEnvio", "destinoLat", "destinoLng", "fletero", "fleteroTel"];
+function todosCon(items, campo) { return (items || []).length > 0 && (items || []).every((x) => !!x[campo]); }
+// Los envíos de un cliente: las ventas con el mismo envioJunto van juntas; las
+// demás, cada una por su lado. Cada envío es una lista de ventas.
+function enviosDelCliente(ventas) {
+  const juntos = new Map();
+  const sueltos = [];
+  (ventas || []).forEach((v) => {
+    const id = envioJuntoDe(v);
+    if (!id) { sueltos.push([v]); return; }
+    if (!juntos.has(id)) juntos.set(id, []);
+    juntos.get(id).push(v);
+  });
+  return [...juntos.values(), ...sueltos];
+}
+
 // ===== Coordinar con el flete ==============================================
 // El teléfono del flete no se carga en ningún lado aparte: se recuerda del
 // último envío que llevó esa misma persona, igual que los datos del cliente
@@ -10566,7 +10613,7 @@ function mensajeParaElFlete(items, nombreFlete) {
     .filter(Boolean).join(" · ");
   const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
   const aCobrar = lista.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
-    + lista.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+    + envioPendienteDeVarios(lista);
 
   const lineas = [
     `${hola} Tenemos un envío para coordinar.`,
@@ -10623,7 +10670,7 @@ function bloqueEntregaPedido(items, i) {
   const medidas = items.map((x) => (x.ancho && x.alto ? `${x.ancho}×${x.alto} cm` : "")).filter(Boolean).join(" · ");
   const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
   const aCobrar = items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
-    + items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
+    + envioPendienteDeVarios(items);
   const texto = [
     `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
     `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
@@ -10680,7 +10727,7 @@ function fleteEnComun(grupos) {
 function estadoPagoDelFlete(items) {
   const lista = items || [];
   const p = lista[0] || {};
-  const monto = lista.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0);
+  const monto = costoEnvioDeVarios(lista);
   if (monto <= 0) return { texto: "Falta cargar el monto del flete", clase: "falta" };
   if (p.fleteLiquidado) return { texto: `Ya le pagamos ${money(Number(p.fleteLiquidadoMonto) || monto)}${p.fleteLiquidadoFecha ? ` el ${fechaEntregaCorta(p.fleteLiquidadoFecha)}` : ""}`, clase: "ok" };
   if (p.envioCobro === "entrega") return { texto: `Lo cobra él en la entrega (${money(monto)})`, clase: "neutro" };
@@ -10795,11 +10842,51 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
 
   // Todos los cambios de esta pantalla son del pedido entero: los datos de
   // entrega y el envío son uno solo aunque haya varios espejos.
-  function updateGrupo(pedido, patchDe) {
-    const grupo = pedido.grupoId || pedido.id;
-    onChange(pedidos.map((p) => ((p.grupoId || p.id) === grupo ? { ...p, ...patchDe(p) } : p)));
+  // Cambia todos los espejos de los pedidos de esa fila: uno solo, o todos los
+  // que van juntos en el mismo envío.
+  function updateItems(items, patchDe) {
+    const g = gruposDe(items);
+    onChange(pedidos.map((p) => (g.has(p.grupoId || p.id) ? { ...p, ...(typeof patchDe === "function" ? patchDe(p) : patchDe) } : p)));
   }
-  function updateShipping(pedido, patch) { updateGrupo(pedido, () => patch); }
+  const updateFila = (f, patch) => updateItems(f.items, patch);
+  // Lo que se lleva el flete es de cada pedido: no se copia a los otros.
+  const updateVenta = (f, patch) => updateItems([f.p], patch);
+
+  // Los pedidos de un mismo cliente, juntos (ver «UN CLIENTE, UNA FILA»).
+  const clientesConEnvio = (() => {
+    const m = new Map();
+    grupos.forEach((venta) => {
+      const k = claveClienteEnvio(venta[0]);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(venta);
+    });
+    return [...m.entries()].map(([clave, ventas]) => ({ clave, ventas }));
+  })();
+  const [juntandoCliente, setJuntandoCliente] = useState(null);
+  // Juntar: todos van a la dirección elegida, el mismo día y con el mismo
+  // flete. La plata de cada pedido no se toca.
+  function juntarEnvios(f, base) {
+    const id = uid();
+    const b = base.p;
+    const nuevo = {};
+    CAMPOS_DEL_ENVIO_JUNTO.forEach((c) => { nuevo[c] = c === "destinoLat" || c === "destinoLng" ? (b[c] ?? null) : (b[c] || ""); });
+    updateItems(f.items, (x) => {
+      // Lo de antes se guarda una sola vez (si ya estaba juntado, queda lo original).
+      const antes = x.envioAntes || Object.fromEntries(CAMPOS_DEL_ENVIO_JUNTO.map((c) => [c, x[c] ?? ""]));
+      return { ...nuevo, envioJunto: id, envioAntes: antes };
+    });
+    if (onRegistrar) onRegistrar("Juntó envíos", `${f.cliente} — pedidos ${ordenesDe(f.items)} — a ${[b.detalleEntrega, b.barrio].filter(Boolean).join(", ") || "la misma dirección"}`);
+    setJuntandoCliente(null);
+    setFilaAbierta(`junto:${id}`);
+  }
+  function separarEnvios(f) {
+    const todos = ((clientesConEnvio.find((c) => c.clave === f.cli) || {}).ventas || []).flat();
+    const items = todos.length ? todos : f.items;
+    // Cada uno vuelve a la dirección (y el día) que tenía antes de juntarlos.
+    updateItems(items, (x) => (x.envioAntes ? { ...x.envioAntes, envioJunto: "no", envioAntes: null } : { envioJunto: "no" }));
+    if (onRegistrar) onRegistrar("Separó envíos", `${f.cliente} — pedidos ${ordenesDe(items)}`);
+    setFilaAbierta(`cli:${f.cli}`);
+  }
 
   // Un reclamo a domicilio es, para postventa, una salida más: hay que
   // coordinar el día e ir. Entra en la misma tabla que los envíos.
@@ -10852,284 +10939,19 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
       return;
     }
     const ahora = new Date().toISOString();
-    updateGrupo(p, (x) => ({ clienteAvisado: true, clienteAvisadoFecha: ahora, vistoPostventa: x.vistoPostventa || ahora }));
+    updateItems(items, (x) => ({ clienteAvisado: true, clienteAvisadoFecha: x.clienteAvisadoFecha || ahora, vistoPostventa: x.vistoPostventa || ahora }));
   }
   function marcarEnvioConfirmado(items) {
     const p = items[0];
-    if (!pedidoEstaListo(p) || !p.clienteAvisado) {
+    if (!pedidoEstaListo(p) || !todosCon(items, "clienteAvisado")) {
       window.alert("Primero confirmá con el cliente que los datos del envío sean correctos.");
       return;
     }
-    updateGrupo(p, () => ({ envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() }));
+    updateItems(items, () => ({ envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() }));
   }
 
-  return (
-    <div className="dg-page">
-      <div className="dg-crm-filters">
-        <Filter size={14} />
-        <input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
-        {puedeCargarSalidas && !formSalida && (
-          <button type="button" className="dg-btn-primary dg-mini-btn dg-cargar-salida" onClick={() => setFormSalida(salidaManualVacia())}>
-            <Plus size={14} /> Cargar salida
-          </button>
-        )}
-      </div>
-      <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((x) => <option key={x} value={x} />)}</datalist>
-
-      {formSalida && (() => {
-        const t = tipoDeSalida(formSalida);
-        const set = (campo, valor) => setFormSalida((f) => ({ ...f, [campo]: valor }));
-        const que = formSalida.tipo === "retiro_material" ? "Qué hay que retirar"
-          : formSalida.tipo === "retiro_espejo" || formSalida.tipo === "devolucion" ? "Qué hay que traer"
-          : formSalida.tipo === "arreglo" ? "Qué hay que arreglar"
-          : "Qué hay que llevar";
-        return (
-          <div className="dg-section-card dg-salida-form">
-            <div className="dg-section-header"><Truck size={14} /> {formSalida.id ? "Editar la salida" : "Cargar una salida"}</div>
-            <EnterFlow onSubmit={guardarSalida} autoFocus={false}>
-              <div className="dg-field-grid">
-                <Field label="Qué es">
-                  <select value={formSalida.tipo === "colecta" ? "retiro_espejo" : formSalida.tipo} onChange={(e) => set("tipo", e.target.value)}>
-                    {Object.entries(TIPOS_SALIDA).map(([id, x]) => <option key={id} value={id}>{x.label}</option>)}
-                  </select>
-                </Field>
-                <Field label={t.quien}>
-                  <div className="dg-cliente-busca">
-                    <input value={formSalida.cliente} autoComplete="off"
-                      onChange={(e) => { set("cliente", e.target.value); setBuscandoContacto(true); }}
-                      onFocus={() => setBuscandoContacto(true)}
-                      onBlur={() => window.setTimeout(() => setBuscandoContacto(false), 150)}
-                      placeholder="Escribí el nombre o el teléfono" />
-                    {sugerenciasContacto.length > 0 && (
-                      <div className="dg-cliente-lista">
-                        <div className="dg-cliente-lista-tit">Ya los tenemos — tocá para traer sus datos</div>
-                        {sugerenciasContacto.map((c) => (
-                          <button type="button" key={c.clave} className="dg-cliente-opcion"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => elegirContacto(c)}>
-                            <strong>{c.nombre}</strong>
-                            <small>{[c.celular, c.barrio, c.direccion].filter(Boolean).join(" · ") || "sin teléfono ni dirección"}</small>
-                            <span>{c.origen}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </Field>
-                <Field label="Teléfono"><input inputMode="tel" value={formSalida.telefono} onChange={(e) => set("telefono", e.target.value)} placeholder="Ej: 11 2233 4455" /></Field>
-                <Field label="Día"><input type="date" value={formSalida.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
-                <Field label="Horario">
-                  <select value={formSalida.horario} onChange={(e) => set("horario", e.target.value)}>
-                    <option value="">A coordinar</option>
-                    {TURNOS_ENVIO.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-                  </select>
-                </Field>
-                <Field label="Barrio"><input value={formSalida.barrio} onChange={(e) => set("barrio", e.target.value)} /></Field>
-                <Field label="Dirección (calle y número)"><input value={formSalida.direccion} onChange={(e) => set("direccion", e.target.value)} /></Field>
-                <Field label="Piso / depto"><input value={formSalida.piso} onChange={(e) => set("piso", e.target.value)} /></Field>
-                <Field label={que}><input value={formSalida.motivo} onChange={(e) => set("motivo", e.target.value)} /></Field>
-                <Field label="A cobrar ($)"><input type="number" inputMode="decimal" value={formSalida.cobrar} onChange={(e) => set("cobrar", e.target.value)} placeholder="0" /></Field>
-                <Field label="Se lleva el flete ($)"><input type="number" inputMode="decimal" value={formSalida.flete} onChange={(e) => set("flete", e.target.value)} placeholder="0" /></Field>
-                <Field label="Lo lleva"><input list="dg-fleteros" value={formSalida.fletero} onChange={(e) => set("fletero", e.target.value)} placeholder="Nombre del flete" /></Field>
-                <Field label="Notas"><input value={formSalida.notas} onChange={(e) => set("notas", e.target.value)} /></Field>
-              </div>
-              <div className="dg-form-actions" style={{ marginTop: 10 }}>
-                <button type="button" className="dg-btn-ghost" onClick={() => setFormSalida(null)}>Cancelar</button>
-                <button type="button" className="dg-btn-primary" onClick={guardarSalida}><Check size={14} /> {formSalida.id ? "Guardar" : "Agregar a la lista"}</button>
-              </div>
-            </EnterFlow>
-          </div>
-        );
-      })()}
-
-      {(grupos.length > 0 || visitas.length > 0 || manualesPendientes.length > 0) && (() => {
-        const semana = semanaActual();
-        const filasEnvio = grupos
-          .map((items) => {
-            const p = items[0];
-            const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
-            return {
-              clave: p.grupoId || p.id, p, items, fecha, visita: false, grupo: 1,
-              flex: items.some((x) => x.metodo === "Envío flex"),
-              cliente: p.cliente || "Sin nombre",
-              // Barrio y calle en una sola columna: son el mismo dato para el
-              // que maneja, y en dos columnas la tabla no entraba en pantalla.
-              donde: [p.barrio, p.detalleEntrega, p.piso].filter(Boolean).join(" · "),
-              listoPara: items.map((x) => x.listo).filter(Boolean).sort()[0] || "",
-              productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
-              saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
-              flete: items.reduce((mayor, x) => Math.max(mayor, costoEnvioPedido(x)), 0),
-              fletePagado: items.some((x) => x.envioPagado),
-              falta: faltaParaEntregar(items),
-            };
-          });
-        // Las visitas por reclamo entran con los mismos campos que un envío,
-        // así la tabla no tiene que saber de dónde salió cada fila. Lo único
-        // propio es el color y el cartelito.
-        const filasVisita = visitas.map((r) => ({
-          clave: `visita-${r.id}`, r, visita: true, flex: false, grupo: 2,
-          fecha: r.fechaEnvio || "",
-          cliente: r.cliente || "Sin nombre",
-          donde: [r.barrio, r.detalleEntrega, r.piso].filter(Boolean).join(" · "),
-          productos: r.tipo || "Reclamo",
-          saldo: 0, flete: 0, fletePagado: false, falta: "",
-        }));
-        const filasManual = manualesPendientes.map((m) => {
-          const t = tipoDeSalida(m);
-          return {
-            clave: `salida-${m.id}`, m, manual: true, tipo: t, grupo: t.grupo, visita: false, flex: false,
-            fecha: m.fecha || "",
-            cliente: m.cliente || t.quien,
-            donde: [m.barrio, m.direccion, m.piso].filter(Boolean).join(" · "),
-            productos: m.motivo || t.label,
-            saldo: Number(m.cobrar) || 0, flete: Number(m.flete) || 0, fletePagado: !!m.fletePagado, falta: "",
-          };
-        });
-        const filas = [...filasEnvio, ...filasVisita, ...filasManual]
-          // Por fecha (los que no tienen, al final) y, dentro del día, en el
-          // orden de GRUPOS_SALIDA: entregas, arreglos, retiros de espejos,
-          // devoluciones y retiros de material.
-          .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo);
-        const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
-        const atrasadas = filas.filter((f) => f.fecha && f.fecha < semana.hoy).length;
-        // Las visitas y los arreglos a domicilio los hacemos nosotros, no el
-        // flete: no entran en la tanda.
-        const elegidos = filas.filter((f) => f.grupo !== 2 && seleccion.has(f.clave));
-        const totalSaldo = filas.reduce((t, f) => t + f.saldo, 0);
-        const totalFlete = filas.reduce((t, f) => t + (f.fletePagado ? 0 : f.flete), 0);
-        return (
-          <div className={`dg-section-card dg-envios-tabla-card ${tablaAbierta ? "dg-envios-tabla-abierta" : ""}`}>
-            <button type="button" className="dg-envios-tabla-head" onClick={() => setTablaAbierta((v) => !v)} aria-expanded={tablaAbierta}>
-              <span className="dg-envios-tabla-tit">
-                <strong><CalendarDays size={14} /> Todas las salidas</strong>
-                <small>
-                  {filasEnvio.length} {filasEnvio.length === 1 ? "pedido" : "pedidos"}
-                  {filasVisita.length > 0 && ` · ${filasVisita.length} ${filasVisita.length === 1 ? "visita por reclamo" : "visitas por reclamo"}`}
-                  {filasManual.length > 0 && ` · ${filasManual.length} ${filasManual.length === 1 ? "cargada a mano" : "cargadas a mano"}`}
-                  {estaSemana > 0 && ` · ${estaSemana} esta semana`}
-                  {atrasadas > 0 && <span className="dg-envios-tabla-atraso"> · {atrasadas} pasados de fecha</span>}
-                </small>
-              </span>
-              <ChevronRight size={16} className={tablaAbierta ? "dg-presu-chevron-on" : ""} />
-            </button>
-            {tablaAbierta && (
-              <div className="dg-envios-tabla-scroll">
-                <table className="dg-envios-tabla dg-salidas-tabla">
-                  <thead>
-                    <tr>
-                      <th className="dg-sel-col" aria-label="Elegir" /><th>Salida</th><th>Nombre</th><th>Dónde</th><th>Productos</th>
-                      <th className="dg-num">Saldo</th><th className="dg-num">Flete</th><th className="dg-envios-hecho-col">Hecho</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filas.map((f, i) => {
-                      const atrasada = f.fecha && f.fecha < semana.hoy;
-                      const deSemana = f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo;
-                      const abierta = filaAbierta === f.clave;
-                      // Un renglón por día con qué sale: «5 entregas · 2 retiros…».
-                      const empiezaDia = i === 0 || (filas[i - 1].fecha || "") !== (f.fecha || "");
-                      const delDia = empiezaDia ? filas.filter((x) => (x.fecha || "") === (f.fecha || "")) : [];
-                      return (
-                        <Fragment key={f.clave}>
-                        {empiezaDia && (
-                          <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""}`}>
-                            <td colSpan={8}>
-                              <b>{f.fecha ? fechaLargaCorta(f.fecha) : "A coordinar"}</b>
-                              <small>{delDia.length} {delDia.length === 1 ? "salida" : "salidas"} · {resumenDeSalidas(delDia)}</small>
-                            </td>
-                          </tr>
-                        )}
-                        <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${f.manual && f.tipo.clase ? `dg-envios-fila-${f.tipo.clase}` : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
-                          onClick={() => setFilaAbierta(abierta ? null : f.clave)}
-                          aria-expanded={abierta}>
-                          <td className="dg-sel-col">
-                            {/* Las visitas por reclamo las hacemos nosotros, no el
-                                flete: no entran en la tanda. */}
-                            <input type="checkbox" className="dg-sel-check" disabled={f.grupo === 2}
-                              checked={seleccion.has(f.clave)}
-                              aria-label={`Elegir el envío de ${f.cliente}`}
-                              onClick={(ev) => ev.stopPropagation()}
-                              onChange={() => alternarElegido(f.clave)} />
-                          </td>
-                          <td className="dg-envios-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : <span className="dg-envios-falta">a coordinar</span>}</td>
-                          <td className="dg-envios-nombre">
-                            {f.manual
-                              ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver la salida"}>{f.cliente}</button><span className={`dg-envios-chip-tipo ${f.tipo.clase ? `dg-chip-${f.tipo.clase}` : ""}`}>{f.tipo.corto}</span></span>
-                              : f.visita
-                              ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
-                              : f.flex
-                                ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button><span className="dg-envios-chip-flex"><Zap size={11} /> Flex</span></span>
-                                : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
-                            {!f.manual && !f.visita && aclaracionEntregaDe(f.items) && <span className="dg-envios-chip-tipo dg-chip-nota" title={aclaracionEntregaDe(f.items)}>Nota</span>}
-                          </td>
-                          <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
-                          <td className="dg-envios-productos">{f.productos}</td>
-                          <td className="dg-num" data-label="Saldo">
-                            {f.visita || (f.manual && !f.saldo)
-                              ? <span className="dg-envios-falta">—</span>
-                              : (f.saldo > 0 ? money(f.saldo) : <span className="dg-envios-pagado">pagado</span>)}
-                          </td>
-                          <td className="dg-num" data-label="Flete">
-                            {f.visita || (f.manual && !f.flete)
-                              ? <span className="dg-envios-falta">—</span>
-                              : f.flete > 0
-                                ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)}</span> : money(f.flete))
-                                : <span className="dg-envios-falta">sin cargar</span>}
-                          </td>
-                          {/* El botón rápido: cerrar la salida sin bajar hasta
-                              la tarjeta. Si todavía no se puede, queda apagado
-                              y al tocarlo dice qué falta. */}
-                          <td className="dg-envios-hecho-col">
-                            <button
-                              type="button"
-                              className={`dg-envios-hecho ${f.falta ? "dg-envios-hecho-off" : ""}`}
-                              disabled={!canEdit}
-                              title={f.manual ? `Marcar como ${f.tipo.verbo}` : f.visita ? "Ya fuimos al domicilio" : (f.falta || "Marcar este pedido como entregado")}
-                              onClick={(ev) => { ev.stopPropagation(); if (f.manual) marcarSalidaHecha(f.m); else if (f.visita) marcarVisitaHecha(f.r); else entregarDesdeLaTabla(f); }}>
-                              <Check size={15} />
-                            </button>
-                          </td>
-                        </tr>
-                        {abierta && (
-                          <tr className="dg-envios-detalle">
-                            <td colSpan={8}>
-                              {f.manual ? (
-                                <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
-                                  <div className="dg-salida-bloque">
-                                    <div className="dg-salida-tit">{f.tipo.label}</div>
-                                    <ul className="dg-salida-plata">
-                                      <li><span>{f.tipo.quien}</span><b className="dg-salida-dato">{f.m.cliente || "—"}</b></li>
-                                      <li><span>Teléfono</span><b className="dg-salida-dato">{f.m.telefono || "—"}</b></li>
-                                      <li><span>Dónde</span><b className="dg-salida-dato">{f.donde || "—"}</b></li>
-                                      <li><span>Horario</span><b className="dg-salida-dato">{f.m.horario || "a coordinar"}</b></li>
-                                      <li><span>Qué</span><b className="dg-salida-dato">{f.m.motivo || "—"}</b></li>
-                                      {f.saldo > 0 && <li><span>A cobrar</span><b>{money(f.saldo)}</b></li>}
-                                      {f.flete > 0 && <li><span>Se lleva el flete</span><b>{money(f.flete)}</b></li>}
-                                      {f.m.fletero && <li><span>Lo lleva</span><b className="dg-salida-dato">{f.m.fletero}</b></li>}
-                                    </ul>
-                                    {f.m.notas && <p className="dg-salida-nota">{f.m.notas}</p>}
-                                  </div>
-                                  <div className="dg-salida-bloque dg-salida-bloque-ancho">
-                                    <div className="dg-form-actions">
-                                      {soloDigitos(f.m.telefono).length >= 6 && <a className="dg-btn-ghost dg-mini-btn" href={`tel:${soloDigitos(f.m.telefono)}`}><Phone size={13} /> Llamar</a>}
-                                      {waLink(f.m.telefono) && <a className="dg-btn-ghost dg-mini-btn" href={waLink(f.m.telefono)} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> WhatsApp</a>}
-                                      {puedeCargarSalidas && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFormSalida({ ...salidaManualVacia(), ...f.m })}><Pencil size={13} /> Editar</button>}
-                                      {puedeCargarSalidas && <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={() => borrarSalida(f.m)}><Trash2 size={13} /> Borrar</button>}
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : f.visita ? (
-                                <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
-                                  <label className="dg-envios-detalle-fecha">
-                                    <span>Fecha de la visita</span>
-                                    <input type="date" disabled={!canEdit} value={f.r.fechaEnvio || ""} onChange={(e) => updateReclamo(f.r.id, { fechaEnvio: e.target.value })} />
-                                  </label>
-                                  <span><b>Teléfono</b> {f.r.celular || "—"}</span>
-                                  <span><b>Horario</b> {f.r.horarioEntrega || "a coordinar"}</span>
-                                  <span><b>Reclamo</b> {f.r.notas || f.r.tipo}</span>
-                                </div>
-                              ) : (() => {
+  // El detalle de un envío (uno o varios pedidos que salen juntos).
+  function detalleEnvio(f) {
                                 // Todo lo del envío en un solo lugar: qué falta,
                                 // cuánta plata hay que cobrar, qué se lleva el
                                 // flete y la coordinación con él. Desde que esto
@@ -11143,13 +10965,23 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                 const waFlete = waLink(telFlete);
                                 const mensajeFlete = mensajeParaElFlete(f.items, p.fletero);
                                 const saldoEspejos = f.items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0);
-                                const envioPend = f.items.reduce((mayor, x) => Math.max(mayor, envioPendientePedido(x)), 0);
-                                const seLleva = pagoAlFletePedido(p);
+                                const envioPend = envioPendienteDeVarios(f.items);
+                                const seLleva = sumaPorVenta(f.items, pagoAlFletePedido);
                                 const nosQueda = f.flete - seLleva;
                                 const waCliente = listo && !entregado ? entregaWaLink(p) : null;
                                 const abiertoEditar = editandoFila === f.clave;
                                 return (
                                 <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
+                                  {f.ventas > 1 && (() => {
+                                    const conEnvio = gruposDe(f.items.filter((x) => costoEnvioPedido(x) > 0)).size;
+                                    return (
+                                      <div className="dg-salida-bloque dg-salida-bloque-ancho dg-envio-junto">
+                                        <span><Package size={14} /> Van juntos en un solo envío: pedidos {ordenesDe(f.items)}.</span>
+                                        {canEdit && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => separarEnvios(f)}>Separarlos</button>}
+                                        {conEnvio > 1 && <p className="dg-salida-nota">Tienen {conEnvio} envíos cargados. Si va en un solo viaje, dejá el costo del envío en uno solo (en la ficha del pedido).</p>}
+                                      </div>
+                                    );
+                                  })()}
 
                                   <div className="dg-salida-bloque">
                                     <div className="dg-salida-tit">En qué anda</div>
@@ -11165,18 +10997,18 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                       </li>
                                       {/* Estos los marca PostVenta. */}
                                       <li>
-                                        <button type="button" className={`dg-salida-check ${p.clienteAvisado || entregado ? "dg-salida-check-on" : ""}`}
-                                          disabled={!canEdit || entregado || !!p.clienteAvisado}
+                                        <button type="button" className={`dg-salida-check ${todosCon(f.items, "clienteAvisado") || entregado ? "dg-salida-check-on" : ""}`}
+                                          disabled={!canEdit || entregado || !!todosCon(f.items, "clienteAvisado")}
                                           onClick={() => marcarClienteAvisado(f.items)}>
-                                          <span className="dg-salida-marca" aria-hidden="true">{p.clienteAvisado || entregado ? <Check size={13} /> : null}</span>
+                                          <span className="dg-salida-marca" aria-hidden="true">{todosCon(f.items, "clienteAvisado") || entregado ? <Check size={13} /> : null}</span>
                                           Cliente confirmado
                                         </button>
                                       </li>
                                       <li>
-                                        <button type="button" className={`dg-salida-check ${p.envioConfirmado || entregado ? "dg-salida-check-on" : ""}`}
-                                          disabled={!canEdit || entregado || !!p.envioConfirmado}
+                                        <button type="button" className={`dg-salida-check ${todosCon(f.items, "envioConfirmado") || entregado ? "dg-salida-check-on" : ""}`}
+                                          disabled={!canEdit || entregado || !!todosCon(f.items, "envioConfirmado")}
                                           onClick={() => marcarEnvioConfirmado(f.items)}>
-                                          <span className="dg-salida-marca" aria-hidden="true">{p.envioConfirmado || entregado ? <Check size={13} /> : null}</span>
+                                          <span className="dg-salida-marca" aria-hidden="true">{todosCon(f.items, "envioConfirmado") || entregado ? <Check size={13} /> : null}</span>
                                           Envío confirmado
                                         </button>
                                       </li>
@@ -11260,23 +11092,23 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                             const nombre = e.target.value;
                                             // Si ya llevó otros envíos, el teléfono lo sabemos.
                                             const tel = p.fleteroTel || telDeFletero(pedidos, nombre);
-                                            updateShipping(p, { fletero: nombre, fleteroTel: tel });
+                                            updateFila(f, { fletero: nombre, fleteroTel: tel });
                                           }} />
                                       </label>
                                       <label>
                                         <span>Su teléfono</span>
                                         <CampoTextoGuardado value={telFlete} placeholder="Ej: 1122334455"
-                                          onGuardar={(v) => updateShipping(p, { fleteroTel: v })} />
+                                          onGuardar={(v) => updateFila(f, { fleteroTel: v })} />
                                       </label>
                                       <label>
                                         <span>Se lleva</span>
                                         <CampoTextoGuardado value={p.fletePago == null ? "" : String(p.fletePago)} placeholder={f.flete > 0 ? String(f.flete) : "Ej: 12000"}
-                                          onGuardar={(v) => updateShipping(p, { fletePago: String(v).trim() === "" ? "" : Number(String(v).replace(/[^0-9.-]/g, "")) || 0 })} />
+                                          onGuardar={(v) => updateVenta(f, { fletePago: String(v).trim() === "" ? "" : Number(String(v).replace(/[^0-9.-]/g, "")) || 0 })} />
                                       </label>
                                       <label>
                                         <span>El flete lo cobra</span>
                                         <select disabled={!canEdit} value={p.envioCobro || ""}
-                                          onChange={(e) => updateShipping(p, { envioCobro: e.target.value, envioPagado: e.target.value === "anticipado" })}>
+                                          onChange={(e) => updateFila(f, { envioCobro: e.target.value, envioPagado: e.target.value === "anticipado" })}>
                                           <option value="">— sin definir —</option>
                                           <option value="anticipado">Ya lo cobramos nosotros</option>
                                           <option value="entrega">Lo cobra él en la entrega</option>
@@ -11284,7 +11116,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                       </label>
                                       <label>
                                         <span>Fecha de envío</span>
-                                        <input type="date" disabled={!canEdit} value={p.fechaEnvio || ""} onChange={(e) => updateShipping(p, { fechaEnvio: e.target.value })} />
+                                        <input type="date" disabled={!canEdit} value={p.fechaEnvio || ""} onChange={(e) => updateFila(f, { fechaEnvio: e.target.value })} />
                                       </label>
                                     </div>
                                     <div className="dg-salida-acciones">
@@ -11308,11 +11140,11 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                     <div className="dg-salida-bloque dg-salida-bloque-ancho dg-salida-editar">
                                       <div className="dg-salida-tit">Datos de entrega</div>
                                       <div className="dg-salida-campos">
-                                        <label><span>Teléfono</span><CampoTextoGuardado value={p.celular} onGuardar={(v) => updateShipping(p, { celular: v })} placeholder="Ej: 1122334455" /></label>
-                                        <label><span>Barrio</span><CampoTextoGuardado value={p.barrio} onGuardar={(v) => updateShipping(p, { barrio: v })} placeholder="Ej: Palermo" /></label>
-                                        <label><span>Dirección</span><CampoTextoGuardado value={p.detalleEntrega} onGuardar={(v) => updateShipping(p, { detalleEntrega: v })} placeholder="Calle y número" /></label>
-                                        <label><span>Piso / Depto</span><CampoTextoGuardado value={p.piso} onGuardar={(v) => updateShipping(p, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></label>
-                                        <label><span>Localidad</span><CampoTextoGuardado value={p.localidad} onGuardar={(v) => updateShipping(p, { localidad: v })} placeholder="Opcional" /></label>
+                                        <label><span>Teléfono</span><CampoTextoGuardado value={p.celular} onGuardar={(v) => updateFila(f, { celular: v })} placeholder="Ej: 1122334455" /></label>
+                                        <label><span>Barrio</span><CampoTextoGuardado value={p.barrio} onGuardar={(v) => updateFila(f, { barrio: v })} placeholder="Ej: Palermo" /></label>
+                                        <label><span>Dirección</span><CampoTextoGuardado value={p.detalleEntrega} onGuardar={(v) => updateFila(f, { detalleEntrega: v })} placeholder="Calle y número" /></label>
+                                        <label><span>Piso / Depto</span><CampoTextoGuardado value={p.piso} onGuardar={(v) => updateFila(f, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></label>
+                                        <label><span>Localidad</span><CampoTextoGuardado value={p.localidad} onGuardar={(v) => updateFila(f, { localidad: v })} placeholder="Opcional" /></label>
                                       </div>
                                       <div className="dg-salida-horario">
                                         <span>Horario de entrega</span>
@@ -11320,16 +11152,16 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                           {TURNOS_ENVIO.map((t) => (
                                             <button key={t.id} type="button" disabled={!canEdit}
                                               className={`dg-salida-turno ${p.horarioEntrega === t.id ? "dg-salida-turno-on" : ""}`}
-                                              onClick={() => updateShipping(p, { horarioEntrega: p.horarioEntrega === t.id ? "" : t.id })}>
+                                              onClick={() => updateFila(f, { horarioEntrega: p.horarioEntrega === t.id ? "" : t.id })}>
                                               {t.label}
                                             </button>
                                           ))}
                                         </div>
-                                        <CampoTextoGuardado className="dg-salida-horario-libre" value={p.horarioEntrega} onGuardar={(v) => updateShipping(p, { horarioEntrega: v })} placeholder="o escribilo: 13 a 17 hs" />
+                                        <CampoTextoGuardado className="dg-salida-horario-libre" value={p.horarioEntrega} onGuardar={(v) => updateFila(f, { horarioEntrega: v })} placeholder="o escribilo: 13 a 17 hs" />
                                       </div>
                                       {canEdit && (
                                         <div className="dg-salida-acciones">
-                                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setMapaPedido(p)}>
+                                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setMapaPedido({ p, items: f.items })}>
                                             <MapPin size={13} /> {p.destinoLat != null ? "Cambiar la ubicación" : "Marcar en el mapa"}
                                           </button>
                                           {p.destinoLat != null
@@ -11342,14 +11174,356 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                   )}
 
                                   <div className="dg-salida-pie">
-                                    <span className="dg-salida-datos">Pedido #{p.orden}{f.items.length > 1 ? ` · ${f.items.length} espejos` : ""} · {p.metodo}</span>
+                                    <span className="dg-salida-datos">{f.ventas > 1 ? "Pedidos" : "Pedido"} {ordenesDe(f.items)}{f.items.length > 1 ? ` · ${f.items.length} espejos` : ""} · {p.metodo}</span>
                                     <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoFila(abiertoEditar ? null : f.clave)} aria-expanded={abiertoEditar}>
                                       <Pencil size={13} /> {abiertoEditar ? "Listo" : "Datos de entrega, horario y mapa"}
                                     </button>
                                   </div>
                                 </div>
                                 );
-                              })()}
+  }
+  // Un cliente con varios pedidos que todavía no van juntos: arriba se elige
+  // cómo salen y abajo va cada envío con su dirección.
+  function detalleCliente(f) {
+    const separados = f.items.every((x) => x.envioJunto === "no");
+    const direcciones = [];
+    f.sub.forEach((x) => { if (!direcciones.some((d) => d.donde === x.donde)) direcciones.push({ donde: x.donde, sub: x }); });
+    const eligiendo = juntandoCliente === f.clave;
+    return (
+      <div className="dg-cliente-envios" onClick={(ev) => ev.stopPropagation()}>
+        <div className="dg-cliente-envios-elegir">
+          <span><b>{f.cliente}</b> tiene {f.ventas} pedidos para entregar ({ordenesDe(f.items)}). ¿Cómo salen?</span>
+          <div className="dg-salida-turnos">
+            <button type="button" disabled={!canEdit} className={`dg-salida-turno ${eligiendo ? "dg-salida-turno-on" : ""}`}
+              onClick={() => (direcciones.length > 1 ? setJuntandoCliente(eligiendo ? null : f.clave) : juntarEnvios(f, f.sub[0]))}>
+              Juntos, en un solo envío
+            </button>
+            <button type="button" disabled={!canEdit} className={`dg-salida-turno ${separados ? "dg-salida-turno-on" : ""}`}
+              onClick={() => { setJuntandoCliente(null); if (!separados) separarEnvios(f); }}>
+              Cada uno a su dirección
+            </button>
+          </div>
+          {eligiendo && (
+            <div className="dg-cliente-envios-dirs">
+              <small>¿A qué dirección van?</small>
+              {direcciones.map((d) => (
+                <button type="button" key={d.sub.clave} className="dg-btn-ghost dg-mini-btn" onClick={() => juntarEnvios(f, d.sub)}>
+                  <MapPin size={13} /> {d.donde || "sin dirección"} <small>{ordenesDe(d.sub.items)}</small>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {f.sub.map((x) => (
+          <div className="dg-cliente-envio" key={x.clave}>
+            <div className="dg-cliente-envio-tit">
+              {x.ventas > 1 ? "Pedidos" : "Pedido"} {ordenesDe(x.items)} · {x.donde || "sin dirección"} · {x.fecha ? fechaEntregaCorta(x.fecha) : "a coordinar"}
+            </div>
+            {detalleEnvio(x)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="dg-page">
+      <div className="dg-crm-filters">
+        <Filter size={14} />
+        <input className="dg-pedido-search" placeholder={PISTA_BUSCAR_PEDIDO} value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        {puedeCargarSalidas && !formSalida && (
+          <button type="button" className="dg-btn-primary dg-mini-btn dg-cargar-salida" onClick={() => setFormSalida(salidaManualVacia())}>
+            <Plus size={14} /> Cargar salida
+          </button>
+        )}
+      </div>
+      <datalist id="dg-fleteros">{fleterosUsados(pedidos).map((x) => <option key={x} value={x} />)}</datalist>
+
+      {formSalida && (() => {
+        const t = tipoDeSalida(formSalida);
+        const set = (campo, valor) => setFormSalida((f) => ({ ...f, [campo]: valor }));
+        const que = formSalida.tipo === "retiro_material" ? "Qué hay que retirar"
+          : formSalida.tipo === "retiro_espejo" || formSalida.tipo === "devolucion" ? "Qué hay que traer"
+          : formSalida.tipo === "arreglo" ? "Qué hay que arreglar"
+          : "Qué hay que llevar";
+        return (
+          <div className="dg-section-card dg-salida-form">
+            <div className="dg-section-header"><Truck size={14} /> {formSalida.id ? "Editar la salida" : "Cargar una salida"}</div>
+            <EnterFlow onSubmit={guardarSalida} autoFocus={false}>
+              <div className="dg-field-grid">
+                <Field label="Qué es">
+                  <select value={formSalida.tipo === "colecta" ? "retiro_espejo" : formSalida.tipo} onChange={(e) => set("tipo", e.target.value)}>
+                    {Object.entries(TIPOS_SALIDA).map(([id, x]) => <option key={id} value={id}>{x.label}</option>)}
+                  </select>
+                </Field>
+                <Field label={t.quien}>
+                  <div className="dg-cliente-busca">
+                    <input value={formSalida.cliente} autoComplete="off"
+                      onChange={(e) => { set("cliente", e.target.value); setBuscandoContacto(true); }}
+                      onFocus={() => setBuscandoContacto(true)}
+                      onBlur={() => window.setTimeout(() => setBuscandoContacto(false), 150)}
+                      placeholder="Escribí el nombre o el teléfono" />
+                    {sugerenciasContacto.length > 0 && (
+                      <div className="dg-cliente-lista">
+                        <div className="dg-cliente-lista-tit">Ya los tenemos — tocá para traer sus datos</div>
+                        {sugerenciasContacto.map((c) => (
+                          <button type="button" key={c.clave} className="dg-cliente-opcion"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => elegirContacto(c)}>
+                            <strong>{c.nombre}</strong>
+                            <small>{[c.celular, c.barrio, c.direccion].filter(Boolean).join(" · ") || "sin teléfono ni dirección"}</small>
+                            <span>{c.origen}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Field>
+                <Field label="Teléfono"><input inputMode="tel" value={formSalida.telefono} onChange={(e) => set("telefono", e.target.value)} placeholder="Ej: 11 2233 4455" /></Field>
+                <Field label="Día"><input type="date" value={formSalida.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
+                <Field label="Horario">
+                  <select value={formSalida.horario} onChange={(e) => set("horario", e.target.value)}>
+                    <option value="">A coordinar</option>
+                    {TURNOS_ENVIO.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Barrio"><input value={formSalida.barrio} onChange={(e) => set("barrio", e.target.value)} /></Field>
+                <Field label="Dirección (calle y número)"><input value={formSalida.direccion} onChange={(e) => set("direccion", e.target.value)} /></Field>
+                <Field label="Piso / depto"><input value={formSalida.piso} onChange={(e) => set("piso", e.target.value)} /></Field>
+                <Field label={que}><input value={formSalida.motivo} onChange={(e) => set("motivo", e.target.value)} /></Field>
+                <Field label="A cobrar ($)"><input type="number" inputMode="decimal" value={formSalida.cobrar} onChange={(e) => set("cobrar", e.target.value)} placeholder="0" /></Field>
+                <Field label="Se lleva el flete ($)"><input type="number" inputMode="decimal" value={formSalida.flete} onChange={(e) => set("flete", e.target.value)} placeholder="0" /></Field>
+                <Field label="Lo lleva"><input list="dg-fleteros" value={formSalida.fletero} onChange={(e) => set("fletero", e.target.value)} placeholder="Nombre del flete" /></Field>
+                <Field label="Notas"><input value={formSalida.notas} onChange={(e) => set("notas", e.target.value)} /></Field>
+              </div>
+              <div className="dg-form-actions" style={{ marginTop: 10 }}>
+                <button type="button" className="dg-btn-ghost" onClick={() => setFormSalida(null)}>Cancelar</button>
+                <button type="button" className="dg-btn-primary" onClick={guardarSalida}><Check size={14} /> {formSalida.id ? "Guardar" : "Agregar a la lista"}</button>
+              </div>
+            </EnterFlow>
+          </div>
+        );
+      })()}
+
+      {(grupos.length > 0 || visitas.length > 0 || manualesPendientes.length > 0) && (() => {
+        const semana = semanaActual();
+        const filaEnvio = (items, clave) => {
+            const p = items[0];
+            const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
+            return {
+              clave, p, items, fecha, visita: false, grupo: 1, ventas: ventasDe(items),
+              flex: items.some((x) => x.metodo === "Envío flex"),
+              cliente: p.cliente || "Sin nombre",
+              // Barrio y calle en una sola columna: son el mismo dato para el
+              // que maneja, y en dos columnas la tabla no entraba en pantalla.
+              donde: [p.barrio, p.detalleEntrega, p.piso].filter(Boolean).join(" · "),
+              listoPara: items.map((x) => x.listo).filter(Boolean).sort()[0] || "",
+              productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
+              saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
+              flete: costoEnvioDeVarios(items),
+              fletePagado: items.some((x) => x.envioPagado),
+              falta: faltaParaEntregar(items),
+            };
+          };
+        // Una fila por cliente. Con un solo pedido, como siempre. Con varios:
+        // si van juntos es una sola entrega; si no (o todavía no se eligió),
+        // la fila los agrupa y adentro cada uno tiene su envío.
+        const filasEnvio = clientesConEnvio.map(({ clave: cli, ventas }) => {
+          if (ventas.length === 1) return { ...filaEnvio(ventas[0], ventas[0][0].grupoId || ventas[0][0].id), cli };
+          const envios = enviosDelCliente(ventas);
+          if (envios.length === 1) {
+            const items = envios[0].flat();
+            return { ...filaEnvio(items, `junto:${envioJuntoDe(items)}`), cli };
+          }
+          const sub = envios.map((vs) => {
+            const items = vs.flat();
+            const id = envioJuntoDe(items);
+            return { ...filaEnvio(items, id ? `junto:${id}` : (items[0].grupoId || items[0].id)), cli };
+          }).sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999"));
+          const items = sub.flatMap((x) => x.items);
+          const dondes = [...new Set(sub.map((x) => x.donde).filter(Boolean))];
+          return {
+            clave: `cli:${cli}`, cli, multi: true, sub, p: sub[0].p, items,
+            fecha: sub.map((x) => x.fecha).filter(Boolean).sort()[0] || "",
+            visita: false, grupo: 1, ventas: ventasDe(items),
+            flex: sub.some((x) => x.flex), cliente: sub[0].cliente,
+            donde: dondes.length > 1 ? dondes.join(" / ") : (dondes[0] || ""),
+            listoPara: sub.map((x) => x.listoPara).filter(Boolean).sort()[0] || "",
+            productos: sub.map((x) => x.productos).join(", "),
+            saldo: sub.reduce((t, x) => t + x.saldo, 0),
+            flete: sub.reduce((t, x) => t + x.flete, 0),
+            fletePagado: sub.every((x) => x.fletePagado),
+            falta: "",
+          };
+        });
+        // Las visitas por reclamo entran con los mismos campos que un envío,
+        // así la tabla no tiene que saber de dónde salió cada fila. Lo único
+        // propio es el color y el cartelito.
+        const filasVisita = visitas.map((r) => ({
+          clave: `visita-${r.id}`, r, visita: true, flex: false, grupo: 2,
+          fecha: r.fechaEnvio || "",
+          cliente: r.cliente || "Sin nombre",
+          donde: [r.barrio, r.detalleEntrega, r.piso].filter(Boolean).join(" · "),
+          productos: r.tipo || "Reclamo",
+          saldo: 0, flete: 0, fletePagado: false, falta: "",
+        }));
+        const filasManual = manualesPendientes.map((m) => {
+          const t = tipoDeSalida(m);
+          return {
+            clave: `salida-${m.id}`, m, manual: true, tipo: t, grupo: t.grupo, visita: false, flex: false,
+            fecha: m.fecha || "",
+            cliente: m.cliente || t.quien,
+            donde: [m.barrio, m.direccion, m.piso].filter(Boolean).join(" · "),
+            productos: m.motivo || t.label,
+            saldo: Number(m.cobrar) || 0, flete: Number(m.flete) || 0, fletePagado: !!m.fletePagado, falta: "",
+          };
+        });
+        const filas = [...filasEnvio, ...filasVisita, ...filasManual]
+          // Por fecha (los que no tienen, al final) y, dentro del día, en el
+          // orden de GRUPOS_SALIDA: entregas, arreglos, retiros de espejos,
+          // devoluciones y retiros de material.
+          .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo);
+        const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
+        const atrasadas = filas.filter((f) => f.fecha && f.fecha < semana.hoy).length;
+        // Las visitas y los arreglos a domicilio los hacemos nosotros, no el
+        // flete: no entran en la tanda.
+        const elegidos = filas.filter((f) => f.grupo !== 2 && seleccion.has(f.clave)).flatMap((f) => (f.multi ? f.sub : [f]));
+        const totalSaldo = filas.reduce((t, f) => t + f.saldo, 0);
+        const totalFlete = filas.reduce((t, f) => t + (f.fletePagado ? 0 : f.flete), 0);
+        return (
+          <div className={`dg-section-card dg-envios-tabla-card ${tablaAbierta ? "dg-envios-tabla-abierta" : ""}`}>
+            <button type="button" className="dg-envios-tabla-head" onClick={() => setTablaAbierta((v) => !v)} aria-expanded={tablaAbierta}>
+              <span className="dg-envios-tabla-tit">
+                <strong><CalendarDays size={14} /> Todas las salidas</strong>
+                <small>
+                  {filasEnvio.length} {filasEnvio.length === 1 ? "pedido" : "pedidos"}
+                  {filasVisita.length > 0 && ` · ${filasVisita.length} ${filasVisita.length === 1 ? "visita por reclamo" : "visitas por reclamo"}`}
+                  {filasManual.length > 0 && ` · ${filasManual.length} ${filasManual.length === 1 ? "cargada a mano" : "cargadas a mano"}`}
+                  {estaSemana > 0 && ` · ${estaSemana} esta semana`}
+                  {atrasadas > 0 && <span className="dg-envios-tabla-atraso"> · {atrasadas} pasados de fecha</span>}
+                </small>
+              </span>
+              <ChevronRight size={16} className={tablaAbierta ? "dg-presu-chevron-on" : ""} />
+            </button>
+            {tablaAbierta && (
+              <div className="dg-envios-tabla-scroll">
+                <table className="dg-envios-tabla dg-salidas-tabla">
+                  <thead>
+                    <tr>
+                      <th className="dg-sel-col" aria-label="Elegir" /><th>Salida</th><th>Nombre</th><th>Dónde</th><th>Productos</th>
+                      <th className="dg-num">Saldo</th><th className="dg-num">Flete</th><th className="dg-envios-hecho-col">Hecho</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filas.map((f, i) => {
+                      const atrasada = f.fecha && f.fecha < semana.hoy;
+                      const deSemana = f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo;
+                      const abierta = filaAbierta === f.clave;
+                      // Un renglón por día con qué sale: «5 entregas · 2 retiros…».
+                      const empiezaDia = i === 0 || (filas[i - 1].fecha || "") !== (f.fecha || "");
+                      const delDia = empiezaDia ? filas.filter((x) => (x.fecha || "") === (f.fecha || "")) : [];
+                      return (
+                        <Fragment key={f.clave}>
+                        {empiezaDia && (
+                          <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""}`}>
+                            <td colSpan={8}>
+                              <b>{f.fecha ? fechaLargaCorta(f.fecha) : "A coordinar"}</b>
+                              <small>{delDia.length} {delDia.length === 1 ? "salida" : "salidas"} · {resumenDeSalidas(delDia)}</small>
+                            </td>
+                          </tr>
+                        )}
+                        <tr
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${f.manual && f.tipo.clase ? `dg-envios-fila-${f.tipo.clase}` : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
+                          onClick={() => setFilaAbierta(abierta ? null : f.clave)}
+                          aria-expanded={abierta}>
+                          <td className="dg-sel-col">
+                            {/* Las visitas por reclamo las hacemos nosotros, no el
+                                flete: no entran en la tanda. */}
+                            <input type="checkbox" className="dg-sel-check" disabled={f.grupo === 2}
+                              checked={seleccion.has(f.clave)}
+                              aria-label={`Elegir el envío de ${f.cliente}`}
+                              onClick={(ev) => ev.stopPropagation()}
+                              onChange={() => alternarElegido(f.clave)} />
+                          </td>
+                          <td className="dg-envios-fecha">{f.fecha ? fechaEntregaCorta(f.fecha) : <span className="dg-envios-falta">a coordinar</span>}</td>
+                          <td className="dg-envios-nombre">
+                            {f.manual
+                              ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver la salida"}>{f.cliente}</button><span className={`dg-envios-chip-tipo ${f.tipo.clase ? `dg-chip-${f.tipo.clase}` : ""}`}>{f.tipo.corto}</span></span>
+                              : f.visita
+                              ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
+                              : f.flex
+                                ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button><span className="dg-envios-chip-flex"><Zap size={11} /> Flex</span></span>
+                                : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
+                            {!f.manual && !f.visita && aclaracionEntregaDe(f.items) && <span className="dg-envios-chip-tipo dg-chip-nota" title={aclaracionEntregaDe(f.items)}>Nota</span>}
+                            {!f.manual && !f.visita && f.ventas > 1 && <span className="dg-envios-chip-tipo dg-chip-varios" title={`Pedidos ${ordenesDe(f.items)}`}>{f.ventas} pedidos{f.multi ? "" : " · juntos"}</span>}
+                          </td>
+                          <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
+                          <td className="dg-envios-productos">{f.productos}</td>
+                          <td className="dg-num" data-label="Saldo">
+                            {f.visita || (f.manual && !f.saldo)
+                              ? <span className="dg-envios-falta">—</span>
+                              : (f.saldo > 0 ? money(f.saldo) : <span className="dg-envios-pagado">pagado</span>)}
+                          </td>
+                          <td className="dg-num" data-label="Flete">
+                            {f.visita || (f.manual && !f.flete)
+                              ? <span className="dg-envios-falta">—</span>
+                              : f.flete > 0
+                                ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)}</span> : money(f.flete))
+                                : <span className="dg-envios-falta">sin cargar</span>}
+                          </td>
+                          {/* El botón rápido: cerrar la salida sin bajar hasta
+                              la tarjeta. Si todavía no se puede, queda apagado
+                              y al tocarlo dice qué falta. */}
+                          <td className="dg-envios-hecho-col">
+                            <button
+                              type="button"
+                              className={`dg-envios-hecho ${f.falta || f.multi ? "dg-envios-hecho-off" : ""}`}
+                              disabled={!canEdit}
+                              title={f.manual ? `Marcar como ${f.tipo.verbo}` : f.visita ? "Ya fuimos al domicilio" : f.multi ? "Abrí la fila para entregar cada envío" : (f.falta || "Marcar este pedido como entregado")}
+                              onClick={(ev) => { ev.stopPropagation(); if (f.manual) marcarSalidaHecha(f.m); else if (f.visita) marcarVisitaHecha(f.r); else if (f.multi) setFilaAbierta(f.clave); else entregarDesdeLaTabla(f); }}>
+                              <Check size={15} />
+                            </button>
+                          </td>
+                        </tr>
+                        {abierta && (
+                          <tr className="dg-envios-detalle">
+                            <td colSpan={8}>
+                              {f.manual ? (
+                                <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
+                                  <div className="dg-salida-bloque">
+                                    <div className="dg-salida-tit">{f.tipo.label}</div>
+                                    <ul className="dg-salida-plata">
+                                      <li><span>{f.tipo.quien}</span><b className="dg-salida-dato">{f.m.cliente || "—"}</b></li>
+                                      <li><span>Teléfono</span><b className="dg-salida-dato">{f.m.telefono || "—"}</b></li>
+                                      <li><span>Dónde</span><b className="dg-salida-dato">{f.donde || "—"}</b></li>
+                                      <li><span>Horario</span><b className="dg-salida-dato">{f.m.horario || "a coordinar"}</b></li>
+                                      <li><span>Qué</span><b className="dg-salida-dato">{f.m.motivo || "—"}</b></li>
+                                      {f.saldo > 0 && <li><span>A cobrar</span><b>{money(f.saldo)}</b></li>}
+                                      {f.flete > 0 && <li><span>Se lleva el flete</span><b>{money(f.flete)}</b></li>}
+                                      {f.m.fletero && <li><span>Lo lleva</span><b className="dg-salida-dato">{f.m.fletero}</b></li>}
+                                    </ul>
+                                    {f.m.notas && <p className="dg-salida-nota">{f.m.notas}</p>}
+                                  </div>
+                                  <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                    <div className="dg-form-actions">
+                                      {soloDigitos(f.m.telefono).length >= 6 && <a className="dg-btn-ghost dg-mini-btn" href={`tel:${soloDigitos(f.m.telefono)}`}><Phone size={13} /> Llamar</a>}
+                                      {waLink(f.m.telefono) && <a className="dg-btn-ghost dg-mini-btn" href={waLink(f.m.telefono)} target="_blank" rel="noopener noreferrer"><MessageCircle size={13} /> WhatsApp</a>}
+                                      {puedeCargarSalidas && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFormSalida({ ...salidaManualVacia(), ...f.m })}><Pencil size={13} /> Editar</button>}
+                                      {puedeCargarSalidas && <button type="button" className="dg-btn-ghost dg-mini-btn dg-btn-danger-ghost" onClick={() => borrarSalida(f.m)}><Trash2 size={13} /> Borrar</button>}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : f.visita ? (
+                                <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
+                                  <label className="dg-envios-detalle-fecha">
+                                    <span>Fecha de la visita</span>
+                                    <input type="date" disabled={!canEdit} value={f.r.fechaEnvio || ""} onChange={(e) => updateReclamo(f.r.id, { fechaEnvio: e.target.value })} />
+                                  </label>
+                                  <span><b>Teléfono</b> {f.r.celular || "—"}</span>
+                                  <span><b>Horario</b> {f.r.horarioEntrega || "a coordinar"}</span>
+                                  <span><b>Reclamo</b> {f.r.notas || f.r.tipo}</span>
+                                </div>
+                              ) : f.multi ? detalleCliente(f) : detalleEnvio(f)}
                             </td>
                           </tr>
                         )}
@@ -11382,7 +11556,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
               const aCobrar = elegidos.reduce((t, f) => t + (f.manual
                 ? (Number(f.m.cobrar) || 0)
                 : f.items.reduce((x, i) => x + Math.max(0, pedidoSaldo(i)), 0)
-                  + f.items.reduce((mayor, i) => Math.max(mayor, envioPendientePedido(i)), 0)), 0);
+                  + envioPendienteDeVarios(f.items)), 0);
               return (
                 <div className="dg-sel-barra">
                   <span className="dg-sel-cuenta">
@@ -11416,9 +11590,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
 
       {mapaPedido && (
         <ModalDestinoRecorrido
-          direccionTexto={[mapaPedido.detalleEntrega, mapaPedido.barrio, mapaPedido.localidad, "Argentina"].filter(Boolean).join(", ")}
-          valorInicial={mapaPedido.destinoLat != null ? { lat: mapaPedido.destinoLat, lng: mapaPedido.destinoLng } : null}
-          onConfirmar={(coord) => { updateShipping(mapaPedido, { destinoLat: coord ? coord.lat : null, destinoLng: coord ? coord.lng : null }); setMapaPedido(null); }}
+          direccionTexto={[mapaPedido.p.detalleEntrega, mapaPedido.p.barrio, mapaPedido.p.localidad, "Argentina"].filter(Boolean).join(", ")}
+          valorInicial={mapaPedido.p.destinoLat != null ? { lat: mapaPedido.p.destinoLat, lng: mapaPedido.p.destinoLng } : null}
+          onConfirmar={(coord) => { updateItems(mapaPedido.items, { destinoLat: coord ? coord.lat : null, destinoLng: coord ? coord.lng : null }); setMapaPedido(null); }}
           onCancelar={() => setMapaPedido(null)}
         />
       )}
@@ -12768,7 +12942,10 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   const gruposMap = confirmados.reduce((acc, p) => {
     const normal = (valor) => String(valor || "").trim().toLowerCase();
     const comparteGrupo = p.grupoId && grupoIdCounts[p.grupoId] > 1;
-    const key = comparteGrupo
+    // Pedidos que PostVenta juntó en un solo envío (29/10/2026).
+    const key = p.envioJunto && p.envioJunto !== "no"
+      ? `junto:${p.envioJunto}`
+      : comparteGrupo
       ? `grupo:${p.grupoId}`
       : `entrega:${normal(p.cliente)}|${normal(p.celular)}|${normal(p.detalleEntrega)}|${fechaEnvioOListo(p)}`;
     if (!acc[key]) acc[key] = { key, pedidos: [] };
@@ -12987,10 +13164,12 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
           const piso = datoEntrega(items, "piso", "");
           const fecha = items.map(fechaEnvioOListo).find(Boolean) || "Sin fecha";
           const saldo = items.reduce((total, p) => total + Math.max(0, pedidoSaldo(p)), 0);
-          const costoEnvio = items.reduce((mayor, p) => Math.max(mayor, costoEnvioPedido(p)), 0);
+          // El envío de cada pedido se suma aparte (si van juntos, cada uno
+          // conserva el suyo); dentro de un pedido vale uno solo.
+          const costoEnvio = costoEnvioDeVarios(items);
           const pedidosConCosto = items.filter((p) => costoEnvioPedido(p) > 0);
-          const envioPagado = costoEnvio > 0 && pedidosConCosto.every((p) => Boolean(p.envioPagado));
-          const envioPendiente = envioPagado ? 0 : costoEnvio;
+          const envioPendiente = envioPendienteDeVarios(items);
+          const envioPagado = costoEnvio > 0 && envioPendiente === 0;
           const totalACobrar = saldo + envioPendiente;
           const medidas = items.map((p) => `${p.ancho}×${p.alto} cm`).join(" · ");
           const ordenes = [...new Set(items.map((p) => p.orden))].map((orden) => `#${orden}`).join(" · ");
@@ -23024,6 +23203,18 @@ function Style() {
       .dg-pagos b { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; margin-left:auto; }
       .dg-tdia-aclaracion { display:inline-block; margin-left:6px; padding:0 6px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.3px; background:rgba(var(--dg-warning-rgb),.22); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
       .dg-tdia-detalle-aclaracion { flex-basis:100%; padding:6px 9px; border-left:3px solid var(--dg-warning); border-radius:8px; background:rgba(var(--dg-warning-rgb),.10); }
+      .dg-chip-varios { margin-left:6px; background:rgba(var(--dg-line-rgb),.16); color:var(--dg-text); }
+      .dg-cliente-envios { display:flex; flex-direction:column; gap:14px; }
+      .dg-cliente-envios-elegir { display:flex; flex-direction:column; gap:10px; padding:12px 14px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:10px; background:rgba(var(--dg-line-rgb),.04); }
+      .dg-cliente-envios-elegir > span { font-size:14px; line-height:1.4; color:var(--dg-text); }
+      .dg-cliente-envios-dirs { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+      .dg-cliente-envios-dirs > small { width:100%; font-size:12px; font-weight:700; color:var(--dg-text-dim); }
+      .dg-cliente-envios-dirs button small { margin-left:4px; color:var(--dg-text-dim); font-weight:500; }
+      .dg-cliente-envio { display:flex; flex-direction:column; gap:6px; }
+      .dg-cliente-envio-tit { font-size:13px; font-weight:700; color:var(--dg-text); padding-left:2px; }
+      .dg-envio-junto { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+      .dg-envio-junto > span { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--dg-text); }
+      .dg-envio-junto .dg-salida-nota { width:100%; margin:0; }
       .dg-chip-nota { margin-left:6px; background:rgba(var(--dg-retiro-rgb),.22); color:color-mix(in srgb, var(--dg-retiro) 55%, var(--dg-text)); }
 
       .dg-fab-audit { margin-bottom:10px; font-size:11px; }
