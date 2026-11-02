@@ -721,6 +721,22 @@ function confirmarEmbaladoInterior(pedido) {
   );
 }
 
+// Envío al interior (02/11/2026): o lo retira en una sucursal de Vía Cargo o
+// se lo llevan a la casa. Cada uno pide datos distintos. Los pedidos viejos no
+// tienen el tipo: si tienen dirección cargada, eran a domicilio.
+const TIPOS_INTERIOR = { sucursal: "Sucursal de Vía Cargo", domicilio: "A domicilio" };
+function tipoInterior(p) {
+  if (p?.interiorTipo === "sucursal" || p?.interiorTipo === "domicilio") return p.interiorTipo;
+  return String(p?.detalleEntrega || "").trim() ? "domicilio" : "";
+}
+// A dónde va, en una línea: para la lista de Interior, la planilla y el rótulo.
+function entregaInteriorTexto(p) {
+  const t = tipoInterior(p);
+  if (t === "sucursal") return `Retira en sucursal${p.sucursalViaCargo ? `: ${p.sucursalViaCargo}` : " (falta cuál)"}`;
+  if (t === "domicilio") return `A domicilio: ${[p.detalleEntrega, p.piso].filter(Boolean).join(", ") || "(falta la dirección)"}`;
+  return "";
+}
+
 function esPedidoConEnvio(pedido) {
   return ENVIO_METODOS.includes(pedido?.metodo);
 }
@@ -1520,7 +1536,7 @@ function cambiosDeUnPedido(a, d) {
   if ((Array.isArray(d.fotosEntrega) ? d.fotosEntrega.length : 0) > (Array.isArray(a.fotosEntrega) ? a.fotosEntrega.length : 0)) pon("Sacó la foto de la entrega");
   if ((Array.isArray(d.pagos) ? d.pagos.length : 0) > (Array.isArray(a.pagos) ? a.pagos.length : 0)) pon("Registró un pago");
   if (ordenesPapelDe(d).length < ordenesPapelDe(a).length) pon("Quitó la foto de la orden");
-  if (["detalleEntrega", "barrio", "piso", "celular", "localidad", "provincia", "codigoPostal"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
+  if (["detalleEntrega", "barrio", "piso", "celular", "localidad", "provincia", "codigoPostal", "interiorTipo", "sucursalViaCargo"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
   const plata = [];
   if (cambio(a, d, "monto")) plata.push(`monto ${money(Number(d.monto) || 0)}`);
   if (cambio(a, d, "anticipo")) plata.push(`anticipo ${money(Number(d.anticipo) || 0)}`);
@@ -5566,7 +5582,7 @@ function textoComparable(value) {
    =========================================================================== */
 const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
 // "A confirmar" no es un método de entrega: es que todavía no se sabe.
-const DATOS_QUE_SE_REPITEN = ["celular", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "canalVenta", "tipoFactura"];
+const DATOS_QUE_SE_REPITEN = ["celular", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "canalVenta", "tipoFactura"];
 
 function clientesDeLosPedidos(pedidos) {
   const mapa = new Map();
@@ -7115,7 +7131,7 @@ function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
 const CAMPOS_DEL_PEDIDO = [
   "cliente", "celular", "dniCuit", "vendedor", "canalVenta", "fecha", "listo",
   "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
-  "provincia", "localidad", "codigoPostal", "costoEnvio", "destinoLat", "destinoLng",
+  "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "costoEnvio", "destinoLat", "destinoLng",
   "aclaracionEntrega", "aclaracionInterna",
 ];
 // La factura y la comisión son de la venta entera, no de cada espejo: una
@@ -8374,8 +8390,17 @@ function validarPedido(p) {
     if (Number(p.anticipo) > Number(p.monto)) errores.anticipo = "El anticipo no puede ser mayor al monto";
   }
   if (falta(p.metodo) || p.metodo === "A confirmar") errores.metodo = "Confirmá el método de entrega";
-  if (["Envío", "Envío flex", "Interior", "Colocación"].includes(p.metodo) && falta(p.detalleEntrega)) {
+  if (["Envío", "Envío flex", "Colocación"].includes(p.metodo) && falta(p.detalleEntrega)) {
     errores.detalleEntrega = "Con envío hace falta la dirección";
+  }
+  // Interior: solo lo que pide Vía Cargo, según si va a sucursal o a domicilio.
+  if (p.metodo === "Interior") {
+    const t = tipoInterior(p);
+    if (!t) errores.interiorTipo = "Elegí si lo retira en una sucursal de Vía Cargo o va a domicilio";
+    if (falta(p.provincia)) errores.provincia = "Falta la provincia del envío al interior";
+    if (falta(p.localidad)) errores.localidad = "Falta la localidad del envío al interior";
+    if (t === "sucursal" && falta(p.sucursalViaCargo)) errores.sucursalViaCargo = "Falta la sucursal de Vía Cargo";
+    if (t === "domicilio" && falta(p.detalleEntrega)) errores.detalleEntrega = "Falta la dirección del domicilio";
   }
   if (falta(p.tipoFactura) || p.tipoFactura === "No aplica") errores.tipoFactura = "Definí el tipo de factura";
   if (pulidoEsObligatorio(p) && p.pulido !== "Sí") errores.pulido = AVISO_PULIDO_ESMERILADO;
@@ -10041,11 +10066,47 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <Field label="Método de entrega" error={err("metodo")}><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
-            <Field label="Barrio"><input disabled={!canEditFull} value={draft.barrio} onChange={(e) => set("barrio", e.target.value)} placeholder="Ej: Palermo, Centro..." /></Field>
-            <Field label="Dirección" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Calle y número" /></Field>
-            <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
-            <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
-            <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
+            {draft.metodo === "Interior" ? (
+              <>
+                {/* Interior (02/11/2026): no se piden barrio ni horario, que son
+                    del flete propio. Primero cómo lo recibe y después solo los
+                    datos de ese caso. */}
+                <div className={`dg-field dg-field-ancho dg-interior-tipo ${err("interiorTipo") ? "dg-field-error" : ""}`}>
+                  <label>Envío al interior{err("interiorTipo") ? " *" : ""}</label>
+                  <div className="dg-salida-turnos">
+                    {Object.entries(TIPOS_INTERIOR).map(([id, label]) => (
+                      <button type="button" key={id} disabled={!canEditFull}
+                        className={`dg-salida-turno ${tipoInterior(draft) === id ? "dg-salida-turno-on" : ""}`}
+                        onClick={() => set("interiorTipo", id)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {err("interiorTipo") && <span className="dg-field-error-msg">{err("interiorTipo")}</span>}
+                </div>
+                <Field label="Provincia" error={err("provincia")}><input disabled={!canEditFull} value={draft.provincia || ""} onChange={(e) => set("provincia", e.target.value)} placeholder="Ej: Córdoba" /></Field>
+                <Field label="Localidad" error={err("localidad")}><input disabled={!canEditFull} value={draft.localidad || ""} onChange={(e) => set("localidad", e.target.value)} placeholder="Ej: Río Cuarto" /></Field>
+                <Field label="Código postal"><input disabled={!canEditFull} value={draft.codigoPostal || ""} onChange={(e) => set("codigoPostal", e.target.value)} placeholder="Ej: 5800" /></Field>
+                {tipoInterior(draft) === "sucursal" && (
+                  <Field label="Sucursal de Vía Cargo" error={err("sucursalViaCargo")}><input disabled={!canEditFull} value={draft.sucursalViaCargo || ""} onChange={(e) => set("sucursalViaCargo", e.target.value)} placeholder="Nombre o dirección de la sucursal" /></Field>
+                )}
+                {tipoInterior(draft) === "domicilio" && (
+                  <>
+                    <Field label="Dirección" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Calle y número" /></Field>
+                    <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
+                  </>
+                )}
+                <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
+              </>
+            ) : (
+              <>
+                <Field label="Barrio"><input disabled={!canEditFull} value={draft.barrio} onChange={(e) => set("barrio", e.target.value)} placeholder="Ej: Palermo, Centro..." /></Field>
+                <Field label="Dirección" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Calle y número" /></Field>
+                <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
+                <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
+                <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
+              </>
+            )}
             <div className="dg-aclaracion-campo dg-field-ancho">
               <label>Aclaración para la entrega <small>— la ve PostVenta, Logística y el flete</small></label>
               <CampoQueCrece rows={2} disabled={!canEditFull} value={draft.aclaracionEntrega || ""} placeholder="Ej: tocar timbre 3 B, no hay ascensor, llamar antes de ir…"
@@ -10086,17 +10147,6 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             ))}
           </div>
         </details>
-
-        {verEntrega && draft.metodo === "Interior" && (
-          <div className="dg-section-card">
-            <div className="dg-section-header"><MapPin size={14} /> Dirección para el envío al interior</div>
-            <div className="dg-field-grid">
-              <Field label="Provincia"><input disabled={!canEditFull} value={draft.provincia} onChange={(e) => set("provincia", e.target.value)} /></Field>
-              <Field label="Localidad"><input disabled={!canEditFull} value={draft.localidad} onChange={(e) => set("localidad", e.target.value)} /></Field>
-              <Field label="Código postal"><input disabled={!canEditFull} value={draft.codigoPostal} onChange={(e) => set("codigoPostal", e.target.value)} /></Field>
-            </div>
-          </div>
-        )}
 
         {draft.metodo === "Interior" && (
           <RemitoViaCargoCampo pedido={draft} canEdit={canEditFull} onCambiar={(cambios) => setDraft((d) => ({ ...d, ...cambios }))} />
@@ -10209,7 +10259,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
       espejos: totalUnidades(items),
       hechos: listos.length,
       bultos: completo ? bultosDeEnvios(listos) : 0,
-      destino: [p.localidad, p.provincia].filter(Boolean).join(", "),
+      destino: [[p.localidad, p.provincia].filter(Boolean).join(", "), tipoInterior(p) === "sucursal" ? "sucursal" : tipoInterior(p) === "domicilio" ? "domicilio" : ""].filter(Boolean).join(" · "),
     };
   });
   const elegidas = filas.filter((f) => f.completo && seleccion.has(f.clave));
@@ -10304,7 +10354,19 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
 
                               <div className="dg-salida-bloque dg-salida-bloque-ancho">
                                 <div className="dg-salida-tit">A dónde va</div>
+                                <div className="dg-salida-turnos" style={{ marginBottom: 10 }}>
+                                  {Object.entries(TIPOS_INTERIOR).map(([id, label]) => (
+                                    <button type="button" key={id} disabled={!canEdit}
+                                      className={`dg-salida-turno ${tipoInterior(f.p) === id ? "dg-salida-turno-on" : ""}`}
+                                      onClick={() => updateGrupo(f.p, { interiorTipo: id })}>
+                                      {label}
+                                    </button>
+                                  ))}
+                                </div>
                                 <div className="dg-salida-campos">
+                                  {tipoInterior(f.p) === "sucursal" && <label><span>Sucursal de Vía Cargo</span><CampoTextoGuardado value={f.p.sucursalViaCargo} onGuardar={(v) => updateGrupo(f.p, { sucursalViaCargo: v })} placeholder="Nombre o dirección" /></label>}
+                                  {tipoInterior(f.p) === "domicilio" && <label><span>Dirección</span><CampoTextoGuardado value={f.p.detalleEntrega} onGuardar={(v) => updateGrupo(f.p, { detalleEntrega: v })} placeholder="Calle y número" /></label>}
+                                  {tipoInterior(f.p) === "domicilio" && <label><span>Piso / Depto</span><CampoTextoGuardado value={f.p.piso} onGuardar={(v) => updateGrupo(f.p, { piso: v })} placeholder="Ej: 3 B — o casa" /></label>}
                                   <label><span>Provincia</span><CampoTextoGuardado value={f.p.provincia} onGuardar={(v) => updateGrupo(f.p, { provincia: v })} placeholder="Ej: Córdoba" /></label>
                                   <label><span>Localidad</span><CampoTextoGuardado value={f.p.localidad} onGuardar={(v) => updateGrupo(f.p, { localidad: v })} placeholder="Ej: Río Cuarto" /></label>
                                   <label><span>Código postal</span><CampoTextoGuardado value={f.p.codigoPostal} onGuardar={(v) => updateGrupo(f.p, { codigoPostal: v })} placeholder="Ej: 5800" /></label>
@@ -23233,6 +23295,7 @@ function Style() {
       .dg-pagos b { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; margin-left:auto; }
       .dg-tdia-aclaracion { display:inline-block; margin-left:6px; padding:0 6px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.3px; background:rgba(var(--dg-warning-rgb),.22); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
       .dg-tdia-detalle-aclaracion { flex-basis:100%; padding:6px 9px; border-left:3px solid var(--dg-warning); border-radius:8px; background:rgba(var(--dg-warning-rgb),.10); }
+      .dg-interior-tipo .dg-salida-turnos { margin-top:4px; }
       .dg-chip-varios { margin-left:6px; background:rgba(var(--dg-line-rgb),.16); color:var(--dg-text); }
       .dg-cliente-envios { display:flex; flex-direction:column; gap:14px; }
       .dg-cliente-envios-elegir { display:flex; flex-direction:column; gap:10px; padding:12px 14px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:10px; background:rgba(var(--dg-line-rgb),.04); }
@@ -25064,6 +25127,7 @@ function abrirDatosDespacho(lista) {
           <td>${p.provincia || "—"}</td>
           <td>${p.localidad || "—"}</td>
           <td>${p.codigoPostal || "—"}</td>
+          <td>${entregaInteriorTexto(p) || "—"}</td>
         </tr>`;
   }).join("");
 
@@ -25084,7 +25148,7 @@ function abrirDatosDespacho(lista) {
   <div class="remitente">${envios.length} envío${envios.length === 1 ? "" : "s"} · ${envios.reduce((t, e) => t + e.bultos.length, 0)} bulto${envios.reduce((t, e) => t + e.bultos.length, 0) === 1 ? "" : "s"} en total</div>
   <table>
     <thead>
-      <tr><th>Nombre</th><th>Tel</th><th>DNI/CUIT</th><th>Bultos</th><th>Medida de cada caja</th><th>Peso total</th><th>Provincia</th><th>Localidad</th><th>CP</th></tr>
+      <tr><th>Nombre</th><th>Tel</th><th>DNI/CUIT</th><th>Bultos</th><th>Medida de cada caja</th><th>Peso total</th><th>Provincia</th><th>Localidad</th><th>CP</th><th>Entrega</th></tr>
     </thead>
     <tbody>${filas}</tbody>
   </table>
@@ -25177,6 +25241,7 @@ function abrirRotulos(pedidosOPedido) {
         <div class="dato">Tel: ${pedido.celular || "—"}</div>
         <div class="dato">${pedido.localidad || "—"}${pedido.provincia ? `, ${pedido.provincia}` : ""}</div>
         ${pedido.codigoPostal ? `<div class="dato">CP: ${pedido.codigoPostal}</div>` : ""}
+        ${entregaInteriorTexto(pedido) ? `<div class="dato"><b>${entregaInteriorTexto(pedido)}</b></div>` : ""}
       </div>
 
       <div class="bloque">
