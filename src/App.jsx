@@ -10951,9 +10951,12 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
     });
   }
 
+  // Todos los pedidos con envío, estén listos o no (03/11/2026): así se les
+  // puede poner fecha de entrega desde antes y la lista queda organizada.
+  // Lo que todavía está en fábrica lleva un cartel y no se puede entregar.
   const enviosListos = filtrarPedidosConSuGrupo(pedidos
     .filter((p) => esPedidoConEnvio(p) && p.metodo !== "Interior")
-    .filter((p) => p.estado !== "Entregado" && pedidoEstaListo(p)), busqueda);
+    .filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado"), busqueda);
 
   // Un pedido puede tener varios espejos y un solo envío: va una tarjeta por pedido.
   const grupos = (() => {
@@ -11061,8 +11064,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
     if (navigator.clipboard) navigator.clipboard.writeText(mensaje(items)).then(() => { setCopiedId(clave); setTimeout(() => setCopiedId(null), 2000); });
   }
   function marcarClienteAvisado(items) {
-    const p = items[0];
-    if (!pedidoEstaListo(p)) {
+    if (!items.some(pedidoEstaListo)) {
       window.alert("Esperá a que fábrica marque el espejo como listo antes de confirmar con el cliente.");
       return;
     }
@@ -11071,7 +11073,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   }
   function marcarEnvioConfirmado(items) {
     const p = items[0];
-    if (!pedidoEstaListo(p) || !todosCon(items, "clienteAvisado")) {
+    if (!items.some(pedidoEstaListo) || !todosCon(items, "clienteAvisado")) {
       window.alert("Primero confirmá con el cliente que los datos del envío sean correctos.");
       return;
     }
@@ -11086,7 +11088,11 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                 // está completo, abajo ya no hacen falta las
                                 // tarjetas: eran lo mismo dos veces.
                                 const p = f.p;
-                                const listo = pedidoEstaListo(p);
+                                const listosN = f.items.filter(pedidoEstaListo).length;
+                                const listo = listosN > 0;
+                                const todosListos = listosN === f.items.length;
+                                // Una fecha de envío anterior al día que fábrica lo tiene listo.
+                                const fechaAntes = !todosListos && p.fechaEnvio && f.listoPara && p.fechaEnvio < f.listoPara;
                                 const entregado = p.estado === "Entregado";
                                 const pago = estadoPagoDelFlete(f.items);
                                 const telFlete = p.fleteroTel || telDeFletero(pedidos, p.fletero);
@@ -11119,9 +11125,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                         <span className="dg-salida-marca" aria-hidden="true">{pedidoFueVerificado(p) || entregado ? <Check size={13} /> : null}</span>
                                         Pedido verificado
                                       </li>
-                                      <li className={listo ? "dg-salida-ok" : ""}>
-                                        <span className="dg-salida-marca" aria-hidden="true">{listo ? <Check size={13} /> : null}</span>
-                                        Espejos listos{f.listoPara ? <small> · {fechaEntregaCorta(f.listoPara)}</small> : null}
+                                      <li className={todosListos ? "dg-salida-ok" : ""}>
+                                        <span className="dg-salida-marca" aria-hidden="true">{todosListos ? <Check size={13} /> : null}</span>
+                                        Espejos listos{listo && !todosListos ? <small> · {listosN} de {f.items.length}</small> : f.listoPara ? <small> · {todosListos ? "" : "fábrica lo tiene para el "}{fechaEntregaCorta(f.listoPara)}</small> : null}
                                       </li>
                                       {/* Estos los marca PostVenta. */}
                                       <li>
@@ -11258,6 +11264,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                       </button>
                                       <span className={`dg-salida-pagoflete dg-salida-pagoflete-${pago.clase}`}>{pago.texto}</span>
                                     </div>
+                                    {fechaAntes && <p className="dg-salida-nota dg-salida-aviso">Ojo: la fecha de envío es antes del {fechaEntregaCorta(f.listoPara)}, que es cuando fábrica lo tiene listo.</p>}
                                     {!waFlete && p.fletero && <p className="dg-salida-nota">Cargale el teléfono y la próxima vez se abre el WhatsApp solo.</p>}
                                   </div>
 
@@ -11525,6 +11532,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                 <strong><CalendarDays size={14} /> Todas las salidas</strong>
                 <small>
                   {filasEnvio.length} {filasEnvio.length === 1 ? "pedido" : "pedidos"}
+                  {(() => { const n = filasEnvio.filter((x) => !x.items.some(pedidoEstaListo)).length; return n > 0 ? ` · ${n} todavía en fábrica` : ""; })()}
                   {filasVisita.length > 0 && ` · ${filasVisita.length} ${filasVisita.length === 1 ? "visita por reclamo" : "visitas por reclamo"}`}
                   {filasManual.length > 0 && ` · ${filasManual.length} ${filasManual.length === 1 ? "cargada a mano" : "cargadas a mano"}`}
                   {estaSemana > 0 && ` · ${estaSemana} esta semana`}
@@ -11584,6 +11592,17 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                 : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
                             {!f.manual && !f.visita && aclaracionEntregaDe(f.items) && <span className="dg-envios-chip-tipo dg-chip-nota" title={aclaracionEntregaDe(f.items)}>Nota</span>}
                             {!f.manual && !f.visita && f.ventas > 1 && <span className="dg-envios-chip-tipo dg-chip-varios" title={`Pedidos ${ordenesDe(f.items)}`}>{f.ventas} pedidos{f.multi ? "" : " · juntos"}</span>}
+                            {!f.manual && !f.visita && (() => {
+                              const n = f.items.filter(pedidoEstaListo).length;
+                              if (n === f.items.length) return null;
+                              const sinVerificar = f.items.every((x) => x.estado === "Sin pasar a fábrica");
+                              return (
+                                <span className="dg-envios-chip-tipo dg-chip-fabrica" title={f.listoPara ? `Fábrica lo tiene para el ${fechaEntregaCorta(f.listoPara)}` : "Todavía en fábrica"}>
+                                  {n > 0 ? `${n} de ${f.items.length} listos` : sinVerificar ? "Sin pasar a fábrica" : "En fábrica"}
+                                  {n === 0 && f.listoPara ? ` · ${fechaEntregaCorta(f.listoPara)}` : ""}
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td className="dg-envios-dir">{f.donde || <span className="dg-envios-falta">sin dirección</span>}</td>
                           <td className="dg-envios-productos">{f.productos}</td>
@@ -23332,6 +23351,8 @@ function Style() {
       .dg-tdia-aclaracion { display:inline-block; margin-left:6px; padding:0 6px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.3px; background:rgba(var(--dg-warning-rgb),.22); color:color-mix(in srgb, var(--dg-warning) 50%, var(--dg-text)); }
       .dg-tdia-detalle-aclaracion { flex-basis:100%; padding:6px 9px; border-left:3px solid var(--dg-warning); border-radius:8px; background:rgba(var(--dg-warning-rgb),.10); }
       .dg-interior-tipo .dg-salida-turnos { margin-top:4px; }
+      .dg-chip-fabrica { margin-left:6px; background:rgba(var(--dg-line-rgb),.08); color:var(--dg-text-dim); border:1px dashed rgba(var(--dg-line-rgb),.3); }
+      .dg-salida-aviso { color:color-mix(in srgb, var(--dg-warning) 70%, var(--dg-text)); font-weight:600; }
       .dg-chip-varios { margin-left:6px; background:rgba(var(--dg-line-rgb),.16); color:var(--dg-text); }
       .dg-cliente-envios { display:flex; flex-direction:column; gap:14px; }
       .dg-cliente-envios-elegir { display:flex; flex-direction:column; gap:10px; padding:12px 14px; border:1px solid rgba(var(--dg-line-rgb),.14); border-radius:10px; background:rgba(var(--dg-line-rgb),.04); }
