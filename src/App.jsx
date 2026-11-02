@@ -669,6 +669,10 @@ const TALLER_PESTANAS = [
   { id: "simples", label: "Pedidos Simples", cola: "armar", grupos: ["simples"], color: "var(--dg-accent)" },
   { id: "esm_cortar", label: "Esmerilados p/cortar", cola: "armar", grupos: ["esmerilados_cortar"], color: "var(--dg-warning)" },
   { id: "esm_armar", label: "Esmerilados p/armar", cola: "armar", grupos: ["esmerilados_armar", "biselados_armar"], color: "var(--dg-estado-grabado)" },
+  // Los del interior que ya están armados y solo esperan el embalaje (que es
+  // el que más demora: a veces no hay madera). Salen de su lista para no
+  // llenarla, y se juntan acá (02/11/2026).
+  { id: "int_embalar", label: "Interior p/embalar", cola: "int_embalar", color: "var(--dg-interior)" },
   { id: "mandar_grabar", label: "Para mandar a grabar", cola: "mandar_grabar", color: "var(--dg-warning)" },
   { id: "en_grabado", label: "En grabado", cola: "en_grabado", color: "var(--dg-estado-grabado)" },
   { id: "bisel_sin_pedir", label: "Biselados sin pedir", cola: "bisel_sin_pedir", color: "var(--dg-estado-bisel)" },
@@ -678,6 +682,7 @@ const infoPestana = (id) => TALLER_PESTANAS.find((x) => x.id === id);
 const esPestanaDeArmar = (id) => infoPestana(id)?.cola === "armar";
 // En qué pestaña cae cada pedido.
 function pestanaTaller(pedido) {
+  if (esperaEmbalajeInterior(pedido)) return "int_embalar";
   const cola = pedidoListaFabrica(pedido);
   if (cola !== "armar") return cola;
   const g = grupoListaArmar(pedido);
@@ -685,6 +690,14 @@ function pestanaTaller(pedido) {
 }
 // ¿Este espejo entra en la pestaña que están mirando?
 function esDeLaPestana(pedido, id) {
+  if (id === "int_embalar") return esperaEmbalajeInterior(pedido);
+  if (esperaEmbalajeInterior(pedido)) return false;
+  return esDeLaPestanaOriginal(pedido, id);
+}
+// La lista donde estaría si no existiera «Interior p/embalar». La usa el plan
+// para contar lo hecho hoy: un espejo del interior armado hoy sigue contando
+// en el cupo del día de su lista (si no, el plan le sumaría otro al taller).
+function esDeLaPestanaOriginal(pedido, id) {
   const info = infoPestana(id);
   if (!info) return false;
   return info.grupos ? info.grupos.includes(grupoListaArmar(pedido)) && pedidoListaFabrica(pedido) === "armar" : pedidoListaFabrica(pedido) === info.cola;
@@ -6931,6 +6944,18 @@ function planTaller(pedidos, hoyIso, listaId = "simples", trabas = trabasDeLaLis
     armadosDe.set(p.id, total);
   });
   const embalarDel = (dia) => embalarPorDia.get(dia) || [];
+  // Los del interior que solo esperan el embalaje ya no se muestran en esta
+  // lista (están en «Interior p/embalar»), pero el lugar que ocuparon en su
+  // día sí cuenta: si no, el plan rellenaría ese hueco con otro espejo.
+  const ocupadoInterior = new Map();
+  (pedidos || []).filter((p) => entraEnPlanTaller(p) && esperaEmbalajeInterior(p) && esDeLaPestanaOriginal(p, listaId)).forEach((p) => {
+    const porDia = porEmbalarPorDia(p);
+    let total = 0, masViejo = "";
+    porDia.forEach((n, diaArmado) => { total += n; if (!masViejo || diaArmado < masViejo) masViejo = diaArmado; });
+    if (!total) return;
+    const dia = diaDe(p) || masViejo;
+    ocupadoInterior.set(dia, (ocupadoInterior.get(dia) || 0) + total);
+  });
 
   // Un pedido que no entra entero en un día se reparte en varios.
   // Y lo que tenía día puesto y no se hizo NO vuelve al reparto: se queda en
@@ -6974,7 +6999,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples", trabas = trabasDeLaLis
     return !!d && d < primero;
   };
   const hechosHoy = primero === hoyIso
-    ? (pedidos || []).filter((p) => esDeLaPestana(p, listaId) && !eraDeAntes(p)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
+    ? (pedidos || []).filter((p) => esDeLaPestanaOriginal(p, listaId) && !eraDeAntes(p)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
     : [];
 
   const ultimoFijado = pool.map((x) => x.fijado).filter(Boolean).sort().pop() || primero;
@@ -7005,7 +7030,8 @@ function planTaller(pedidos, hoyIso, listaId = "simples", trabas = trabasDeLaLis
     const porEmbalar = embalarDel(fecha);
     // Lo armado ese día ya ocupó su lugar en el día: no se vuelve a llenar.
     let usados = hechos.reduce((t, x) => t + x.unidades, 0)
-               + porEmbalar.reduce((t, x) => t + x.unidades, 0);
+               + porEmbalar.reduce((t, x) => t + x.unidades, 0)
+               + (ocupadoInterior.get(fecha) || 0);
     const libre = () => maxDia - usados;
     // Los espejos que se meten como EXTRA no descuentan del cupo: se suman
     // arriba. Por eso un día puede mostrar 11 cuando el tope es 10.
@@ -7187,6 +7213,16 @@ function unidadesDePedido(pedido) {
     produccionArmadoFecha: pedido?.produccionArmadoFecha, produccionArmadoPor: pedido?.produccionArmadoPor,
     produccionEmbaladoFecha: pedido?.produccionEmbaladoFecha, produccionEmbaladoPor: pedido?.produccionEmbaladoPor,
   }));
+}
+// Un pedido del interior al que solo le falta embalar: todos sus espejos ya
+// están armados y alguno todavía no se embaló.
+function esperaEmbalajeInterior(p) {
+  if (!p || !esEnvioInterior(p) || pedidoEstaListo(p) || p.estado === "Cancelado") return false;
+  if (pedidoListaFabrica(p) !== "armar") return false;
+  const unidades = unidadesDePedido(p);
+  return unidades.length > 0
+    && unidades.every((u) => unidadPasosCompletados(u) >= 2)
+    && unidades.some((u) => unidadPasosCompletados(u) < 3);
 }
 function unidadPasosCompletados(unidad) {
   const i = PRODUCCION_PASOS.findIndex((p) => p.id === unidad?.etapa);
@@ -14633,7 +14669,7 @@ function tareasAutomaticas(sectorId, pedidos, hoyIso) {
   const agregar = (t) => { if (t.n > 0) out.push({ ...t, auto: true }); };
   const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
-  const paraArmar = [...enLista("simples"), ...enLista("esm_cortar"), ...enLista("esm_armar")].filter((p) => !pedidoEstaListo(p));
+  const paraArmar = [...enLista("simples"), ...enLista("esm_cortar"), ...enLista("esm_armar"), ...enLista("int_embalar")].filter((p) => !pedidoEstaListo(p));
   // Los que esperan para mandar a grabar hay que cortarlos igual, y encima son
   // los que frenan todo: el grabador es el cuello de botella.
   const aGrabar = enLista("mandar_grabar");
