@@ -10698,6 +10698,11 @@ function envioPendienteDeVarios(items) { return sumaPorVenta(items, envioPendien
 // Lo que se copia al juntar. Antes de pisarlo se guarda lo que tenía cada
 // pedido («envioAntes»), así separarlos le devuelve su dirección.
 const CAMPOS_DEL_ENVIO_JUNTO = ["barrio", "detalleEntrega", "piso", "localidad", "horarioEntrega", "fechaEnvio", "destinoLat", "destinoLng", "fletero", "fleteroTel"];
+// Para ordenar Envíos (03/11/2026): dentro de cada día, arriba el que se pasó
+// primero. La fecha de carga y, si es el mismo día, el número de pedido.
+function cuandoSePaso(items) {
+  return (items || []).map((x) => `${String(x.fecha || "").slice(0, 10) || "9999"}|${String(Number(x.orden) || 0).padStart(9, "0")}`).sort()[0] || "9999";
+}
 function todosCon(items, campo) { return (items || []).length > 0 && (items || []).every((x) => !!x[campo]); }
 // Los envíos de un cliente: las ventas con el mismo envioJunto van juntas; las
 // demás, cada una por su lado. Cada envío es una lista de ventas.
@@ -11446,7 +11451,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
             const p = items[0];
             const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
             return {
-              clave, p, items, fecha, visita: false, grupo: 1, ventas: ventasDe(items),
+              clave, p, items, fecha, visita: false, grupo: 1, ventas: ventasDe(items), sePaso: cuandoSePaso(items),
               flex: items.some((x) => x.metodo === "Envío flex"),
               cliente: p.cliente || "Sin nombre",
               // Barrio y calle en una sola columna: son el mismo dato para el
@@ -11478,7 +11483,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           const items = sub.flatMap((x) => x.items);
           const dondes = [...new Set(sub.map((x) => x.donde).filter(Boolean))];
           return {
-            clave: `cli:${cli}`, cli, multi: true, sub, p: sub[0].p, items,
+            clave: `cli:${cli}`, cli, multi: true, sub, p: sub[0].p, items, sePaso: cuandoSePaso(items),
             fecha: sub.map((x) => x.fecha).filter(Boolean).sort()[0] || "",
             visita: false, grupo: 1, ventas: ventasDe(items),
             flex: sub.some((x) => x.flex), cliente: sub[0].cliente,
@@ -11495,7 +11500,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
         // así la tabla no tiene que saber de dónde salió cada fila. Lo único
         // propio es el color y el cartelito.
         const filasVisita = visitas.map((r) => ({
-          clave: `visita-${r.id}`, r, visita: true, flex: false, grupo: 2,
+          clave: `visita-${r.id}`, r, visita: true, flex: false, grupo: 2, sePaso: `${String(r.fecha || r.creado || "").slice(0, 10) || "9999"}|`,
           fecha: r.fechaEnvio || "",
           cliente: r.cliente || "Sin nombre",
           donde: [r.barrio, r.detalleEntrega, r.piso].filter(Boolean).join(" · "),
@@ -11505,7 +11510,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
         const filasManual = manualesPendientes.map((m) => {
           const t = tipoDeSalida(m);
           return {
-            clave: `salida-${m.id}`, m, manual: true, tipo: t, grupo: t.grupo, visita: false, flex: false,
+            clave: `salida-${m.id}`, m, manual: true, tipo: t, grupo: t.grupo, visita: false, flex: false, sePaso: `${String(m.creado || "").slice(0, 10) || "9999"}|`,
             fecha: m.fecha || "",
             cliente: m.cliente || t.quien,
             donde: [m.barrio, m.direccion, m.piso].filter(Boolean).join(" · "),
@@ -11517,7 +11522,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           // Por fecha (los que no tienen, al final) y, dentro del día, en el
           // orden de GRUPOS_SALIDA: entregas, arreglos, retiros de espejos,
           // devoluciones y retiros de material.
-          .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo);
+          // y, dentro de cada uno, el que se pasó primero arriba.
+          .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo || (a.sePaso || "9999").localeCompare(b.sePaso || "9999"));
         const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
         const atrasadas = filas.filter((f) => f.fecha && f.fecha < semana.hoy).length;
         // Las visitas y los arreglos a domicilio los hacemos nosotros, no el
@@ -11546,7 +11552,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                 <table className="dg-envios-tabla dg-salidas-tabla">
                   <thead>
                     <tr>
-                      <th className="dg-sel-col" aria-label="Elegir" /><th>Salida</th><th>Nombre</th><th>Dónde</th><th>Productos</th>
+                      <th className="dg-sel-col" aria-label="Elegir" /><th>Salida</th><th>Nombre</th><th>Barrio, dirección y piso</th><th>Productos</th>
                       <th className="dg-num">Saldo</th><th className="dg-num">Flete</th><th className="dg-envios-hecho-col">Hecho</th>
                     </tr>
                   </thead>
