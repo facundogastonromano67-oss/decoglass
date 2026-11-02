@@ -1112,6 +1112,8 @@ function curvaCapilla(espejo) {
 const DEFAULT_QUOTE_CONFIG = {
   materiales: {
     aluminioPrecio: 16395, aluminioRendimiento: 4.09875,
+    // Espejo sin luz: la tira de aluminio en U para colgar. Viene de 6 metros.
+    tiraUPrecio: 12000, tiraURendimiento: 6,
     planchaPrecio: 181290, planchaRendimiento: 6.09,
     ledPrecio: 8300, ledRendimiento: 1,
     transformadorPrecio: 7500, transformadorRendimiento: 1,
@@ -1162,6 +1164,35 @@ function determinePanel(ancho, alto, margen) {
   if (ancho >= 30 + margen && alto >= 30 + margen) return "30x30";
   return "NO ENTRA";
 }
+
+// ===== ESPEJO SIN LUZ (03/11/2026) =========================================
+// Es el espejo + 2 tiras de aluminio en U para colgarlo: una arriba y una
+// abajo, a lo largo del espejo (el ancho). Se cobra solo lo que usa de la
+// tira. Todo lo demás es la MISMA cuenta que un espejo con luz (embalaje,
+// mano de obra, margen, IVA y 3 cuotas): computeQuote no se toca, se le pasan
+// los materiales del espejo sin luz.
+function metrosTiraU(ancho) { return (2 * (Number(ancho) || 0)) / 100; }
+function costoTirasU(cfg, ancho) {
+  const M = (cfg && cfg.materiales) || {};
+  const precio = Number(M.tiraUPrecio ?? DEFAULT_QUOTE_CONFIG.materiales.tiraUPrecio) || 0;
+  const metros = Number(M.tiraURendimiento ?? DEFAULT_QUOTE_CONFIG.materiales.tiraURendimiento) || 1;
+  return metrosTiraU(ancho) * (precio / metros);
+}
+// computeQuote cobra el aluminio por el perímetro. Acá se le pasa un precio por
+// metro de perímetro que da justo el costo de las dos tiras, y sin LED ni
+// transformador.
+function configSinLuz(cfg, ancho, alto) {
+  const M = cfg.materiales || {};
+  const perimetro = (2 * ((Number(ancho) || 0) + (Number(alto) || 0))) / 100;
+  const tiras = costoTirasU(cfg, ancho);
+  return { ...cfg, materiales: { ...M, aluminioPrecio: perimetro ? tiras / perimetro : 0, aluminioRendimiento: 1, ledPrecio: 0, transformadorPrecio: 0 } };
+}
+function computeQuoteSinLuz(inputs, cfg) {
+  const sinLuz = inputsSinLed(inputs);
+  const r = computeQuote(sinLuz, configSinLuz(cfg, sinLuz.ancho, sinLuz.alto));
+  return { ...r, sinLed: true, metrosTiraU: metrosTiraU(sinLuz.ancho), costoTirasU: costoTirasU(cfg, sinLuz.ancho), modeloComercial: `${r.modeloComercial} · sin LED` };
+}
+function esPedidoSinLuz(p) { return /sin led/i.test(`${p?.tipo || ""} ${p?.tono || ""}`); }
 
 function roundTo1000(n) { return Math.round(n / 1000) * 1000; }
 function fmtMoney(n) { return "$" + Math.round(n).toLocaleString("es-AR"); }
@@ -5816,7 +5847,8 @@ function estimarCostoPedido(pedido, cfg) {
   try {
     const inputs = pedidoAInputsCosteo(pedido);
     if (!inputs.ancho || !inputs.alto) return 0;
-    const r = computeQuote(inputs, cfg);
+    // Un pedido sin luz se costea como sin luz (antes contaba LED y perfil).
+    const r = esPedidoSinLuz(pedido) ? computeQuoteSinLuz(inputs, cfg) : computeQuote(inputs, cfg);
     return (Number(r.costoTotalEstimado) || 0) * (Number(pedido?.cant) || 1);
   } catch (e) {
     return 0;
@@ -20656,28 +20688,9 @@ function nuevoEspejoPresupuesto(base) {
   };
 }
 
-const DESCUENTO_SIN_LED = 0.3;
 // Un espejo sin luz no lleva touch, desempañante, hora ni bluetooth.
 function inputsSinLed(inputs) {
   return { ...inputs, touch: "No", desemp: "No", horaTemp: "No", bluetoothSel: "Sin Bluetooth", panelesAdicionales: 0 };
-}
-function aplicarSinLed(r, cfg) {
-  const f = 1 - DESCUENTO_SIN_LED;
-  const M = cfg.materiales;
-  const costoLuz = unitCost(M.ledPrecio, M.ledRendimiento) + unitCost(M.transformadorPrecio, M.transformadorRendimiento);
-  const precioEfectivoSinIva = r.precioEfectivoSinIva * f;
-  const costoTotalEstimado = Math.max(0, r.costoTotalEstimado - costoLuz);
-  return {
-    ...r,
-    sinLed: true,
-    precioTransferencia: r.precioTransferencia * f,
-    precio3Cuotas: r.precio3Cuotas ? r.precio3Cuotas * f : r.precio3Cuotas,
-    precioEfectivoSinIva,
-    totalPedidoTransferencia: r.totalPedidoTransferencia * f,
-    costoTotalEstimado,
-    margenReal: precioEfectivoSinIva ? (precioEfectivoSinIva - costoTotalEstimado) / precioEfectivoSinIva : 0,
-    modeloComercial: `${r.modeloComercial} · sin LED`,
-  };
 }
 
 function etiquetaEspejo(espejo, i) {
@@ -20720,8 +20733,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin, on
       cliente,
     };
     if (e.sinLed) {
-      const sinLuz = inputsSinLed(inputs);
-      return { espejo: e, inputs: sinLuz, result: aplicarSinLed(computeQuote(sinLuz, config), config) };
+      return { espejo: e, inputs: inputsSinLed(inputs), result: computeQuoteSinLuz(inputs, config) };
     }
     return { espejo: e, inputs, result: computeQuote(inputs, config) };
   });
@@ -20925,7 +20937,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin, on
                         </select>
                       </Field>
                     </div>
-                    {e.sinLed && <p className="dg-hint dg-presu-sin-led">Sin luz no lleva touch, desempañante, hora ni bluetooth. El precio es un 30% menos que el mismo espejo con luz.</p>}
+                    {e.sinLed && <p className="dg-hint dg-presu-sin-led">Sin luz: el espejo + 2 tiras de aluminio en U para colgar, una arriba y una abajo a lo largo del espejo{Number(e.ancho) > 0 ? ` (usa ${metrosTiraU(e.ancho).toLocaleString("es-AR")} m de tira)` : ""}. No lleva touch, desempañante, hora ni bluetooth.</p>}
                     {!e.sinLed && (
                     <div className="dg-field-grid" style={{ marginTop: 12 }}>
                       <Field label="Touch"><select value={e.touch} onChange={(ev) => setEspejo(e.id, { touch: ev.target.value })}><option value="No">No</option><option value="Sí">Touch simple</option><option value="Doble">Doble touch (frontal + perimetral)</option></select></Field>
@@ -21187,6 +21199,8 @@ function ConfigEditor({ config, onChange }) {
         <ConfigField label="Tira LED $" value={M.ledPrecio} onChange={(v) => set("materiales", "ledPrecio", v)} />
         <ConfigField label="Transformador $" value={M.transformadorPrecio} onChange={(v) => set("materiales", "transformadorPrecio", v)} />
         <ConfigField label="Sellador/silicona $" value={M.selladorPrecio} onChange={(v) => set("materiales", "selladorPrecio", v)} />
+        <ConfigField label="Tira U sin luz $ (la tira)" value={M.tiraUPrecio ?? DEFAULT_QUOTE_CONFIG.materiales.tiraUPrecio} onChange={(v) => set("materiales", "tiraUPrecio", v)} />
+        <ConfigField label="Tira U — metros por tira" value={M.tiraURendimiento ?? DEFAULT_QUOTE_CONFIG.materiales.tiraURendimiento} onChange={(v) => set("materiales", "tiraURendimiento", v)} />
       </div>
 
       <div className="dg-config-group-title">Funciones (costo componente / carga operativa)</div>
