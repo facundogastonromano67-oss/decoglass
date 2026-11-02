@@ -1147,7 +1147,9 @@ const DEFAULT_QUOTE_CONFIG = {
     },
     esmerilado: { Recto: 61000, Circular: 80430, "Pastilla/Oval": 99500 },
   },
-  cargaOperativa: { "Simple / Touch": 48000, Esmerilado: 53000, embalajeInteriorAdicional: 15000, panelAdicional: 2500 },
+  // manoObraSinLuz: un espejo sin luz se arma mucho más rápido; su carga base
+  // es este factor de la de con luz (0.5 = la mitad). 03/11/2026.
+  cargaOperativa: { "Simple / Touch": 48000, Esmerilado: 53000, embalajeInteriorAdicional: 15000, panelAdicional: 2500, manoObraSinLuz: 0.5 },
   reglas: {
     iva: 0.21, factor3cuotas: 1.20407, limiteMedidaEstandar: 0.81,
     margenMinorista: 0.4, margenRevendedor: 0.3, margenConstructora10: 0.25, margenConstructora20: 0.2,
@@ -1181,16 +1183,45 @@ function costoTirasU(cfg, ancho) {
 // computeQuote cobra el aluminio por el perímetro. Acá se le pasa un precio por
 // metro de perímetro que da justo el costo de las dos tiras, y sin LED ni
 // transformador.
+function factorManoObraSinLuz(cfg) {
+  const v = Number(cfg?.cargaOperativa?.manoObraSinLuz ?? DEFAULT_QUOTE_CONFIG.cargaOperativa.manoObraSinLuz);
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, 1) : 0.5;
+}
 function configSinLuz(cfg, ancho, alto) {
   const M = cfg.materiales || {};
+  const C = cfg.cargaOperativa || {};
   const perimetro = (2 * ((Number(ancho) || 0) + (Number(alto) || 0))) / 100;
   const tiras = costoTirasU(cfg, ancho);
-  return { ...cfg, materiales: { ...M, aluminioPrecio: perimetro ? tiras / perimetro : 0, aluminioRendimiento: 1, ledPrecio: 0, transformadorPrecio: 0 } };
+  // La mano de obra: sin luz se arma mucho más rápido (por defecto, la mitad).
+  const f = factorManoObraSinLuz(cfg);
+  return {
+    ...cfg,
+    materiales: { ...M, aluminioPrecio: perimetro ? tiras / perimetro : 0, aluminioRendimiento: 1, ledPrecio: 0, transformadorPrecio: 0 },
+    cargaOperativa: { ...C, "Simple / Touch": (Number(C["Simple / Touch"]) || 0) * f, Esmerilado: (Number(C.Esmerilado) || 0) * f },
+  };
 }
+// Tope (03/11/2026, lo pidió Facundo): nunca más caro que la cuenta de antes,
+// que era el mismo espejo con luz con un 30% menos.
+const DESCUENTO_SIN_LED_TOPE = 0.3;
 function computeQuoteSinLuz(inputs, cfg) {
   const sinLuz = inputsSinLed(inputs);
-  const r = computeQuote(sinLuz, configSinLuz(cfg, sinLuz.ancho, sinLuz.alto));
-  return { ...r, sinLed: true, metrosTiraU: metrosTiraU(sinLuz.ancho), costoTirasU: costoTirasU(cfg, sinLuz.ancho), modeloComercial: `${r.modeloComercial} · sin LED` };
+  let r = computeQuote(sinLuz, configSinLuz(cfg, sinLuz.ancho, sinLuz.alto));
+  const tope = computeQuote(sinLuz, cfg).precioTransferencia * (1 - DESCUENTO_SIN_LED_TOPE);
+  let topeAplicado = false;
+  if (r.precioTransferencia > tope && r.precioTransferencia > 0) {
+    const f = tope / r.precioTransferencia;
+    const precioEfectivoSinIva = r.precioEfectivoSinIva * f;
+    r = {
+      ...r,
+      precioTransferencia: r.precioTransferencia * f,
+      precio3Cuotas: r.precio3Cuotas ? r.precio3Cuotas * f : r.precio3Cuotas,
+      precioEfectivoSinIva,
+      totalPedidoTransferencia: r.totalPedidoTransferencia * f,
+      margenReal: precioEfectivoSinIva ? (precioEfectivoSinIva - r.costoTotalEstimado) / precioEfectivoSinIva : 0,
+    };
+    topeAplicado = true;
+  }
+  return { ...r, sinLed: true, topeSinLuz: topeAplicado, metrosTiraU: metrosTiraU(sinLuz.ancho), costoTirasU: costoTirasU(cfg, sinLuz.ancho), modeloComercial: `${r.modeloComercial} · sin LED` };
 }
 function esPedidoSinLuz(p) { return /sin led/i.test(`${p?.tipo || ""} ${p?.tono || ""}`); }
 
@@ -21218,6 +21249,7 @@ function ConfigEditor({ config, onChange }) {
       <div className="dg-config-grid">
         <ConfigField label="Carga base simple $" value={C["Simple / Touch"]} onChange={(v) => onChange({ ...config, cargaOperativa: { ...C, "Simple / Touch": v } })} />
         <ConfigField label="Carga base esmerilado $" value={C.Esmerilado} onChange={(v) => onChange({ ...config, cargaOperativa: { ...C, Esmerilado: v } })} />
+        <ConfigField label="Mano de obra sin luz (0-1, 0.5 = la mitad)" value={C.manoObraSinLuz ?? DEFAULT_QUOTE_CONFIG.cargaOperativa.manoObraSinLuz} onChange={(v) => onChange({ ...config, cargaOperativa: { ...C, manoObraSinLuz: v } })} />
         <ConfigField label="IVA (%, ej 0.21)" value={R.iva} onChange={(v) => set("reglas", "iva", v)} />
         <ConfigField label="Factor 3 cuotas" value={R.factor3cuotas} onChange={(v) => set("reglas", "factor3cuotas", v)} />
         <ConfigField label="Margen minorista (0-1)" value={R.margenMinorista} onChange={(v) => set("reglas", "margenMinorista", v)} />
