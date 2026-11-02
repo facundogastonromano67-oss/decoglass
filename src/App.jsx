@@ -25057,7 +25057,8 @@ function pasoPublicoDe(pedido) {
   return 1; // Verificado en adelante ya se muestra como "En producción"
 }
 
-const WHATSAPP_CONSULTAS = "1173571399";
+// El WhatsApp de PostVenta en todos los links de seguimiento (cambiado el 02/11/2026).
+const WHATSAPP_CONSULTAS = "1170594088";
 
 // Tabla real de pesos y medidas de caja para envíos al interior (de la
 // planilla de Vía Cargo). La caja siempre es la medida del espejo + 10cm de
