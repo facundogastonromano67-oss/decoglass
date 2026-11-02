@@ -1030,9 +1030,9 @@ function entregaWaLink(p) {
   const saldoTexto = detalleCobroEntrega(p);
   let cuerpo;
   if (p.metodo === "Retira") {
-    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo para retirar. ¿Coordinamos un día y horario?\n\n${saldoTexto}`;
+    cuerpo = `te confirmamos que tu espejo ${medidaEspejo(p)} ya está listo para retirar. ¿Coordinamos un día y horario?\n\n${saldoTexto}`;
   } else if (p.metodo === "Colocación") {
-    cuerpo = `te confirmamos que tu espejo ${p.ancho}×${p.alto} cm ya está listo. ¿Coordinamos día y horario para la colocación?\n\n${saldoTexto}`;
+    cuerpo = `te confirmamos que tu espejo ${medidaEspejo(p)} ya está listo. ¿Coordinamos día y horario para la colocación?\n\n${saldoTexto}`;
   } else {
     // Lo primero que quiere saber el cliente es CUÁNDO lo recibe, no que esté
     // listo. Si la fecha ya está coordinada se la damos; si no, se le propone
@@ -1042,7 +1042,7 @@ function entregaWaLink(p) {
     const linea = propuesta
       ? `te lo podemos enviar el ${cuando}. Si te queda bien, confirmanos y lo dejamos agendado.`
       : `tu envío quedó agendado para el ${cuando}.`;
-    cuerpo = `tu espejo ${p.ancho}×${p.alto} cm ya está listo y ${linea}\n\nConfirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
+    cuerpo = `tu espejo ${medidaEspejo(p)} ya está listo y ${linea}\n\nConfirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
   }
   const mensaje = `Hola${nombre}! 👋 ${cuerpo}`;
   return `${base}?text=${encodeURIComponent(mensaje)}`;
@@ -1290,6 +1290,36 @@ function computeQuote(inputs, cfg) {
 // confunde al cliente y encima deja lugar a que se lo imagine cuadrado.
 // Si por lo que sea el ancho y el alto NO coinciden, se muestran los dos: un
 // redondo con medidas distintas es un dato raro que hay que poder ver.
+// Lo mismo para los pedidos, el stock y todo lo demás (02/11/2026): un espejo
+// circular se muestra «60 cm Circular», nunca «60×60», que se confunde con un
+// cuadrado. Si el ancho y el alto no coinciden se muestran los dos, para que
+// el dato raro se vea.
+function esCircular(p) { return /circular|redond/i.test(String(p?.forma || "")); }
+function diametroDe(p) {
+  if (!esCircular(p)) return 0;
+  const a = Number(p?.ancho) || 0, h = Number(p?.alto) || 0;
+  if (a && h && a !== h) return 0;
+  return a || h;
+}
+function medidaEspejo(p, opciones) {
+  const cm = !opciones || opciones.cm !== false;
+  if (!p) return "";
+  const d = diametroDe(p);
+  if (d) return `${d} cm Circular`;
+  if (!p.ancho && !p.alto) return "";
+  return `${p.ancho}×${p.alto}${cm ? " cm" : ""}`;
+}
+// La forma, sin repetir «Circular» cuando la medida ya lo dice.
+function formaAparte(p) { return diametroDe(p) ? "" : (p?.forma || ""); }
+// La medida grande de las tarjetas: el número grande y «cm» chico.
+function MedidaGrande(props) {
+  const p = props.p;
+  const d = diametroDe(p);
+  return d
+    ? <><strong>{d}</strong><small>cm Circular</small></>
+    : <><strong>{p?.ancho} × {p?.alto}</strong><small>cm</small></>;
+}
+
 function medidaParaTexto(ancho, alto, display) {
   const a = Number(ancho) || 0, h = Number(alto) || 0;
   if (display === "Redondo" && a > 0 && a === h) return `${a} cm Diam.`;
@@ -3463,7 +3493,7 @@ function PanelControlAdmin({ pedidos, incomes, purchases = [], reclamos, stockMa
                     <div className="dg-task dg-pago-row" key={p.id}>
                       <div className="dg-pago-info">
                         <span>#{p.orden} · {p.cliente || "Sin nombre"}</span>
-                        <span className="dg-pago-meta">{p.ancho}×{p.alto} cm · {p.forma} · venta {money(venta)} − costo est. {money(costo)}</span>
+                        <span className="dg-pago-meta">{medidaEspejo(p)}{formaAparte(p) ? ` · ${formaAparte(p)}` : ""} · venta {money(venta)} − costo est. {money(costo)}</span>
                       </div>
                       <span className="dg-pago-monto" style={{ color: margenItem >= 0 ? "var(--dg-success)" : "var(--dg-danger)" }}>{money(margenItem)}</span>
                     </div>
@@ -5679,7 +5709,7 @@ function ClientesPanel({ pedidos, reclamos = [], onRepetir }) {
                     {c.pedidos.map((p) => (
                       <li key={p.id}>
                         <span className="dg-cliente-compra">
-                          <b>#{p.orden} · {p.ancho}×{p.alto} cm{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</b>
+                          <b>#{p.orden} · {medidaEspejo(p)}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</b>
                           <small>{[p.forma, p.tipo, funcionesPedido(p).map((f) => f.label.toLowerCase()).join(", ")].filter(Boolean).join(" · ")}</small>
                           <small>{fechaEntregaCorta(String(p.fecha || "").slice(0, 10))} · {p.estado} · {money(Number(p.monto) || 0)}</small>
                         </span>
@@ -7680,7 +7710,7 @@ function BuscadorGlobal({ pedidos, reclamos, onClose, onIr }) {
               <span className="dg-buscador-tag">#{p.orden}</span>
               <span className="dg-buscador-txt">
                 <b>{p.cliente || "Sin nombre"}</b>
-                <small>{p.estado} · {p.ancho}×{p.alto} cm{p.celular ? ` · ${p.celular}` : ""}{pedidoSaldo(p) > 0 ? ` · saldo ${money(pedidoSaldo(p))}` : ""}</small>
+                <small>{p.estado} · {medidaEspejo(p)}{p.celular ? ` · ${p.celular}` : ""}{pedidoSaldo(p) > 0 ? ` · saldo ${money(pedidoSaldo(p))}` : ""}</small>
               </span>
               <ChevronRight size={15} />
             </button>
@@ -7833,7 +7863,7 @@ function FichaEspejoPaso({ pedido }) {
   return (
     <div className="dg-ficha-espejo-paso">
       <div className="dg-fab-medida">
-        <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+        <MedidaGrande p={pedido} />
         {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
       </div>
       <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
@@ -7885,7 +7915,7 @@ function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio, onEd
 
         <div className="dg-verif-specs">
           <div className="dg-fab-medida">
-            <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+            <MedidaGrande p={pedido} />
             {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
           </div>
           <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
@@ -8034,7 +8064,7 @@ function BotonCompartirSeguimiento({ pedido }) {
 const ECOMAPP_FACTURA_URL = "https://admin.ecomm-app.com/facturacion/factura/editar";
 function datosClienteParaFactura(p) {
   const dir = [p?.detalleEntrega, p?.barrio && `Barrio ${p.barrio}`, p?.piso && `(${p.piso})`].filter(Boolean).join(" ");
-  const detalle = [(p?.ancho && p?.alto) ? `Espejo ${p.ancho}×${p.alto} cm` : "", detalleFabrica(p)].filter((x) => x && String(x).trim()).join(" · ");
+  const detalle = [(p?.ancho && p?.alto) ? `Espejo ${medidaEspejo(p)}` : "", detalleFabrica(p)].filter((x) => x && String(x).trim()).join(" · ");
   return [
     `Cliente: ${p?.cliente || "-"}`,
     `DNI/CUIT: ${p?.dniCuit || "-"}`,
@@ -8807,7 +8837,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                   <strong><i>#{p.orden}</i> {p.cliente || "Sin nombre"}{esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}{espejos.some(esEnvioInterior) && <span className="dg-pedido-flag dg-flag-interior">INTERIOR</span>}</strong>
                 </span>
                 <span className="dg-order-compact-item dg-order-compact-measure">
-                  <strong>{cantidadEspejos === 1 ? `${p.ancho}×${p.alto} cm` : `${cantidadEspejos} espejos`}</strong>
+                  <strong>{cantidadEspejos === 1 ? medidaEspejo(p) : `${cantidadEspejos} espejos`}</strong>
                 </span>
                 <span className="dg-order-compact-item dg-order-compact-method">
                   <strong><MetodoIcon size={12} /> {metodoLabel}</strong>
@@ -8923,7 +8953,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                         <summary>
                           <span className="dg-order-mirror-index">Espejo {index + 1}</span>
                           <span className="dg-order-mirror-main">
-                            <strong>{espejo.ancho}×{espejo.alto} cm</strong>
+                            <strong>{medidaEspejo(espejo)}</strong>
                             <small>{espejo.forma} · {espejo.tipo || "Simple"}</small>
                           </span>
                           <span className="dg-order-mirror-state" style={{ "--mirror-color": espejoStage.color }}>{espejoStage.stage}</span>
@@ -9048,7 +9078,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           <tbody>
             {visibles.map((p) => (
               <tr key={p.id}>
-                <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}</td><td>{p.vendedor}</td>
+                <td>#{p.orden}</td><td>{p.cliente}</td><td>{medidaEspejo(p, { cm: false })}</td><td>{p.vendedor}</td>
                 <td>{money(p.monto)}</td><td>{money(pedidoSaldo(p))}</td><td>{p.estado}</td><td>{p.comision}</td>
                 <td>{p.facturado ? "Sí" : "No"}</td><td>{p.metodo}</td>
               </tr>
@@ -9971,7 +10001,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 const sal = (Number(m.monto) || 0) - (Number(m.anticipo) || 0);
                 return (
                   <div className="dg-monto-fila" key={p.id}>
-                    <span className="dg-monto-espejo">Espejo {i + 1}<small>{p.ancho && p.alto ? `${p.ancho}×${p.alto} cm` : "sin medida"}</small></span>
+                    <span className="dg-monto-espejo">Espejo {i + 1}<small>{p.ancho && p.alto ? medidaEspejo(p) : "sin medida"}</small></span>
                     <Field label="Monto"><input type="number" disabled={!canEditFull} value={m.monto} onChange={(e) => setMonto(p.id, "monto", e.target.value)} /></Field>
                     <Field label="Anticipo"><input type="number" disabled={!canEditFull} value={m.anticipo} onChange={(e) => setMonto(p.id, "anticipo", e.target.value)} /></Field>
                     <Field label="Saldo" computed><input disabled value={money(sal)} /></Field>
@@ -10266,7 +10296,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
                                   {f.items.map((e) => (
                                     <li key={e.id} className={pedidoEstaListo(e) ? "dg-salida-ok" : ""}>
                                       <span className="dg-salida-marca" aria-hidden="true">{pedidoEstaListo(e) ? <Check size={13} /> : null}</span>
-                                      #{e.orden} · {e.ancho}×{e.alto} cm · {e.forma}
+                                      #{e.orden} · {medidaEspejo(e)}{formaAparte(e) ? ` · ${formaAparte(e)}` : ""}
                                     </li>
                                   ))}
                                 </ul>
@@ -10609,7 +10639,7 @@ function mensajeParaElFlete(items, nombreFlete) {
   const hola = nombreFlete ? `Hola ${String(nombreFlete).trim()}!` : "Hola!";
   const bultos = lista.reduce((t, x) => t + Math.max(1, Number(x.cant) || 1), 0);
   const medidas = lista
-    .map((x) => (x.ancho && x.alto ? `${x.ancho}×${x.alto} cm` : ""))
+    .map((x) => medidaEspejo(x))
     .filter(Boolean).join(" · ");
   const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
   const aCobrar = lista.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
@@ -10667,7 +10697,7 @@ function mensajeParaElFleteVarias(grupos, nombreFlete) {
 function bloqueEntregaPedido(items, i) {
   const p = items[0] || {};
   const bultos = items.reduce((t, x) => t + Math.max(1, Number(x.cant) || 0), 0);
-  const medidas = items.map((x) => (x.ancho && x.alto ? `${x.ancho}×${x.alto} cm` : "")).filter(Boolean).join(" · ");
+  const medidas = items.map((x) => medidaEspejo(x)).filter(Boolean).join(" · ");
   const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
   const aCobrar = items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
     + envioPendienteDeVarios(items);
@@ -10925,7 +10955,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
 
   function mensaje(items) {
     const p = items[0];
-    const espejos = items.map((e) => `Espejo ${e.ancho}×${e.alto} cm`).join("\n");
+    const espejos = items.map((e) => `Espejo ${medidaEspejo(e)}`).join("\n");
     return `Hola ${p.cliente || ""}, te confirmamos los datos de tu envío:\n\n${espejos}\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(a confirmar)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n📅 Fecha de envío: ${p.fechaEnvio ? fechaEntregaCorta(p.fechaEnvio) : "a coordinar"}\n\n${detalleCobroEntregaGrupo(items)}\n\n¿Podés confirmarnos que estos datos son correctos?`;
   }
   function copiar(items) {
@@ -11318,7 +11348,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
               // que maneja, y en dos columnas la tabla no entraba en pantalla.
               donde: [p.barrio, p.detalleEntrega, p.piso].filter(Boolean).join(" · "),
               listoPara: items.map((x) => x.listo).filter(Boolean).sort()[0] || "",
-              productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
+              productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? medidaEspejo(x, { cm: false }) : "", formaAparte(x)].filter(Boolean).join(" ")).join(", "),
               saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
               flete: costoEnvioDeVarios(items),
               fletePagado: items.some((x) => x.envioPagado),
@@ -11616,7 +11646,7 @@ function mensajeRetiro(items) {
   const lista = items || [];
   const p = lista[0] || {};
   const espejos = lista
-    .map((e) => `• ${Number(e.cant) > 1 ? `${e.cant}× ` : ""}${e.ancho && e.alto ? `${e.ancho}×${e.alto} cm` : "espejo"}${e.forma ? ` ${String(e.forma).toLowerCase()}` : ""}`)
+    .map((e) => `• ${Number(e.cant) > 1 ? `${e.cant}× ` : ""}${medidaEspejo(e) || "espejo"}${formaAparte(e) ? ` ${String(formaAparte(e)).toLowerCase()}` : ""}`)
     .join("\n");
   const cuando = p.fechaEnvio
     ? `Te esperamos el ${fechaLargaCorta(p.fechaEnvio)}${p.horarioEntrega ? ` (${String(p.horarioEntrega).toLowerCase()})` : ""}.`
@@ -11955,7 +11985,7 @@ ${preguntaDeEntrega(prep)}`)) return;
       clave: p.grupoId || p.id, p, items,
       cliente: p.cliente || "Sin nombre",
       listoDesde: items.map((x) => String(x.produccionListaFecha || "").slice(0, 10)).filter(Boolean).sort().pop() || "",
-      productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? `${x.ancho}×${x.alto}` : "", x.forma || ""].filter(Boolean).join(" ")).join(", "),
+      productos: items.map((x) => [Number(x.cant) > 1 ? `${x.cant}×` : "", x.ancho && x.alto ? medidaEspejo(x, { cm: false }) : "", formaAparte(x)].filter(Boolean).join(" ")).join(", "),
       avisado: items.every((x) => x.clienteAvisado),
       viene: p.fechaEnvio || "",
       saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
@@ -12481,7 +12511,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                                         <ul className="dg-interior-espejos">
                                           {compras.map((c) => (
                                             <li key={c.id}>
-                                              <b>#{c.orden}</b>&nbsp;{c.ancho && c.alto ? `${c.ancho}×${c.alto} cm` : "sin medida"}
+                                              <b>#{c.orden}</b>&nbsp;{c.ancho && c.alto ? medidaEspejo(c) : "sin medida"}
                                               {c.forma ? ` · ${c.forma}` : ""}{c.fecha ? ` · ${fechaEntregaCorta(c.fecha)}` : ""}
                                               {Array.isArray(c.fotosEntrega) && c.fotosEntrega.length > 0 && (
                                                 <BotonArchivo bucket="facturas" valor={c.fotosEntrega[0]} className="dg-btn-ghost dg-mini-btn dg-foto-entrega-link"><Camera size={12} /> cómo se entregó</BotonArchivo>
@@ -13171,7 +13201,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
           const envioPendiente = envioPendienteDeVarios(items);
           const envioPagado = costoEnvio > 0 && envioPendiente === 0;
           const totalACobrar = saldo + envioPendiente;
-          const medidas = items.map((p) => `${p.ancho}×${p.alto} cm`).join(" · ");
+          const medidas = items.map((p) => medidaEspejo(p)).join(" · ");
           const ordenes = [...new Set(items.map((p) => p.orden))].map((orden) => `#${orden}`).join(" · ");
           return (
             <article className="dg-section-card dg-logistics-card" key={grupo.key}>
@@ -13216,7 +13246,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                     <details className="dg-logistics-mirror" key={p.id}>
                       <summary>
                         <span>Espejo {index + 1}</span>
-                        <strong>{p.ancho}×{p.alto} cm · {p.forma}</strong>
+                        <strong>{medidaEspejo(p)}{formaAparte(p) ? ` · ${formaAparte(p)}` : ""}</strong>
                         <small>#{p.orden}</small>
                         <ChevronRight size={16} />
                       </summary>
@@ -13226,7 +13256,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                 </div>
               ) : (
                 <div className="dg-logistics-single">
-                  <div className="dg-logistics-single-head"><span>Espejo</span><strong>{principal.ancho}×{principal.alto} cm · {principal.forma}</strong></div>
+                  <div className="dg-logistics-single-head"><span>Espejo</span><strong>{medidaEspejo(principal)}{formaAparte(principal) ? ` · ${formaAparte(principal)}` : ""}</strong></div>
                   {controlesEspejo(principal)}
                 </div>
               )}
@@ -13455,8 +13485,8 @@ function emptyStockEspejo() {
 }
 function resumenFichaEspejo(s) {
   return [
-    s.ancho && s.alto ? `${s.ancho}×${s.alto} cm` : null,
-    s.forma && s.forma !== "Rectangular" ? s.forma : null,
+    s.ancho && s.alto ? medidaEspejo(s) : null,
+    formaAparte(s) && formaAparte(s) !== "Rectangular" ? formaAparte(s) : null,
     s.tono && !["Sin led", "3 tonos"].includes(s.tono) ? `luz ${s.tono}` : null,
     s.touch && s.touch !== "No" ? "touch" : null,
     s.desemp === "Desempañante" ? "desempañante" : null,
@@ -14220,7 +14250,7 @@ function OptimizadorCortePanel({ pedidos }) {
                 <ul className="dg-corte-atrasado-lista">
                   {atrasadas.map((x, k) => (
                     <li key={k}>
-                      <b>{x.etiqueta}</b> {x.cliente || "—"} · {x.ancho}×{x.alto}
+                      <b>{x.etiqueta}</b> {x.cliente || "—"} · {medidaEspejo(x, { cm: false })}
                       {x.unidades > 1 ? " · " + x.unidades + " espejos" : ""}
                       <span>{diaCortito(x.dia)}</span>
                     </li>
@@ -16254,7 +16284,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           </div>
 
           <div className="dg-fab-medida">
-            <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
+            <MedidaGrande p={p} />
             {Number(p.cant) > 1 && totalUnidadesPedido <= 1 && <span className="dg-fab-cant">× {p.cant}</span>}
           </div>
 
@@ -16383,7 +16413,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <span className="dg-fab-multi-resumen">{resumen}</span>
             </div>
             <div className="dg-fab-multi-l2">
-              <strong>{p.ancho} × {p.alto} cm</strong>
+              <strong>{medidaEspejo(p)}</strong>
               <span>{p.forma} · {p.tipo}</span>
               {p.tono && <span>tono {p.tono}</span>}
               <span className="dg-fab-multi-l2-cant">× {cant}</span>
@@ -16399,7 +16429,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         {abierto && (
           <div className="dg-fab-multi-body">
             <div className="dg-fab-medida dg-fab-multi-medida">
-              <strong>{p.ancho} × {p.alto}</strong><small>cm</small>
+              <MedidaGrande p={p} />
               <span className="dg-fab-cant">× {cant}</span>
             </div>
             <div className="dg-fab-linea">{p.forma} · {p.tipo} · <span className="dg-fab-tono">{p.tono || "—"}</span> · <span className="dg-fab-proceso" style={{ color: procesoInfo?.color }}>{procesoInfo?.label || "Simple"}</span> · <span className="dg-fab-entrega" style={{ "--ec": entrega.color }}>{p.metodo}</span></div>
@@ -16650,7 +16680,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                       {aclaracionDe(p, "aclaracionTaller") && <span className="dg-tdia-aclaracion" title={p.aclaracionTaller}>NOTA</span>}
                                     </td>
                                     <td className="dg-num">{x.unidades > 1 ? `${x.unidades}${x.partes > 1 ? ` de ${x.total}` : ""}` : "1"}</td>
-                                    <td className="dg-num dg-tdia-medida">{p.ancho} × {p.alto}</td>
+                                    <td className="dg-num dg-tdia-medida">{medidaEspejo(p, { cm: false })}</td>
                                     <td>{p.forma || <span className="dg-tdia-falta">—</span>}</td>
                                     <td>{p.tono || <span className="dg-tdia-falta">—</span>}</td>
                                     <td className="dg-tdia-proceso" style={{ color: colorProc }}>{(proc?.label || "Simples").replace(/s$/, "")}</td>
@@ -16739,7 +16769,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                 <select value="" onChange={(e) => { if (e.target.value) moverADia(e.target.value, dia.fecha, true); }}>
                                   <option value="">+ Sumar un espejo a este día (arriba del cupo)…</option>
                                   {candidatos.map((p) => (
-                                    <option key={p.id} value={p.id}>#{p.orden} · {p.cliente} · {p.ancho}×{p.alto}</option>
+                                    <option key={p.id} value={p.id}>#{p.orden} · {p.cliente} · {medidaEspejo(p, { cm: false })}</option>
                                   ))}
                                 </select>
                               </div>
@@ -16798,7 +16828,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               <summary><Check size={13} /> Terminados hoy ({hechosU})</summary>
                               <ul>
                                 {dia.hechos.map((x) => (
-                                  <li key={x.pedido.id}>#{x.pedido.orden} {x.pedido.cliente} · {x.pedido.ancho}×{x.pedido.alto}{x.unidades > 1 ? ` · ${x.unidades} u.` : ""} · {x.clase === "simple" ? "simple" : "esm./bisel"}</li>
+                                  <li key={x.pedido.id}>#{x.pedido.orden} {x.pedido.cliente} · {medidaEspejo(x.pedido, { cm: false })}{x.unidades > 1 ? ` · ${x.unidades} u.` : ""} · {x.clase === "simple" ? "simple" : "esm./bisel"}</li>
                                 ))}
                               </ul>
                             </details>
@@ -16900,7 +16930,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             <tbody>
               {((esPestanaDeArmar(lista) && filtroEstado === "activos") ? (diaDeHoyDelPlan(planTaller(pedidos, hoyTaller, lista))?.items || []).map((x) => ({ ...x.pedido, cant: x.unidades })) : visibles).map((p) => (
                 <tr key={p.id}>
-                  <td>#{p.orden}</td><td>{p.cliente}</td><td>{p.ancho}×{p.alto}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
+                  <td>#{p.orden}</td><td>{p.cliente}</td><td>{medidaEspejo(p, { cm: false })}{Number(p.cant) > 1 ? ` ×${p.cant}` : ""}</td>
                   <td>{p.forma} / {p.tipo}</td><td>{p.tono}</td>
                   <td>{funcionesPedido(p, true).map((f) => f.label).join(", ") || "—"}</td>
                   <td>{p.metodo}</td><td>{p.estado}{p.demorado ? " (demorado)" : ""}</td><td>{p.listo || "—"}</td>
@@ -20582,7 +20612,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin, on
                   <span className="dg-presu-espejo-n">{i + 1}</span>
                   <span className="dg-presu-espejo-txt">
                     <strong>{etiquetaEspejo(e, i)}</strong>
-                    <small>{e.ancho}×{e.alto} cm · {l.result.modeloComercial}{cant(e) > 1 ? ` · ${cant(e)} u` : ""}</small>
+                    <small>{medidaParaTexto(e.ancho, e.alto, l.result.tipoComercialDisplay)} · {l.result.modeloComercial}{cant(e) > 1 ? ` · ${cant(e)} u` : ""}</small>
                   </span>
                   <span className="dg-presu-espejo-precio">{fmtMoney(roundTo1000(l.result.totalPedidoTransferencia))}</span>
                   <ChevronRight size={16} className={esteAbierto ? "dg-presu-chevron-on" : ""} />
@@ -20736,7 +20766,7 @@ function QuotePage({ config, onConfigChange, quotes, onQuotesChange, isAdmin, on
                 <div className="dg-presu-detalle-fila" key={l.espejo.id}>
                   <span className="dg-presu-detalle-txt">
                     <strong>{etiquetaEspejo(l.espejo, i)}</strong>
-                    <small>{l.espejo.ancho}×{l.espejo.alto} cm{cant(l.espejo) > 1 ? ` · ${cant(l.espejo)} u × ${fmtMoney(roundTo1000(l.result.precioTransferencia))}` : ""}</small>
+                    <small>{medidaParaTexto(l.espejo.ancho, l.espejo.alto, l.result.tipoComercialDisplay)}{cant(l.espejo) > 1 ? ` · ${cant(l.espejo)} u × ${fmtMoney(roundTo1000(l.result.precioTransferencia))}` : ""}</small>
                   </span>
                   <span className="dg-presu-detalle-monto">{fmtMoney(roundTo1000(l.result.totalPedidoTransferencia))}</span>
                 </div>
@@ -25192,7 +25222,7 @@ function abrirGarantia(pedidosOEspejo) {
   const fechaCompra = primero.fecha ? new Date(primero.fecha + "T00:00:00").toLocaleDateString("es-AR") : "—";
   const ordenes = [...new Set(espejos.map((e) => e.orden))].join(", ");
   const bloquesDatos = espejos.map((pedido, i) => {
-    const medida = `${pedido.ancho} × ${pedido.alto} cm${Number(pedido.cant) > 1 ? ` (×${pedido.cant})` : ""}`;
+    const medida = `${medidaEspejo(pedido)}${Number(pedido.cant) > 1 ? ` (×${pedido.cant})` : ""}`;
     const funciones = funcionesPedido(pedido, true).map((f) => f.label).join(", ") || "—";
     return `
   <div class="datos">
@@ -26002,7 +26032,7 @@ function SeguimientoPublico({ pedidoId }) {
 
           <div className="dg-verif-specs" style={{ marginTop: 16 }}>
             <div className="dg-fab-medida">
-              <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+              <MedidaGrande p={pedido} />
               {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
             </div>
             <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
@@ -26149,7 +26179,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
                   </div>
                   <div className="dg-verif-specs" style={{ marginTop: 8 }}>
                     <div className="dg-fab-medida">
-                      <strong>{pedido.ancho} × {pedido.alto}</strong><small>cm</small>
+                      <MedidaGrande p={pedido} />
                       {Number(pedido.cant) > 1 && <span className="dg-fab-cant">× {pedido.cant}</span>}
                     </div>
                     <div className="dg-fab-linea">{pedido.forma} · {pedido.tipo} · <span className="dg-fab-tono">{pedido.tono || "—"}</span></div>
