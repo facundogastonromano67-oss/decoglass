@@ -8443,6 +8443,90 @@ function validarPedido(p) {
   return errores;
 }
 
+// ===== GUARDAR UN PEDIDO (compartido por Pedidos y Envíos, 03/11/2026) ====
+// Todo lo que pasa al guardar un espejo: número, fecha automática, controles
+// para archivarlo y la plata que hay que registrar. Pedidos y PostVenta ›
+// Envíos usan ESTA función, así guardar desde cualquiera de los dos hace lo
+// mismo. Devuelve { error } si no se puede guardar.
+function prepararGuardadoPedido(pedidos, pedido, nuevoNumero) {
+  pedido = normalizarPedidoFunciones(pedido);
+  pedido = { ...pedido, cliente: nombrePropio(pedido.cliente) };
+  const exists = pedidos.some((p) => p.id === pedido.id);
+  const previous = pedidos.find((p) => p.id === pedido.id);
+  const ordenDelGrupo = pedido.grupoId
+    ? pedidos
+      .filter((p) => p.grupoId === pedido.grupoId && Number(p.orden) > 0)
+      .reduce((menor, p) => menor === null || Number(p.orden) < menor ? Number(p.orden) : menor, null)
+    : null;
+  let withOrden = { ...pedido, orden: ordenDelGrupo || pedido.orden || nuevoNumero() };
+  if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
+  // Si nadie le puso fecha de entrega, se la pone la app y queda fija, así
+  // el pedido no se va al fondo de la lista cada vez que entra uno nuevo.
+  if (!withOrden.listo && !pedidoEstaListo(withOrden) && withOrden.estado !== "Cancelado") {
+    const auto = fechaEntregaAutomatica(withOrden, pedidos, isoLocal(new Date()));
+    if (auto) withOrden = { ...withOrden, listo: auto, listoAutomatica: true };
+  }
+  if (previous?.estado === "Sin pasar a fábrica" && pedidoFueVerificado(withOrden)) {
+    withOrden = { ...withOrden, pedidoVerificadoFecha: withOrden.pedidoVerificadoFecha || new Date().toISOString() };
+  }
+  if (withOrden.estado === "Espejo listo" && previous && previous.estado !== "Espejo listo" && previous.estado !== "Entregado") {
+    withOrden = { ...withOrden, clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "", produccionListaFecha: new Date().toISOString() };
+  }
+  if (withOrden.estado === "Entregado") {
+    if (previous?.estado !== "Espejo listo" && previous?.estado !== "Entregado") {
+      return { error: "Antes de entregarlo, el taller debe guardar el pedido como “Espejo listo”." };
+    }
+    if (!withOrden.clienteAvisado) {
+      return { error: "Antes de archivar el pedido, marcá que el cliente ya fue avisado de que el espejo está listo." };
+    }
+    if (esPedidoConEnvio(withOrden) && !withOrden.envioConfirmado) {
+      return { error: "Antes de archivar un pedido con envío, PostVenta debe confirmar que el envío quedó coordinado." };
+    }
+    if (previous?.estado !== "Entregado") withOrden = { ...withOrden, entregadoFecha: new Date().toISOString() };
+  }
+
+  if (reclamoSinCargo(withOrden)) withOrden = { ...withOrden, monto: 0, anticipo: 0 };
+
+  // Cuánto plata entró realmente por este pedido:
+  // si ya se entregó, se cobró todo; si no, solo el anticipo.
+  const cambio = ingresoPorCambioDeMonto(withOrden);
+  return { pedido, exists, previous, withOrden, cambio };
+}
+
+// Lo mismo para los datos del cliente y la entrega de un pedido entero (todos
+// sus espejos), con el monto y el anticipo de cada uno.
+function prepararEntregaEditada(pedidos, grupo, editado, montosPorEspejo, registraPlata) {
+  const ids = new Set((grupo || []).map((p) => p.id));
+  const patch = soloCamposDelPedido(editado);
+  CAMPOS_DE_LA_VENTA.forEach((c) => { if (c in editado) patch[c] = editado[c]; });
+  // Con UN solo espejo no hay ambigüedad: el monto, el anticipo y el estado
+  // del formulario son los de ese espejo. Con varios, el monto de cada uno
+  // viene aparte (montosPorEspejo) y el estado se maneja espejo por espejo.
+  const unEspejo = (grupo || []).length === 1;
+  if (unEspejo) {
+    ["monto", "anticipo", "estado", "motivoCancelacion"].forEach((c) => { if (c in editado) patch[c] = editado[c]; });
+    // Si acá queda entregado y no tiene fecha, se la ponemos: sin eso el
+    // pedido no cuenta en los números de PostVenta ni en «sin facturar».
+    const cerrado = patch.estado === "Entregado" || patch.estado === "Despachado";
+    if (cerrado && !grupo[0].entregadoFecha) patch.entregadoFecha = new Date().toISOString();
+  }
+  const montos = montosPorEspejo || {};
+  const ingresos = [];
+  const actualizados = (pedidos || []).map((p) => {
+    if (!ids.has(p.id)) return p;
+    const m = montos[p.id];
+    let nuevo = { ...p, ...patch };
+    if (m) nuevo = { ...nuevo, monto: m.monto, anticipo: m.anticipo };
+    const cambio = ingresoPorCambioDeMonto(nuevo);
+    if (cambio && registraPlata) {
+      ingresos.push(cambio.ingreso);
+      nuevo = { ...nuevo, montoRegistrado: cambio.cobrado };
+    }
+    return nuevo;
+  });
+  return { actualizados, ingresos };
+}
+
 function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar = true, sessionSectorId, incomes, onCreateIncome, onRegistrar, kommoSubdominio, stockEspejos, onChangeStockEspejos, desdePresupuesto, onPresupuestoUsado, linkResena = "" }) {
   // Los espejos de un presupuesto que faltan cargar: cada «Guardar y cargar
   // otro espejo» toma el siguiente.
@@ -8539,50 +8623,10 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   function nextOrden() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
 
   function savePedido(pedido, opts) {
-    pedido = normalizarPedidoFunciones(pedido);
-    pedido = { ...pedido, cliente: nombrePropio(pedido.cliente) };
-    const exists = pedidos.some((p) => p.id === pedido.id);
-    const previous = pedidos.find((p) => p.id === pedido.id);
-    const ordenDelGrupo = pedido.grupoId
-      ? pedidos
-        .filter((p) => p.grupoId === pedido.grupoId && Number(p.orden) > 0)
-        .reduce((menor, p) => menor === null || Number(p.orden) < menor ? Number(p.orden) : menor, null)
-      : null;
-    let withOrden = { ...pedido, orden: ordenDelGrupo || pedido.orden || nextOrden() };
-    if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
-    // Si nadie le puso fecha de entrega, se la pone la app y queda fija, así
-    // el pedido no se va al fondo de la lista cada vez que entra uno nuevo.
-    if (!withOrden.listo && !pedidoEstaListo(withOrden) && withOrden.estado !== "Cancelado") {
-      const auto = fechaEntregaAutomatica(withOrden, pedidos, isoLocal(new Date()));
-      if (auto) withOrden = { ...withOrden, listo: auto, listoAutomatica: true };
-    }
-    if (previous?.estado === "Sin pasar a fábrica" && pedidoFueVerificado(withOrden)) {
-      withOrden = { ...withOrden, pedidoVerificadoFecha: withOrden.pedidoVerificadoFecha || new Date().toISOString() };
-    }
-    if (withOrden.estado === "Espejo listo" && previous && previous.estado !== "Espejo listo" && previous.estado !== "Entregado") {
-      withOrden = { ...withOrden, clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "", produccionListaFecha: new Date().toISOString() };
-    }
-    if (withOrden.estado === "Entregado") {
-      if (previous?.estado !== "Espejo listo" && previous?.estado !== "Entregado") {
-        window.alert("Antes de entregarlo, el taller debe guardar el pedido como “Espejo listo”.");
-        return;
-      }
-      if (!withOrden.clienteAvisado) {
-        window.alert("Antes de archivar el pedido, marcá que el cliente ya fue avisado de que el espejo está listo.");
-        return;
-      }
-      if (esPedidoConEnvio(withOrden) && !withOrden.envioConfirmado) {
-        window.alert("Antes de archivar un pedido con envío, PostVenta debe confirmar que el envío quedó coordinado.");
-        return;
-      }
-      if (previous?.estado !== "Entregado") withOrden = { ...withOrden, entregadoFecha: new Date().toISOString() };
-    }
-
-    if (reclamoSinCargo(withOrden)) withOrden = { ...withOrden, monto: 0, anticipo: 0 };
-
-    // Cuánto plata entró realmente por este pedido:
-    // si ya se entregó, se cobró todo; si no, solo el anticipo.
-    const cambio = ingresoPorCambioDeMonto(withOrden);
+    const prep = prepararGuardadoPedido(pedidos, pedido, nextOrden);
+    if (prep.error) { window.alert(prep.error); return; }
+    pedido = prep.pedido;
+    const { exists, withOrden, cambio } = prep;
     let toSave = withOrden;
     if (cambio && onCreateIncome) {
       onCreateIncome(cambio.ingreso);
@@ -8648,34 +8692,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   // por espejo, con la misma regla que usa guardar un espejo suelto.
   function guardarEntregaDelGrupo(editado, _opts, montosPorEspejo) {
     const grupo = editandoEntrega || [];
-    const ids = new Set(grupo.map((p) => p.id));
-    const patch = soloCamposDelPedido(editado);
-    CAMPOS_DE_LA_VENTA.forEach((c) => { if (c in editado) patch[c] = editado[c]; });
-    // Con UN solo espejo no hay ambigüedad: el monto, el anticipo y el estado
-    // del formulario son los de ese espejo. Con varios, el monto de cada uno
-    // viene aparte (montosPorEspejo) y el estado se maneja espejo por espejo.
-    const unEspejo = grupo.length === 1;
-    if (unEspejo) {
-      ["monto", "anticipo", "estado", "motivoCancelacion"].forEach((c) => { if (c in editado) patch[c] = editado[c]; });
-      // Si acá queda entregado y no tiene fecha, se la ponemos: sin eso el
-      // pedido no cuenta en los números de PostVenta ni en «sin facturar».
-      const cerrado = patch.estado === "Entregado" || patch.estado === "Despachado";
-      if (cerrado && !grupo[0].entregadoFecha) patch.entregadoFecha = new Date().toISOString();
-    }
-    const montos = montosPorEspejo || {};
-    const ingresos = [];
-    const actualizados = pedidos.map((p) => {
-      if (!ids.has(p.id)) return p;
-      const m = montos[p.id];
-      let nuevo = { ...p, ...patch };
-      if (m) nuevo = { ...nuevo, monto: m.monto, anticipo: m.anticipo };
-      const cambio = ingresoPorCambioDeMonto(nuevo);
-      if (cambio && onCreateIncome) {
-        ingresos.push(cambio.ingreso);
-        nuevo = { ...nuevo, montoRegistrado: cambio.cobrado };
-      }
-      return nuevo;
-    });
+    const { actualizados, ingresos } = prepararEntregaEditada(pedidos, grupo, editado, montosPorEspejo, !!onCreateIncome);
     onChange(actualizados);
     if (ingresos.length && onCreateIncome) onCreateIncome(ingresos);
     if (onRegistrar && grupo[0]) {
@@ -10879,7 +10896,38 @@ function semanaActual() {
   return { hoy: iso(hoy), lunes: iso(lunes), domingo: iso(domingo) };
 }
 
-function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar, salidas = [], onChangeSalidas, proveedores = [] }) {
+function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar, salidas = [], onChangeSalidas, proveedores = [], vendedores = [], stockEspejos = [] }) {
+  // Todos los datos del pedido, desde acá (03/11/2026): las mismas ventanas
+  // que en Ventas › Pedidos y guardando con las mismas reglas.
+  const [editandoVenta, setEditandoVenta] = useState(null);
+  const [editandoEspejo, setEditandoEspejo] = useState(null);
+  function espejosDeLaVenta(p) {
+    const g = p.grupoId || p.id;
+    return pedidos.filter((x) => (x.grupoId || x.id) === g).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  }
+  function nuevoNumeroDePedido() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
+  function guardarEspejo(pedido) {
+    const prep = prepararGuardadoPedido(pedidos, pedido, nuevoNumeroDePedido);
+    if (prep.error) { window.alert(prep.error); return; }
+    let toSave = prep.withOrden;
+    if (prep.cambio && onCreateIncome) {
+      onCreateIncome(prep.cambio.ingreso);
+      toSave = { ...toSave, montoRegistrado: prep.cambio.cobrado };
+    }
+    onChange(normalizarOrdenesPorGrupo(pedidos.map((p) => (p.id === toSave.id ? toSave : p))));
+    if (onRegistrar) onRegistrar("Editó un pedido", `#${toSave.orden} — ${toSave.cliente} — ${money(toSave.monto)}`);
+    setEditandoEspejo(null);
+  }
+  function guardarVenta(editado, _opts, montosPorEspejo) {
+    const grupo = editandoVenta || [];
+    const { actualizados, ingresos } = prepararEntregaEditada(pedidos, grupo, editado, montosPorEspejo, !!onCreateIncome);
+    onChange(actualizados);
+    if (ingresos.length && onCreateIncome) onCreateIncome(ingresos);
+    if (onRegistrar && grupo[0]) {
+      onRegistrar("Editó los datos de entrega", `#${grupo[0].orden} — ${editado.cliente} — ${grupo.length} espejo(s)${ingresos.length ? ` — ${ingresos.length} movimiento(s) de plata` : ""}`);
+    }
+    setEditandoVenta(null);
+  }
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
@@ -11313,6 +11361,25 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                     </div>
                                   )}
 
+                                  <div className="dg-salida-bloque dg-salida-bloque-ancho dg-salida-todo">
+                                    <div className="dg-salida-tit">Todo el pedido</div>
+                                    <div className="dg-salida-acciones">
+                                      {[...gruposDe(f.items)].map((g) => {
+                                        const v = f.items.find((x) => (x.grupoId || x.id) === g);
+                                        return (
+                                          <button type="button" key={g} className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoVenta(espejosDeLaVenta(v))}>
+                                            <Pencil size={13} /> {f.ventas > 1 ? `Pedido #${v.orden}: ` : ""}cliente, entrega, factura y plata
+                                          </button>
+                                        );
+                                      })}
+                                      {f.items.map((e) => (
+                                        <button type="button" key={e.id} className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoEspejo(e)}>
+                                          <Pencil size={13} /> Espejo {medidaEspejo(e) || `#${e.orden}`}{f.ventas > 1 ? ` (#${e.orden})` : ""}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+
                                   <div className="dg-salida-pie">
                                     <span className="dg-salida-datos">{f.ventas > 1 ? "Pedidos" : "Pedido"} {ordenesDe(f.items)}{f.items.length > 1 ? ` · ${f.items.length} espejos` : ""} · {p.metodo}</span>
                                     <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoFila(abiertoEditar ? null : f.clave)} aria-expanded={abiertoEditar}>
@@ -11452,6 +11519,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
             const fecha = items.map((x) => x.fechaEnvio).filter(Boolean).sort()[0] || "";
             return {
               clave, p, items, fecha, visita: false, grupo: 1, ventas: ventasDe(items), sePaso: cuandoSePaso(items),
+              // Con algún espejo todavía en fábrica va abajo, en «En producción».
+              enProduccion: !items.every(pedidoEstaListo),
               flex: items.some((x) => x.metodo === "Envío flex"),
               cliente: p.cliente || "Sin nombre",
               // Barrio y calle en una sola columna: son el mismo dato para el
@@ -11484,6 +11553,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           const dondes = [...new Set(sub.map((x) => x.donde).filter(Boolean))];
           return {
             clave: `cli:${cli}`, cli, multi: true, sub, p: sub[0].p, items, sePaso: cuandoSePaso(items),
+            // Si alguno de sus envíos ya se puede coordinar, va arriba.
+            enProduccion: !sub.some((x) => !x.enProduccion),
             fecha: sub.map((x) => x.fecha).filter(Boolean).sort()[0] || "",
             visita: false, grupo: 1, ventas: ventasDe(items),
             flex: sub.some((x) => x.flex), cliente: sub[0].cliente,
@@ -11523,7 +11594,12 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           // orden de GRUPOS_SALIDA: entregas, arreglos, retiros de espejos,
           // devoluciones y retiros de material.
           // y, dentro de cada uno, el que se pasó primero arriba.
-          .sort((a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo || (a.sePaso || "9999").localeCompare(b.sePaso || "9999"));
+          .sort((a, b) => (a.enProduccion ? 1 : 0) - (b.enProduccion ? 1 : 0) || (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo || (a.sePaso || "9999").localeCompare(b.sePaso || "9999"));
+        // Dos partes (03/11/2026): lo que ya se puede coordinar y lo que sigue
+        // en fábrica. Cada una con sus días, como siempre.
+        const hayProduccion = filas.some((x) => x.enProduccion);
+        const cuantosListos = filas.filter((x) => !x.enProduccion).length;
+        const cuantosProduccion = filas.length - cuantosListos;
         const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
         const atrasadas = filas.filter((f) => f.fecha && f.fecha < semana.hoy).length;
         // Las visitas y los arreglos a domicilio los hacemos nosotros, no el
@@ -11562,10 +11638,20 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       const deSemana = f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo;
                       const abierta = filaAbierta === f.clave;
                       // Un renglón por día con qué sale: «5 entregas · 2 retiros…».
-                      const empiezaDia = i === 0 || (filas[i - 1].fecha || "") !== (f.fecha || "");
-                      const delDia = empiezaDia ? filas.filter((x) => (x.fecha || "") === (f.fecha || "")) : [];
+                      const empiezaSeccion = hayProduccion && (i === 0 || !!filas[i - 1].enProduccion !== !!f.enProduccion);
+                      const empiezaDia = empiezaSeccion || i === 0 || (filas[i - 1].fecha || "") !== (f.fecha || "");
+                      const delDia = empiezaDia ? filas.filter((x) => (x.fecha || "") === (f.fecha || "") && !!x.enProduccion === !!f.enProduccion) : [];
                       return (
                         <Fragment key={f.clave}>
+                        {empiezaSeccion && (
+                          <tr className={`dg-envios-seccion ${f.enProduccion ? "dg-envios-seccion-produccion" : ""}`}>
+                            <td colSpan={8}>
+                              {f.enProduccion
+                                ? <><b>En producción</b><small>{cuantosProduccion} · todavía en fábrica. Ya se les puede poner fecha, pero no se entregan hasta que estén listos.</small></>
+                                : <><b>Listos para coordinar</b><small>{cuantosListos} · terminados en fábrica, salidas cargadas a mano y visitas</small></>}
+                            </td>
+                          </tr>
+                        )}
                         {empiezaDia && (
                           <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""}`}>
                             <td colSpan={8}>
@@ -11740,6 +11826,43 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
       })()}
 
       {grupos.length === 0 && visitas.length === 0 && manualesPendientes.length === 0 && <div className="dg-empty">No hay salidas pendientes.</div>}
+
+      {editandoVenta && (
+        <PedidoModal
+          key={`envio-venta-${editandoVenta[0]?.id}`}
+          pedido={editandoVenta[0]}
+          modo="entrega"
+          grupo={editandoVenta}
+          cuantosEspejos={editandoVenta.length}
+          vendedores={vendedores}
+          canEditFull={canEdit}
+          canEditEstadoOnly={false}
+          onClose={() => setEditandoVenta(null)}
+          onSave={guardarVenta}
+          onDelete={null}
+          stockEspejos={stockEspejos}
+          esNuevo={false}
+          aviso={null}
+          clientes={clientesDeLosPedidos(pedidos)}
+        />
+      )}
+      {editandoEspejo && (
+        <PedidoModal
+          key={`envio-espejo-${editandoEspejo.id}`}
+          pedido={editandoEspejo}
+          modo="espejo"
+          vendedores={vendedores}
+          canEditFull={canEdit}
+          canEditEstadoOnly={false}
+          onClose={() => setEditandoEspejo(null)}
+          onSave={guardarEspejo}
+          onDelete={null}
+          stockEspejos={stockEspejos}
+          esNuevo={false}
+          aviso={null}
+          clientes={clientesDeLosPedidos(pedidos)}
+        />
+      )}
 
       {mapaPedido && (
         <ModalDestinoRecorrido
@@ -21619,7 +21742,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "postventa" && (
-        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} proveedores={proveedores || []} />
+        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} proveedores={proveedores || []} vendedores={vendedores} stockEspejos={stockEspejos} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
       )}
 
@@ -22160,6 +22283,12 @@ function Style() {
       .dg-chip-material { background:rgba(var(--dg-material-rgb),.26); color:color-mix(in srgb, var(--dg-material) 55%, var(--dg-text)); }
       /* El renglón de cada día: qué sale ese día, contado por tipo. */
       .dg-envios-tabla tbody tr.dg-envios-dia { cursor:default; }
+      .dg-envios-tabla tbody tr.dg-envios-seccion { cursor:default; }
+      .dg-envios-tabla tbody tr.dg-envios-seccion:hover { background:transparent; }
+      .dg-envios-seccion > td { padding:16px 12px 10px; border-top:2px solid rgba(var(--dg-accent-rgb),.55); background:rgba(var(--dg-accent-rgb),.1); white-space:normal; }
+      .dg-envios-seccion b { font-size:15px; font-weight:800; letter-spacing:.2px; color:var(--dg-text); }
+      .dg-envios-seccion small { margin-left:10px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-envios-seccion-produccion > td { border-top-color:rgba(var(--dg-line-rgb),.45); background:rgba(var(--dg-line-rgb),.08); }
       .dg-envios-tabla tbody tr.dg-envios-dia:hover { background:transparent; }
       .dg-envios-dia > td { padding:10px 12px 6px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.05); white-space:normal; }
       .dg-envios-dia b { font-size:13px; font-weight:700; color:var(--dg-text); text-transform:capitalize; }
@@ -25007,6 +25136,9 @@ function Style() {
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-fila-material { box-shadow:inset 3px 0 0 rgb(var(--dg-material-rgb)); }
         /* El renglón del día también es ficha: a todo el ancho. */
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tbody > .dg-envios-dia { display:block; }
+        .dg-envios-tabla.dg-salidas-tabla tbody > .dg-envios-seccion { display:block; }
+        .dg-envios-tabla.dg-salidas-tabla tbody > .dg-envios-seccion > td { display:block; padding:14px 14px 10px; }
+        .dg-envios-tabla.dg-salidas-tabla .dg-envios-seccion small { display:block; margin:3px 0 0; }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) tbody > .dg-envios-dia > td { display:block; padding:10px 14px 6px; }
         .dg-envios-tabla:is(.dg-salidas-tabla, .dg-interior-tabla, .dg-reclamos-tabla, .dg-retiros-tabla) .dg-envios-dia small { display:block; margin:2px 0 0; }
         .dg-cargar-salida { margin-left:0; flex:1 1 100%; justify-content:center; }
