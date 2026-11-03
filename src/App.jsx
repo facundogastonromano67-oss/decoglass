@@ -1802,6 +1802,11 @@ function App() {
   const anotadoAMano = useRef([]);
   const [saveState, setSaveState] = useState({ estado: "idle" });
   const [syncState, setSyncState] = useState("connecting");
+  // Consumo de Supabase (03/11/2026): cada consulta deja una línea en los logs
+  // («Log Ingestion»). Con el aviso en vivo andando, las revisiones de respaldo
+  // van cada 60 s en vez de cada 4 s. Si el aviso se cae, vuelven a 4 s solas.
+  const syncVivoRef = useRef(false);
+  const VUELTAS_RESPALDO = 15; // 15 × 4 s = 60 s
   const [loading, setLoading] = useState(true);
   const [errorCarga, setErrorCarga] = useState("");
   const [session, setSession] = useState(() => loadSavedSession());
@@ -2085,12 +2090,20 @@ function App() {
       (row) => { if (active) applySharedRow(row); },
       (status) => {
         if (!active) return;
+        syncVivoRef.current = status === "SUBSCRIBED";
         setSyncState(status === "SUBSCRIBED" ? "live" : status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED" ? "fallback" : "connecting");
       }
     );
 
     refreshSharedData(true);
-    const interval = window.setInterval(() => { if (pestanaVisible()) refreshSharedData(false); }, 4000);
+    let vueltaKv = 0;
+    const interval = window.setInterval(() => {
+      if (!pestanaVisible()) return;
+      vueltaKv += 1;
+      // Con el aviso en vivo, solo una de cada 15 vueltas (60 s).
+      if (syncVivoRef.current && vueltaKv % VUELTAS_RESPALDO !== 0) return;
+      refreshSharedData(false);
+    }, 4000);
     const refreshNow = () => refreshSharedData(false);
     const refreshWhenVisible = () => { if (document.visibilityState === "visible") refreshNow(); };
     window.addEventListener("focus", refreshNow);
@@ -2154,17 +2167,23 @@ function App() {
     const unsubReclamos = reclamosStore.subscribeRealtime(() => { if (active) refreshReclamos(true); });
     const unsubStockEspejos = stockEspejosStore.subscribeRealtime(() => { if (active) refreshStockEspejos(true); });
     const unsubStockMateriales = stockMaterialesStore.subscribeRealtime(() => { if (active) refreshStockMateriales(true); });
-    // Cada 75 vueltas (5 minutos) se baja todo sin mirar la huella, por si el
-    // aviso en vivo se cayó y algún celular guardó con la hora corrida.
+    // Con el aviso en vivo andando, la revisión de respaldo va cada 60 s (antes
+    // cada 4 s: eran 4 consultas cada 4 s por pantalla abierta). Cada 5 minutos
+    // se baja todo sin mirar la huella, por si algún celular guardó con la
+    // hora corrida.
     let vuelta = 0;
-    const refrescarTodo = () => {
+    let vueltaRespaldo = 0;
+    const refrescarTodo = (ahora = false) => {
       if (!active || !pestanaVisible()) return;
       vuelta += 1;
-      const aFondo = vuelta % 75 === 0;
+      if (!ahora && syncVivoRef.current && vuelta % VUELTAS_RESPALDO !== 0) return;
+      vueltaRespaldo += 1;
+      const aFondo = vueltaRespaldo % (syncVivoRef.current ? 5 : 75) === 0;
       refreshPedidos(aFondo); refreshReclamos(aFondo); refreshStockEspejos(aFondo); refreshStockMateriales(aFondo);
     };
-    const interval = window.setInterval(refrescarTodo, 4000);
-    const refreshWhenVisible = () => { if (active && document.visibilityState === "visible") refrescarTodo(); };
+    const interval = window.setInterval(() => refrescarTodo(false), 4000);
+    // Al volver a la app se revisa en el momento, como siempre.
+    const refreshWhenVisible = () => { if (active && document.visibilityState === "visible") refrescarTodo(true); };
     window.addEventListener("focus", refreshWhenVisible);
     window.addEventListener("online", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
@@ -2214,7 +2233,8 @@ function App() {
     };
     cargar();
     const stop = chatStore.subscribeRealtime(() => { if (active) cargar(); });
-    const iv = window.setInterval(() => { if (pestanaVisible()) cargar(true); }, 15000);
+    // Los mensajes llegan por el aviso en vivo; esto es solo respaldo.
+    const iv = window.setInterval(() => { if (pestanaVisible()) cargar(true); }, 60000);
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session]);
   const chatSinLeer = chatHilos.filter((h) => clasificarHilo(h) === "sin_leer").length;
@@ -2237,7 +2257,7 @@ function App() {
     };
     recalcular();
     const stop = chatStore.internoSubscribe(() => recalcular());
-    const iv = window.setInterval(() => { if (pestanaVisible()) recalcular(true); }, 20000);
+    const iv = window.setInterval(() => { if (pestanaVisible()) recalcular(true); }, 60000);
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session, chatEquipoOpen]);
 
@@ -13189,7 +13209,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
     let vivo = true;
     const cargar = () => trackingStore.listActivos().then((r) => { if (vivo) setTrackingRows(r); }).catch(() => {});
     cargar();
-    const iv = window.setInterval(cargar, 15000);
+    const iv = window.setInterval(cargar, 30000);
     // Al volver a la app (que es cuando se mira si el GPS siguió mandando),
     // pedir el dato de nuevo en vez de mostrar el de hasta 15 segundos atrás.
     const alVolver = () => { if (document.visibilityState === "visible") cargar(); };
@@ -25687,7 +25707,7 @@ function ChatClientePublico({ hiloId, meta, cerrado }) {
       const id = p?.new?.hilo_id || p?.new?.id || p?.old?.hilo_id;
       if (id === hiloId) cargar();
     });
-    const iv = window.setInterval(cargar, 15000);
+    const iv = window.setInterval(cargar, 30000);
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, [hiloId]);
 
@@ -25790,7 +25810,7 @@ function HiloChatVista({ hiloId, session, onVolver }) {
       const id = p?.new?.hilo_id || p?.new?.id || p?.old?.hilo_id;
       if (id === hiloId) cargar();
     });
-    const iv = window.setInterval(cargar, 15000);
+    const iv = window.setInterval(cargar, 30000);
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, [hiloId]);
 
@@ -25921,7 +25941,7 @@ function ChatEquipoPanel({ session, onClose, sectors, onUpdateSector, isAdmin })
     const cargar = () => chatStore.internoListar().then((m) => { if (vivo) { setMensajes(m); setCargando(false); } }).catch(() => setCargando(false));
     cargar();
     const stop = chatStore.internoSubscribe(() => cargar());
-    const iv = window.setInterval(cargar, 15000);
+    const iv = window.setInterval(cargar, 30000);
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, []);
 
