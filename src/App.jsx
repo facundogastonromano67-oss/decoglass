@@ -8686,7 +8686,7 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
         <>
           <div className="dg-vxv-cobrar-filtro">
             <select value={soloVendedor} onChange={(e) => setSoloVendedor(e.target.value)} aria-label="Vendedor">
-              <option value="">Todos los vendedores</option>
+              <option value="">Vendedor: todos</option>
               {filas.map((f) => <option key={f.clave} value={f.clave}>{f.vendedor}</option>)}
             </select>
             {debenFiltradas.length > 0 && <span className="dg-vxv-cobrar-resumen">{debenFiltradas.length} venta(s) deben <strong>{money(totalDeben)}</strong></span>}
