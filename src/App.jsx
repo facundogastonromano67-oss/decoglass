@@ -9,7 +9,7 @@ import {
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
   Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare,
   Mic, NotebookPen, CalendarClock, Undo2, Scissors, Ruler,
-  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList, ChevronUp, ChevronDown
+  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList, ChevronUp, ChevronDown, ChevronLeft
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -90,6 +90,7 @@ const SUBPAGE_ICONS = {
   guia: ClipboardList,
   finanzas: Wallet,
   comisiones: CircleDollarSign,
+  vendedores: BarChart3,
   sueldos: Users,
   materiales: Package,
   stock: Building2,
@@ -861,6 +862,7 @@ const SECTOR_SUBPAGES = {
     { id: "finanzas", label: "Finanzas" },
     { id: "misiones", label: "Misiones" },
     { id: "comisiones", label: "Comisiones" },
+    { id: "vendedores", label: "Ventas por vendedor" },
     { id: "fletes", label: "Fletes" },
     { id: "sueldos", label: "Sueldos" },
     { id: "tareas", label: "Avisos del sector", soloAdmin: true },
@@ -8451,6 +8453,169 @@ function porcentajeVendedor(nombre, empleados) {
 }
 function comisionMonto(p, empleados) {
   return comisionBase(p) * (porcentajeVendedor(p.vendedor, empleados) / 100);
+}
+
+// ===== VENTAS POR VENDEDOR (03/11/2026) ====================================
+// Ventas brutas del mes: el monto total de cada espejo vendido (con el envío),
+// por la fecha del pedido. Lo cobrado es lo que ya pagó el cliente (seña y
+// pagos); lo que falta es el saldo. Los cancelados y los sin cargo (reposición
+// por garantía) no son ventas.
+function mesDeVenta(p) { return String(p?.fecha || "").slice(0, 7); }
+function claveVendedor(nombre) { return String(nombre || "").trim().toLowerCase(); }
+function esVentaDelMes(p, mes) {
+  return !!p && p.estado !== "Cancelado" && (Number(p.monto) || 0) > 0 && mesDeVenta(p) === mes;
+}
+// La comisión de un espejo: la que ya se pagó, la que ya se puede liquidar
+// (el pedido está cobrado) y la que viene cuando se cobre el resto.
+function comisionDelEspejo(p, empleados) {
+  if (p.comisionPagada) return { pagada: Number(p.comisionLiquidadaMonto) || 0, aLiquidar: 0, porCobrar: 0 };
+  if (p.comisionExcluida || !String(p.vendedor || "").trim()) return { pagada: 0, aLiquidar: 0, porCobrar: 0 };
+  const monto = comisionMonto(p, empleados);
+  return comisionElegible(p) ? { pagada: 0, aLiquidar: monto, porCobrar: 0 } : { pagada: 0, aLiquidar: 0, porCobrar: monto };
+}
+function cuentaDeVentas(items, empleados) {
+  const c = { vendido: 0, cobrado: 0, falta: 0, comisionPagada: 0, comisionALiquidar: 0, comisionPorCobrar: 0 };
+  items.forEach((p) => {
+    const monto = Number(p.monto) || 0;
+    const cobrado = Math.min(monto, Math.max(0, Number(p.anticipo) || 0));
+    const com = comisionDelEspejo(p, empleados);
+    c.vendido += monto; c.cobrado += cobrado; c.falta += monto - cobrado;
+    c.comisionPagada += com.pagada; c.comisionALiquidar += com.aLiquidar; c.comisionPorCobrar += com.porCobrar;
+  });
+  c.comisionPendiente = c.comisionALiquidar + c.comisionPorCobrar;
+  return c;
+}
+function ventasPorVendedor(pedidos, mes, empleados) {
+  const porClave = {};
+  (pedidos || []).forEach((p) => {
+    if (!esVentaDelMes(p, mes)) return;
+    const nombre = String(p.vendedor || "").trim();
+    const clave = claveVendedor(nombre) || "__sin_vendedor__";
+    if (!porClave[clave]) porClave[clave] = { clave, vendedor: nombre || "Sin vendedor", sinVendedor: !nombre, items: [] };
+    porClave[clave].items.push(p);
+  });
+  return Object.values(porClave).map((f) => {
+    // Una venta puede tener varios espejos: se cuentan las ventas, no los espejos.
+    const porVenta = {};
+    f.items.forEach((p) => { const k = p.grupoId || p.id; (porVenta[k] = porVenta[k] || []).push(p); });
+    const ventas = Object.values(porVenta).map((items) => {
+      const ordenados = [...items].sort((a, b) => (Number(a.orden) || 0) - (Number(b.orden) || 0));
+      return { clave: ordenados[0].grupoId || ordenados[0].id, items: ordenados, ...cuentaDeVentas(ordenados, empleados) };
+    }).sort((a, b) => String(a.items[0].fecha || "").localeCompare(String(b.items[0].fecha || "")) || (Number(a.items[0].orden) || 0) - (Number(b.items[0].orden) || 0));
+    return { ...f, pct: f.sinVendedor ? 0 : porcentajeVendedor(f.vendedor, empleados), ventas, ...cuentaDeVentas(f.items, empleados) };
+  }).sort((a, b) => (a.sinVendedor ? 1 : 0) - (b.sinVendedor ? 1 : 0) || b.vendido - a.vendido);
+}
+// Los meses que tienen ventas, más el actual, del más nuevo al más viejo.
+function mesesConVentas(pedidos, mesActual) {
+  const set = new Set([mesActual]);
+  (pedidos || []).forEach((p) => { const m = mesDeVenta(p); if (/^\d{4}-\d{2}$/.test(m) && p.estado !== "Cancelado" && (Number(p.monto) || 0) > 0) set.add(m); });
+  return [...set].sort().reverse();
+}
+
+function VentasPorVendedorPanel({ pedidos, empleados }) {
+  const mesActual = isoLocal(new Date()).slice(0, 7);
+  const [mes, setMes] = useState(mesActual);
+  const [abierto, setAbierto] = useState(null);
+  const meses = mesesConVentas(pedidos, mesActual);
+  const filas = ventasPorVendedor(pedidos, mes, empleados);
+  const total = filas.reduce((t, f) => {
+    ["vendido", "cobrado", "falta", "comisionPagada", "comisionALiquidar", "comisionPorCobrar", "comisionPendiente"].forEach((k) => { t[k] += f[k]; });
+    f.items.forEach((p) => t.ventas.add(p.grupoId || p.id));
+    return t;
+  }, { vendido: 0, cobrado: 0, falta: 0, comisionPagada: 0, comisionALiquidar: 0, comisionPorCobrar: 0, comisionPendiente: 0, ventas: new Set() });
+  const sinPorcentaje = filas.filter((f) => !f.sinVendedor && f.pct === 0);
+  const i = meses.indexOf(mes);
+  const pctCobrado = (f) => (f.vendido > 0 ? Math.round((f.cobrado / f.vendido) * 100) : 0);
+  const textoPendiente = (f) => [f.comisionALiquidar > 0 ? `${money(f.comisionALiquidar)} ya se puede liquidar` : "", f.comisionPorCobrar > 0 ? `${money(f.comisionPorCobrar)} cuando se cobre el resto` : ""].filter(Boolean).join(" · ");
+
+  return (
+    <div className="dg-page dg-vxv">
+      <div className="dg-vxv-mes">
+        <button type="button" className="dg-icon-btn" title="Mes anterior" disabled={i < 0 || i >= meses.length - 1} onClick={() => { setMes(meses[i + 1]); setAbierto(null); }}><ChevronLeft size={16} /></button>
+        <select value={mes} onChange={(e) => { setMes(e.target.value); setAbierto(null); }} aria-label="Mes">
+          {meses.map((m) => <option key={m} value={m}>{nombreMesLargo(m)}</option>)}
+        </select>
+        <button type="button" className="dg-icon-btn" title="Mes siguiente" disabled={i <= 0} onClick={() => { setMes(meses[i - 1]); setAbierto(null); }}><ChevronRight size={16} /></button>
+      </div>
+
+      <div className="dg-totales">
+        <div className="dg-total-card" style={{ "--c": "var(--dg-accent)" }}><span>Vendido en el mes</span><strong>{money(total.vendido)}</strong><small className="dg-vxv-sub">{total.ventas.size} venta(s)</small></div>
+        <div className="dg-total-card" style={{ "--c": "var(--dg-success)" }}><span>Cobrado</span><strong>{money(total.cobrado)}</strong><small className="dg-vxv-sub">{pctCobrado(total)}% de lo vendido</small></div>
+        <div className="dg-total-card" style={{ "--c": "var(--dg-danger)" }}><span>Falta cobrar</span><strong>{money(total.falta)}</strong></div>
+        <div className="dg-total-card" style={{ "--c": "var(--dg-warning)" }}><span>Comisión pagada</span><strong>{money(total.comisionPagada)}</strong>{total.comisionPendiente > 0 && <small className="dg-vxv-sub">+ {money(total.comisionPendiente)} pendiente</small>}</div>
+      </div>
+
+      {sinPorcentaje.length > 0 && (
+        <div className="dg-comision-banner">
+          <AlertTriangle size={15} />
+          <span>{sinPorcentaje.map((f) => f.vendedor).join(", ")} no tiene % de comisión cargado en <strong>Sueldos → Empleados</strong>, así que su comisión da $0.</span>
+        </div>
+      )}
+
+      {filas.length === 0 ? (
+        <div className="dg-empty">No hay ventas cargadas en {nombreMesLargo(mes)}.</div>
+      ) : (
+        <div className="dg-section-card">
+          <div className="dg-flete-scroll">
+            <table className="dg-flete-tabla dg-vxv-tabla">
+              <thead><tr><th>Vendedor</th><th className="dg-num">Vendido</th><th className="dg-num">Cobrado</th><th className="dg-num">Falta cobrar</th><th className="dg-num">Comisión pagada</th><th className="dg-num">Comisión pendiente</th></tr></thead>
+              <tbody>
+                {filas.map((f) => (
+                  <Fragment key={f.clave}>
+                    <tr className={abierto === f.clave ? "dg-vxv-fila dg-vxv-abierta" : "dg-vxv-fila"}>
+                      <td>
+                        <button type="button" className="dg-vxv-nombre" aria-expanded={abierto === f.clave} onClick={() => setAbierto(abierto === f.clave ? null : f.clave)}>
+                          <ChevronRight size={14} className={abierto === f.clave ? "dg-chev-open" : ""} />
+                          <span><strong>{f.vendedor}</strong><small className="dg-vxv-sub">{f.ventas.length} venta(s){f.sinVendedor ? " · cargale el vendedor al pedido" : ` · ${f.pct}% de comisión`}</small></span>
+                        </button>
+                      </td>
+                      <td className="dg-num" data-label="Vendido"><strong>{money(f.vendido)}</strong></td>
+                      <td className="dg-num" data-label="Cobrado">{money(f.cobrado)}<small className="dg-vxv-sub">{pctCobrado(f)}%</small></td>
+                      <td className="dg-num" data-label="Falta cobrar">{f.falta > 0 ? <span className="dg-vxv-falta">{money(f.falta)}</span> : "—"}</td>
+                      <td className="dg-num" data-label="Comisión pagada">{f.comisionPagada > 0 ? money(f.comisionPagada) : "—"}</td>
+                      <td className="dg-num" data-label="Comisión pendiente">{f.comisionPendiente > 0 ? money(f.comisionPendiente) : "—"}{f.comisionPendiente > 0 && <small className="dg-vxv-sub">{textoPendiente(f)}</small>}</td>
+                    </tr>
+                    {abierto === f.clave && f.ventas.map((v) => {
+                      const p = v.items[0];
+                      const ordenes = v.items.map((x) => x.orden).filter(Boolean);
+                      return (
+                        <tr className="dg-vxv-venta" key={v.clave}>
+                          <td>
+                            <div className="dg-vxv-venta-quien">
+                              <span>{ordenes.length ? `#${ordenes.join(", #")}` : "Sin número"} {p.cliente || "Sin nombre"}</span>
+                              <small className="dg-vxv-sub">{fechaLargaCorta(p.fecha)}{v.items.length > 1 ? ` · ${v.items.length} espejos` : ""}</small>
+                            </div>
+                          </td>
+                          <td className="dg-num" data-label="Vendido">{money(v.vendido)}</td>
+                          <td className="dg-num" data-label="Cobrado">{money(v.cobrado)}</td>
+                          <td className="dg-num" data-label="Falta cobrar">{v.falta > 0 ? <span className="dg-vxv-falta">{money(v.falta)}</span> : "—"}</td>
+                          <td className="dg-num" data-label="Comisión pagada">{v.comisionPagada > 0 ? money(v.comisionPagada) : "—"}</td>
+                          <td className="dg-num" data-label="Comisión pendiente">{v.comisionPendiente > 0 ? money(v.comisionPendiente) : "—"}{v.comisionPendiente > 0 && <small className="dg-vxv-sub">{v.comisionALiquidar > 0 ? "ya se puede liquidar" : "cuando se cobre el resto"}</small>}</td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </tbody>
+              {filas.length > 1 && (
+                <tfoot>
+                  <tr className="dg-vxv-total">
+                    <td><strong>Total</strong></td>
+                    <td className="dg-num" data-label="Vendido"><strong>{money(total.vendido)}</strong></td>
+                    <td className="dg-num" data-label="Cobrado">{money(total.cobrado)}</td>
+                    <td className="dg-num" data-label="Falta cobrar">{money(total.falta)}</td>
+                    <td className="dg-num" data-label="Comisión pagada">{money(total.comisionPagada)}</td>
+                    <td className="dg-num" data-label="Comisión pendiente">{money(total.comisionPendiente)}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+      <p className="dg-hint">Vendido es el total de cada pedido del mes (con el envío), por la fecha del pedido. La comisión se paga desde <strong>Comisiones</strong>, cuando el pedido queda cobrado.</p>
+    </div>
+  );
 }
 
 function resumenComisionesLiquidadas(pedidos, empleado, periodo) {
@@ -21797,6 +21962,11 @@ function SectorPage({
           : <LockedPage label="Comisiones" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "vendedores" && (
+        isAdmin ? <VentasPorVendedorPanel pedidos={pedidos} empleados={empleadosSueldo} />
+          : <LockedPage label="Ventas por vendedor" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "fletes" && (
         isAdmin ? <FletesPanel pedidos={pedidos} onChangePedidos={onChangePedidos} onCreatePurchase={onCreatePurchase} />
           : <LockedPage label="Fletes" onLogin={onRequestLogin} />
@@ -22035,6 +22205,35 @@ function Style() {
       .dg-rendicion-ok { color:var(--dg-success); background:rgba(var(--dg-line-rgb),.06); }
       .dg-rendicion-falta { color:var(--dg-danger); background:rgba(var(--dg-line-rgb),.06); }
       .dg-rendicion-sobra { color:var(--dg-warning); background:rgba(var(--dg-line-rgb),.06); }
+      /* Ventas por vendedor */
+      .dg-vxv-mes { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+      .dg-vxv-mes select { width:auto; min-width:180px; font-weight:600; }
+      .dg-vxv-sub { display:block; font-size:11px; font-weight:500; color:var(--dg-text-dim); font-family:'Jost', sans-serif; white-space:normal; }
+      .dg-total-card .dg-vxv-sub { margin-top:-2px; }
+      .dg-vxv .dg-vxv-tabla { min-width:720px; }
+      .dg-vxv-nombre { display:flex; align-items:flex-start; gap:6px; background:transparent; border:0; padding:0; color:var(--dg-text); cursor:pointer; text-align:left; font:inherit; }
+      .dg-vxv-nombre svg { margin-top:3px; flex:none; }
+      .dg-vxv-nombre:focus-visible { outline:2px solid var(--dg-accent); outline-offset:3px; border-radius:4px; }
+      .dg-vxv-abierta td { background:rgba(var(--dg-line-rgb),.04); }
+      .dg-vxv-falta { color:var(--dg-danger); font-weight:600; }
+      .dg-vxv-total td { border-top:2px solid rgba(var(--dg-line-rgb),.18); font-weight:600; }
+      .dg-vxv-venta td { font-size:12px; background:rgba(var(--dg-line-rgb),.04); color:var(--dg-text-dim); }
+      .dg-vxv-venta-quien { padding-left:20px; white-space:normal; color:var(--dg-text); }
+      @media (max-width: 600px) {
+        .dg-vxv-mes select { flex:1; min-width:0; font-size:16px; }
+        .dg-vxv .dg-vxv-tabla { min-width:0; }
+        .dg-vxv .dg-vxv-tabla thead { display:none; }
+        .dg-vxv .dg-vxv-tabla tbody, .dg-vxv .dg-vxv-tabla tfoot { display:block; }
+        .dg-vxv .dg-vxv-tabla tr { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; padding:12px 0; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
+        .dg-vxv .dg-vxv-tabla tbody tr:first-child { border-top:0; }
+        .dg-vxv .dg-vxv-tabla td { display:block; border:0; padding:0; white-space:normal; text-align:left; background:transparent; }
+        .dg-vxv .dg-vxv-tabla td:first-child { grid-column:1 / -1; }
+        .dg-vxv .dg-vxv-tabla td[data-label]::before { content:attr(data-label); display:block; margin-bottom:2px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+        .dg-vxv .dg-vxv-tabla tr.dg-vxv-venta { margin-left:12px; padding:10px 0 10px 10px; border-top:1px dashed rgba(var(--dg-line-rgb),.14); border-left:2px solid rgba(var(--dg-line-rgb),.14); }
+        .dg-vxv-venta-quien { padding-left:0; }
+        .dg-vxv-total { border-top:2px solid rgba(var(--dg-line-rgb),.18) !important; }
+        .dg-vxv-total td { border-top:0; }
+      }
       /* En el celular cada entrega es una ficha: la tabla no entra a lo ancho. */
       @media (max-width: 600px) {
         .dg-rendicion .dg-flete-tabla { min-width:0; }
