@@ -4241,7 +4241,7 @@ function ComisionesPanel({ pedidos, onChangePedidos, empleados, onCreatePurchase
   return (
     <div className="dg-page">
       <Ayuda titulo="Cuándo entra un pedido a comisiones" style={{ marginBottom: 14 }}>
-        Un pedido entra acá automáticamente cuando queda <strong>totalmente cobrado</strong> (saldo $0) y tiene vendedor asignado.
+        Un pedido entra acá automáticamente cuando queda <strong>totalmente cobrado</strong> (saldo $0) o cuando se <strong>entrega</strong> (el saldo se cobra en la puerta; cuenta para los entregados desde el 1 de noviembre de 2026), y tiene vendedor asignado.
         La comisión se calcula sobre el monto <strong>sin contar el envío</strong>, con el % de cada vendedor cargado en Sueldos.
       </Ayuda>
 
@@ -4270,7 +4270,7 @@ function ComisionesPanel({ pedidos, onChangePedidos, empleados, onCreatePurchase
       </div>
 
       {grupos.length === 0 && (
-        <div className="dg-empty">{verPagadas ? "Todavía no liquidaste ninguna comisión." : "No hay comisiones pendientes. Un pedido aparece acá cuando su saldo llega a $0."}</div>
+        <div className="dg-empty">{verPagadas ? "Todavía no liquidaste ninguna comisión." : "No hay comisiones pendientes. Un pedido aparece acá cuando queda cobrado o se entrega."}</div>
       )}
 
       {grupos.map((g) => (
@@ -7909,7 +7909,7 @@ function calcularPendientes(pedidos, reclamos, stockMateriales) {
     if (cerrado && !pedidoFacturadoOEfectivo(p) && dias(p.entregadoFecha || p.fecha) >= 3)
       add("administracion", "media", `fac-${p.id}`, quien, "entregado y todavía sin factura");
 
-    if (!p.comisionPagada && !p.comisionExcluida && p.vendedor && pedidoSaldo(p) <= 0 && dias(p.fecha) >= 7)
+    if (!p.comisionPagada && !p.comisionExcluida && p.vendedor && cobradoParaComision(p) && dias(p.fecha) >= 7)
       add("administracion", "media", `com-${p.id}`, quien, `comisión sin liquidar (${p.vendedor})`);
 
     if (esperaAcuseFabrica(p) && dias(p.pedidoVerificadoFecha) >= 1)
@@ -8431,14 +8431,24 @@ function fleterosUsados(pedidos) {
 function comisionBase(p) {
   return Math.max(0, (Number(p.monto) || 0) - (Number(p.costoEnvio) || 0));
 }
-// Un pedido da derecho a comisión cuando está totalmente cobrado (saldo $0),
-// tiene vendedor asignado, no está cancelado y no fue excluido a mano.
+// Un pedido da derecho a comisión cuando está totalmente cobrado, tiene
+// vendedor asignado, no está cancelado y no fue excluido a mano.
 function comisionElegible(p) {
   if (p.comisionExcluida) return false;
   if (p.estado === "Cancelado") return false;
   if (!p.vendedor || !String(p.vendedor).trim()) return false;
   if ((Number(p.monto) || 0) <= 0) return false;
-  return pedidoSaldo(p) <= 0;
+  return cobradoParaComision(p);
+}
+// Cobrado = saldo $0, o entregado: el saldo se cobra en la puerta y el
+// anticipo no se toca al entregar (con esa diferencia rinde el flete).
+// Lo de entregado cuenta desde el 1/11/2026 (lo pidió Facundo): los entregados
+// antes siguen pidiendo saldo $0, para no traer comisiones viejas que quizás
+// ya se pagaron por fuera de la app.
+const COMISION_ENTREGADO_DESDE = "2026-11-01";
+function cobradoParaComision(p) {
+  if (pedidoSaldo(p) <= 0) return true;
+  return p.estado === "Entregado" && diaLocalDe(p.entregadoFecha) >= COMISION_ENTREGADO_DESDE;
 }
 // Relaciona el nombre usado en Pedidos con la ficha de Sueldos (tolera "Dou" vs "Douglas").
 function vendedorCoincideConEmpleado(nombreVendedor, empleado) {
@@ -10601,7 +10611,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                   ? <><CheckCircle2 size={13} /> Ya liquidada</>
                   : comisionElegible(draft)
                   ? <><CircleDollarSign size={13} /> Lista para liquidar</>
-                  : <>Se habilita al cobrar todo</>}
+                  : <>Se habilita al cobrar todo o al entregarlo</>}
               </div>
             </Field>
           </div>
