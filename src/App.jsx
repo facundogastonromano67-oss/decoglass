@@ -8462,8 +8462,9 @@ function comisionMonto(p, empleados) {
 // por garantía) no son ventas.
 function mesDeVenta(p) { return String(p?.fecha || "").slice(0, 7); }
 function claveVendedor(nombre) { return String(nombre || "").trim().toLowerCase(); }
-function esVentaDelMes(p, mes) {
-  return !!p && p.estado !== "Cancelado" && (Number(p.monto) || 0) > 0 && mesDeVenta(p) === mes;
+// El período es un mes ("2026-11"), un año ("2026") o todo ("").
+function esVentaDelPeriodo(p, periodo) {
+  return !!p && p.estado !== "Cancelado" && (Number(p.monto) || 0) > 0 && String(p.fecha || "").startsWith(periodo || "");
 }
 // La comisión de un espejo: la que ya se pagó, la que ya se puede liquidar
 // (el pedido está cobrado) y la que viene cuando se cobre el resto.
@@ -8485,10 +8486,10 @@ function cuentaDeVentas(items, empleados) {
   c.comisionPendiente = c.comisionALiquidar + c.comisionPorCobrar;
   return c;
 }
-function ventasPorVendedor(pedidos, mes, empleados) {
+function ventasPorVendedor(pedidos, periodo, empleados) {
   const porClave = {};
   (pedidos || []).forEach((p) => {
-    if (!esVentaDelMes(p, mes)) return;
+    if (!esVentaDelPeriodo(p, periodo)) return;
     const nombre = String(p.vendedor || "").trim();
     const clave = claveVendedor(nombre) || "__sin_vendedor__";
     if (!porClave[clave]) porClave[clave] = { clave, vendedor: nombre || "Sin vendedor", sinVendedor: !nombre, items: [] };
@@ -8505,55 +8506,122 @@ function ventasPorVendedor(pedidos, mes, empleados) {
     return { ...f, pct: f.sinVendedor ? 0 : porcentajeVendedor(f.vendedor, empleados), ventas, ...cuentaDeVentas(f.items, empleados) };
   }).sort((a, b) => (a.sinVendedor ? 1 : 0) - (b.sinVendedor ? 1 : 0) || b.vendido - a.vendido);
 }
+// Las ventas que todavía deben plata en el período, una fila por venta (con
+// todos sus espejos), de la más vieja a la más nueva. Con un vendedor elegido
+// cuenta solo sus espejos, así la lista suma lo mismo que su fila.
+function ventasConSaldo(pedidos, periodo, empleados, vendedor = "") {
+  const porVenta = {};
+  (pedidos || []).forEach((p) => {
+    if (!esVentaDelPeriodo(p, periodo)) return;
+    if (vendedor && (claveVendedor(p.vendedor) || "__sin_vendedor__") !== vendedor) return;
+    const k = p.grupoId || p.id;
+    (porVenta[k] = porVenta[k] || []).push(p);
+  });
+  return Object.entries(porVenta).map(([clave, items]) => {
+    const ordenados = [...items].sort((a, b) => (Number(a.orden) || 0) - (Number(b.orden) || 0));
+    const p = ordenados[0];
+    const vendedores = [...new Set(ordenados.map((x) => String(x.vendedor || "").trim()).filter(Boolean))];
+    const estados = [...new Set(ordenados.map((x) => x.estado).filter(Boolean))];
+    return {
+      clave, items: ordenados, cliente: p.cliente || "Sin nombre", celular: p.celular || "", fecha: p.fecha || "",
+      vendedores, claves: vendedores.map(claveVendedor), estados,
+      entregado: ordenados.some((x) => x.estado === "Entregado" || x.estado === "Despachado"),
+      ...cuentaDeVentas(ordenados, empleados),
+    };
+  }).filter((v) => v.falta > 0)
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || (Number(a.items[0].orden) || 0) - (Number(b.items[0].orden) || 0));
+}
 // Los meses que tienen ventas, más el actual, del más nuevo al más viejo.
 function mesesConVentas(pedidos, mesActual) {
   const set = new Set([mesActual]);
   (pedidos || []).forEach((p) => { const m = mesDeVenta(p); if (/^\d{4}-\d{2}$/.test(m) && p.estado !== "Cancelado" && (Number(p.monto) || 0) > 0) set.add(m); });
   return [...set].sort().reverse();
 }
+// Los períodos que se pueden elegir: meses, años o todo junto.
+function periodosDeVentas(pedidos, tipo, mesActual) {
+  const meses = mesesConVentas(pedidos, mesActual);
+  if (tipo === "anio") return [...new Set(meses.map((m) => m.slice(0, 4)))];
+  if (tipo === "todo") return [""];
+  return meses;
+}
+function nombrePeriodo(periodo) {
+  if (!periodo) return "todos los meses";
+  if (periodo.length === 4) return `el año ${periodo}`;
+  return nombreMesLargo(periodo);
+}
 
 function VentasPorVendedorPanel({ pedidos, empleados }) {
   const mesActual = isoLocal(new Date()).slice(0, 7);
-  const [mes, setMes] = useState(mesActual);
+  const [tipo, setTipo] = useState("mes");
+  const [periodo, setPeriodo] = useState(mesActual);
+  const [vista, setVista] = useState("vendedores");
   const [abierto, setAbierto] = useState(null);
-  const meses = mesesConVentas(pedidos, mesActual);
-  const filas = ventasPorVendedor(pedidos, mes, empleados);
+  const [soloVendedor, setSoloVendedor] = useState("");
+  const periodos = periodosDeVentas(pedidos, tipo, mesActual);
+  const filas = ventasPorVendedor(pedidos, periodo, empleados);
+  const deben = ventasConSaldo(pedidos, periodo, empleados);
+  const debenFiltradas = soloVendedor ? ventasConSaldo(pedidos, periodo, empleados, soloVendedor) : deben;
+  const totalDeben = debenFiltradas.reduce((t, v) => t + v.falta, 0);
   const total = filas.reduce((t, f) => {
     ["vendido", "cobrado", "falta", "comisionPagada", "comisionALiquidar", "comisionPorCobrar", "comisionPendiente"].forEach((k) => { t[k] += f[k]; });
     f.items.forEach((p) => t.ventas.add(p.grupoId || p.id));
     return t;
   }, { vendido: 0, cobrado: 0, falta: 0, comisionPagada: 0, comisionALiquidar: 0, comisionPorCobrar: 0, comisionPendiente: 0, ventas: new Set() });
   const sinPorcentaje = filas.filter((f) => !f.sinVendedor && f.pct === 0);
-  const i = meses.indexOf(mes);
+  const i = periodos.indexOf(periodo);
   const pctCobrado = (f) => (f.vendido > 0 ? Math.round((f.cobrado / f.vendido) * 100) : 0);
   const textoPendiente = (f) => [f.comisionALiquidar > 0 ? `${money(f.comisionALiquidar)} ya se puede liquidar` : "", f.comisionPorCobrar > 0 ? `${money(f.comisionPorCobrar)} cuando se cobre el resto` : ""].filter(Boolean).join(" · ");
+  const etiqueta = (x) => (!x ? "Todos los meses" : x.length === 4 ? `Año ${x}` : nombreMesLargo(x));
+  const anterior = tipo === "anio" ? "Año anterior" : "Mes anterior";
+  const siguiente = tipo === "anio" ? "Año siguiente" : "Mes siguiente";
+  function elegirTipo(t) {
+    setTipo(t);
+    setPeriodo(t === "anio" ? mesActual.slice(0, 4) : t === "todo" ? "" : mesActual);
+    setAbierto(null);
+  }
+  function irA(p) { setPeriodo(p); setAbierto(null); }
+  function verLoQueFalta(f) { setSoloVendedor(f.clave); setVista("cobrar"); }
 
   return (
     <div className="dg-page dg-vxv">
       <div className="dg-vxv-mes">
-        <button type="button" className="dg-icon-btn" title="Mes anterior" disabled={i < 0 || i >= meses.length - 1} onClick={() => { setMes(meses[i + 1]); setAbierto(null); }}><ChevronLeft size={16} /></button>
-        <select value={mes} onChange={(e) => { setMes(e.target.value); setAbierto(null); }} aria-label="Mes">
-          {meses.map((m) => <option key={m} value={m}>{nombreMesLargo(m)}</option>)}
-        </select>
-        <button type="button" className="dg-icon-btn" title="Mes siguiente" disabled={i <= 0} onClick={() => { setMes(meses[i - 1]); setAbierto(null); }}><ChevronRight size={16} /></button>
+        <div className="dg-periodo-toggle" role="group" aria-label="Período">
+          <button type="button" className={tipo === "mes" ? "dg-periodo-on" : ""} onClick={() => elegirTipo("mes")}>Mes</button>
+          <button type="button" className={tipo === "anio" ? "dg-periodo-on" : ""} onClick={() => elegirTipo("anio")}>Año</button>
+          <button type="button" className={tipo === "todo" ? "dg-periodo-on" : ""} onClick={() => elegirTipo("todo")}>Todo</button>
+        </div>
+        {tipo !== "todo" && (
+          <div className="dg-vxv-elegir">
+            <button type="button" className="dg-icon-btn" title={anterior} aria-label={anterior} disabled={i < 0 || i >= periodos.length - 1} onClick={() => irA(periodos[i + 1])}><ChevronLeft size={16} /></button>
+            <select value={periodo} onChange={(e) => irA(e.target.value)} aria-label={tipo === "anio" ? "Año" : "Mes"}>
+              {periodos.map((m) => <option key={m} value={m}>{etiqueta(m)}</option>)}
+            </select>
+            <button type="button" className="dg-icon-btn" title={siguiente} aria-label={siguiente} disabled={i <= 0} onClick={() => irA(periodos[i - 1])}><ChevronRight size={16} /></button>
+          </div>
+        )}
       </div>
 
       <div className="dg-totales">
-        <div className="dg-total-card" style={{ "--c": "var(--dg-accent)" }}><span>Vendido en el mes</span><strong>{money(total.vendido)}</strong><small className="dg-vxv-sub">{total.ventas.size} venta(s)</small></div>
+        <div className="dg-total-card" style={{ "--c": "var(--dg-accent)" }}><span>Vendido</span><strong>{money(total.vendido)}</strong><small className="dg-vxv-sub">{total.ventas.size} venta(s)</small></div>
         <div className="dg-total-card" style={{ "--c": "var(--dg-success)" }}><span>Cobrado</span><strong>{money(total.cobrado)}</strong><small className="dg-vxv-sub">{pctCobrado(total)}% de lo vendido</small></div>
-        <div className="dg-total-card" style={{ "--c": "var(--dg-danger)" }}><span>Falta cobrar</span><strong>{money(total.falta)}</strong></div>
+        <div className="dg-total-card" style={{ "--c": "var(--dg-danger)" }}><span>Falta cobrar</span><strong>{money(total.falta)}</strong><small className="dg-vxv-sub">{deben.length} venta(s) deben</small></div>
         <div className="dg-total-card" style={{ "--c": "var(--dg-warning)" }}><span>Comisión pagada</span><strong>{money(total.comisionPagada)}</strong>{total.comisionPendiente > 0 && <small className="dg-vxv-sub">+ {money(total.comisionPendiente)} pendiente</small>}</div>
       </div>
 
-      {sinPorcentaje.length > 0 && (
+      <div className="dg-quickviews" style={{ marginBottom: 14 }}>
+        <button type="button" className={`dg-quickview-btn ${vista === "vendedores" ? "dg-quickview-on" : ""}`} onClick={() => setVista("vendedores")}>Por vendedor</button>
+        <button type="button" className={`dg-quickview-btn ${vista === "cobrar" ? "dg-quickview-on" : ""}`} onClick={() => setVista("cobrar")}>Falta cobrar ({deben.length})</button>
+      </div>
+
+      {vista === "vendedores" && sinPorcentaje.length > 0 && (
         <div className="dg-comision-banner">
           <AlertTriangle size={15} />
           <span>{sinPorcentaje.map((f) => f.vendedor).join(", ")} no tiene % de comisión cargado en <strong>Sueldos → Empleados</strong>, así que su comisión da $0.</span>
         </div>
       )}
 
-      {filas.length === 0 ? (
-        <div className="dg-empty">No hay ventas cargadas en {nombreMesLargo(mes)}.</div>
+      {vista === "vendedores" && (filas.length === 0 ? (
+        <div className="dg-empty">No hay ventas cargadas en {nombrePeriodo(periodo)}.</div>
       ) : (
         <div className="dg-section-card">
           <div className="dg-flete-scroll">
@@ -8571,7 +8639,7 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
                       </td>
                       <td className="dg-num" data-label="Vendido"><strong>{money(f.vendido)}</strong></td>
                       <td className="dg-num" data-label="Cobrado">{money(f.cobrado)}<small className="dg-vxv-sub">{pctCobrado(f)}%</small></td>
-                      <td className="dg-num" data-label="Falta cobrar">{f.falta > 0 ? <span className="dg-vxv-falta">{money(f.falta)}</span> : "—"}</td>
+                      <td className="dg-num" data-label="Falta cobrar">{f.falta > 0 ? <button type="button" className="dg-vxv-link dg-vxv-falta" title="Ver qué ventas faltan cobrar" onClick={() => verLoQueFalta(f)}>{money(f.falta)}</button> : "—"}</td>
                       <td className="dg-num" data-label="Comisión pagada">{f.comisionPagada > 0 ? money(f.comisionPagada) : "—"}</td>
                       <td className="dg-num" data-label="Comisión pendiente">{f.comisionPendiente > 0 ? money(f.comisionPendiente) : "—"}{f.comisionPendiente > 0 && <small className="dg-vxv-sub">{textoPendiente(f)}</small>}</td>
                     </tr>
@@ -8612,8 +8680,55 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
             </table>
           </div>
         </div>
+      ))}
+
+      {vista === "cobrar" && (
+        <>
+          <div className="dg-vxv-cobrar-filtro">
+            <select value={soloVendedor} onChange={(e) => setSoloVendedor(e.target.value)} aria-label="Vendedor">
+              <option value="">Todos los vendedores</option>
+              {filas.map((f) => <option key={f.clave} value={f.clave}>{f.vendedor}</option>)}
+            </select>
+            {debenFiltradas.length > 0 && <span className="dg-vxv-cobrar-resumen">{debenFiltradas.length} venta(s) deben <strong>{money(totalDeben)}</strong></span>}
+          </div>
+          {debenFiltradas.length === 0 ? (
+            <div className="dg-empty">{deben.length === 0 ? `Todas las ventas de ${nombrePeriodo(periodo)} están cobradas.` : "Ese vendedor no tiene ventas sin cobrar en este período."}</div>
+          ) : (
+            <div className="dg-section-card">
+              <div className="dg-flete-scroll">
+                <table className="dg-flete-tabla dg-vxv-tabla">
+                  <thead><tr><th>Pedido</th><th>Vendedor</th><th>Estado</th><th className="dg-num">Vendido</th><th className="dg-num">Cobrado</th><th className="dg-num">Falta cobrar</th></tr></thead>
+                  <tbody>
+                    {debenFiltradas.map((v) => {
+                      const ordenes = v.items.map((x) => x.orden).filter(Boolean);
+                      return (
+                        <tr key={v.clave}>
+                          <td>
+                            <div className="dg-vxv-venta-quien dg-vxv-sin-sangria">
+                              <strong>{ordenes.length ? `#${ordenes.join(", #")}` : "Sin número"} {v.cliente}</strong>
+                              <small className="dg-vxv-sub">{[fechaLargaCorta(v.fecha), v.celular, v.items.length > 1 ? `${v.items.length} espejos` : ""].filter(Boolean).join(" · ")}</small>
+                            </div>
+                          </td>
+                          <td data-label="Vendedor">{v.vendedores.join(", ") || "Sin vendedor"}</td>
+                          <td data-label="Estado">
+                            {v.entregado
+                              ? <span className="dg-vxv-estado dg-vxv-estado-entregado">Entregado y debe</span>
+                              : <span className="dg-vxv-estado">{v.estados.join(" / ")}</span>}
+                          </td>
+                          <td className="dg-num" data-label="Vendido">{money(v.vendido)}</td>
+                          <td className="dg-num" data-label="Cobrado">{money(v.cobrado)}</td>
+                          <td className="dg-num" data-label="Falta cobrar"><span className="dg-vxv-falta">{money(v.falta)}</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       )}
-      <p className="dg-hint">Vendido es el total de cada pedido del mes (con el envío), por la fecha del pedido. La comisión se paga desde <strong>Comisiones</strong>, cuando el pedido queda cobrado.</p>
+      <p className="dg-hint">Vendido es el total de cada pedido (con el envío), contado por la fecha del pedido. La comisión se paga desde <strong>Comisiones</strong>, cuando el pedido queda cobrado.</p>
     </div>
   );
 }
@@ -22206,8 +22321,17 @@ function Style() {
       .dg-rendicion-falta { color:var(--dg-danger); background:rgba(var(--dg-line-rgb),.06); }
       .dg-rendicion-sobra { color:var(--dg-warning); background:rgba(var(--dg-line-rgb),.06); }
       /* Ventas por vendedor */
-      .dg-vxv-mes { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
-      .dg-vxv-mes select { width:auto; min-width:180px; font-weight:600; }
+      .dg-vxv-mes { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin-bottom:14px; }
+      .dg-vxv-elegir { display:flex; align-items:center; gap:8px; }
+      .dg-vxv-mes select, .dg-vxv-cobrar-filtro select { width:auto; min-width:180px; font-weight:600; }
+      .dg-vxv-cobrar-filtro { display:flex; align-items:center; flex-wrap:wrap; gap:8px 14px; margin-bottom:12px; }
+      .dg-vxv-cobrar-resumen { font-size:13px; color:var(--dg-text-dim); }
+      .dg-vxv-cobrar-resumen strong { color:var(--dg-danger); font-family:'JetBrains Mono', monospace; }
+      .dg-vxv-link { background:transparent; border:0; padding:0; font:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px; }
+      .dg-vxv-link:focus-visible { outline:2px solid var(--dg-accent); outline-offset:3px; border-radius:4px; }
+      .dg-vxv-sin-sangria { padding-left:0; }
+      .dg-vxv-estado { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.07); white-space:nowrap; }
+      .dg-vxv-estado-entregado { color:var(--dg-danger); background:rgba(var(--dg-danger-rgb),.1); }
       .dg-vxv-sub { display:block; font-size:11px; font-weight:500; color:var(--dg-text-dim); font-family:'Jost', sans-serif; white-space:normal; }
       .dg-total-card .dg-vxv-sub { margin-top:-2px; }
       .dg-vxv .dg-vxv-tabla { min-width:720px; }
@@ -22220,7 +22344,9 @@ function Style() {
       .dg-vxv-venta td { font-size:12px; background:rgba(var(--dg-line-rgb),.04); color:var(--dg-text-dim); }
       .dg-vxv-venta-quien { padding-left:20px; white-space:normal; color:var(--dg-text); }
       @media (max-width: 600px) {
-        .dg-vxv-mes select { flex:1; min-width:0; font-size:16px; }
+        .dg-vxv-elegir { flex:1 1 100%; }
+        .dg-vxv-mes select, .dg-vxv-cobrar-filtro select { flex:1; min-width:0; font-size:16px; }
+        .dg-vxv-cobrar-filtro select { flex:1 1 100%; }
         .dg-vxv .dg-vxv-tabla { min-width:0; }
         .dg-vxv .dg-vxv-tabla thead { display:none; }
         .dg-vxv .dg-vxv-tabla tbody, .dg-vxv .dg-vxv-tabla tfoot { display:block; }
