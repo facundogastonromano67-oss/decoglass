@@ -8478,7 +8478,10 @@ function cuentaDeVentas(items, empleados) {
   const c = { vendido: 0, cobrado: 0, falta: 0, comisionPagada: 0, comisionALiquidar: 0, comisionPorCobrar: 0 };
   items.forEach((p) => {
     const monto = Number(p.monto) || 0;
-    const cobrado = Math.min(monto, Math.max(0, Number(p.anticipo) || 0));
+    // Entregado = cobrado: el saldo se cobra en la puerta (es la misma regla
+    // que usa Finanzas). El anticipo no se toca al entregar porque con esa
+    // diferencia se arma la rendición del flete.
+    const cobrado = p.estado === "Entregado" ? monto : Math.min(monto, Math.max(0, Number(p.anticipo) || 0));
     const com = comisionDelEspejo(p, empleados);
     c.vendido += monto; c.cobrado += cobrado; c.falta += monto - cobrado;
     c.comisionPagada += com.pagada; c.comisionALiquidar += com.aLiquidar; c.comisionPorCobrar += com.porCobrar;
@@ -8506,6 +8509,98 @@ function ventasPorVendedor(pedidos, periodo, empleados) {
     return { ...f, pct: f.sinVendedor ? 0 : porcentajeVendedor(f.vendedor, empleados), ventas, ...cuentaDeVentas(f.items, empleados) };
   }).sort((a, b) => (a.sinVendedor ? 1 : 0) - (b.sinVendedor ? 1 : 0) || b.vendido - a.vendido);
 }
+// Marcar entregada una venta desde «Ventas por vendedor» (03/11/2026): los
+// chicos no siempre la marcan. Hace lo mismo que entregar desde Pedidos o
+// Logística: queda entregada y el saldo (lo que se cobró en la puerta) entra a
+// Finanzas una sola vez (montoRegistrado). El anticipo no se toca: con esa
+// diferencia se arma la rendición del flete. Si se pagó por transferencia, se
+// anota así el flete no tiene que rendir esa plata.
+function prepararEntregaDesdeVentas(pedidos, grupo, opciones) {
+  const o = opciones || {};
+  const pendientes = (grupo || []).filter((e) => !["Entregado", "Despachado", "Cancelado"].includes(e.estado));
+  const ids = new Set(pendientes.map((e) => e.id));
+  const delGrupo = new Set((grupo || []).map((e) => e.id));
+  const saldo = pendientes.reduce((t, e) => t + Math.max(0, pedidoSaldo(e)), 0);
+  const porTransferencia = saldo > 0 && !!o.medio && o.medio !== "efectivo";
+  const ingresos = [];
+  const actualizados = (pedidos || []).map((x) => {
+    if (!delGrupo.has(x.id)) return x;
+    let nuevo = porTransferencia ? { ...x, saldoPorTransferencia: true } : x;
+    if (!ids.has(x.id)) return nuevo;
+    nuevo = { ...nuevo, estado: "Entregado", entregadoFecha: o.entregadoFecha || new Date().toISOString() };
+    if (o.registraPlata) {
+      const c = ingresoPorCambioDeMonto(nuevo, saldo > 0 ? o.medio : "");
+      // La plata entró el día de la entrega, no el día que se anota.
+      if (c) { ingresos.push(o.dia ? { ...c.ingreso, fecha: o.dia } : c.ingreso); nuevo = { ...nuevo, montoRegistrado: c.cobrado }; }
+    }
+    return nuevo;
+  });
+  return { actualizados, ingresos, saldo, cuantos: pendientes.length };
+}
+// La fecha de entrega que se elige («2026-11-02»), como fecha y hora. Hoy va
+// con la hora de ahora; otro día, al mediodía (así no se corre de día).
+function entregadoFechaDesdeDia(dia, hoy) {
+  if (!dia || dia === hoy) return new Date().toISOString();
+  return new Date(`${dia}T12:00:00`).toISOString();
+}
+// Qué se puede hacer con una venta desde la lista.
+function puedeEntregarseVenta(items) {
+  return (items || []).some((e) => !["Entregado", "Despachado", "Cancelado"].includes(e.estado));
+}
+
+function EntregarVentaModal({ grupo, onConfirmar, onCerrar }) {
+  const hoy = isoLocal(new Date());
+  const pendientes = (grupo || []).filter((e) => !["Entregado", "Despachado", "Cancelado"].includes(e.estado));
+  const saldo = pendientes.reduce((t, e) => t + Math.max(0, pedidoSaldo(e)), 0);
+  const noListos = pendientes.filter((e) => e.estado !== "Espejo listo");
+  const p = (grupo || [])[0] || {};
+  const [dia, setDia] = useState(hoy);
+  const [medio, setMedio] = useState("efectivo");
+  const [error, setError] = useState("");
+  function confirmar() {
+    if (!dia) { setError("Poné qué día se entregó."); return; }
+    if (dia > hoy) { setError("La entrega no puede ser de un día que todavía no pasó."); return; }
+    onConfirmar({ dia, medio });
+  }
+  return (
+    <div className="dg-overlay" onClick={onCerrar}>
+      <div className="dg-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title">Marcar entregado · #{p.orden} {p.cliente}</div>
+          <button className="dg-icon-btn" onClick={onCerrar} aria-label="Cerrar"><X size={18} /></button>
+        </div>
+        <div className="dg-form">
+          <p className="dg-hint" style={{ marginTop: 0 }}>
+            {pendientes.length === 1 ? "El espejo queda entregado" : `Los ${pendientes.length} espejos quedan entregados`}
+            {saldo > 0 ? <> y el saldo de <strong>{money(saldo)}</strong> queda cobrado: entra a Finanzas.</> : " (ya estaba todo pagado)."}
+          </p>
+          {noListos.length > 0 && (
+            <div className="dg-comision-banner">
+              <AlertTriangle size={15} />
+              <span>{noListos.map((e) => `#${e.orden} figura «${e.estado}»`).join(", ")}. Marcalo solo si de verdad ya se entregó.</span>
+            </div>
+          )}
+          <div className="dg-field-grid">
+            <Field label="¿Qué día se entregó?"><input type="date" value={dia} max={hoy} onChange={(e) => setDia(e.target.value)} /></Field>
+            {saldo > 0 && (
+              <Field label="¿Cómo pagó el saldo?">
+                <select value={medio} onChange={(e) => setMedio(e.target.value)}>
+                  {Object.entries(MEDIOS_PAGO).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                </select>
+              </Field>
+            )}
+          </div>
+          {error && <div className="dg-error" style={{ marginTop: 8 }}>{error}</div>}
+          <div className="dg-form-actions" style={{ marginTop: 14 }}>
+            <button type="button" className="dg-btn-ghost" onClick={onCerrar}>Cancelar</button>
+            <button type="button" className="dg-btn-primary" onClick={confirmar}><Check size={14} /> Marcar entregado{saldo > 0 ? ` y cobrado ${money(saldo)}` : ""}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Las ventas que todavía deben plata en el período, una fila por venta (con
 // todos sus espejos), de la más vieja a la más nueva. Con un vendedor elegido
 // cuenta solo sus espejos, así la lista suma lo mismo que su fila.
@@ -8525,7 +8620,6 @@ function ventasConSaldo(pedidos, periodo, empleados, vendedor = "") {
     return {
       clave, items: ordenados, cliente: p.cliente || "Sin nombre", celular: p.celular || "", fecha: p.fecha || "",
       vendedores, claves: vendedores.map(claveVendedor), estados,
-      entregado: ordenados.some((x) => x.estado === "Entregado" || x.estado === "Despachado"),
       ...cuentaDeVentas(ordenados, empleados),
     };
   }).filter((v) => v.falta > 0)
@@ -8550,8 +8644,58 @@ function nombrePeriodo(periodo) {
   return nombreMesLargo(periodo);
 }
 
-function VentasPorVendedorPanel({ pedidos, empleados }) {
+function VentasPorVendedorPanel({ pedidos, empleados, onChangePedidos, onCreateIncome, onRegistrar, vendedores = [], stockEspejos = [] }) {
   const mesActual = isoLocal(new Date()).slice(0, 7);
+  // Abrir el pedido y marcarlo entregado, desde la lista (03/11/2026).
+  const [entregando, setEntregando] = useState(null);
+  const [editando, setEditando] = useState(null);
+  const [aviso, setAviso] = useState("");
+  const puedeEditar = !!onChangePedidos;
+  function espejosDeLaVenta(clave) {
+    return pedidos.filter((x) => (x.grupoId || x.id) === clave).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  }
+  function avisar(texto) { setAviso(texto); window.setTimeout(() => setAviso(""), 6000); }
+  function confirmarEntrega(opciones) {
+    const grupo = entregando || [];
+    const prep = prepararEntregaDesdeVentas(pedidos, grupo, { medio: opciones.medio, dia: opciones.dia, entregadoFecha: entregadoFechaDesdeDia(opciones.dia, isoLocal(new Date())), registraPlata: !!onCreateIncome });
+    if (prep.ingresos.length && onCreateIncome) onCreateIncome(prep.ingresos);
+    onChangePedidos(prep.actualizados);
+    const p = grupo[0] || {};
+    if (onRegistrar) onRegistrar("Marcó entregado", `#${p.orden} — ${p.cliente || "Sin nombre"}${prep.saldo > 0 ? ` — cobró ${money(prep.saldo)} en ${(MEDIOS_PAGO[opciones.medio] || "").toLowerCase()}` : ""} (desde Ventas por vendedor)`);
+    avisar(`#${p.orden} ${p.cliente || ""} quedó entregado${prep.saldo > 0 ? ` y ${money(prep.saldo)} entró a Finanzas` : ""}.`);
+    setEntregando(null);
+  }
+  function nuevoNumeroDePedido() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
+  function guardarUnEspejo(pedido) {
+    const prep = prepararGuardadoPedido(pedidos, pedido, nuevoNumeroDePedido);
+    if (prep.error) { window.alert(prep.error); return; }
+    let toSave = prep.withOrden;
+    if (prep.cambio && onCreateIncome) {
+      onCreateIncome(prep.cambio.ingreso);
+      toSave = { ...toSave, montoRegistrado: prep.cambio.cobrado };
+    }
+    onChangePedidos(normalizarOrdenesPorGrupo(pedidos.map((p) => (p.id === toSave.id ? toSave : p))));
+    if (onRegistrar) onRegistrar("Editó un pedido", `#${toSave.orden} — ${toSave.cliente} — ${money(toSave.monto)}`);
+    setEditando(null);
+  }
+  function guardarVenta(editado, _opts, montosPorEspejo) {
+    const grupo = editando || [];
+    const { actualizados, ingresos } = prepararEntregaEditada(pedidos, grupo, editado, montosPorEspejo, !!onCreateIncome);
+    onChangePedidos(actualizados);
+    if (ingresos.length && onCreateIncome) onCreateIncome(ingresos);
+    if (onRegistrar && grupo[0]) onRegistrar("Editó los datos de entrega", `#${grupo[0].orden} — ${editado.cliente} — ${grupo.length} espejo(s)`);
+    setEditando(null);
+  }
+  function acciones(clave) {
+    if (!puedeEditar) return null;
+    const grupo = espejosDeLaVenta(clave);
+    return (
+      <div className="dg-vxv-acciones-btns">
+        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setEditando(grupo)}><Pencil size={13} /> Abrir</button>
+        {puedeEntregarseVenta(grupo) && <button type="button" className="dg-btn-ghost dg-mini-btn dg-vxv-entregar" onClick={() => setEntregando(grupo)}><Check size={13} /> Entregado</button>}
+      </div>
+    );
+  }
   const [tipo, setTipo] = useState("mes");
   const [periodo, setPeriodo] = useState(mesActual);
   const [vista, setVista] = useState("vendedores");
@@ -8584,6 +8728,7 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
 
   return (
     <div className="dg-page dg-vxv">
+      {aviso && <div className="dg-comision-banner" role="status" style={{ background: "rgba(var(--dg-success-rgb),0.1)", borderColor: "rgba(var(--dg-success-rgb),0.35)", color: "var(--dg-success)" }}><Check size={15} /> {aviso}</div>}
       <div className="dg-vxv-mes">
         <div className="dg-periodo-toggle" role="group" aria-label="Período">
           <button type="button" className={tipo === "mes" ? "dg-periodo-on" : ""} onClick={() => elegirTipo("mes")}>Mes</button>
@@ -8626,7 +8771,7 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
         <div className="dg-section-card">
           <div className="dg-flete-scroll">
             <table className="dg-flete-tabla dg-vxv-tabla">
-              <thead><tr><th>Vendedor</th><th className="dg-num">Vendido</th><th className="dg-num">Cobrado</th><th className="dg-num">Falta cobrar</th><th className="dg-num">Comisión pagada</th><th className="dg-num">Comisión pendiente</th></tr></thead>
+              <thead><tr><th>Vendedor</th><th className="dg-num">Vendido</th><th className="dg-num">Cobrado</th><th className="dg-num">Falta cobrar</th><th className="dg-num">Comisión pagada</th><th className="dg-num">Comisión pendiente</th>{puedeEditar && <th />}</tr></thead>
               <tbody>
                 {filas.map((f) => (
                   <Fragment key={f.clave}>
@@ -8642,10 +8787,11 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
                       <td className="dg-num" data-label="Falta cobrar">{f.falta > 0 ? <button type="button" className="dg-vxv-link dg-vxv-falta" title="Ver qué ventas faltan cobrar" onClick={() => verLoQueFalta(f)}>{money(f.falta)}</button> : "—"}</td>
                       <td className="dg-num" data-label="Comisión pagada">{f.comisionPagada > 0 ? money(f.comisionPagada) : "—"}</td>
                       <td className="dg-num" data-label="Comisión pendiente">{f.comisionPendiente > 0 ? money(f.comisionPendiente) : "—"}{f.comisionPendiente > 0 && <small className="dg-vxv-sub">{textoPendiente(f)}</small>}</td>
+                      {puedeEditar && <td className="dg-vxv-acciones dg-vxv-vacia" />}
                     </tr>
                     {abierto === f.clave && f.ventas.map((v) => {
                       const p = v.items[0];
-                      const ordenes = v.items.map((x) => x.orden).filter(Boolean);
+                      const ordenes = [...new Set(v.items.map((x) => x.orden).filter(Boolean))];
                       return (
                         <tr className="dg-vxv-venta" key={v.clave}>
                           <td>
@@ -8659,6 +8805,7 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
                           <td className="dg-num" data-label="Falta cobrar">{v.falta > 0 ? <span className="dg-vxv-falta">{money(v.falta)}</span> : "—"}</td>
                           <td className="dg-num" data-label="Comisión pagada">{v.comisionPagada > 0 ? money(v.comisionPagada) : "—"}</td>
                           <td className="dg-num" data-label="Comisión pendiente">{v.comisionPendiente > 0 ? money(v.comisionPendiente) : "—"}{v.comisionPendiente > 0 && <small className="dg-vxv-sub">{v.comisionALiquidar > 0 ? "ya se puede liquidar" : "cuando se cobre el resto"}</small>}</td>
+                          {puedeEditar && <td className="dg-vxv-acciones">{acciones(v.clave)}</td>}
                         </tr>
                       );
                     })}
@@ -8674,6 +8821,7 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
                     <td className="dg-num" data-label="Falta cobrar">{money(total.falta)}</td>
                     <td className="dg-num" data-label="Comisión pagada">{money(total.comisionPagada)}</td>
                     <td className="dg-num" data-label="Comisión pendiente">{money(total.comisionPendiente)}</td>
+                    {puedeEditar && <td className="dg-vxv-acciones dg-vxv-vacia" />}
                   </tr>
                 </tfoot>
               )}
@@ -8697,10 +8845,10 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
             <div className="dg-section-card">
               <div className="dg-flete-scroll">
                 <table className="dg-flete-tabla dg-vxv-tabla">
-                  <thead><tr><th>Pedido</th><th>Vendedor</th><th>Estado</th><th className="dg-num">Vendido</th><th className="dg-num">Cobrado</th><th className="dg-num">Falta cobrar</th></tr></thead>
+                  <thead><tr><th>Pedido</th><th>Vendedor</th><th>Estado</th><th className="dg-num">Vendido</th><th className="dg-num">Cobrado</th><th className="dg-num">Falta cobrar</th>{puedeEditar && <th />}</tr></thead>
                   <tbody>
                     {debenFiltradas.map((v) => {
-                      const ordenes = v.items.map((x) => x.orden).filter(Boolean);
+                      const ordenes = [...new Set(v.items.map((x) => x.orden).filter(Boolean))];
                       return (
                         <tr key={v.clave}>
                           <td>
@@ -8710,14 +8858,11 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
                             </div>
                           </td>
                           <td data-label="Vendedor">{v.vendedores.join(", ") || "Sin vendedor"}</td>
-                          <td data-label="Estado">
-                            {v.entregado
-                              ? <span className="dg-vxv-estado dg-vxv-estado-entregado">Entregado y debe</span>
-                              : <span className="dg-vxv-estado">{v.estados.join(" / ")}</span>}
-                          </td>
+                          <td data-label="Estado"><span className={`dg-vxv-estado${v.estados.includes("Espejo listo") ? " dg-vxv-estado-listo" : ""}`}>{v.estados.join(" / ")}</span></td>
                           <td className="dg-num" data-label="Vendido">{money(v.vendido)}</td>
                           <td className="dg-num" data-label="Cobrado">{money(v.cobrado)}</td>
                           <td className="dg-num" data-label="Falta cobrar"><span className="dg-vxv-falta">{money(v.falta)}</span></td>
+                          {puedeEditar && <td className="dg-vxv-acciones">{acciones(v.clave)}</td>}
                         </tr>
                       );
                     })}
@@ -8728,7 +8873,44 @@ function VentasPorVendedorPanel({ pedidos, empleados }) {
           )}
         </>
       )}
-      <p className="dg-hint">Vendido es el total de cada pedido (con el envío), contado por la fecha del pedido. La comisión se paga desde <strong>Comisiones</strong>, cuando el pedido queda cobrado.</p>
+      <p className="dg-hint">Vendido es el total de cada pedido (con el envío), contado por la fecha del pedido. Un pedido entregado cuenta como cobrado: el saldo se cobra en la puerta. La comisión se paga desde <strong>Comisiones</strong>.</p>
+
+      {entregando && <EntregarVentaModal grupo={entregando} onCerrar={() => setEntregando(null)} onConfirmar={confirmarEntrega} />}
+      {editando && editando.length === 1 && (
+        <PedidoModal
+          key={`vxv-espejo-${editando[0].id}`}
+          pedido={editando[0]}
+          vendedores={vendedores}
+          canEditFull
+          canEditEstadoOnly={false}
+          onClose={() => setEditando(null)}
+          onSave={guardarUnEspejo}
+          onDelete={null}
+          stockEspejos={stockEspejos}
+          esNuevo={false}
+          aviso={null}
+          clientes={clientesDeLosPedidos(pedidos)}
+        />
+      )}
+      {editando && editando.length > 1 && (
+        <PedidoModal
+          key={`vxv-venta-${editando[0].id}`}
+          pedido={editando[0]}
+          modo="entrega"
+          grupo={editando}
+          cuantosEspejos={editando.length}
+          vendedores={vendedores}
+          canEditFull
+          canEditEstadoOnly={false}
+          onClose={() => setEditando(null)}
+          onSave={guardarVenta}
+          onDelete={null}
+          stockEspejos={stockEspejos}
+          esNuevo={false}
+          aviso={null}
+          clientes={clientesDeLosPedidos(pedidos)}
+        />
+      )}
     </div>
   );
 }
@@ -22078,7 +22260,7 @@ function SectorPage({
       )}
 
       {subpage === "vendedores" && (
-        isAdmin ? <VentasPorVendedorPanel pedidos={pedidos} empleados={empleadosSueldo} />
+        isAdmin ? <VentasPorVendedorPanel pedidos={pedidos} empleados={empleadosSueldo} onChangePedidos={onChangePedidos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} vendedores={vendedores} stockEspejos={stockEspejos} />
           : <LockedPage label="Ventas por vendedor" onLogin={onRequestLogin} />
       )}
 
@@ -22331,7 +22513,11 @@ function Style() {
       .dg-vxv-link:focus-visible { outline:2px solid var(--dg-accent); outline-offset:3px; border-radius:4px; }
       .dg-vxv-sin-sangria { padding-left:0; }
       .dg-vxv-estado { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.07); white-space:nowrap; }
-      .dg-vxv-estado-entregado { color:var(--dg-danger); background:rgba(var(--dg-danger-rgb),.1); }
+      .dg-vxv-estado-listo { color:var(--dg-success); background:rgba(var(--dg-success-rgb),.1); }
+      .dg-vxv-acciones { white-space:nowrap; text-align:right; }
+      .dg-vxv-acciones-btns { display:inline-flex; gap:6px; justify-content:flex-end; }
+      .dg-vxv-acciones-btns .dg-mini-btn { display:inline-flex; align-items:center; gap:4px; }
+      .dg-vxv-entregar { color:var(--dg-success); border-color:rgba(var(--dg-success-rgb),.35); }
       .dg-vxv-sub { display:block; font-size:11px; font-weight:500; color:var(--dg-text-dim); font-family:'Jost', sans-serif; white-space:normal; }
       .dg-total-card .dg-vxv-sub { margin-top:-2px; }
       .dg-vxv .dg-vxv-tabla { min-width:720px; }
@@ -22353,7 +22539,10 @@ function Style() {
         .dg-vxv .dg-vxv-tabla tr { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; padding:12px 0; border-top:1px solid rgba(var(--dg-line-rgb),.1); }
         .dg-vxv .dg-vxv-tabla tbody tr:first-child { border-top:0; }
         .dg-vxv .dg-vxv-tabla td { display:block; border:0; padding:0; white-space:normal; text-align:left; background:transparent; }
-        .dg-vxv .dg-vxv-tabla td:first-child { grid-column:1 / -1; }
+        .dg-vxv .dg-vxv-tabla td:first-child, .dg-vxv .dg-vxv-tabla td.dg-vxv-acciones { grid-column:1 / -1; }
+        .dg-vxv .dg-vxv-tabla td.dg-vxv-vacia { display:none; }
+        .dg-vxv-acciones-btns { display:flex; width:100%; }
+        .dg-vxv-acciones-btns .dg-mini-btn { flex:1; justify-content:center; min-height:38px; }
         .dg-vxv .dg-vxv-tabla td[data-label]::before { content:attr(data-label); display:block; margin-bottom:2px; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
         .dg-vxv .dg-vxv-tabla tr.dg-vxv-venta { margin-left:12px; padding:10px 0 10px 10px; border-top:1px dashed rgba(var(--dg-line-rgb),.14); border-left:2px solid rgba(var(--dg-line-rgb),.14); }
         .dg-vxv-venta-quien { padding-left:0; }
