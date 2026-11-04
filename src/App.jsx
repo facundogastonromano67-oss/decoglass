@@ -773,53 +773,84 @@ function totalPendientePedido(pedido) {
   return Math.max(0, pedidoSaldo(pedido)) + envioPendientePedido(pedido);
 }
 
-function detalleCobroEntrega(pedido) {
-  const saldoEspejo = Math.max(0, pedidoSaldo(pedido));
-  if (!esPedidoConEnvio(pedido)) {
-    return saldoEspejo > 0 ? `💰 Saldo pendiente: ${money(saldoEspejo)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+// ===== Lo que se cobra al entregar (04/11/2026) ===========================
+// Una sola cuenta para todos los mensajes: al cliente, al flete y el de
+// retiro. El envío es uno por venta aunque tenga varios espejos.
+// El flete: su viaje (pagoAlFletePedido) suele ser lo mismo que el envío o
+// un poco más. Si cobra el envío en la puerta se queda con eso (hasta lo que
+// vale su viaje) y la diferencia se la pagamos nosotros desde Administración.
+function cuentaCobroEntrega(items) {
+  const lista = (items || []).filter((p) => p && p.estado !== "Cancelado");
+  const conEnvio = lista.some(esPedidoConEnvio);
+  const deEnvio = lista.filter(esPedidoConEnvio);
+  const saldo = lista.reduce((t, p) => t + Math.max(0, pedidoSaldo(p)), 0);
+  const costoEnvio = conEnvio ? costoEnvioDeVarios(deEnvio) : 0;
+  const envioPendiente = conEnvio ? envioPendienteDeVarios(deEnvio) : 0;
+  const viaje = conEnvio ? sumaPorVenta(deEnvio, pagoAlFletePedido) : 0;
+  const total = saldo + envioPendiente;
+  const fleteSeQueda = Math.min(envioPendiente, viaje);
+  return {
+    espejos: lista.length, conEnvio, saldo, costoEnvio, envioPendiente,
+    envioPagado: conEnvio && costoEnvio > 0 && envioPendiente === 0,
+    total, viaje, fleteSeQueda,
+    fleteLePagamos: Math.max(0, viaje - fleteSeQueda),
+    fleteRinde: Math.max(0, total - fleteSeQueda),
+  };
+}
+// Cuándo paga el cliente lo que falta, según cómo lo recibe.
+function momentoDePago(p) {
+  if (p?.metodo === "Retira") return "al retirar el pedido";
+  if (p?.metodo === "Colocación") return "el día de la colocación";
+  return "al recibir el pedido";
+}
+// Lo que le falta pagar al cliente, renglón por renglón (para WhatsApp: lo
+// que va entre asteriscos sale en negrita).
+function textoCobroCliente(items) {
+  const lista = (items || []).filter(Boolean);
+  const c = cuentaCobroEntrega(lista);
+  const cuando = momentoDePago(lista[0]);
+  const varios = c.espejos > 1;
+  const espejo = varios ? "de los espejos" : "del espejo";
+  if (!c.conEnvio) {
+    return c.saldo > 0
+      ? `💰 Saldo a abonar ${cuando}: *${money(c.saldo)}*`
+      : "✅ Ya está todo pagado: no tenés que abonar nada.";
   }
-
-  const costoEnvio = costoEnvioPedido(pedido);
-  const envioPendiente = envioPendientePedido(pedido);
-  const total = totalPendientePedido(pedido);
-  const lineas = [
-    saldoEspejo > 0 ? `🪞 Saldo del espejo: ${money(saldoEspejo)}` : "🪞 Espejo: saldado",
-    costoEnvio > 0
-      ? pedido?.envioPagado
-        ? `🚚 Envío: ${money(costoEnvio)} (pagado)`
-        : `🚚 Envío pendiente: ${money(costoEnvio)}`
-      : "🚚 Envío: monto a confirmar",
-  ];
-  if (total > 0) lineas.push(`💰 ${costoEnvio > 0 ? "Total a pagar" : "Total parcial"}: ${money(total)}`);
-  else lineas.push("💰 No queda saldo pendiente.");
+  if (c.total === 0) {
+    return c.costoEnvio > 0
+      ? "✅ Ya está todo pagado (espejo y envío): no tenés que abonar nada."
+      : `✅ ${varios ? "Los espejos ya están pagados" : "El espejo ya está pagado"}. El costo del envío te lo confirmamos.`;
+  }
+  const lineas = [`💰 *Para abonar ${cuando}:*`];
+  lineas.push(c.saldo > 0 ? `• Saldo ${espejo}: ${money(c.saldo)}` : `• ${varios ? "Espejos" : "Espejo"}: ya pagado ✓`);
+  if (c.costoEnvio <= 0) lineas.push("• Envío: el costo te lo confirmamos");
+  else lineas.push(c.envioPendiente > 0 ? `• Envío: ${money(c.envioPendiente)}` : "• Envío: ya pagado ✓");
+  lineas.push(c.costoEnvio > 0 ? `*Total: ${money(c.total)}*` : `*Total sin el envío: ${money(c.total)}*`);
   return lineas.join("\n");
 }
-
-// Lo mismo que detalleCobroEntrega pero sumando todos los espejos del pedido.
-// El envío es uno solo aunque haya varios espejos, por eso va el mayor y no la suma.
-function detalleCobroEntregaGrupo(items) {
-  const lista = items || [];
-  if (lista.length <= 1) return detalleCobroEntrega(lista[0]);
-
-  const saldoEspejos = lista.reduce((total, p) => total + Math.max(0, pedidoSaldo(p)), 0);
-  if (!lista.some(esPedidoConEnvio)) {
-    return saldoEspejos > 0 ? `💰 Saldo pendiente: ${money(saldoEspejos)}` : "💰 Ya está todo abonado, no queda saldo pendiente.";
+function detalleCobroEntrega(pedido) { return textoCobroCliente([pedido]); }
+// Lo mismo sumando todos los espejos del pedido.
+function detalleCobroEntregaGrupo(items) { return textoCobroCliente(items); }
+// Lo que el flete cobra, lo que se lleva y lo que nos entrega.
+function lineasCobroFlete(items, corto) {
+  const c = cuentaCobroEntrega(items);
+  const lineas = [];
+  if (c.total > 0) {
+    const partes = [c.saldo > 0 ? `saldo ${money(c.saldo)}` : "", c.envioPendiente > 0 ? `envío ${money(c.envioPendiente)}` : ""].filter(Boolean);
+    const detalle = partes.length > 1 ? ` (${partes.join(" + ")})` : c.saldo === 0 ? " (solo el envío)" : " (saldo; el envío ya está pagado)";
+    lineas.push(`💵 ${corto ? "COBRAR" : "COBRAR EN LA ENTREGA"}: ${money(c.total)}${c.conEnvio ? detalle : ""}`);
+  } else {
+    lineas.push(corto ? "💵 No cobra nada: está pagado." : "💵 No hay que cobrar nada: está todo pagado.");
   }
-
-  const costoEnvio = costoEnvioDeVarios(lista);
-  const envioPendiente = envioPendienteDeVarios(lista);
-  const total = saldoEspejos + envioPendiente;
-  const lineas = [
-    saldoEspejos > 0 ? `🪞 Saldo de los espejos: ${money(saldoEspejos)}` : "🪞 Espejos: saldados",
-    costoEnvio > 0
-      ? envioPendiente > 0
-        ? `🚚 Envío pendiente: ${money(costoEnvio)}`
-        : `🚚 Envío: ${money(costoEnvio)} (pagado)`
-      : "🚚 Envío: monto a confirmar",
-  ];
-  if (total > 0) lineas.push(`💰 ${costoEnvio > 0 ? "Total a pagar" : "Total parcial"}: ${money(total)}`);
-  else lineas.push("💰 No queda saldo pendiente.");
-  return lineas.join("\n");
+  if (c.conEnvio && c.viaje > 0) {
+    let como;
+    if (c.fleteSeQueda > 0 && c.fleteLePagamos > 0) como = `te quedás con los ${money(c.fleteSeQueda)} del envío y los ${money(c.fleteLePagamos)} que faltan te los pagamos nosotros`;
+    else if (c.fleteSeQueda > 0) como = c.fleteSeQueda === c.envioPendiente ? "te quedás con el envío que cobrás" : `te quedás con ${money(c.fleteSeQueda)} de lo que cobrás`;
+    else como = "te lo pagamos nosotros";
+    lineas.push(`🚚 Tu viaje: ${money(c.viaje)} — ${como}.`);
+  }
+  if (c.total > 0) lineas.push(`↩️ Nos entregás: ${money(c.fleteRinde)}`);
+  return { lineas, c };
 }
 
 function pedidoFueVerificado(pedido) {
@@ -1061,7 +1092,7 @@ function entregaWaLink(p) {
   const saldoTexto = detalleCobroEntrega(p);
   let cuerpo;
   if (p.metodo === "Retira") {
-    cuerpo = `te confirmamos que tu espejo ${medidaEspejo(p)} ya está listo para retirar. ¿Coordinamos un día y horario?\n\n${saldoTexto}`;
+    cuerpo = `te confirmamos que tu espejo ${medidaEspejo(p)} ya está listo para retirar. ¿Qué día y en qué horario pasás?\n\n${textoLocalParaRetirar()}\n\n${saldoTexto}`;
   } else if (p.metodo === "Colocación") {
     cuerpo = `te confirmamos que tu espejo ${medidaEspejo(p)} ya está listo. ¿Coordinamos día y horario para la colocación?\n\n${saldoTexto}`;
   } else {
@@ -1075,7 +1106,7 @@ function entregaWaLink(p) {
       : `tu envío quedó agendado para el ${cuando}.`;
     cuerpo = `tu espejo ${medidaEspejo(p)} ya está listo y ${linea}\n\nConfirmanos que estos datos son correctos:\n\n📞 Teléfono: ${p.celular || "(sin dato)"}\n🏘️ Barrio: ${p.barrio || "(sin dato)"}\n📍 Dirección: ${p.detalleEntrega || "(sin dato)"}\n🏢 Piso / Depto (o casa): ${p.piso || "(sin dato)"}\n🕐 Horario de entrega: ${p.horarioEntrega || "a coordinar"}\n\n${saldoTexto}`;
   }
-  const mensaje = `Hola${nombre}! 👋 ${cuerpo}`;
+  const mensaje = `Hola${nombre}! 👋 ${cuerpo.charAt(0).toUpperCase()}${cuerpo.slice(1)}`;
   return `${base}?text=${encodeURIComponent(mensaje)}`;
 }
 
@@ -11317,8 +11348,7 @@ function mensajeParaElFlete(items, nombreFlete) {
     .map((x) => medidaEspejo(x))
     .filter(Boolean).join(" · ");
   const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
-  const aCobrar = lista.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
-    + envioPendienteDeVarios(lista);
+  const cobro = lineasCobroFlete(lista, false);
 
   const lineas = [
     `${hola} Tenemos un envío para coordinar.`,
@@ -11328,9 +11358,8 @@ function mensajeParaElFlete(items, nombreFlete) {
     `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
     `🕐 Horario: ${p.horarioEntrega || "a coordinar con el cliente"}`,
     ...(aclaracionEntregaDe(lista) ? [`📝 ${aclaracionEntregaDe(lista)}`] : []),
-    aCobrar > 0
-      ? `💵 COBRAR EN LA ENTREGA: ${money(aCobrar)}`
-      : "💵 No hay que cobrar nada: está todo pagado.",
+    "",
+    ...cobro.lineas,
     "",
     p.fechaEnvio
       ? `Lo teníamos para el ${fechaLargaCorta(p.fechaEnvio)}. ¿Te queda bien o lo movemos?`
@@ -11350,10 +11379,10 @@ function mensajeParaElFleteVarias(grupos, nombreFlete) {
   if (lista.length === 1) return mensajeParaElFlete(lista[0], nombreFlete);
 
   const hola = nombreFlete ? `Hola ${String(nombreFlete).trim()}!` : "Hola!";
-  let totalACobrar = 0;
+  const suma = sumaDeLaVuelta();
   const bloques = lista.map((items, i) => {
     const b = bloqueEntregaPedido(items, i);
-    totalACobrar += b.aCobrar;
+    suma.agregar(b.c);
     return b.texto;
   });
 
@@ -11362,7 +11391,7 @@ function mensajeParaElFleteVarias(grupos, nombreFlete) {
     "",
     bloques.join("\n\n"),
     "",
-    totalACobrar > 0 ? `💰 Total a cobrar en la vuelta: ${money(totalACobrar)}` : "💰 No hay que cobrar nada en esta vuelta.",
+    ...suma.lineas(),
     "",
     "¿Qué día las podés hacer?",
   ].join("\n");
@@ -11374,16 +11403,34 @@ function bloqueEntregaPedido(items, i) {
   const bultos = items.reduce((t, x) => t + Math.max(1, Number(x.cant) || 0), 0);
   const medidas = items.map((x) => medidaEspejo(x)).filter(Boolean).join(" · ");
   const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
-  const aCobrar = items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0)
-    + envioPendienteDeVarios(items);
+  const cobro = lineasCobroFlete(items, true);
   const texto = [
     `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
     `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
     `📦 ${bultos} ${bultos === 1 ? "espejo" : "espejos"}${medidas ? ` (${medidas})` : ""} · 🕐 ${p.horarioEntrega || "a coordinar"}`,
     ...(aclaracionEntregaDe(items) ? [`📝 ${aclaracionEntregaDe(items)}`] : []),
-    aCobrar > 0 ? `💵 COBRAR: ${money(aCobrar)}` : "💵 No cobra nada: está pagado.",
+    ...cobro.lineas,
   ].join("\n");
-  return { texto, aCobrar };
+  return { texto, aCobrar: cobro.c.total, c: cobro.c };
+}
+// Los totales de una vuelta del flete: lo que cobra, sus viajes, con cuánto se
+// queda y cuánto nos entrega. Las salidas cargadas a mano suman a lo que cobra
+// y entrega (el viaje de esas se arregla aparte).
+function sumaDeLaVuelta() {
+  const t = { total: 0, viaje: 0, seQueda: 0, lePagamos: 0, rinde: 0 };
+  return {
+    agregar(c) { t.total += c.total; t.viaje += c.viaje; t.seQueda += c.fleteSeQueda; t.lePagamos += c.fleteLePagamos; t.rinde += c.fleteRinde; },
+    agregarManual(monto) { const n = Number(monto) || 0; t.total += n; t.rinde += n; },
+    lineas() {
+      const out = [t.total > 0 ? `💰 Total a cobrar en la vuelta: ${money(t.total)}` : "💰 No hay que cobrar nada en esta vuelta."];
+      if (t.viaje > 0) {
+        const partes = [t.seQueda > 0 ? `te quedás con ${money(t.seQueda)} de lo que cobrás` : "", t.lePagamos > 0 ? `te pagamos ${money(t.lePagamos)}` : ""].filter(Boolean);
+        out.push(`🚚 Tus viajes: ${money(t.viaje)}${partes.length ? ` — ${partes.join(" y ")}` : ""}`);
+      }
+      if (t.total > 0) out.push(`↩️ Nos entregás en total: ${money(t.rinde)}`);
+      return out;
+    },
+  };
 }
 
 // La tanda con todo lo elegido en la tabla: entregas de pedidos y salidas
@@ -11394,11 +11441,11 @@ function mensajeParaElFleteTanda(filas, nombreFlete) {
   if (!lista.length) return "";
   if (!lista.some((f) => f.manual)) return mensajeParaElFleteVarias(lista.map((f) => f.items), nombreFlete);
   const hola = nombreFlete ? `Hola ${String(nombreFlete).trim()}!` : "Hola!";
-  let total = 0;
+  const suma = sumaDeLaVuelta();
   const bloques = lista.map((f, i) => {
-    if (f.manual) { total += Number(f.m.cobrar) || 0; return bloqueSalidaManual(f.m, i); }
+    if (f.manual) { suma.agregarManual(f.m.cobrar); return bloqueSalidaManual(f.m, i); }
     const b = bloqueEntregaPedido(f.items, i);
-    total += b.aCobrar;
+    suma.agregar(b.c);
     return b.texto;
   });
   return [
@@ -11406,7 +11453,7 @@ function mensajeParaElFleteTanda(filas, nombreFlete) {
     "",
     bloques.join("\n\n"),
     "",
-    total > 0 ? `💰 Total a cobrar en la vuelta: ${money(total)}` : "💰 No hay que cobrar nada en esta vuelta.",
+    ...suma.lineas(),
     "",
     `¿Qué día ${lista.length === 1 ? "la" : "las"} podés hacer?`,
   ].join("\n");
@@ -12439,7 +12486,23 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
    por pedido (aunque tenga varios espejos), se abre tocándola y el ✓ lo da por
    retirado con la MISMA regla que una entrega (avisado y cobrando el saldo).
    =========================================================================== */
-const DIRECCION_LOCAL = "José Mármol 1660, Capital Federal";
+const DIRECCION_LOCAL = "José Mármol 1660, Boedo, CABA";
+// La dirección y los horarios que ve el cliente: en el link de seguimiento y
+// en el mensaje de «ya está listo para retirar». Se cambian solo acá.
+const LOCAL_PUBLICO = {
+  direccion: "José Mármol 1660, Boedo, CABA",
+  entre: "Entre Inclán y Salcedo",
+  horarios: "Lunes a viernes de 9 a 12 hs y de 13 a 17 hs\nSábados de 9 a 13 hs",
+  // Corto a propósito: va en el mensaje de WhatsApp.
+  mapa: "https://maps.google.com/?q=Jos%C3%A9+M%C3%A1rmol+1660,+Boedo,+CABA",
+};
+function textoLocalParaRetirar() {
+  return [
+    `📍 ${LOCAL_PUBLICO.direccion} (${LOCAL_PUBLICO.entre.charAt(0).toLowerCase()}${LOCAL_PUBLICO.entre.slice(1)})`,
+    ...LOCAL_PUBLICO.horarios.split("\n").map((h) => `🕐 ${h}`),
+    `🗺️ Cómo llegar: ${LOCAL_PUBLICO.mapa}`,
+  ].join("\n");
+}
 
 // El aviso de «ya está listo» para un pedido que se retira, con todos sus
 // espejos y lo que queda por pagar.
@@ -12457,7 +12520,8 @@ function mensajeRetiro(items) {
     "",
     espejos,
     "",
-    `📍 ${DIRECCION_LOCAL}`,
+    textoLocalParaRetirar(),
+    "",
     cuando,
     "",
     detalleCobroEntregaGrupo(lista),
@@ -26773,13 +26837,7 @@ function PuertaSeguimiento({ onProbar, tema }) {
 
 // ===== Cómo recibe el pedido el cliente (04/11/2026) ======================
 // En el link de seguimiento: la forma de entrega y sus datos. Si retira, la
-// dirección del local y los horarios.
-const LOCAL_PUBLICO = {
-  direccion: "José Mármol 1660, Boedo, CABA",
-  entre: "Entre Inclán y Salcedo",
-  horarios: "Lunes a viernes de 9 a 12 hs y de 13 a 17 hs\nSábados de 9 a 13 hs",
-  mapa: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent("José Mármol 1660, Boedo, Ciudad Autónoma de Buenos Aires")}`,
-};
+// dirección del local y los horarios (LOCAL_PUBLICO, junto a DIRECCION_LOCAL).
 function datosEntregaPublica(p) {
   const x = p || {};
   const m = x.metodo || "";
