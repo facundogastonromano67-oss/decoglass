@@ -25586,6 +25586,15 @@ function Style() {
       .dg-seguimiento-footer { text-align:center; font-size:11px; color:var(--dg-text-faint); margin-top:16px; }
       .dg-seguimiento-whatsapp { justify-content:center; text-decoration:none; width:100%; margin-top:18px; background:linear-gradient(145deg, #25D366, #1DA851); }
       .dg-seguimiento-docs { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+      .dg-seg-entrega { margin-top:16px; padding:14px 15px; border-radius:12px; background:rgba(var(--dg-line-rgb),0.04); border:1px solid rgba(var(--dg-line-rgb),0.12); }
+      .dg-seg-entrega-titulo { display:flex; align-items:center; gap:7px; font-family:'Jost', sans-serif; font-weight:700; font-size:14px; color:var(--dg-text); }
+      .dg-seg-entrega-titulo svg { color:var(--dg-accent); flex:none; }
+      .dg-seg-entrega-datos { margin:12px 0 0; display:flex; flex-direction:column; gap:10px; }
+      .dg-seg-entrega-datos dt { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-seg-entrega-datos dd { margin:2px 0 0; font-size:14px; line-height:1.45; color:var(--dg-text); white-space:pre-line; overflow-wrap:anywhere; }
+      .dg-seg-entrega-datos dd small { display:block; font-size:12px; color:var(--dg-text-dim); }
+      .dg-seg-entrega-mapa { margin-top:12px; width:100%; justify-content:center; text-decoration:none; }
+      .dg-seg-entrega-nota { margin:10px 0 0; font-size:12px; line-height:1.4; color:var(--dg-text-dim); }
       .dg-seguimiento-espejo { padding:14px 0; border-top:1px solid rgba(var(--dg-line-rgb),0.1); }
       .dg-seguimiento-espejo:first-of-type { border-top:none; padding-top:4px; }
       .dg-seguimiento-espejo-titulo { display:flex; align-items:center; justify-content:space-between; gap:8px; font-family:'Jost', sans-serif; font-weight:700; font-size:13px; color:var(--dg-text-dim); text-transform:uppercase; letter-spacing:0.3px; }
@@ -26762,6 +26771,79 @@ function PuertaSeguimiento({ onProbar, tema }) {
   );
 }
 
+// ===== Cómo recibe el pedido el cliente (04/11/2026) ======================
+// En el link de seguimiento: la forma de entrega y sus datos. Si retira, la
+// dirección del local y los horarios.
+const LOCAL_PUBLICO = {
+  direccion: "José Mármol 1660, Boedo, CABA",
+  entre: "Entre Inclán y Salcedo",
+  horarios: "Lunes a viernes de 9 a 12 hs y de 13 a 17 hs\nSábados de 9 a 13 hs",
+  mapa: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent("José Mármol 1660, Boedo, Ciudad Autónoma de Buenos Aires")}`,
+};
+function datosEntregaPublica(p) {
+  const x = p || {};
+  const m = x.metodo || "";
+  const texto = (v) => String(v || "").trim();
+  const fila = (label, valor, sub) => (texto(valor) ? { label, valor: texto(valor), sub: sub || "" } : null);
+  const direccion = [texto(x.detalleEntrega), texto(x.piso)].filter(Boolean).join(", ");
+  if (m === "Retira") {
+    return {
+      tipo: "retiro", titulo: "Retirás en nuestro local",
+      filas: [fila("Dirección", LOCAL_PUBLICO.direccion, LOCAL_PUBLICO.entre), fila("Horarios", LOCAL_PUBLICO.horarios)],
+      mapa: LOCAL_PUBLICO.mapa,
+      nota: "Te avisamos por WhatsApp cuando esté listo para retirar.",
+    };
+  }
+  if (m === "Envío" || m === "Envío flex" || m === "Colocación") {
+    return {
+      tipo: m === "Colocación" ? "colocacion" : "envio",
+      titulo: m === "Colocación" ? "Colocación a domicilio" : "Envío a domicilio",
+      filas: [
+        fila("Dirección", direccion || "A confirmar"),
+        fila("Barrio", [texto(x.barrio), texto(x.localidad)].filter(Boolean).join(", ")),
+        fila("Horario", x.horarioEntrega || "A coordinar"),
+      ].filter(Boolean),
+      nota: "Si algún dato no es correcto, avisanos por WhatsApp.",
+    };
+  }
+  if (m === "Interior") {
+    const lugar = [texto(x.localidad), texto(x.provincia)].filter(Boolean).join(", ") + (texto(x.codigoPostal) ? ` (CP ${texto(x.codigoPostal)})` : "");
+    const t = tipoInterior(x);
+    return {
+      tipo: "interior", titulo: "Envío al interior por Vía Cargo",
+      filas: [
+        t === "sucursal"
+          ? fila("Retirás en la sucursal", x.sucursalViaCargo || "A confirmar")
+          : fila("Dirección", direccion || "A confirmar"),
+        fila("Localidad", lugar),
+      ].filter(Boolean),
+      nota: t === "sucursal" ? "Cuando lo despachemos te pasamos el número de guía para seguirlo." : "Si algún dato no es correcto, avisanos por WhatsApp.",
+    };
+  }
+  return { tipo: "confirmar", titulo: "Forma de entrega a confirmar", filas: [], nota: "Te escribimos para coordinar cómo te llega el pedido." };
+}
+function EntregaPublica(props) {
+  const d = datosEntregaPublica(props.pedido);
+  const Icono = d.tipo === "retiro" ? Building2 : d.tipo === "colocacion" ? Wrench : d.tipo === "confirmar" ? Package : Truck;
+  return (
+    <section className="dg-seg-entrega" aria-label="Cómo recibís tu pedido">
+      <div className="dg-seg-entrega-titulo"><Icono size={15} aria-hidden="true" /> {d.titulo}</div>
+      {d.filas.length > 0 && (
+        <dl className="dg-seg-entrega-datos">
+          {d.filas.map((f) => (
+            <div key={f.label}>
+              <dt>{f.label}</dt>
+              <dd>{f.valor}{f.sub && <small>{f.sub}</small>}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {d.mapa && <a className="dg-btn-ghost dg-mini-btn dg-seg-entrega-mapa" href={d.mapa} target="_blank" rel="noopener noreferrer"><MapPin size={14} /> Cómo llegar</a>}
+      {d.nota && <p className="dg-seg-entrega-nota">{d.nota}</p>}
+    </section>
+  );
+}
+
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
   const [fallo, setFallo] = useState("");            // la conexión falló (no es lo mismo que «no existe»)
@@ -26880,6 +26962,8 @@ function SeguimientoPublico({ pedidoId }) {
               <strong>Despachado. Ya podés seguirlo con el número de guía más abajo.</strong>
             </p>
           )}
+
+          {pedido.estado !== "Entregado" && <EntregaPublica pedido={pedido} />}
 
           <div className="dg-verif-specs" style={{ marginTop: 16 }}>
             <div className="dg-fab-medida">
@@ -27070,6 +27154,8 @@ function SeguimientoGrupoPublico({ grupoId }) {
                 </div>
               );
             })}
+
+            {activos.some((e) => e.estado !== "Entregado") && <EntregaPublica pedido={activos.find((e) => e.estado !== "Entregado") || primero} />}
 
             <div className="dg-seguimiento-docs">
               {puedeDescargarFactura && (
