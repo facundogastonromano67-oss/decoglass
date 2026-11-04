@@ -10834,6 +10834,22 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
 // su grupo están listos (no alcanza con que estén 4 de 5). Así los rótulos y la
 // papelería de Vía Cargo se habilitan recién cuando el pedido entero se puede
 // despachar.
+// Marcar embalado desde Envíos al interior (04/11/2026): a veces lo embalan y
+// no lo marcan en Fábrica, y sin eso no se habilitan los rótulos ni los datos
+// para Vía Cargo. Queda igual que si lo marcaran en Fábrica: embalado, listo,
+// y con el aviso al cliente por hacer. Las etapas de antes que no se marcaron
+// no se inventan (los números del taller medirían tiempos que no existieron).
+function embaladoDesdeInterior(p, ahora, quien) {
+  if (!p || pedidoEstaListo(p) || p.estado === "Cancelado") return p;
+  const marca = (x) => (x.produccionEmbaladoFecha ? x : { ...x, produccionEmbaladoFecha: ahora, produccionEmbaladoPor: quien });
+  let r = marca({ ...p, vistoFabrica: p.vistoFabrica || ahora, vistoFabricaPor: p.vistoFabricaPor || quien });
+  if (Array.isArray(p.unidades) && p.unidades.length) r.unidades = p.unidades.map((u) => marca({ ...u, etapa: "embalado" }));
+  return {
+    ...r, produccionEtapa: "embalado", estado: "Espejo listo", produccionListaFecha: ahora,
+    clienteAvisado: false, clienteAvisadoFecha: "", envioConfirmado: false, envioConfirmadoFecha: "",
+  };
+}
+
 function grupoInteriorCompleto(pedido, todos) {
   const grupo = pedido?.grupoId;
   if (!grupo) return pedidoEstaListo(pedido);
@@ -10841,7 +10857,52 @@ function grupoInteriorCompleto(pedido, todos) {
   return hermanos.length > 0 && hermanos.every((p) => pedidoEstaListo(p));
 }
 
-function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
+function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onRegistrar, vendedores = [], stockEspejos = [], session }) {
+  // Todos los datos del pedido, desde acá (04/11/2026): las mismas ventanas
+  // que en Envíos y en Pedidos, y guardando con las mismas reglas.
+  const [editandoVenta, setEditandoVenta] = useState(null);
+  const [editandoEspejo, setEditandoEspejo] = useState(null);
+  function espejosDeLaVenta(p) {
+    const g = p.grupoId || p.id;
+    return pedidos.filter((x) => (x.grupoId || x.id) === g).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  }
+  function nuevoNumeroDePedido() { return pedidos.reduce((m, p) => Math.max(m, p.orden || 0), 0) + 1; }
+  function guardarEspejo(pedido) {
+    const prep = prepararGuardadoPedido(pedidos, pedido, nuevoNumeroDePedido);
+    if (prep.error) { window.alert(prep.error); return; }
+    let toSave = prep.withOrden;
+    if (prep.cambio && onCreateIncome) {
+      onCreateIncome(prep.cambio.ingreso);
+      toSave = { ...toSave, montoRegistrado: prep.cambio.cobrado };
+    }
+    onChange(normalizarOrdenesPorGrupo(pedidos.map((p) => (p.id === toSave.id ? toSave : p))));
+    if (onRegistrar) onRegistrar("Editó un pedido", `#${toSave.orden} — ${toSave.cliente} — ${money(toSave.monto)}`);
+    setEditandoEspejo(null);
+  }
+  function guardarVenta(editado, _opts, montosPorEspejo) {
+    const grupo = editandoVenta || [];
+    const { actualizados, ingresos } = prepararEntregaEditada(pedidos, grupo, editado, montosPorEspejo, !!onCreateIncome);
+    onChange(actualizados);
+    if (ingresos.length && onCreateIncome) onCreateIncome(ingresos);
+    if (onRegistrar && grupo[0]) onRegistrar("Editó los datos de entrega", `#${grupo[0].orden} — ${editado.cliente} — ${grupo.length} espejo(s)`);
+    setEditandoVenta(null);
+  }
+  // Los espejos que se marcan embalados (uno o todos los que faltan).
+  function marcarEmbalados(espejos) {
+    const faltan = (espejos || []).filter((e) => !pedidoEstaListo(e) && e.estado !== "Cancelado");
+    if (!faltan.length) return;
+    const sinArmar = faltan.filter((e) => !e.produccionArmadoFecha && !esperaEmbalajeInterior(e));
+    const lista = faltan.map((e) => `#${e.orden} ${medidaEspejo(e) || ""}`.trim()).join(", ");
+    const aviso = sinArmar.length
+      ? `\n\nOjo: en Fábrica ${sinArmar.length === 1 ? "figura" : "figuran"} ${sinArmar.map((e) => `#${e.orden} «${estadoProduccionLabel(e)}»`).join(", ")}. Marcalo solo si de verdad ya está embalado.`
+      : "";
+    if (!window.confirm(`¿${faltan.length === 1 ? "Ya está embalado" : "Ya están embalados"} ${lista} para viajar al interior?${aviso}\n\nQueda como listo y se habilitan los rótulos y los datos para Vía Cargo.`)) return;
+    const ahora = new Date().toISOString();
+    const quien = session?.nombre || (session?.role === "admin" ? "Administrador" : "PostVenta");
+    const ids = new Set(faltan.map((e) => e.id));
+    onChange(pedidos.map((p) => (ids.has(p.id) ? embaladoDesdeInterior(p, ahora, quien) : p)));
+    if (onRegistrar) onRegistrar("Marcó embalado", `${lista} — ${faltan[0].cliente || "Sin nombre"} (desde Envíos al interior)`);
+  }
   const [busqueda, setBusqueda] = useState("");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
@@ -10985,7 +11046,12 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
                                   {f.items.map((e) => (
                                     <li key={e.id} className={pedidoEstaListo(e) ? "dg-salida-ok" : ""}>
                                       <span className="dg-salida-marca" aria-hidden="true">{pedidoEstaListo(e) ? <Check size={13} /> : null}</span>
-                                      #{e.orden} · {medidaEspejo(e)}{formaAparte(e) ? ` · ${formaAparte(e)}` : ""}
+                                      <span className="dg-interior-espejo-txt">#{e.orden} · {medidaEspejo(e)}{formaAparte(e) ? ` · ${formaAparte(e)}` : ""}{!pedidoEstaListo(e) && <small> · {esperaEmbalajeInterior(e) ? "falta embalar" : estadoProduccionLabel(e)}</small>}</span>
+                                      {canEdit && !pedidoEstaListo(e) && (
+                                        <button type="button" className="dg-btn-ghost dg-mini-btn dg-interior-embalar" onClick={() => marcarEmbalados([e])}>
+                                          <Package size={12} /> Embalado
+                                        </button>
+                                      )}
                                     </li>
                                   ))}
                                 </ul>
@@ -11018,6 +11084,27 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
                                 <div className="dg-salida-tit">El remito de Vía Cargo</div>
                                 <RemitoViaCargoCampo pedido={f.p} canEdit={canEdit} onCambiar={(cambios) => updateGrupo(f.p, cambios)} />
                               </div>
+
+                              {canEdit && (
+                                <div className="dg-salida-bloque dg-salida-bloque-ancho dg-salida-todo">
+                                  <div className="dg-salida-tit">Todo el pedido</div>
+                                  <div className="dg-salida-acciones">
+                                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoVenta(espejosDeLaVenta(f.p))}>
+                                      <Pencil size={13} /> Cliente, entrega, factura y plata
+                                    </button>
+                                    {f.items.map((e) => (
+                                      <button type="button" key={e.id} className="dg-btn-ghost dg-mini-btn" onClick={() => setEditandoEspejo(e)}>
+                                        <Pencil size={13} /> Espejo {medidaEspejo(e) || `#${e.orden}`}{f.items.length > 1 ? ` (#${e.orden})` : ""}
+                                      </button>
+                                    ))}
+                                    {f.items.filter((e) => !pedidoEstaListo(e)).length > 1 && (
+                                      <button type="button" className="dg-btn-ghost dg-mini-btn dg-interior-embalar" onClick={() => marcarEmbalados(f.items)}>
+                                        <Package size={13} /> Marcar embalados los {f.items.filter((e) => !pedidoEstaListo(e)).length}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
 
                               <div className="dg-salida-pie">
                                 <span className="dg-salida-datos">
@@ -11095,6 +11182,43 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit }) {
           })}
         </div>
       </div>
+
+      {editandoVenta && (
+        <PedidoModal
+          key={`interior-venta-${editandoVenta[0]?.id}`}
+          pedido={editandoVenta[0]}
+          modo="entrega"
+          grupo={editandoVenta}
+          cuantosEspejos={editandoVenta.length}
+          vendedores={vendedores}
+          canEditFull={canEdit}
+          canEditEstadoOnly={false}
+          onClose={() => setEditandoVenta(null)}
+          onSave={guardarVenta}
+          onDelete={null}
+          stockEspejos={stockEspejos}
+          esNuevo={false}
+          aviso={null}
+          clientes={clientesDeLosPedidos(pedidos)}
+        />
+      )}
+      {editandoEspejo && (
+        <PedidoModal
+          key={`interior-espejo-${editandoEspejo.id}`}
+          pedido={editandoEspejo}
+          modo="espejo"
+          vendedores={vendedores}
+          canEditFull={canEdit}
+          canEditEstadoOnly={false}
+          onClose={() => setEditandoEspejo(null)}
+          onSave={guardarEspejo}
+          onDelete={null}
+          stockEspejos={stockEspejos}
+          esNuevo={false}
+          aviso={null}
+          clientes={clientesDeLosPedidos(pedidos)}
+        />
+      )}
     </div>
   );
 }
@@ -22354,7 +22478,7 @@ function SectorPage({
       )}
 
       {subpage === "interior" && sector.id === "postventa" && (
-        canSeePedidos ? <EnviosInteriorPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} />
+        canSeePedidos ? <EnviosInteriorPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} vendedores={vendedores} stockEspejos={stockEspejos} session={session} />
           : <LockedPage label="Envíos al interior" onLogin={onRequestLogin} />
       )}
 
@@ -23141,7 +23265,10 @@ function Style() {
       /* Al que le faltan espejos no se le puede armar el despacho: se nota. */
       .dg-interior-fila-falta > td { opacity:.72; }
       .dg-interior-espejos { list-style:none; margin:9px 0 0; padding:0; display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dg-text-dim); }
-      .dg-interior-espejos li { display:flex; align-items:center; min-width:0; }
+      .dg-interior-espejos li { display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap; }
+      .dg-interior-espejo-txt { flex:1; min-width:0; }
+      .dg-interior-espejo-txt small { color:var(--dg-warning); }
+      .dg-interior-embalar { display:inline-flex; align-items:center; gap:4px; color:var(--dg-success); border-color:rgba(var(--dg-success-rgb),.35); }
       .dg-interior-espejos b { color:var(--dg-text); font-weight:600; }
       /* Lo que se le ofrece al cliente es el campo más importante del reclamo:
          va ancho, no apretado en una columna. */
