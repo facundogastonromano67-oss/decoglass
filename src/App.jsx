@@ -10850,6 +10850,14 @@ function embaladoDesdeInterior(p, ahora, quien) {
   };
 }
 
+// Marcar despachado a mano (04/11/2026): salió hacia Vía Cargo aunque todavía
+// no tengan el número de guía. Pasa lo mismo que al cargar la guía: los
+// espejos listos del pedido quedan «Despachado» con la fecha de hoy.
+function despachadoDesdeInterior(p, hoy) {
+  if (!p || p.metodo !== "Interior" || !pedidoEstaListo(p) || ["Despachado", "Entregado", "Cancelado"].includes(p.estado)) return p;
+  return { ...p, estado: "Despachado", despachadoFecha: p.despachadoFecha || hoy };
+}
+
 function grupoInteriorCompleto(pedido, todos) {
   const grupo = pedido?.grupoId;
   if (!grupo) return pedidoEstaListo(pedido);
@@ -10887,6 +10895,20 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
     if (onRegistrar && grupo[0]) onRegistrar("Editó los datos de entrega", `#${grupo[0].orden} — ${editado.cliente} — ${grupo.length} espejo(s)`);
     setEditandoVenta(null);
   }
+  // Despachar a mano: los pedidos elegidos (o uno solo) salen hacia Vía Cargo.
+  function marcarDespachados(filasElegidas) {
+    const lista = (filasElegidas || []).filter((f) => f.completo);
+    if (!lista.length) return;
+    const nombres = lista.map((f) => `${f.ordenes} ${f.p.cliente || ""}`.trim()).join("\n• ");
+    if (!window.confirm(`¿Ya ${lista.length === 1 ? "salió" : "salieron"} hacia Vía Cargo?\n\n• ${nombres}\n\nPasa${lista.length === 1 ? "" : "n"} a «Despachados». Cuando tengas el número de guía, cargalo ahí así el cliente lo puede seguir.`)) return;
+    const hoy = isoLocal(new Date());
+    const ids = new Set(lista.flatMap((f) => f.items.map((e) => e.id)));
+    onChange(pedidos.map((p) => (ids.has(p.id) ? despachadoDesdeInterior(p, hoy) : p)));
+    if (onRegistrar) onRegistrar("Marcó despachado", `${lista.map((f) => `${f.ordenes} ${f.p.cliente || ""}`.trim()).join(", ")} (Vía Cargo)`);
+    setSeleccion(new Set());
+    setFilaAbierta(null);
+  }
+  const [guiaAbierta, setGuiaAbierta] = useState(null);
   // Los espejos que se marcan embalados (uno o todos los que faltan).
   function marcarEmbalados(espejos) {
     const faltan = (espejos || []).filter((e) => !pedidoEstaListo(e) && e.estado !== "Cancelado");
@@ -11117,6 +11139,11 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
                                     <Printer size={13} /> Rótulos de este pedido
                                   </button>
                                 )}
+                                {f.completo && canEdit && (
+                                  <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => marcarDespachados([f])}>
+                                    <Truck size={13} /> Marcar despachado
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -11148,6 +11175,11 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
               <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => abrirTirasContieneEspejo(espejosElegidos.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}>
                 <AlertTriangle size={13} /> Tiras "Contiene espejo"
               </button>
+              {canEdit && (
+                <button type="button" className="dg-btn-ghost dg-mini-btn dg-interior-despachar" onClick={() => marcarDespachados(elegidas)}>
+                  <Truck size={13} /> Marcar {elegidas.length === 1 ? "despachado" : `despachados (${elegidas.length})`}
+                </button>
+              )}
               <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setSeleccion(new Set())}>
                 <X size={13} /> Limpiar
               </button>
@@ -11167,17 +11199,31 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
             const p = items[0];
             const ordenes = [...new Set(items.map((x) => x.orden))].map((o) => `#${o}`).join(" · ");
             const total = totalUnidades(items);
+            const clave = p.grupoId || p.id;
+            const sinGuia = !p.remitoNumeroGuia?.trim();
             return (
-              <div className="dg-task dg-pago-row" key={p.grupoId || p.id}>
+              <Fragment key={clave}>
+              <div className="dg-task dg-pago-row">
                 <div className="dg-pago-info">
                   <span>{ordenes} · {p.cliente}{total > 1 ? ` · ${total} espejos` : ""}</span>
-                  <span className="dg-pago-meta">Despachado el {p.despachadoFecha || "—"} · Guía: {p.remitoNumeroGuia || "—"} · {p.localidad || "—"}{p.provincia ? `, ${p.provincia}` : ""}</span>
+                  <span className="dg-pago-meta">Despachado el {p.despachadoFecha ? fechaLargaCorta(p.despachadoFecha) : "—"} · Guía: {sinGuia ? <span className="dg-envios-falta">falta cargarla</span> : p.remitoNumeroGuia} · {p.localidad || "—"}{p.provincia ? `, ${p.provincia}` : ""}</span>
                 </div>
-                {p.remitoNumeroGuia?.trim() && (
+                {!sinGuia && (
                   <a className="dg-btn-ghost dg-mini-btn" href={linkViaCargo(p.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><ExternalLink size={13} /> Ver en Vía Cargo</a>
+                )}
+                {canEdit && (
+                  <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setGuiaAbierta(guiaAbierta === clave ? null : clave)} aria-expanded={guiaAbierta === clave}>
+                    <FileText size={13} /> {sinGuia ? "Cargar la guía" : "Remito"}
+                  </button>
                 )}
                 <button className="dg-btn-primary dg-mini-btn" onClick={() => marcarEntregadoGrupo(p)}><CheckCircle2 size={13} /> Confirmar entrega</button>
               </div>
+              {guiaAbierta === clave && (
+                <div className="dg-interior-guia">
+                  <RemitoViaCargoCampo pedido={p} canEdit={canEdit} onCambiar={(cambios) => updateGrupo(p, cambios)} />
+                </div>
+              )}
+              </Fragment>
             );
           })}
         </div>
@@ -23269,6 +23315,7 @@ function Style() {
       .dg-interior-espejo-txt { flex:1; min-width:0; }
       .dg-interior-espejo-txt small { color:var(--dg-warning); }
       .dg-interior-embalar { display:inline-flex; align-items:center; gap:4px; color:var(--dg-success); border-color:rgba(var(--dg-success-rgb),.35); }
+      .dg-interior-guia { margin:-2px 0 10px; padding:12px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:10px; background:rgba(var(--dg-line-rgb),.03); }
       .dg-interior-espejos b { color:var(--dg-text); font-weight:600; }
       /* Lo que se le ofrece al cliente es el campo más importante del reclamo:
          va ancho, no apretado en una columna. */
@@ -26088,6 +26135,32 @@ function pesoCajaInterior(pedido) {
   return { peso: estimado, estimado: true };
 }
 
+// ===== Hojas para imprimir (04/11/2026) ===================================
+// Antes se abría una pestaña en blanco y se le escribía la hoja adentro. Esa
+// pestaña queda pegada a la app: mientras el cuadro de imprimir está abierto
+// la app entera se traba, y si uno vuelve a la app sin cerrarlo parece colgada
+// (pasaba con «Datos para Vía Cargo»). Ahora la hoja se abre como una página
+// aparte de verdad (noopener): imprime sola y la app sigue andando. Además
+// lleva un botón «Imprimir» por si se cancela el cuadro o no aparece.
+const BARRA_IMPRIMIR = `<div class="dg-barra-imprimir" style="position:sticky;top:0;display:flex;gap:8px;justify-content:flex-end;padding:8px 0;background:#fff;"><button type="button" onclick="window.print()" style="font:600 14px Arial,sans-serif;padding:8px 16px;border:1px solid #111;border-radius:6px;background:#111;color:#fff;cursor:pointer;">Imprimir</button></div><style>@media print { .dg-barra-imprimir { display:none !important; } }</style>`;
+function hojaConBotonImprimir(html) {
+  const texto = String(html || "");
+  return /<body[^>]*>/.test(texto) ? texto.replace(/<body([^>]*)>/, (m) => `${m}\n${BARRA_IMPRIMIR}`) : BARRA_IMPRIMIR + texto;
+}
+function abrirParaImprimir(html) {
+  const url = URL.createObjectURL(new Blob([hojaConBotonImprimir(html)], { type: "text/html;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Se libera después: la pestaña nueva ya la cargó.
+  window.setTimeout(() => URL.revokeObjectURL(url), 120000);
+}
+
 // 1ra impresión del despacho: la planilla con los datos de la empresa y de
 // cada cliente, para dársela al de Vía Cargo y que arme los remitos.
 function abrirDatosDespacho(lista) {
@@ -26140,8 +26213,7 @@ function abrirDatosDespacho(lista) {
   </table>
   <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
-  const ventana = window.open("", "_blank");
-  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+  abrirParaImprimir(html);
 }
 
 // 3ra impresión del despacho: tiras "CONTIENE ESPEJO" para envolver los
@@ -26168,8 +26240,7 @@ function abrirTirasContieneEspejo(cantidadEspejos) {
   ${tiras}
   <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
-  const ventana = window.open("", "_blank");
-  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+  abrirParaImprimir(html);
 }
 
 // Agrupa los espejos por pedido: cada grupo es un envío a un solo destino,
@@ -26263,8 +26334,7 @@ function abrirRotulos(pedidosOPedido) {
   </div>
   <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
-  const ventana = window.open("", "_blank");
-  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+  abrirParaImprimir(html);
 }
 
 function abrirGarantia(pedidosOEspejo) {
@@ -26331,8 +26401,7 @@ function abrirGarantia(pedidosOEspejo) {
 
   <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
-  const ventana = window.open("", "_blank");
-  if (ventana) { ventana.document.write(html); ventana.document.close(); }
+  abrirParaImprimir(html);
 }
 
 // ==== Chat con clientes ======================================================
@@ -27144,7 +27213,7 @@ function SeguimientoPublico({ pedidoId }) {
           )}
           {pasoActual === 4 && esInterior && (
             <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
-              <strong>Despachado. Ya podés seguirlo con el número de guía más abajo.</strong>
+              <strong>{pedido.remitoNumeroGuia?.trim() ? "Despachado. Ya podés seguirlo con el número de guía más abajo." : "Despachado por Vía Cargo. En cuanto tengamos el número de guía lo vas a ver acá."}</strong>
             </p>
           )}
 
@@ -27334,7 +27403,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
                     <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo. Lo estamos preparando para despachar por Vía Cargo.</strong></p>
                   )}
                   {pasoActual === 4 && esInterior && (
-                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Despachado. Ya podés seguirlo con el número de guía más abajo.</strong></p>
+                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>{conRemito ? "Despachado. Ya podés seguirlo con el número de guía más abajo." : "Despachado por Vía Cargo. En cuanto tengamos el número de guía lo vas a ver acá."}</strong></p>
                   )}
                 </div>
               );
