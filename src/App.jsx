@@ -9,7 +9,7 @@ import {
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
   Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare,
   Mic, NotebookPen, CalendarClock, Undo2, Scissors, Ruler,
-  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList, ChevronUp, ChevronDown, ChevronLeft
+  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList, ChevronUp, ChevronDown, ChevronLeft, GripVertical
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -1790,7 +1790,7 @@ const SHARED_SYNC_KEYS = [
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
   "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas", "misiones",
-  "tareas-sector", "trabas-taller",
+  "tareas-sector", "trabas-taller", "orden-salidas",
 ];
 
 function App() {
@@ -1818,6 +1818,8 @@ function App() {
   // null = todavía no se leyó. Mientras tanto no se traba nada solo: si se
   // escribiera sin haber leído, se pisarían las trabas guardadas.
   const [trabasTaller, setTrabasTaller] = useState(null);
+  // El orden que eligió PostVenta para las salidas de cada día (05/11/2026).
+  const [ordenSalidas, setOrdenSalidas] = useState(null);
   fijarTrabasTaller(trabasTaller);
   const [reclamos, setReclamos] = useState(null);
   const [stockEspejos, setStockEspejos] = useState(null);
@@ -2052,6 +2054,7 @@ function App() {
       "facturas-manuales": setFacturas,
       "envios-logistica": setEnviosLogistica,
       "trabas-taller": (v) => setTrabasTaller(v && typeof v === "object" && !Array.isArray(v) ? v : {}),
+      "orden-salidas": (v) => setOrdenSalidas(v && typeof v === "object" && !Array.isArray(v) ? v : {}),
       "empleados-sueldo": setEmpleadosSueldo,
       "liquidaciones-sueldo": setLiquidaciones,
       // Se MEZCLA con lo que ya hay: si pisara, se perderían las acciones que
@@ -2481,6 +2484,11 @@ function App() {
       setTrabasTaller(leidas && typeof leidas === "object" && !Array.isArray(leidas) ? leidas : {});
     } catch (e) { /* no se pudo leer: queda en null y no se traba nada solo */ }
     try {
+      const os = await storage.get("orden-salidas", true);
+      const leido = os ? JSON.parse(os.value) : {};
+      setOrdenSalidas(leido && typeof leido === "object" && !Array.isArray(leido) ? leido : {});
+    } catch (e) { setOrdenSalidas({}); }
+    try {
       let reclamosGuardados = await reclamosStore.getAll();
       if (reclamosGuardados.length === 0) {
         try {
@@ -2682,6 +2690,7 @@ function App() {
   };
   const persistTurnosAnotado = conRegistro(persistTurnos, () => turnos, (a, b) => describirCambiosTurnos(a, b, tituloDeTarea));
   async function persistTrabasTaller(next) { guardar("trabas-taller", next, () => setTrabasTaller(next)); }
+  async function persistOrdenSalidas(next) { guardar("orden-salidas", next, () => setOrdenSalidas(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
   async function persistProveedores(next) { guardar("proveedores", next, () => setProveedores(next)); }
@@ -3011,6 +3020,8 @@ function App() {
             linkResena={integraciones?.linkResena || ""}
             trabasTaller={trabasTaller || {}}
             onCambiarTrabas={persistTrabasTaller}
+            ordenSalidas={ordenSalidas || {}}
+            onChangeOrdenSalidas={persistOrdenSalidas}
             driveFacturasUrl={integraciones?.driveFacturasUrl || ""}
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
@@ -11449,6 +11460,69 @@ const TURNOS_ENVIO = [
 // La plata NO se mezcla: cada pedido conserva su saldo y su costo de envío.
 // Por eso el envío se suma pedido por pedido (dentro de un mismo pedido sigue
 // valiendo uno solo aunque tenga varios espejos, como siempre).
+// ===== El orden de las salidas, a mano (05/11/2026) ========================
+// PostVenta arrastra las filas para ordenar las salidas de un día (por
+// ejemplo, primero el envío común y después los dos flex). Se reordena solo
+// adentro del mismo día y de la misma parte (listos / en producción): la fecha
+// la sigue mandando la columna «Salida». Se guarda en «orden-salidas», una
+// lista de filas por día, y lo ven todos. El mensaje al flete y la ruta de
+// Google Maps salen en este orden. Lo nuevo de un día ya ordenado va al final.
+function bloqueDeSalida(f) { return `${f.enProduccion ? "prod" : "listo"}|${f.fecha || "sin-fecha"}`; }
+function ordenarConGuardado(filas, orden) {
+  const salida = [];
+  let i = 0;
+  while (i < filas.length) {
+    const bloque = bloqueDeSalida(filas[i]);
+    let j = i;
+    while (j < filas.length && bloqueDeSalida(filas[j]) === bloque) j++;
+    const lista = (orden && Array.isArray(orden[bloque])) ? orden[bloque] : [];
+    const rango = (f) => { const k = lista.indexOf(f.clave); return k < 0 ? Number.MAX_SAFE_INTEGER : k; };
+    salida.push(...filas.slice(i, j).map((f, k) => ({ f, k })).sort((a, b) => rango(a.f) - rango(b.f) || a.k - b.k).map((x) => x.f));
+    i = j;
+  }
+  return salida;
+}
+// Saca los días que ya pasaron hace más de dos semanas: no se miran más.
+function ordenSinViejos(orden, corte) {
+  const nuevo = {};
+  Object.entries(orden || {}).forEach(([k, v]) => {
+    const fecha = String(k).split("|")[1] || "";
+    if (fecha === "sin-fecha" || !corte || fecha >= corte) nuevo[k] = v;
+  });
+  return nuevo;
+}
+// Pone `clave` antes (o después) de `destino`, adentro de su día.
+function moverSalida(orden, filas, clave, destino, despues, corte) {
+  const f = (filas || []).find((x) => x.clave === clave);
+  const g = (filas || []).find((x) => x.clave === destino);
+  if (!f || !g || clave === destino || bloqueDeSalida(f) !== bloqueDeSalida(g)) return orden;
+  const bloque = bloqueDeSalida(f);
+  const sin = filas.filter((x) => bloqueDeSalida(x) === bloque && x.clave !== clave).map((x) => x.clave);
+  const i = sin.indexOf(destino) + (despues ? 1 : 0);
+  sin.splice(i, 0, clave);
+  return { ...ordenSinViejos(orden, corte), [bloque]: sin };
+}
+// Con el teclado: una posición para arriba (-1) o para abajo (+1).
+function moverSalidaPaso(orden, filas, clave, paso, corte) {
+  const f = (filas || []).find((x) => x.clave === clave);
+  if (!f) return orden;
+  const delDia = filas.filter((x) => bloqueDeSalida(x) === bloqueDeSalida(f));
+  const i = delDia.findIndex((x) => x.clave === clave);
+  const otro = delDia[i + paso];
+  if (!otro) return orden;
+  return moverSalida(orden, filas, clave, otro.clave, paso > 0, corte);
+}
+// Logística arma su lista con los pedidos sueltos: se busca en qué lugar del
+// día lo dejó PostVenta (como pedido, como envío junto o como cliente).
+function posicionEnSalidas(orden, p) {
+  const lista = (orden || {})[`listo|${p?.fechaEnvio || "sin-fecha"}`];
+  if (!Array.isArray(lista) || !p) return Number.MAX_SAFE_INTEGER;
+  const junto = envioJuntoDe([p]);
+  const claves = [p.grupoId || p.id, junto ? `junto:${junto}` : "", `cli:${claveClienteEnvio(p)}`].filter(Boolean);
+  const pos = claves.map((c) => lista.indexOf(c)).filter((k) => k >= 0);
+  return pos.length ? Math.min(...pos) : Number.MAX_SAFE_INTEGER;
+}
+
 function claveClienteEnvio(p) {
   const tel = soloNumeros(p?.celular).slice(-8);
   if (tel.length >= 6) return `tel:${tel}`;
@@ -11668,7 +11742,49 @@ function semanaActual() {
   return { hoy: iso(hoy), lunes: iso(lunes), domingo: iso(domingo) };
 }
 
-function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar, salidas = [], onChangeSalidas, proveedores = [], vendedores = [], stockEspejos = [] }) {
+function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onChangeReclamos, onCreateIncome, onRegistrar, salidas = [], onChangeSalidas, proveedores = [], vendedores = [], stockEspejos = [], ordenSalidas = {}, onChangeOrdenSalidas }) {
+  // Arrastrar las filas para ordenar el día (05/11/2026).
+  const [arrastre, setArrastre] = useState(null);
+  const arrastreRef = useRef(null);
+  const puedeOrdenar = canEdit && !!onChangeOrdenSalidas;
+  const corteOrden = () => isoLocal(new Date(Date.now() - 14 * 86400000));
+  function guardarOrden(nuevo) { if (nuevo !== ordenSalidas && onChangeOrdenSalidas) onChangeOrdenSalidas(nuevo); }
+  function empezarArrastre(ev, f) {
+    if (!puedeOrdenar) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (e) {}
+    const a = { clave: f.clave, bloque: bloqueDeSalida(f), sobre: null, despues: false };
+    arrastreRef.current = a;
+    setArrastre(a);
+  }
+  function moverArrastre(ev) {
+    const a = arrastreRef.current;
+    if (!a) return;
+    // Cerca del borde de la pantalla, se corre sola.
+    if (ev.clientY < 70) window.scrollBy(0, -14); else if (ev.clientY > window.innerHeight - 70) window.scrollBy(0, 14);
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const tr = el && el.closest ? el.closest("tr[data-fila]") : null;
+    let n = { ...a, sobre: null, despues: false };
+    if (tr && tr.dataset.bloque === a.bloque) {
+      const r = tr.getBoundingClientRect();
+      n = { ...a, sobre: tr.dataset.fila, despues: ev.clientY > r.top + r.height / 2 };
+    }
+    if (n.sobre !== a.sobre || n.despues !== a.despues) { arrastreRef.current = n; setArrastre(n); }
+  }
+  function soltarArrastre(filasActuales) {
+    const a = arrastreRef.current;
+    arrastreRef.current = null;
+    setArrastre(null);
+    if (!a || !a.sobre || a.sobre === a.clave) return;
+    guardarOrden(moverSalida(ordenSalidas, filasActuales, a.clave, a.sobre, a.despues, corteOrden()));
+  }
+  function teclaOrden(ev, f, filasActuales) {
+    if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    guardarOrden(moverSalidaPaso(ordenSalidas, filasActuales, f.clave, ev.key === "ArrowUp" ? -1 : 1, corteOrden()));
+  }
   // Todos los datos del pedido, desde acá (03/11/2026): las mismas ventanas
   // que en Ventas › Pedidos y guardando con las mismas reglas.
   const [editandoVenta, setEditandoVenta] = useState(null);
@@ -12361,12 +12477,14 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
             saldo: Number(m.cobrar) || 0, flete: Number(m.flete) || 0, fletePagado: !!m.fletePagado, falta: "",
           };
         });
-        const filas = [...filasEnvio, ...filasVisita, ...filasManual]
+        const filasSinOrden = [...filasEnvio, ...filasVisita, ...filasManual]
           // Por fecha (los que no tienen, al final) y, dentro del día, en el
           // orden de GRUPOS_SALIDA: entregas, arreglos, retiros de espejos,
           // devoluciones y retiros de material.
           // y, dentro de cada uno, el que se pasó primero arriba.
           .sort((a, b) => (a.enProduccion ? 1 : 0) - (b.enProduccion ? 1 : 0) || (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo || (a.sePaso || "9999").localeCompare(b.sePaso || "9999"));
+        // Y adentro de cada día, el orden que dejó PostVenta arrastrando.
+        const filas = ordenarConGuardado(filasSinOrden, ordenSalidas);
         // Dos partes (03/11/2026): lo que ya se puede coordinar y lo que sigue
         // en fábrica. Cada una con sus días, como siempre.
         const hayProduccion = filas.some((x) => x.enProduccion);
@@ -12433,10 +12551,25 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           </tr>
                         )}
                         <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${f.manual && f.tipo.clase ? `dg-envios-fila-${f.tipo.clase}` : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""}`}
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${f.manual && f.tipo.clase ? `dg-envios-fila-${f.tipo.clase}` : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""} ${arrastre?.clave === f.clave ? "dg-fila-arrastrada" : ""} ${arrastre?.sobre === f.clave && arrastre.clave !== f.clave ? (arrastre.despues ? "dg-fila-soltar-despues" : "dg-fila-soltar-antes") : ""}`}
+                          data-fila={f.clave}
+                          data-bloque={bloqueDeSalida(f)}
                           onClick={() => setFilaAbierta(abierta ? null : f.clave)}
                           aria-expanded={abierta}>
                           <td className="dg-sel-col">
+                            {puedeOrdenar && (
+                              <button type="button" className="dg-salida-asa"
+                                aria-label={`Mover ${f.cliente}: arrastrá para cambiar el orden del día (o usá las flechas arriba y abajo)`}
+                                title="Arrastrá para cambiar el orden del día"
+                                onPointerDown={(ev) => empezarArrastre(ev, f)}
+                                onPointerMove={moverArrastre}
+                                onPointerUp={() => soltarArrastre(filas)}
+                                onPointerCancel={() => { arrastreRef.current = null; setArrastre(null); }}
+                                onClick={(ev) => ev.stopPropagation()}
+                                onKeyDown={(ev) => teclaOrden(ev, f, filas)}>
+                                <GripVertical size={15} aria-hidden="true" />
+                              </button>
+                            )}
                             {/* Las visitas por reclamo las hacemos nosotros, no el
                                 flete: no entran en la tanda. */}
                             <input type="checkbox" className="dg-sel-check" disabled={f.grupo === 2}
@@ -13906,7 +14039,7 @@ function ModalDestinoRecorrido({ direccionTexto, valorInicial, onConfirmar, onCa
   );
 }
 
-function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra, session, onCreateIncome, onRegistrar }) {
+function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra, session, onCreateIncome, onRegistrar, ordenSalidas = {} }) {
   const listaExtra = Array.isArray(extra) ? extra : [];
   // Arranca en los de mañana: es lo que el flete tiene que preparar hoy.
   const [cuando, setCuando] = useState("manana");
@@ -13985,7 +14118,8 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   // Todo lo que ya está confirmado con el cliente y listo para salir.
   const listosParaSalir = pedidos
     .filter((p) => METODOS_ENVIO_GENERAL.includes(p.metodo) && p.clienteAvisado && p.envioConfirmado && p.estado === "Espejo listo")
-    .sort((a, b) => (fechaEnvioOListo(a) || "9999").localeCompare(fechaEnvioOListo(b) || "9999"));
+    // Mismo día: en el orden que dejó PostVenta en Envíos.
+    .sort((a, b) => (fechaEnvioOListo(a) || "9999").localeCompare(fechaEnvioOListo(b) || "9999") || posicionEnSalidas(ordenSalidas, a) - posicionEnSalidas(ordenSalidas, b));
   const cuandoSale = (p) => {
     const f = p.fechaEnvio || "";
     if (f === mananaIso) return "manana";
@@ -22249,7 +22383,7 @@ function SectorPage({
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "", linkResena = "",
   guias = {}, onChangeGuias, turnos = [], onChangeTurnos, misiones = [], onChangeMisiones,
   tareasSector = {}, onChangeTareasSector,
-  trabasTaller = {}, onCambiarTrabas,
+  trabasTaller = {}, onCambiarTrabas, ordenSalidas = {}, onChangeOrdenSalidas,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
   deudas, onChangeDeudas, notasAnotador, onChangeNotasAnotador,
@@ -22519,7 +22653,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "postventa" && (
-        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} proveedores={proveedores || []} vendedores={vendedores} stockEspejos={stockEspejos} />
+        canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} proveedores={proveedores || []} vendedores={vendedores} stockEspejos={stockEspejos} ordenSalidas={ordenSalidas} onChangeOrdenSalidas={onChangeOrdenSalidas} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
       )}
 
@@ -22539,7 +22673,7 @@ function SectorPage({
       )}
 
       {subpage === "envios" && sector.id === "logistica" && (
-        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} session={session} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} />
+        canSeePedidos ? <EnviosLogisticaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditLogistica} extra={enviosLogistica} onChangeExtra={onChangeEnviosLogistica} session={session} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} ordenSalidas={ordenSalidas} />
           : <LockedPage label="Envíos confirmados" onLogin={onRequestLogin} />
       )}
 
@@ -23107,6 +23241,15 @@ function Style() {
       .dg-chip-material { background:rgba(var(--dg-material-rgb),.26); color:color-mix(in srgb, var(--dg-material) 55%, var(--dg-text)); }
       /* El renglón de cada día: qué sale ese día, contado por tipo. */
       .dg-envios-tabla tbody tr.dg-envios-dia { cursor:default; }
+      /* Ordenar arrastrando (05/11/2026) */
+      .dg-salida-asa { display:inline-flex; align-items:center; justify-content:center; width:22px; height:26px; margin-right:4px; padding:0; border:0; border-radius:5px; background:transparent; color:var(--dg-text-faint); cursor:grab; touch-action:none; vertical-align:middle; }
+      .dg-salida-asa:hover { color:var(--dg-text); background:rgba(var(--dg-line-rgb),.08); }
+      .dg-salida-asa:active { cursor:grabbing; }
+      .dg-salida-asa:focus-visible { outline:2px solid var(--dg-accent); outline-offset:1px; color:var(--dg-text); }
+      .dg-envios-tabla tbody tr.dg-fila-arrastrada { opacity:.45; }
+      .dg-envios-tabla tbody tr.dg-fila-soltar-antes > td { box-shadow:inset 0 3px 0 var(--dg-accent); }
+      .dg-envios-tabla tbody tr.dg-fila-soltar-despues > td { box-shadow:inset 0 -3px 0 var(--dg-accent); }
+      @media (max-width:960px) { .dg-salida-asa { width:34px; height:34px; margin:-4px 2px -4px -6px; } }
       .dg-envios-tabla tbody tr.dg-envios-seccion { cursor:default; }
       .dg-envios-tabla tbody tr.dg-envios-seccion:hover { background:transparent; }
       .dg-envios-seccion > td { padding:16px 12px 10px; border-top:2px solid rgba(var(--dg-accent-rgb),.55); background:rgba(var(--dg-accent-rgb),.1); white-space:normal; }
@@ -23292,6 +23435,7 @@ function Style() {
       .dg-sel-aviso { color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); font-weight:600; }
       .dg-sel-limpiar { margin-left:0; }
       .dg-envios-tabla th.dg-sel-col, .dg-envios-tabla td.dg-sel-col { width:38px; padding-left:10px; padding-right:4px; text-align:center; }
+      .dg-envios-tabla.dg-salidas-tabla th.dg-sel-col, .dg-envios-tabla.dg-salidas-tabla td.dg-sel-col { width:62px; padding-left:4px; white-space:nowrap; text-align:left; }
       /* El casillero es el mismo de todas las listas, para que se reconozca. */
       .dg-sel-check { width:17px; height:17px; margin:0; accent-color:var(--dg-accent); cursor:pointer; vertical-align:middle; }
       .dg-sel-check:disabled { cursor:default; opacity:.3; }
