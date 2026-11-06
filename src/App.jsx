@@ -26619,9 +26619,10 @@ function CajaEnviarChat({ onEnviar, enviando, placeholder }) {
 // --- Cliente: panel de chat dentro de la página pública de seguimiento ---
 function soloDigitos(s) { return String(s || "").replace(/\D/g, ""); }
 
-function ChatClientePublico({ hiloId, meta, cerrado }) {
+function ChatClientePublico({ hiloId, meta, cerrado, yaVerificado = false }) {
   const [mensajes, setMensajes] = useState([]);
-  const [abierto, setAbierto] = useState(false);
+  // Abierto de entrada (06/11/2026): el cliente ve el chat sin tocar nada.
+  const [abierto, setAbierto] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [staffOnline, setStaffOnline] = useState(null);
   const scrollRef = useRef(null);
@@ -26629,7 +26630,7 @@ function ChatClientePublico({ hiloId, meta, cerrado }) {
   const telDigits = soloDigitos(meta?.celular);
   const requiereVerif = telDigits.length >= 4;
   const [verificado, setVerificado] = useState(() => {
-    if (!requiereVerif) return true;
+    if (!requiereVerif || yaVerificado) return true;
     try { return localStorage.getItem("dg_chat_ok_" + hiloId) === "1"; } catch (e) { return false; }
   });
   const [pin, setPin] = useState("");
@@ -26657,7 +26658,7 @@ function ChatClientePublico({ hiloId, meta, cerrado }) {
     let vivo = true;
     const chequear = () => chatStore.hayStaffOnline().then((n) => { if (vivo) setStaffOnline(n); }).catch(() => {});
     chequear();
-    const iv = window.setInterval(chequear, 45000);
+    const iv = window.setInterval(chequear, 120000);
     return () => { vivo = false; window.clearInterval(iv); };
   }, [abierto]);
 
@@ -27401,6 +27402,7 @@ function SeguimientoPublico({ pedidoId }) {
             hiloId={pedido.id}
             meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", celular: pedido.celular || "", entregadoAt: pedido.entregadoFecha || null }}
             cerrado={chatClienteCerrado(pedido)}
+            yaVerificado={!!puerta.clave}
           />
 
           <a className="dg-btn-ghost dg-seguimiento-whatsapp-2" href={linkConsulta} target="_blank" rel="noopener noreferrer">
@@ -27579,6 +27581,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
             hiloId={`grupo:${grupoId}`}
             meta={{ pedidoId: primero.id, grupoId, orden: `#${primero.orden}`, clienteNombre: primero.cliente || "", celular: primero.celular || "", entregadoAt: primero.entregadoFecha || null }}
             cerrado={chatClienteCerrado(primero)}
+            yaVerificado={!!puerta.clave}
           />
         )}
 
