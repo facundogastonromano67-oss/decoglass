@@ -10,7 +10,8 @@
 --    · la foto de la orden en papel;
 --    · lo que se lleva el flete y su teléfono;
 --    · los pagos con sus comprobantes y las fotos de la entrega;
---    · la rendición del flete (lo que cobró y lo que entregó).
+--    · la rendición del flete (lo que cobró y lo que entregó);
+--    · lo que guarda «Volver un paso» (07/11/2026).
 --  La pantalla del cliente no los muestra, pero viajaban igual: alguien que
 --  mire los datos de la página los podía leer. Con esto ya no salen.
 --
@@ -29,7 +30,7 @@ as $$
               - 'vendedor' - 'fletero' - 'fleteLiquidado' - 'fleteLiquidadoMonto'
               - 'aclaracionInterna' - 'aclaracionTaller' - 'ordenPapel'
               - 'fletePago' - 'fleteroTel' - 'pagos' - 'fotosEntrega'
-              - 'rendicionFlete' - 'saldoPorTransferencia'
+              - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer'
   from pedidos_rows
   where id = p_id
 $$;
@@ -46,7 +47,7 @@ as $$
               - 'vendedor' - 'fletero' - 'fleteLiquidado' - 'fleteLiquidadoMonto'
               - 'aclaracionInterna' - 'aclaracionTaller' - 'ordenPapel'
               - 'fletePago' - 'fleteroTel' - 'pagos' - 'fotosEntrega'
-              - 'rendicionFlete' - 'saldoPorTransferencia'
+              - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer'
   from pedidos_rows
   where data->>'grupoId' = p_grupo
 $$;

@@ -7357,6 +7357,52 @@ function unidadPasosCompletados(unidad) {
   const i = PRODUCCION_PASOS.findIndex((p) => p.id === unidad?.etapa);
   return i >= 0 ? i + 1 : 0;
 }
+// ===== Volver un paso (07/11/2026) ========================================
+// Cuando alguien marca un paso por error (cortado, armado, embalado, grabado,
+// biselado, verificado, cliente avisado, envío confirmado), «Volver un paso»
+// lo deja EXACTAMENTE como estaba. Cada paso guarda en el espejo lo que
+// cambió (antes y después), los últimos 3. No es «Reabrir producción»: eso es
+// un retrabajo con motivo y cuenta en los números del taller; esto es una
+// equivocación y no deja rastro (salvo en el historial).
+// Solo se puede durante 24 horas, y solo si nadie volvió a tocar esos datos
+// después (si no, se pisaría lo que hizo otro).
+const PASOS_GUARDADOS = 3;
+const VOLVER_PASO_HORAS = 24;
+function guardarPaso(antes, despues, etiqueta, quien, ahora) {
+  const fecha = ahora || new Date().toISOString();
+  const previos = new Map((antes || []).map((p) => [p.id, p]));
+  return (despues || []).map((p) => {
+    const a = previos.get(p.id);
+    if (!a || a === p) return p;
+    const antesCampos = {};
+    const nuevos = {};
+    new Set([...Object.keys(a), ...Object.keys(p)]).forEach((k) => {
+      if (k === "pasosDeshacer") return;
+      if (JSON.stringify(a[k]) === JSON.stringify(p[k])) return;
+      antesCampos[k] = a[k] === undefined ? null : a[k];
+      nuevos[k] = p[k] === undefined ? null : p[k];
+    });
+    if (!Object.keys(nuevos).length) return p;
+    const pila = Array.isArray(a.pasosDeshacer) ? a.pasosDeshacer : [];
+    return { ...p, pasosDeshacer: [{ etiqueta, quien: quien || "", fecha, antes: antesCampos, nuevos }, ...pila].slice(0, PASOS_GUARDADOS) };
+  });
+}
+function pasoParaVolver(p, ahora) {
+  const u = Array.isArray(p?.pasosDeshacer) ? p.pasosDeshacer[0] : null;
+  if (!u) return null;
+  const t = new Date(u.fecha).getTime();
+  if (Number.isNaN(t) || (ahora ?? Date.now()) - t > VOLVER_PASO_HORAS * 3600000) return null;
+  const intacto = Object.entries(u.nuevos || {}).every(([k, v]) => JSON.stringify(p[k] === undefined ? null : p[k]) === JSON.stringify(v));
+  return intacto ? u : null;
+}
+function volverUnPaso(p, ahora) {
+  const u = pasoParaVolver(p, ahora);
+  if (!u) return p;
+  const r = { ...p, pasosDeshacer: p.pasosDeshacer.slice(1) };
+  Object.entries(u.antes || {}).forEach(([k, v]) => { if (v === null) delete r[k]; else r[k] = v; });
+  return r;
+}
+
 // Recalcula los campos del pedido a partir del estado de todas sus unidades.
 function sincronizarPedidoConUnidades(pedido, unidades, ahora) {
   const compl = unidades.map(unidadPasosCompletados);
@@ -8299,7 +8345,7 @@ function BotonArchivo({ bucket, valor, children, className = "dg-factura-actual"
   );
 }
 
-function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar }) {
+function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado, onEnvioConfirmado, onEntregar, onVolverPaso = null }) {
   const conEnvio = esPedidoConEnvio(pedido);
   const entregado = pedido.estado === "Entregado";
   const verificado = pedidoFueVerificado(pedido) || entregado;
@@ -8439,6 +8485,11 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
       <div className="dg-order-flow-slide" key={`${pedido.id}-${pasoVisible}`}>
         {pasos[pasoVisible]}
       </div>
+      {canEdit && onVolverPaso && pasoParaVolver(pedido) && (
+        <button type="button" className="dg-volver-paso" onClick={() => onVolverPaso(pedido)}>
+          <Undo2 size={13} /> Volver un paso <small>(«{pasoParaVolver(pedido).etiqueta}»)</small>
+        </button>
+      )}
     </div>
   );
 }
@@ -9276,10 +9327,11 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     savePedido({ ...p, estado: "Entregado" });
     if (onRegistrar) onRegistrar("Marcó entregado", `#${p.orden} — ${p.cliente}`);
   }
+  const quienSoy = (() => { try { return JSON.parse(localStorage.getItem("dg-session-v1") || "{}").nombre || ""; } catch (e) { return ""; } })();
   function marcarVerificado(p) {
     if (p.estado !== "Sin pasar a fábrica") return;
     const estadoInicialFabrica = (pedidoProcesoTaller(p) === "biselados" && !biseladoPrearmado(p)) ? "Sin pedir" : "Verificado";
-    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString() } : x)));
+    onChange(guardarPaso(pedidos, pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString() } : x)), "Verificado", quienSoy));
     if (onRegistrar) onRegistrar("Verificó un pedido", `#${p.orden} — ${p.cliente} — habilitado para fábrica`);
   }
   // Editar cliente y entrega de un pedido entero (todos sus espejos).
@@ -9314,7 +9366,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     if (!elegibles.length) return;
     const ids = new Set(elegibles.map((e) => e.id));
     const fecha = new Date().toISOString();
-    onChange(pedidos.map((x) => (ids.has(x.id) ? { ...x, clienteAvisado: true, clienteAvisadoFecha: fecha } : x)));
+    onChange(guardarPaso(pedidos, pedidos.map((x) => (ids.has(x.id) ? { ...x, clienteAvisado: true, clienteAvisadoFecha: fecha } : x)), "Cliente avisado", quienSoy));
     if (onRegistrar) onRegistrar("Avisó al cliente", `#${espejos[0].orden} — ${espejos[0].cliente} — ${elegibles.length} espejo(s)`);
   }
   function confirmarEnvioGrupo(espejos) {
@@ -9322,7 +9374,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     if (!elegibles.length) return;
     const ids = new Set(elegibles.map((e) => e.id));
     const fecha = new Date().toISOString();
-    onChange(pedidos.map((x) => (ids.has(x.id) ? { ...x, envioConfirmado: true, envioConfirmadoFecha: fecha } : x)));
+    onChange(guardarPaso(pedidos, pedidos.map((x) => (ids.has(x.id) ? { ...x, envioConfirmado: true, envioConfirmadoFecha: fecha } : x)), "Envío confirmado", quienSoy));
     if (onRegistrar) onRegistrar("Confirmó un envío", `#${espejos[0].orden} — ${espejos[0].cliente} — ${elegibles.length} espejo(s)`);
   }
   function entregarGrupo(espejos) {
@@ -9373,15 +9425,23 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
       return;
     }
     const fechaAviso = new Date().toISOString();
-    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, clienteAvisado: true, clienteAvisadoFecha: fechaAviso } : x)));
+    onChange(guardarPaso(pedidos, pedidos.map((x) => (x.id === p.id ? { ...x, clienteAvisado: true, clienteAvisadoFecha: fechaAviso } : x)), "Cliente avisado", quienSoy));
     if (onRegistrar) onRegistrar("Avisó al cliente", `#${p.orden} — ${p.cliente} — espejo listo`);
+  }
+  // Volver un paso (07/11/2026): el último que se marcó, como estaba antes.
+  function volverPasoPedido(p) {
+    const u = pasoParaVolver(p);
+    if (!u) return;
+    if (!window.confirm(`¿Volver el último paso del #${p.orden}?\n\n«${u.etiqueta}»${u.quien ? ` — lo marcó ${u.quien}` : ""}\n\nQueda como estaba antes de marcarlo.`)) return;
+    onChange(pedidos.map((x) => (x.id === p.id ? volverUnPaso(x) : x)));
+    if (onRegistrar) onRegistrar("Volvió un paso", `#${p.orden} — ${p.cliente || "Sin nombre"} — deshizo «${u.etiqueta}»`);
   }
   function marcarEnvioConfirmado(p) {
     if (!pedidoEstaListo(p) || !p.clienteAvisado) {
       window.alert("Primero confirmá con el cliente que los datos del envío sean correctos.");
       return;
     }
-    onChange(pedidos.map((x) => (x.id === p.id ? { ...x, envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() } : x)));
+    onChange(guardarPaso(pedidos, pedidos.map((x) => (x.id === p.id ? { ...x, envioConfirmado: true, envioConfirmadoFecha: new Date().toISOString() } : x)), "Envío confirmado", quienSoy));
     if (onRegistrar) onRegistrar("Confirmó un envío", `#${p.orden} — ${p.cliente} — visible para Logística`);
   }
   function restaurarVisibles() {
@@ -9658,6 +9718,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
                             onClienteConfirmado={marcarClienteAvisado}
                             onEnvioConfirmado={marcarEnvioConfirmado}
                             onEntregar={marcarEntregado}
+                            onVolverPaso={canEditFull ? volverPasoPedido : null}
                           />
                           <div className="dg-order-detail-actions">
                             <button className="dg-btn-ghost dg-mini-btn" onClick={() => setOpenPedido(espejo)}>
@@ -10596,6 +10657,24 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 Al guardar se descuenta{Number(draft.cant) > 1 ? `n ${draft.cant} unidades` : " 1 unidad"} de este modelo.
               </p>
             )}
+          </div>
+        )}
+
+        {/* Al abrir un solo espejo de un pedido de varios (07/11/2026): su
+            estado se cambia acá (por ejemplo, de «Verificado» a «Sin pasar a
+            fábrica»). Para deshacer un paso marcado por error está «Volver un
+            paso», que además deja las fechas como estaban. */}
+        {modo === "espejo" && (
+          <div className="dg-section-card">
+            <div className="dg-section-header"><ClipboardList size={14} /> Estado de este espejo</div>
+            <div className="dg-field-grid">
+              <Field label="Estado"><select disabled={readOnly} value={draft.estado} onChange={(e) => {
+                const nuevo = e.target.value;
+                if (nuevo === "Cancelado" && draft.estado !== "Cancelado") setPidiendoMotivoCancelacion(true);
+                else set("estado", nuevo);
+              }}>{estadoOptions.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+              <Field label="Listo para (fecha)"><input type="date" disabled={readOnly} value={draft.listo} onChange={(e) => set("listo", e.target.value)} /></Field>
+            </div>
           </div>
         )}
 
@@ -17199,7 +17278,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const pasoActual = PRODUCCION_PASOS[pasosProduccionCompletados(pedidoActual)];
     if (pasoActual?.id === "embalado" && !confirmarEmbaladoInterior(pedidoActual)) return;
     const responsable = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
-    onChange(pedidos.map((p) => {
+    onChange(guardarPaso(pedidos, pedidos.map((p) => {
       if (p.id !== id) return p;
       const completados = pasosProduccionCompletados(p);
       const paso = PRODUCCION_PASOS[completados];
@@ -17227,7 +17306,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         envioConfirmado: false,
         envioConfirmadoFecha: "",
       };
-    }));
+    }), pasoActual?.label || "Producción", responsable, ahora));
     if (onRegistrar && pedidoActual && pasoActual) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${pasoActual.label}`);
   }
   function avanzarFlujoFabrica(id) {
@@ -17271,10 +17350,19 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     }
 
     if (!cambios) return;
-    onChange(pedidos.map((p) => (p.id === id ? { ...p, ...cambios, vistoFabrica: p.vistoFabrica || ahora, vistoFabricaPor: p.vistoFabricaPor || responsable } : p)));
+    onChange(guardarPaso(pedidos, pedidos.map((p) => (p.id === id ? { ...p, ...cambios, vistoFabrica: p.vistoFabrica || ahora, vistoFabricaPor: p.vistoFabricaPor || responsable } : p)), accion, responsable, ahora));
     if (onRegistrar) onRegistrar(accion, `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${detalle}`);
   }
   const esAdmin = session?.role === "admin";
+  function volverPasoFabrica(id) {
+    setMenuAbierto(null);
+    const p = pedidos.find((x) => x.id === id);
+    const u = pasoParaVolver(p);
+    if (!p || !u) return;
+    if (!window.confirm(`¿Volver el último paso del #${p.orden}?\n\n«${u.etiqueta}»${u.quien ? ` — lo marcó ${u.quien}` : ""}\n\nQueda como estaba antes de marcarlo.`)) return;
+    onChange(pedidos.map((x) => (x.id === id ? volverUnPaso(x) : x)));
+    if (onRegistrar) onRegistrar("Volvió un paso", `#${p.orden} — ${p.cliente || "Sin nombre"} — deshizo «${u.etiqueta}»`);
+  }
   function reabrirProduccion(id) { setMenuAbierto(null); setPedidoParaReabrir(id); }
   function confirmarReabrirProduccion(motivo, etapaElegida) {
     // etapaElegida: "" (nada hecho, ni cortar) | "cortado" | "armado" (ya cortado y armado, falta embalar)
@@ -17327,7 +17415,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const unidadActual = pedidoActual ? unidadesDePedido(pedidoActual)[idx] : null;
     if (unidadActual && PRODUCCION_PASOS[unidadPasosCompletados(unidadActual)]?.id === "embalado" && !confirmarEmbaladoInterior(pedidoActual)) return;
     let labelPaso = "";
-    onChange(pedidos.map((p) => {
+    const nuevosUnidad = pedidos.map((p) => {
       if (p.id !== id) return p;
       const unids = unidadesDePedido(p).map((u) => ({ ...u }));
       const u = unids[idx];
@@ -17337,7 +17425,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       labelPaso = paso.label;
       unids[idx] = { ...u, etapa: paso.id, [paso.fechaCampo]: ahora, [paso.responsableCampo]: responsable };
       return sincronizarPedidoConUnidades(p, unids, ahora);
-    }));
+    });
+    onChange(guardarPaso(pedidos, nuevosUnidad, `Unidad ${idx + 1}: ${labelPaso}`, responsable, ahora));
     if (onRegistrar && pedidoActual && labelPaso) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — unidad ${idx + 1} · ${labelPaso}`);
   }
   // Avanza de golpe `cantidad` unidades que están justo en el paso anterior a `pasoId`.
@@ -17350,7 +17439,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const pedidoActual = pedidos.find((p) => p.id === id);
     if (paso.id === "embalado" && !confirmarEmbaladoInterior(pedidoActual)) return;
     let movidas = 0;
-    onChange(pedidos.map((p) => {
+    const nuevosBulk = pedidos.map((p) => {
       if (p.id !== id) return p;
       const unids = unidadesDePedido(p).map((u) => ({ ...u }));
       let restan = cantidad;
@@ -17361,7 +17450,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         }
       }
       return sincronizarPedidoConUnidades(p, unids, ahora);
-    }));
+    });
+    onChange(guardarPaso(pedidos, nuevosBulk, `${movidas} unidad(es): ${paso.label}`, responsable, ahora));
     if (onRegistrar && pedidoActual && movidas > 0) onRegistrar("Actualizó producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — ${movidas} unidad(es) · ${paso.label}`);
   }
   function reabrirUnidad(id, idx) { setMenuAbierto(null); setUnidadParaReabrir({ id, idx }); }
@@ -17541,6 +17631,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                     <>
                       <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
                       <div className="dg-fab-menu">
+                        {pasoParaVolver(p) && <button onClick={() => volverPasoFabrica(p.id)}><Undo2 size={13} /> Volver un paso <small>({pasoParaVolver(p).etiqueta})</small></button>}
                         {terminado && (perUnidad
                           ? <button onClick={() => reabrirUnidad(p.id, unidad - 1)}><RotateCcw size={13} /> Reabrir esta unidad</button>
                           : <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>)}
@@ -22850,6 +22941,10 @@ function Style() {
       .dg-chat-verif-row input { flex:1; letter-spacing:6px; text-align:center; font-size:18px; font-family:'JetBrains Mono', monospace; font-weight:700;
         border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:12px; padding:9px; background:var(--dg-surface-2); color:var(--dg-text); }
       .dg-chat-verif-row button { flex:none; padding:0 16px; border:none; border-radius:12px; background:var(--dg-accent); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+      .dg-volver-paso { display:inline-flex; align-items:center; gap:5px; margin-top:8px; padding:4px 0; border:0; background:transparent; color:var(--dg-text-dim); font:inherit; font-size:12px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+      .dg-volver-paso:hover { color:var(--dg-text); }
+      .dg-volver-paso:focus-visible { outline:2px solid var(--dg-accent); outline-offset:2px; border-radius:4px; }
+      .dg-volver-paso small { color:inherit; opacity:.8; }
       .dg-chat-adjuntar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 12px 0; }
       .dg-chat-adjuntar .dg-mini-btn { display:inline-flex; align-items:center; gap:5px; }
       .dg-chat-subiendo { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--dg-text-dim); }
