@@ -22840,6 +22840,22 @@ function Style() {
       .dg-chat-verif-row input { flex:1; letter-spacing:6px; text-align:center; font-size:18px; font-family:'JetBrains Mono', monospace; font-weight:700;
         border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:12px; padding:9px; background:var(--dg-surface-2); color:var(--dg-text); }
       .dg-chat-verif-row button { flex:none; padding:0 16px; border:none; border-radius:12px; background:var(--dg-accent); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+      .dg-chat-adjuntar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 12px 0; }
+      .dg-chat-adjuntar .dg-mini-btn { display:inline-flex; align-items:center; gap:5px; }
+      .dg-chat-subiendo { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--dg-text-dim); }
+      .dg-chat-adjunto-error { margin:6px 12px 0; }
+      .dg-chat-grabando { display:flex; align-items:center; flex-wrap:wrap; gap:8px; width:100%; font-size:13px; color:var(--dg-text); }
+      .dg-chat-grabando small { color:var(--dg-text-dim); }
+      .dg-chat-grabando .dg-btn-ghost { margin-left:auto; }
+      .dg-chat-grabando-punto { width:10px; height:10px; border-radius:50%; background:var(--dg-danger); animation:dg-grabando 1s ease-in-out infinite; }
+      @keyframes dg-grabando { 50% { opacity:.3; } }
+      @media (prefers-reduced-motion: reduce) { .dg-chat-grabando-punto { animation:none; } }
+      .dg-chat-foto { display:block; margin:2px 0 4px; }
+      .dg-chat-foto img { display:block; max-width:min(240px, 100%); max-height:280px; border-radius:10px; object-fit:cover; background:rgba(var(--dg-line-rgb),.08); }
+      .dg-chat-audio-wrap { display:flex; align-items:center; gap:6px; margin:2px 0 4px; }
+      .dg-chat-audio { width:230px; max-width:100%; height:36px; }
+      .dg-chat-audio-wrap small { font-size:11px; color:var(--dg-text-dim); }
+      .dg-chat-adjunto-nota { font-size:13px; color:var(--dg-text-dim); font-style:italic; }
       .dg-chat-verif-err { font-size:11px; color:var(--dg-danger); }
       .dg-seguimiento-whatsapp-2 { justify-content:center; width:100%; margin-top:12px; text-decoration:none; font-size:13px; }
 
@@ -26577,7 +26593,123 @@ function clasificarHilo(h) {
   return "respondido";
 }
 
-function ListaBurbujasChat({ mensajes, ladoDerecha }) {
+// ===== Fotos y audios en el chat (06/11/2026) =============================
+// El cliente manda fotos (se achican antes de subirlas) y audios de hasta
+// 1 minuto. Se guardan aparte («chat-adjuntos») y se borran solos cuando la
+// conversación se cierra. El cliente los ve con un link que arma el servidor;
+// el equipo, con su login.
+const AUDIO_MAX_SEGUNDOS = 60;
+const ARCHIVO_CHAT_MAX = 3 * 1024 * 1024;
+const TIPOS_FOTO_CHAT = ["image/jpeg", "image/png", "image/webp"];
+function duracionCorta(seg) {
+  const n = Math.max(0, Math.round(Number(seg) || 0));
+  return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
+}
+function AdjuntoChat({ m, obtenerUrl }) {
+  const a = (m && m.adjunto) || {};
+  const [url, setUrl] = useState("");
+  const [fallo, setFallo] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    if (a.borrado || !obtenerUrl) return undefined;
+    Promise.resolve(obtenerUrl(m)).then((u) => { if (vivo) setUrl(u || ""); }).catch(() => { if (vivo) setFallo(true); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m.id, a.path, a.borrado]);
+  const nombre = a.tipo === "audio" ? "Audio" : "Foto";
+  if (a.borrado) return <span className="dg-chat-adjunto-nota">{a.tipo === "audio" ? "🎤" : "📷"} {nombre} · se borró al cerrarse la conversación</span>;
+  if (fallo) return <span className="dg-chat-adjunto-nota">{a.tipo === "audio" ? "🎤" : "📷"} No se pudo abrir {a.tipo === "audio" ? "el audio" : "la foto"}</span>;
+  if (!url) return <span className="dg-chat-adjunto-nota">{a.tipo === "audio" ? "🎤" : "📷"} {nombre}…</span>;
+  if (a.tipo === "imagen") {
+    return (
+      <a className="dg-chat-foto" href={url} target="_blank" rel="noopener noreferrer" title="Ver la foto entera">
+        <img src={url} alt="Foto enviada en el chat" loading="lazy" onError={() => setFallo(true)} />
+      </a>
+    );
+  }
+  return (
+    <span className="dg-chat-audio-wrap">
+      <audio className="dg-chat-audio" controls preload="none" src={url} onError={() => setFallo(true)} />
+      {Number(a.segundos) > 0 && <small>{duracionCorta(a.segundos)}</small>}
+    </span>
+  );
+}
+// Grabar un audio: se toca «Grabar audio», se habla y se manda (o se cancela).
+// A los 60 segundos corta y lo manda solo.
+function tipoAudioGrabable() {
+  if (typeof window === "undefined" || typeof window.MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) return null;
+  const opciones = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+  for (const t of opciones) { try { if (window.MediaRecorder.isTypeSupported(t)) return t; } catch (e) {} }
+  return "";
+}
+function GrabadorAudio({ onListo, onError, deshabilitado }) {
+  const [grabando, setGrabando] = useState(false);
+  const [seg, setSeg] = useState(0);
+  const rec = useRef(null);
+  const partes = useRef([]);
+  const reloj = useRef(null);
+  const inicio = useRef(0);
+  const mandarAlTerminar = useRef(false);
+  const tipo = tipoAudioGrabable();
+  useEffect(() => () => { try { rec.current?.stream?.getTracks().forEach((t) => t.stop()); } catch (e) {} window.clearInterval(reloj.current); }, []);
+  if (tipo === null) return null;
+  async function empezar() {
+    onError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const opciones = { audioBitsPerSecond: 32000 };
+      if (tipo) opciones.mimeType = tipo;
+      const r = new window.MediaRecorder(stream, opciones);
+      partes.current = [];
+      mandarAlTerminar.current = false;
+      r.ondataavailable = (e) => { if (e.data && e.data.size) partes.current.push(e.data); };
+      r.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        window.clearInterval(reloj.current);
+        setGrabando(false);
+        const segundos = Math.min(AUDIO_MAX_SEGUNDOS, Math.round((Date.now() - inicio.current) / 1000));
+        if (!mandarAlTerminar.current || !partes.current.length) return;
+        const mime = (r.mimeType || tipo || "audio/webm").split(";")[0];
+        const archivo = new Blob(partes.current, { type: mime });
+        if (segundos < 1) { onError("El audio quedó muy corto."); return; }
+        onListo({ archivo, mime, segundos });
+      };
+      rec.current = r;
+      inicio.current = Date.now();
+      setSeg(0);
+      r.start();
+      setGrabando(true);
+      reloj.current = window.setInterval(() => {
+        const s2 = Math.round((Date.now() - inicio.current) / 1000);
+        setSeg(s2);
+        if (s2 >= AUDIO_MAX_SEGUNDOS) terminar(true);
+      }, 500);
+    } catch (e) {
+      onError("Para grabar un audio, permití el uso del micrófono.");
+    }
+  }
+  function terminar(mandar) {
+    mandarAlTerminar.current = mandar;
+    try { if (rec.current && rec.current.state !== "inactive") rec.current.stop(); } catch (e) {}
+  }
+  if (grabando) {
+    return (
+      <div className="dg-chat-grabando" role="status">
+        <span className="dg-chat-grabando-punto" aria-hidden="true" />
+        <span>Grabando {duracionCorta(seg)} <small>/ {duracionCorta(AUDIO_MAX_SEGUNDOS)}</small></span>
+        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => terminar(false)}><X size={13} /> Cancelar</button>
+        <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => terminar(true)}><Send size={13} /> Enviar</button>
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={empezar} disabled={deshabilitado}>
+      <Mic size={14} /> Grabar audio
+    </button>
+  );
+}
+
+function ListaBurbujasChat({ mensajes, ladoDerecha, obtenerUrl }) {
   // ladoDerecha: "staff" (vista interna) | "cliente" (vista del cliente)
   return (
     <>
@@ -26587,7 +26719,7 @@ function ListaBurbujasChat({ mensajes, ladoDerecha }) {
         return (
           <div key={m.id} className={`dg-chat-burbuja ${mio ? "dg-chat-mia" : ""} ${m.autor_tipo === "staff" ? "dg-chat-staff" : "dg-chat-cli"}`}>
             {!mio && <span className="dg-chat-autor">{m.autor_nombre || (m.autor_tipo === "staff" ? "Decoglass" : "Cliente")}</span>}
-            <span className="dg-chat-texto">{m.cuerpo}</span>
+            {m.adjunto ? <AdjuntoChat m={m} obtenerUrl={obtenerUrl} /> : <span className="dg-chat-texto">{m.cuerpo}</span>}
             <span className="dg-chat-hora">{horaChat(m.created_at)}</span>
           </div>
         );
@@ -26619,7 +26751,32 @@ function CajaEnviarChat({ onEnviar, enviando, placeholder }) {
 // --- Cliente: panel de chat dentro de la página pública de seguimiento ---
 function soloDigitos(s) { return String(s || "").replace(/\D/g, ""); }
 
-function ChatClientePublico({ hiloId, meta, cerrado, yaVerificado = false }) {
+function ChatClientePublico({ hiloId, meta, cerrado, yaVerificado = false, acceso = null, clave = "" }) {
+  const [errorAdjunto, setErrorAdjunto] = useState("");
+  const [subiendo, setSubiendo] = useState("");
+  const [pinBueno, setPinBueno] = useState("");
+  const inputFoto = useRef(null);
+  const claveEfectiva = clave || pinBueno;
+  const verAdjunto = (m) => chatStore.linkAdjuntoCliente({ acceso, clave: claveEfectiva, mensajeId: m.id });
+  async function mandarAdjunto({ tipo, archivo, mime, segundos }) {
+    if (!archivo) return;
+    if (archivo.size > ARCHIVO_CHAT_MAX) { setErrorAdjunto(tipo === "audio" ? "El audio es muy largo." : "La foto es muy pesada."); return; }
+    setErrorAdjunto("");
+    setSubiendo(tipo === "audio" ? "Mandando el audio…" : "Mandando la foto…");
+    const motivo = await chatStore.enviarAdjuntoCliente({ hiloId, acceso, clave: claveEfectiva, tipo, archivo, mime, segundos, meta });
+    setSubiendo("");
+    if (motivo) { setErrorAdjunto(motivo); return; }
+    try { setMensajes(await chatStore.getMensajes(hiloId)); } catch (e) {}
+  }
+  async function elegirFoto(e) {
+    const archivo = e.target.files?.[0];
+    e.target.value = "";
+    if (!archivo) return;
+    const chica = await comprimirImagen(archivo, 1600, 0.72);
+    const mime = (chica.type || archivo.type || "").toLowerCase();
+    if (!TIPOS_FOTO_CHAT.includes(mime)) { setErrorAdjunto("Ese formato de foto no se puede mandar. Probá con una captura o con la cámara."); return; }
+    mandarAdjunto({ tipo: "imagen", archivo: chica, mime, segundos: 0 });
+  }
   const [mensajes, setMensajes] = useState([]);
   // Abierto de entrada (06/11/2026): el cliente ve el chat sin tocar nada.
   const [abierto, setAbierto] = useState(true);
@@ -26667,7 +26824,7 @@ function ChatClientePublico({ hiloId, meta, cerrado, yaVerificado = false }) {
     const d = soloDigitos(pin);
     if (d.length < 4) { setErrPin("Poné los últimos 4 números de tu celular."); return; }
     if (telDigits.slice(-4) === d.slice(-4)) {
-      setVerificado(true); setErrPin("");
+      setVerificado(true); setErrPin(""); setPinBueno(d.slice(-4));
       try { localStorage.setItem("dg_chat_ok_" + hiloId, "1"); } catch (e2) {}
     } else {
       setErrPin("No coincide con el celular del pedido. Probá de nuevo o escribinos por WhatsApp.");
@@ -26699,7 +26856,7 @@ function ChatClientePublico({ hiloId, meta, cerrado, yaVerificado = false }) {
         <button type="button" className="dg-icon-btn" onClick={() => setAbierto(false)} aria-label="Cerrar"><X size={16} /></button>
       </div>
       <div className="dg-chat-scroll" ref={scrollRef}>
-        <ListaBurbujasChat mensajes={mensajes} ladoDerecha="cliente" />
+        <ListaBurbujasChat mensajes={mensajes} ladoDerecha="cliente" obtenerUrl={acceso ? verAdjunto : null} />
       </div>
       {!cerrado && staffOnline != null && (verificado || mensajes.length > 0) && (
         <p className={`dg-chat-online ${staffOnline > 0 ? "dg-chat-online-si" : ""}`}>
@@ -26720,7 +26877,25 @@ function ChatClientePublico({ hiloId, meta, cerrado, yaVerificado = false }) {
           {errPin && <span className="dg-chat-verif-err">{errPin}</span>}
         </form>
       ) : (
-        <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder="Escribí tu consulta..." />
+        <>
+          {acceso && (
+            <div className="dg-chat-adjuntar">
+              {subiendo
+                ? <span className="dg-chat-subiendo"><Loader2 size={14} className="dg-spin" /> {subiendo}</span>
+                : (
+                  <>
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => inputFoto.current?.click()}>
+                      <Camera size={14} /> Mandar foto
+                    </button>
+                    <GrabadorAudio onListo={({ archivo, mime, segundos }) => mandarAdjunto({ tipo: "audio", archivo, mime, segundos })} onError={setErrorAdjunto} deshabilitado={!!subiendo} />
+                  </>
+                )}
+              <input ref={inputFoto} type="file" accept="image/*" onChange={elegirFoto} style={{ display: "none" }} />
+            </div>
+          )}
+          {errorAdjunto && <p className="dg-chat-verif-err dg-chat-adjunto-error" role="alert">{errorAdjunto}</p>}
+          <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder="Escribí tu consulta..." />
+        </>
       )}
     </div>
   );
@@ -26782,7 +26957,7 @@ function HiloChatVista({ hiloId, session, onVolver }) {
         {linkSeg && <a className="dg-btn-ghost dg-mini-btn" href={linkSeg} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /> Ver seguimiento</a>}
       </div>
       <div className="dg-chat-scroll dg-chat-scroll-lg" ref={scrollRef}>
-        <ListaBurbujasChat mensajes={mensajes} ladoDerecha="staff" />
+        <ListaBurbujasChat mensajes={mensajes} ladoDerecha="staff" obtenerUrl={(m) => chatStore.linkAdjuntoStaff(m.adjunto?.path)} />
       </div>
       <CajaEnviarChat onEnviar={enviar} enviando={enviando} placeholder={`Responder a ${nombre}...`} />
     </div>
@@ -27403,6 +27578,8 @@ function SeguimientoPublico({ pedidoId }) {
             meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", celular: pedido.celular || "", entregadoAt: pedido.entregadoFecha || null }}
             cerrado={chatClienteCerrado(pedido)}
             yaVerificado={!!puerta.clave}
+            acceso={{ pedido: pedido.id }}
+            clave={puerta.clave}
           />
 
           <a className="dg-btn-ghost dg-seguimiento-whatsapp-2" href={linkConsulta} target="_blank" rel="noopener noreferrer">
@@ -27582,6 +27759,8 @@ function SeguimientoGrupoPublico({ grupoId }) {
             meta={{ pedidoId: primero.id, grupoId, orden: `#${primero.orden}`, clienteNombre: primero.cliente || "", celular: primero.celular || "", entregadoAt: primero.entregadoFecha || null }}
             cerrado={chatClienteCerrado(primero)}
             yaVerificado={!!puerta.clave}
+            acceso={{ grupo: grupoId }}
+            clave={puerta.clave}
           />
         )}
 

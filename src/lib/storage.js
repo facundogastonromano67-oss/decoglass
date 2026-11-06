@@ -351,6 +351,8 @@ export const pushStore = {
 // Chat con clientes: el hilo se identifica con el mismo id que va en el link de
 // seguimiento (id del pedido, o "grupo:"+grupoId), así el cliente no necesita
 // login. El staff logueado ve y responde todos los hilos.
+// Los links firmados de las fotos y audios del chat, por un rato.
+const linksAdjuntos = new Map();
 export const chatStore = {
   hiloId(pedido) {
     if (!pedido) return null;
@@ -413,6 +415,79 @@ export const chatStore = {
         keepalive: true,
       }).catch(() => {});
     } catch (e) { /* noop */ }
+  },
+
+  // ---- Fotos y audios del cliente (06/11/2026) ----
+  // acceso = { pedido } o { grupo }, y clave = los últimos 4 del teléfono.
+  // 1) El servidor da permiso para subir UN archivo (controla los 4 dígitos,
+  //    el máximo por conversación y que no esté cerrada).
+  // 2) Se sube directo al lugar de archivos con ese permiso.
+  // 3) Se anota el mensaje. 4) Aviso al equipo por push.
+  // Devuelve "" si salió bien, o el motivo para mostrarle al cliente.
+  async enviarAdjuntoCliente({ hiloId, acceso, clave, tipo, archivo, mime, segundos, meta }) {
+    if (!hiloId || !archivo) return "No hay nada para mandar.";
+    const params = new URLSearchParams();
+    if (acceso?.pedido) params.set("pedido", acceso.pedido);
+    if (acceso?.grupo) params.set("grupo", acceso.grupo);
+    if (clave) params.set("t", clave);
+    params.set("chat", "subir");
+    params.set("tipo", tipo);
+    params.set("mime", mime || archivo.type || "");
+    let permiso;
+    try {
+      const r = await fetch(`/api/factura?${params.toString()}`);
+      permiso = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (r.status === 403 && !permiso?.error?.includes("cerró")) return "Para mandar archivos, volvé a entrar al link y poné los últimos 4 números de tu teléfono.";
+        return permiso?.error || "No se pudo mandar. Probá de nuevo.";
+      }
+    } catch (e) { return "No hay conexión. Probá de nuevo en un momento."; }
+    const { error: errorSubida } = await supabase.storage.from("chat-adjuntos")
+      .uploadToSignedUrl(permiso.path, permiso.token, archivo, { contentType: mime || archivo.type });
+    if (errorSubida) {
+      return /size|exceed|large/i.test(String(errorSubida.message || "")) ? "El archivo es muy pesado." : "No se pudo subir el archivo. Probá de nuevo.";
+    }
+    const { error } = await supabase.rpc("seguimiento_escribir_adjunto", {
+      p_hilo: hiloId,
+      p_adjunto: { path: permiso.path, tipo, segundos: Math.round(Number(segundos) || 0) },
+      p_meta: {
+        pedidoId: meta?.pedidoId || null,
+        grupoId: meta?.grupoId || null,
+        orden: meta?.orden || null,
+        clienteNombre: meta?.clienteNombre || null,
+        entregadoAt: meta?.entregadoAt || null,
+      },
+    });
+    if (error) return "No se pudo mandar. Probá de nuevo.";
+    try {
+      fetch("/api/enviar-push-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hiloId }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch (e) { /* noop */ }
+    return "";
+  },
+  // El link para que el CLIENTE vea un archivo del chat (lo firma el servidor).
+  linkAdjuntoCliente({ acceso, clave, mensajeId }) {
+    const params = new URLSearchParams();
+    if (acceso?.pedido) params.set("pedido", acceso.pedido);
+    if (acceso?.grupo) params.set("grupo", acceso.grupo);
+    if (clave) params.set("t", clave);
+    params.set("chat", "ver");
+    params.set("m", String(mensajeId));
+    return `/api/factura?${params.toString()}`;
+  },
+  // El link para que el EQUIPO (con login) vea un archivo. Se guarda un rato:
+  // el chat se refresca cada 30 s y no hace falta firmarlo de nuevo cada vez.
+  async linkAdjuntoStaff(path) {
+    if (!path) return "";
+    const guardado = linksAdjuntos.get(path);
+    if (guardado && guardado.vence > Date.now()) return guardado.url;
+    const url = await urlFirmada("chat-adjuntos", path, 3600);
+    if (url) linksAdjuntos.set(path, { url, vence: Date.now() + 50 * 60000 });
+    return url;
   },
 
   // Staff (logueado): responde y marca el hilo como leído.

@@ -6,6 +6,8 @@
 //   GET /api/factura?pedido=<id>&t=1234            -> manda la factura
 //   GET /api/factura?pedido=<id>&t=1234&n=1        -> la segunda (si la pidió en partes)
 //   GET /api/factura?pedido=<id>&t=1234&foto=0     -> la foto del espejo terminado
+//   GET /api/factura?pedido=<id>&t=1234&chat=subir&tipo=imagen&mime=image/jpeg -> permiso para subir al chat
+//   GET /api/factura?pedido=<id>&t=1234&chat=ver&m=<id del mensaje>           -> una foto o audio del chat
 //
 // POR QUÉ LAS DOS COSAS VIVEN EN EL MISMO ARCHIVO: el plan Hobby de Vercel
 // admite 12 funciones por deploy y ya estábamos justo en 12. Separar esto en
@@ -30,6 +32,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { ultimos4, coincide } from "./_telefono.js";
+import { BUCKET_CHAT, MAX_ADJUNTOS, carpetaDeHilo, extensionDe, chatCerrado } from "./_chat-adjuntos.js";
 
 const BUCKET = "facturas";
 const VENCE_EN = 300; // 5 minutos: alcanza para abrirla o bajarla
@@ -100,6 +103,41 @@ export default async function handler(req, res) {
     // puede pedir nada (coincide() da true) y queda como estaba.
     if (!coincide(pedido.celular, escrito)) {
       return res.status(403).json({ error: "Para ver la factura hacen falta los últimos 4 dígitos de tu teléfono." });
+    }
+
+    // Fotos y audios del chat (06/11/2026), con el mismo control de los 4 dígitos:
+    //   ?chat=subir&tipo=imagen|audio&mime=...  -> { path, token } para subirlo
+    //   ?chat=ver&m=<id del mensaje>            -> el archivo (link firmado)
+    // El cliente no tiene login: no puede subir nada por su cuenta. El permiso
+    // es para UN archivo, en la carpeta de SU conversación.
+    if (q.chat === "subir" || q.chat === "ver") {
+      const hilo = id ? id : `grupo:${grupo}`;
+      const carpeta = carpetaDeHilo(hilo);
+      if (q.chat === "ver") {
+        const mId = Number.parseInt(String(q.m || ""), 10);
+        if (!Number.isInteger(mId)) return res.status(400).json({ error: "Falta el mensaje." });
+        const { data: msg } = await supabase.from("chat_mensajes").select("hilo_id, adjunto").eq("id", mId).maybeSingle();
+        const ruta = msg?.adjunto?.path;
+        if (!msg || msg.hilo_id !== hilo || !ruta) return res.status(404).json({ error: "No encontramos ese archivo." });
+        if (msg.adjunto.borrado) return res.status(410).json({ error: "Este archivo ya se borró: la conversación se cerró." });
+        const { data: firmaChat, error: errorChat } = await supabase.storage.from(BUCKET_CHAT).createSignedUrl(ruta, 3600);
+        if (errorChat || !firmaChat?.signedUrl) return res.status(404).json({ error: "No encontramos ese archivo." });
+        // El link dura una hora: el navegador puede reusarlo en vez de volver a pedirlo.
+        res.setHeader("Cache-Control", "private, max-age=3000");
+        return res.redirect(302, firmaChat.signedUrl);
+      }
+      if (chatCerrado(pedido)) return res.status(403).json({ error: "Esta conversación ya se cerró. Escribinos por WhatsApp." });
+      const tipo = q.tipo === "audio" ? "audio" : q.tipo === "imagen" ? "imagen" : "";
+      const ext = extensionDe(tipo, q.mime);
+      if (!tipo || !ext) return res.status(400).json({ error: "Solo se pueden mandar fotos o audios." });
+      const { data: yaHay } = await supabase.storage.from(BUCKET_CHAT).list(carpeta, { limit: 1000 });
+      if ((yaHay || []).length >= MAX_ADJUNTOS) {
+        return res.status(429).json({ error: `Llegaste al máximo de ${MAX_ADJUNTOS} archivos en esta conversación. Escribinos por WhatsApp.` });
+      }
+      const rutaNueva = `${carpeta}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { data: permiso, error: errorPermiso } = await supabase.storage.from(BUCKET_CHAT).createSignedUploadUrl(rutaNueva);
+      if (errorPermiso || !permiso?.token) return res.status(500).json({ error: "No se pudo preparar la subida." });
+      return res.status(200).json({ path: rutaNueva, token: permiso.token });
     }
 
     // La foto del espejo terminado (27/10/2026). Va por acá porque el bucket es

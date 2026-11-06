@@ -11,6 +11,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
+import { limpiarAdjuntosChat } from "./_chat-adjuntos.js";
 
 const UMBRAL_RECLAMO_HORAS = 48;
 const UMBRAL_COMISION_DIAS = 7;
@@ -181,8 +182,14 @@ async function ejecutar(req, res) {
 
   if (bajas.length) await supabase.from("push_subscriptions").delete().in("id", bajas);
 
+  // Fotos y audios del chat (06/11/2026): se borran cuando la conversación
+  // se cerró. Va al final y aparte: si falla, las notificaciones ya salieron.
+  let adjuntosBorrados = 0;
+  try { adjuntosBorrados = await limpiarAdjuntosChat(supabase, pedidos, Date.now()); }
+  catch (e) { console.error("check-alerts: no se pudieron borrar los adjuntos del chat", e?.message || e); }
+
   console.log(`check-alerts ${fecha}: ${suscripciones.length} suscripción(es) cargada(s), ${enviadas} notificación(es) enviada(s), ${bajas.length} suscripción(es) vencida(s) eliminada(s), ${errores.length} error(es).`);
   if (errores.length) console.error("check-alerts errores detallados:", JSON.stringify(errores));
 
-  return res.status(200).json({ ok: true, fecha, resumenes: resultados, enviadas, bajasEliminadas: bajas.length, errores });
+  return res.status(200).json({ ok: true, fecha, resumenes: resultados, enviadas, bajasEliminadas: bajas.length, adjuntosBorrados, errores });
 }
