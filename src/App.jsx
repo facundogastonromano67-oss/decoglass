@@ -1839,9 +1839,10 @@ function App() {
   const [syncState, setSyncState] = useState("connecting");
   // Consumo de Supabase (03/11/2026): cada consulta deja una línea en los logs
   // («Log Ingestion»). Con el aviso en vivo andando, las revisiones de respaldo
-  // van cada 60 s en vez de cada 4 s. Si el aviso se cae, vuelven a 4 s solas.
+  // van cada 3 minutos (06/11/2026; antes 60 s, y al principio 4 s). Si el
+  // aviso se cae, vuelven a 4 s solas.
   const syncVivoRef = useRef(false);
-  const VUELTAS_RESPALDO = 15; // 15 × 4 s = 60 s
+  const VUELTAS_RESPALDO = 45; // 45 × 4 s = 3 minutos
   const [loading, setLoading] = useState(true);
   const [errorCarga, setErrorCarga] = useState("");
   const [session, setSession] = useState(() => loadSavedSession());
@@ -2136,7 +2137,7 @@ function App() {
     const interval = window.setInterval(() => {
       if (!pestanaVisible()) return;
       vueltaKv += 1;
-      // Con el aviso en vivo, solo una de cada 15 vueltas (60 s).
+      // Con el aviso en vivo, solo una de cada VUELTAS_RESPALDO vueltas (3 min).
       if (syncVivoRef.current && vueltaKv % VUELTAS_RESPALDO !== 0) return;
       refreshSharedData(false);
     }, 4000);
@@ -2270,7 +2271,7 @@ function App() {
     cargar();
     const stop = chatStore.subscribeRealtime(() => { if (active) cargar(); });
     // Los mensajes llegan por el aviso en vivo; esto es solo respaldo.
-    const iv = window.setInterval(() => { if (pestanaVisible()) cargar(true); }, 60000);
+    const iv = window.setInterval(() => { if (pestanaVisible()) cargar(true); }, 180000);
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session]);
   const chatSinLeer = chatHilos.filter((h) => clasificarHilo(h) === "sin_leer").length;
@@ -2293,7 +2294,7 @@ function App() {
     };
     recalcular();
     const stop = chatStore.internoSubscribe(() => recalcular());
-    const iv = window.setInterval(() => { if (pestanaVisible()) recalcular(true); }, 60000);
+    const iv = window.setInterval(() => { if (pestanaVisible()) recalcular(true); }, 180000);
     return () => { active = false; stop(); window.clearInterval(iv); };
   }, [loading, session, chatEquipoOpen]);
 
@@ -2303,7 +2304,8 @@ function App() {
     const yo = idDispositivo();
     const latir = () => { if (document.visibilityState === "visible") chatStore.latidoStaff(yo, session?.nombre); };
     latir();
-    const iv = window.setInterval(latir, 45000);
+    // Cada 2 minutos (antes 45 s): «hay alguien conectado» cuenta los últimos 3.
+    const iv = window.setInterval(latir, 120000);
     document.addEventListener("visibilitychange", latir);
     return () => { window.clearInterval(iv); document.removeEventListener("visibilitychange", latir); };
   }, [loading, session]);
@@ -13916,11 +13918,17 @@ function RecorridoFleteControl({ token, onTerminar }) {
   );
 }
 
+// El GPS del flete (el cliente veía el flete en un mapa). Apagado el
+// 06/11/2026 porque no se usa: la página del cliente consultaba cada 12 s y
+// Logística cada 30 s, y cada consulta suma al «Log Ingestion». Para volver a
+// usarlo alcanza con poner esto en true (las tablas y el SQL siguen como están).
+const GPS_FLETE_ACTIVO = false;
+
 // El cliente: mapa con el flete en camino.
 function useEnvioTracking(trackingId) {
   const [row, setRow] = useState(null);
   useEffect(() => {
-    if (!trackingId) { setRow(null); return undefined; }
+    if (!GPS_FLETE_ACTIVO || !trackingId) { setRow(null); return undefined; }
     let vivo = true;
     const cargar = () => trackingStore.get(trackingId).then((r) => { if (vivo) setRow(r); }).catch(() => {});
     cargar();
@@ -14045,6 +14053,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
   const [cuando, setCuando] = useState("manana");
   const [trackingRows, setTrackingRows] = useState([]);
   useEffect(() => {
+    if (!GPS_FLETE_ACTIVO) return undefined;
     let vivo = true;
     const cargar = () => trackingStore.listActivos().then((r) => { if (vivo) setTrackingRows(r); }).catch(() => {});
     cargar();
@@ -14235,6 +14244,7 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
         const miRecorrido = trackingRows.find((t) => String(t.fletero_token || "").toUpperCase() === miCodigo);
         const ultima = miRecorrido ? haceCuanto(miRecorrido.flete_at) : null;
         const urlPrueba = typeof window !== "undefined" ? `${window.location.origin}/api/track?id=${miCodigo}` : "";
+        if (!GPS_FLETE_ACTIVO) return null;
         return (
         <details className="dg-reclamo-editar dg-gps-bloque">
           <summary>
@@ -14462,9 +14472,9 @@ function EnviosLogisticaPanel({ pedidos, onChange, canEdit, extra, onChangeExtra
                         <span className="dg-recorrido-activo"><MapPin size={13} /> En recorrido — el cliente ve el mapa</span>
                         <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => terminarRecorrido(ids)}>Terminar este</button>
                       </>
-                    ) : (
+                    ) : GPS_FLETE_ACTIVO ? (
                       <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => comenzarRecorrido(items)}><Truck size={13} /> Comenzar recorrido <small style={{ opacity: 0.7 }}>· desde este celular</small></button>
-                    )}
+                    ) : null}
                   </div>
                   {/* La prueba de entrega (27/10/2026): una foto del espejo ya
                       entregado, sano. Es lo que se mira cuando alguien dice
@@ -26796,13 +26806,22 @@ function ChatClientePublico({ hiloId, meta, cerrado, yaVerificado = false, acces
   useEffect(() => {
     if (!hiloId) return;
     let vivo = true;
-    const cargar = () => chatStore.getMensajes(hiloId).then((m) => { if (vivo) setMensajes(m); }).catch(() => {});
+    let hayMensajes = false;
+    let vuelta = 0;
+    const cargar = () => chatStore.getMensajes(hiloId).then((m) => { if (vivo) { setMensajes(m); hayMensajes = (m || []).length > 0; } }).catch(() => {});
     cargar();
     const stop = chatStore.subscribeRealtime((p) => {
       const id = p?.new?.hilo_id || p?.new?.id || p?.old?.hilo_id;
       if (id === hiloId) cargar();
     });
-    const iv = window.setInterval(cargar, 30000);
+    // Consumo (06/11/2026): con la página atrás no se pregunta nada; con
+    // conversación, cada 30 s (para que la respuesta llegue rápido); sin
+    // mensajes todavía, cada 2 minutos.
+    const iv = window.setInterval(() => {
+      if (!paginaVisible()) return;
+      vuelta += 1;
+      if (hayMensajes || vuelta % 4 === 0) cargar();
+    }, 30000);
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, [hiloId]);
 
@@ -26923,7 +26942,7 @@ function HiloChatVista({ hiloId, session, onVolver }) {
       const id = p?.new?.hilo_id || p?.new?.id || p?.old?.hilo_id;
       if (id === hiloId) cargar();
     });
-    const iv = window.setInterval(cargar, 30000);
+    const iv = window.setInterval(() => { if (paginaVisible()) cargar(); }, 60000);
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, [hiloId]);
 
@@ -27054,7 +27073,7 @@ function ChatEquipoPanel({ session, onClose, sectors, onUpdateSector, isAdmin })
     const cargar = () => chatStore.internoListar().then((m) => { if (vivo) { setMensajes(m); setCargando(false); } }).catch(() => setCargando(false));
     cargar();
     const stop = chatStore.internoSubscribe(() => cargar());
-    const iv = window.setInterval(cargar, 30000);
+    const iv = window.setInterval(() => { if (paginaVisible()) cargar(); }, 60000);
     return () => { vivo = false; stop(); window.clearInterval(iv); };
   }, []);
 
@@ -27172,6 +27191,11 @@ function ChatEquipoPanel({ session, onClose, sectors, onUpdateSector, isAdmin })
 
 // Una consulta que tarda más de lo razonable se corta: mejor avisar y dejar
 // reintentar que dejar al cliente mirando «Buscando tu pedido…» para siempre.
+// ¿La página está a la vista? Con la pestaña atrás no se le pregunta nada a la
+// base (cada consulta suma al «Log Ingestion»).
+function paginaVisible() {
+  try { return document.visibilityState !== "hidden"; } catch (e) { return true; }
+}
 function conLimiteDeTiempo(promesa, ms) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`sin respuesta en ${Math.round(ms / 1000)}s`)), ms);
@@ -27442,8 +27466,12 @@ function SeguimientoPublico({ pedidoId }) {
       }
     }
     cargar();
-    const interval = window.setInterval(cargar, 20000);
-    return () => { activo = false; window.clearInterval(interval); };
+    // Cada minuto (antes 20 s) y solo con la página a la vista: el pedido
+    // cambia pocas veces por día.
+    const interval = window.setInterval(() => { if (paginaVisible()) cargar(); }, 60000);
+    const alVolver = () => { if (document.visibilityState === "visible") cargar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { activo = false; window.clearInterval(interval); document.removeEventListener("visibilitychange", alVolver); };
   }, [pedidoId, intento, puerta.abierta]);
 
   const tracking = useEnvioTracking(pedido ? (pedido.grupoId ? `grupo:${pedido.grupoId}` : pedido.id) : null);
@@ -27613,8 +27641,10 @@ function SeguimientoGrupoPublico({ grupoId }) {
       }
     }
     cargar();
-    const interval = window.setInterval(cargar, 20000);
-    return () => { activo = false; window.clearInterval(interval); };
+    const interval = window.setInterval(() => { if (paginaVisible()) cargar(); }, 60000);
+    const alVolver = () => { if (document.visibilityState === "visible") cargar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { activo = false; window.clearInterval(interval); document.removeEventListener("visibilitychange", alVolver); };
   }, [grupoId, intento, puerta.abierta]);
 
   const tracking = useEnvioTracking(grupoId ? `grupo:${grupoId}` : null);
