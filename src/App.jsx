@@ -26465,6 +26465,16 @@ function Style() {
       .dg-seg-entrega-datos dd small { display:block; font-size:12px; color:var(--dg-text-dim); }
       .dg-seg-entrega-mapa { margin-top:12px; width:100%; justify-content:center; text-decoration:none; }
       .dg-seg-entrega-nota { margin:10px 0 0; font-size:12px; line-height:1.4; color:var(--dg-text-dim); }
+      .dg-seg-cliente-datos { flex-direction:row; flex-wrap:wrap; gap:10px 28px; }
+      .dg-seg-saldo { margin-top:14px; padding:12px 14px; border-radius:10px; background:rgba(var(--dg-warning-rgb),.1); border:1px solid rgba(var(--dg-warning-rgb),.35); }
+      .dg-seg-saldo-tit { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-seg-saldo ul { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+      .dg-seg-saldo li { display:flex; justify-content:space-between; gap:12px; font-size:14px; color:var(--dg-text); }
+      .dg-seg-saldo li b { font-family:'JetBrains Mono', monospace; font-weight:600; font-variant-numeric:tabular-nums; }
+      .dg-seg-saldo-total { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-top:8px; padding-top:8px; border-top:1px solid rgba(var(--dg-warning-rgb),.35); font-weight:700; }
+      .dg-seg-saldo-total strong { font-family:'JetBrains Mono', monospace; font-size:19px; color:var(--dg-warning); font-variant-numeric:tabular-nums; }
+      .dg-seg-saldo-ok { background:rgba(var(--dg-success-rgb),.1); border-color:rgba(var(--dg-success-rgb),.35); }
+      .dg-seg-saldo-pagado { display:flex; align-items:center; gap:7px; margin:0; font-size:14px; font-weight:600; color:var(--dg-success); }
       .dg-seguimiento-espejo { padding:14px 0; border-top:1px solid rgba(var(--dg-line-rgb),0.1); }
       .dg-seguimiento-espejo:first-of-type { border-top:none; padding-top:4px; }
       .dg-seguimiento-espejo-titulo { display:flex; align-items:center; justify-content:space-between; gap:8px; font-family:'Jost', sans-serif; font-weight:700; font-size:13px; color:var(--dg-text-dim); text-transform:uppercase; letter-spacing:0.3px; }
@@ -27882,6 +27892,60 @@ function datosEntregaPublica(p) {
   }
   return { tipo: "confirmar", titulo: "Forma de entrega a confirmar", filas: [], nota: "Te escribimos para coordinar cómo te llega el pedido." };
 }
+// Lo que le falta pagar al cliente, para el seguimiento (12/11/2026). La
+// misma cuenta que los mensajes de WhatsApp (cuentaCobroEntrega). Los
+// espejos ya entregados no cuentan: entregado es cobrado.
+function datosPagoPublico(items) {
+  const vivos = (items || []).filter((p) => p && p.estado !== "Cancelado");
+  const pendientes = vivos.filter((p) => p.estado !== "Entregado");
+  if (!pendientes.length) return { entregado: vivos.length > 0, lineas: [], total: 0 };
+  const c = cuentaCobroEntrega(pendientes);
+  const varios = c.espejos > 1;
+  const lineas = [];
+  if (c.saldo > 0) lineas.push({ label: varios ? "Saldo de los espejos" : "Saldo del espejo", valor: money(c.saldo) });
+  if (c.conEnvio) {
+    if (c.costoEnvio <= 0) lineas.push({ label: "Envío", valor: "a confirmar" });
+    else if (c.envioPendiente > 0) lineas.push({ label: "Envío", valor: money(c.envioPendiente) });
+    else lineas.push({ label: "Envío", valor: "pagado ✓" });
+  }
+  return {
+    entregado: false, lineas, total: c.total,
+    envioSinPrecio: c.conEnvio && c.costoEnvio <= 0,
+    cuando: momentoDePago(pendientes[0]),
+  };
+}
+function DatosClientePublico(props) {
+  const items = (props.items || []).filter(Boolean);
+  const p = items[0] || {};
+  const pago = datosPagoPublico(items);
+  const pagado = !pago.entregado && pago.total <= 0 && !pago.envioSinPrecio;
+  return (
+    <section className="dg-seg-entrega dg-seg-cliente" aria-label="Tus datos y tu saldo">
+      <div className="dg-seg-entrega-titulo"><User size={15} aria-hidden="true" /> Tus datos</div>
+      <dl className="dg-seg-entrega-datos dg-seg-cliente-datos">
+        <div><dt>Nombre</dt><dd>{p.cliente || "—"}</dd></div>
+        <div><dt>Teléfono de contacto</dt><dd>{p.celular || "—"}</dd></div>
+      </dl>
+      {!pago.entregado && (
+        <div className={`dg-seg-saldo ${pagado ? "dg-seg-saldo-ok" : ""}`}>
+          {pagado ? (
+            <p className="dg-seg-saldo-pagado"><Check size={15} aria-hidden="true" /> Ya está todo pagado: no tenés que abonar nada más.</p>
+          ) : (
+            <>
+              <div className="dg-seg-saldo-tit">Saldo a abonar {pago.cuando}</div>
+              <ul>
+                {pago.lineas.map((l) => <li key={l.label}><span>{l.label}</span><b>{l.valor}</b></li>)}
+              </ul>
+              <div className="dg-seg-saldo-total"><span>{pago.envioSinPrecio ? "Total sin el envío" : "Total"}</span><strong>{money(pago.total)}</strong></div>
+            </>
+          )}
+        </div>
+      )}
+      <p className="dg-seg-entrega-nota">Si algún dato no es correcto, avisanos por el chat o por WhatsApp.</p>
+    </section>
+  );
+}
+
 function EntregaPublica(props) {
   const d = datosEntregaPublica(props.pedido);
   const Icono = d.tipo === "retiro" ? Building2 : d.tipo === "colocacion" ? Wrench : d.tipo === "confirmar" ? Package : Truck;
@@ -28027,6 +28091,7 @@ function SeguimientoPublico({ pedidoId }) {
             </p>
           )}
 
+          <DatosClientePublico items={[pedido]} />
           {pedido.estado !== "Entregado" && <EntregaPublica pedido={pedido} />}
 
           <div className="dg-verif-specs" style={{ marginTop: 16 }}>
@@ -28224,6 +28289,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
               );
             })}
 
+            <DatosClientePublico items={activos} />
             {activos.some((e) => e.estado !== "Entregado") && <EntregaPublica pedido={activos.find((e) => e.estado !== "Entregado") || primero} />}
 
             <div className="dg-seguimiento-docs">
