@@ -13101,6 +13101,16 @@ function historialDeEnvios(pedidos, salidas) {
   });
   return filas.sort((a, b) => b.dia.localeCompare(a.dia) || a.cliente.localeCompare(b.cliente));
 }
+// El color de cada envío: los mismos que usa la lista de Envíos.
+function colorDeEnvio(f) {
+  let k = "accent";
+  let nombre = "Envío";
+  if (f.tipo === "interior") { k = "interior"; nombre = "Interior"; }
+  else if (f.tipo === "salida") { k = (f.salida && f.salida.clase) || "accent"; nombre = (f.salida && f.salida.corto) || "Salida"; }
+  else if (f.metodo === "Envío flex") { k = "flex"; nombre = "Flex"; }
+  else if (f.metodo === "Colocación") { k = "visita"; nombre = "Colocación"; }
+  return { color: `var(--dg-${k})`, rgb: `var(--dg-${k}-rgb)`, nombre };
+}
 // Lo que se busca: nombre, teléfono, dirección, número de pedido, qué llevó, guía.
 function coincideHistorial(f, texto) {
   const q = textoComparable(String(texto || "").trim());
@@ -13129,6 +13139,8 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
   filas.forEach((f) => { const ult = dias[dias.length - 1]; if (ult && ult.dia === f.dia) ult.filas.push(f); else dias.push({ dia: f.dia, filas: [f] }); });
   const totalEspejos = filas.reduce((t, f) => t + f.espejos, 0);
   const totalCobrado = filas.reduce((t, f) => t + f.cobrado, 0);
+  const totalRendido = filas.filter((f) => f.tipo === "flete" && f.rendicion && !f.porTransferencia).reduce((t, f) => t + f.cobrado, 0);
+  const totalSinRendir = filas.filter((f) => f.tipo === "flete" && !f.rendicion && !f.porTransferencia).reduce((t, f) => t + f.cobrado, 0);
   const cuenta = (t) => todas.filter((f) => (buscando || f.dia.startsWith(mes)) && (!flete || f.fletero === flete) && coincideHistorial(f, busqueda) && (t === "todos" || f.tipo === t)).length;
   const i = meses.indexOf(mes);
   const nombreDia = (d) => { const t = fechaLargaCorta(d); return t.charAt(0).toUpperCase() + t.slice(1); };
@@ -13152,84 +13164,107 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
         )}
       </div>
       <div className="dg-quickviews">
-        {[["todos", "Todo"], ["flete", "Flete propio"], ["interior", "Interior"], ["salida", "Salidas a mano"]].map(([id, label]) => (
-          <button key={id} type="button" className={`dg-quickview-btn ${tipo === id ? "dg-quickview-on" : ""}`} onClick={() => setTipo(id)}>{label} ({cuenta(id)})</button>
+        {[["todos", "Todo", "var(--dg-text-dim)"], ["flete", "Flete propio", "var(--dg-accent)"], ["interior", "Interior", "var(--dg-interior)"], ["salida", "Salidas a mano", "var(--dg-devolucion)"]].map(([id, label, color]) => (
+          <button key={id} type="button" className={`dg-quickview-btn dg-hist-filtro-tipo ${tipo === id ? "dg-quickview-on" : ""}`} style={{ "--tc": color }} onClick={() => setTipo(id)}>
+            <span className="dg-hist-punto" aria-hidden="true" />{label} <b>{cuenta(id)}</b>
+          </button>
         ))}
       </div>
 
-      <div className="dg-hist-resumen" aria-live="polite">
-        <span><strong>{filas.length}</strong> {filas.length === 1 ? "envío" : "envíos"}</span>
-        {totalEspejos > 0 && <span><strong>{totalEspejos}</strong> {totalEspejos === 1 ? "espejo" : "espejos"}</span>}
-        {totalCobrado > 0 && <span>cobrado en la puerta <strong>{money(totalCobrado)}</strong></span>}
-        <small>{buscando ? "buscando en todos los meses" : nombreMesLargo(mes)}</small>
+      <div className="dg-hist-stats" aria-live="polite">
+        <div className="dg-hist-stat" style={{ "--c": "var(--dg-accent)" }}>
+          <span>Envíos</span><strong>{filas.length}</strong><small>{buscando ? "en todos los meses" : nombreMesLargo(mes)}</small>
+        </div>
+        <div className="dg-hist-stat" style={{ "--c": "var(--dg-estado-grabado)" }}>
+          <span>Espejos</span><strong>{totalEspejos}</strong><small>entregados o despachados</small>
+        </div>
+        <div className="dg-hist-stat" style={{ "--c": "var(--dg-success)" }}>
+          <span>Cobrado en la puerta</span><strong>{money(totalCobrado)}</strong><small>{totalRendido > 0 ? `${money(totalRendido)} ya rendido` : "nada rendido todavía"}</small>
+        </div>
+        <div className={`dg-hist-stat ${totalSinRendir > 0 ? "dg-hist-stat-alerta" : ""}`} style={{ "--c": totalSinRendir > 0 ? "var(--dg-warning)" : "var(--dg-text-faint)" }}>
+          <span>Falta rendir</span><strong>{money(totalSinRendir)}</strong><small>{totalSinRendir > 0 ? "el flete todavía no lo entregó" : "todo rendido"}</small>
+        </div>
       </div>
 
-      {dias.length > 0 && (
-        <div className="dg-hist-titulos" aria-hidden="true">
-          <span>Cliente</span><span>Barrio y dirección</span><span>Qué llevó</span><span>Lo llevó</span><span className="dg-hist-titulo-cobro">Cobró en la puerta</span><span />
-        </div>
-      )}
       {dias.length === 0 && <div className="dg-empty">{buscando ? "No hay envíos que coincidan con la búsqueda." : `No hay envíos en ${nombreMesLargo(mes)}.`}</div>}
 
-      {dias.map((d) => (
-        <section className="dg-hist-dia" key={d.dia} aria-label={nombreDia(d.dia)}>
-          <h3 className="dg-hist-dia-tit">
-            <span>{nombreDia(d.dia)}</span>
-            <small>{d.filas.length} {d.filas.length === 1 ? "envío" : "envíos"}{(() => { const n = d.filas.reduce((t, f) => t + f.espejos, 0); return n ? ` · ${n} ${n === 1 ? "espejo" : "espejos"}` : ""; })()}</small>
-          </h3>
-          <div className="dg-hist-lista">
-            {d.filas.map((f) => {
-              const open = abierta === f.clave;
-              const fotos = f.items.map((x) => x.fotosEntrega).find((l) => Array.isArray(l) && l.length) || [];
-              return (
-                <div className={`dg-hist-fila dg-hist-${f.tipo} ${open ? "dg-hist-abierta" : ""}`} key={f.clave}>
-                  <button type="button" className="dg-hist-linea" onClick={() => setAbierta(open ? null : f.clave)} aria-expanded={open}>
-                    <span className="dg-hist-quien">
-                      <strong>{f.cliente}</strong>
-                      <small>
-                        {f.ordenes.length ? `#${f.ordenes.join(", #")}` : ""}
-                        {f.tipo === "interior" && <span className="dg-hist-chip">Interior</span>}
-                        {f.tipo === "salida" && <span className="dg-hist-chip">{f.salida.label}</span>}
-                        {f.metodo === "Envío flex" && <span className="dg-hist-chip">Flex</span>}
-                        {f.metodo === "Colocación" && <span className="dg-hist-chip">Colocación</span>}
-                      </small>
-                    </span>
-                    <span className="dg-hist-donde" data-label="Dónde">{f.donde || "—"}</span>
-                    <span className="dg-hist-que" data-label="Qué llevó">{f.productos || "—"}</span>
-                    <span className="dg-hist-flete-col" data-label="Lo llevó">{f.fletero || "—"}</span>
-                    <span className="dg-hist-cobro" data-label={f.tipo === "interior" ? "Estado" : "Cobró"}>
-                      {f.tipo === "interior"
-                        ? <span className={`dg-hist-estado ${f.recibido ? "dg-hist-ok" : ""}`}>{f.recibido ? "Recibido" : "Despachado"}</span>
-                        : f.cobrado > 0
-                          ? <><strong>{money(f.cobrado)}</strong>{f.porTransferencia ? <small>por transferencia</small> : f.tipo === "flete" ? <small className={f.rendicion ? "dg-hist-ok" : "dg-hist-pend"}>{f.rendicion ? "rendido" : "sin rendir"}</small> : null}</>
-                          : <span className="dg-hist-nada">nada</span>}
-                    </span>
-                    <ChevronDown size={15} className="dg-hist-chev" aria-hidden="true" />
-                  </button>
-                  {open && (
-                    <div className="dg-hist-detalle">
-                      <ul>
-                        {f.celular && <li><span>Teléfono</span><a href={`tel:${String(f.celular).replace(/\D/g, "")}`}>{f.celular}</a></li>}
-                        {f.horario && <li><span>Horario</span>{f.horario}</li>}
-                        {f.tipo === "interior" && <li><span>Guía</span>{f.guia ? <a href={linkViaCargo(f.guia)} target="_blank" rel="noopener noreferrer">{f.guia} · ver en Vía Cargo</a> : "sin cargar"}</li>}
-                        {f.rendicion && <li><span>Rendición</span>{f.rendicion.fletero || "El flete"} entregó {money(f.rendicion.entregado)} el {fechaEntregaCorta(String(f.rendicion.fecha || "").slice(0, 10))}</li>}
-                        {f.tipo === "salida" && f.salida && <li><span>Tipo</span>{f.salida.label}</li>}
-                        {aclaracionEntregaDe(f.items) && <li><span>Aclaración</span>{aclaracionEntregaDe(f.items)}</li>}
-                      </ul>
-                      {fotos.length > 0 && (
-                        <div className="dg-hist-fotos">
-                          <span>Fotos de la entrega</span>
-                          <FotosCampo lista={fotos} carpeta={f.items[0].id} canEdit={false} onCambiar={() => {}} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+      {dias.map((d) => {
+        const espejosDia = d.filas.reduce((t, f) => t + f.espejos, 0);
+        const cobradoDia = d.filas.reduce((t, f) => t + f.cobrado, 0);
+        const esHoy = d.dia === isoLocal(new Date());
+        return (
+          <section className="dg-hist-dia" key={d.dia} aria-label={nombreDia(d.dia)}>
+            <h3 className={`dg-hist-dia-tit ${esHoy ? "dg-hist-dia-hoy" : ""}`}>
+              <CalendarDays size={16} aria-hidden="true" />
+              <span className="dg-hist-dia-nombre">{esHoy ? "Hoy · " : ""}{nombreDia(d.dia)}</span>
+              <span className="dg-hist-dia-chips">
+                <span className="dg-hist-dia-chip">{d.filas.length} {d.filas.length === 1 ? "envío" : "envíos"}</span>
+                {espejosDia > 0 && <span className="dg-hist-dia-chip">{espejosDia} {espejosDia === 1 ? "espejo" : "espejos"}</span>}
+                {cobradoDia > 0 && <span className="dg-hist-dia-chip dg-hist-dia-plata">{money(cobradoDia)}</span>}
+              </span>
+            </h3>
+            <div className="dg-hist-lista">
+              {d.filas.map((f) => {
+                const open = abierta === f.clave;
+                const fotos = f.items.map((x) => x.fotosEntrega).find((l) => Array.isArray(l) && l.length) || [];
+                const col = colorDeEnvio(f);
+                const estadoPlata = f.tipo === "interior" ? "" : f.cobrado <= 0 ? "nada" : f.porTransferencia ? "transferencia" : f.tipo === "flete" ? (f.rendicion ? "rendido" : "sinrendir") : "cobrado";
+                return (
+                  <article className={`dg-hist-card ${open ? "dg-hist-abierta" : ""}`} key={f.clave} style={{ "--hc": col.color, "--hc-rgb": col.rgb }}>
+                    <button type="button" className="dg-hist-card-btn" onClick={() => setAbierta(open ? null : f.clave)} aria-expanded={open}>
+                      <span className="dg-hist-card-arriba">
+                        <span className="dg-hist-card-quien">
+                          <strong>{f.cliente}</strong>
+                          <span className="dg-hist-card-tags">
+                            <span className="dg-hist-tipo">{col.nombre}</span>
+                            {f.ordenes.length > 0 && <span className="dg-hist-orden">#{f.ordenes.join(" · #")}</span>}
+                          </span>
+                        </span>
+                        <span className={`dg-hist-plata dg-hist-plata-${estadoPlata || "interior"}`}>
+                          {f.tipo === "interior"
+                            ? <span className={`dg-hist-pill ${f.recibido ? "dg-hist-pill-ok" : "dg-hist-pill-info"}`}>{f.recibido ? <><Check size={12} /> Recibido</> : <><Truck size={12} /> Despachado</>}</span>
+                            : f.cobrado > 0
+                              ? <>
+                                  <strong>{money(f.cobrado)}</strong>
+                                  <span className={`dg-hist-pill ${estadoPlata === "rendido" ? "dg-hist-pill-ok" : estadoPlata === "sinrendir" ? "dg-hist-pill-alerta" : "dg-hist-pill-info"}`}>
+                                    {estadoPlata === "rendido" ? <><Check size={12} /> Rendido</> : estadoPlata === "sinrendir" ? <><AlertTriangle size={12} /> Sin rendir</> : estadoPlata === "transferencia" ? "Por transferencia" : "Cobrado"}
+                                  </span>
+                                </>
+                              : <span className="dg-hist-pill dg-hist-pill-nada">Sin cobro</span>}
+                        </span>
+                      </span>
+                      <span className="dg-hist-card-datos">
+                        <span className="dg-hist-dato"><MapPin size={14} aria-hidden="true" /><span>{f.donde || "Sin dirección"}</span></span>
+                        <span className="dg-hist-dato"><Package size={14} aria-hidden="true" /><span>{f.productos || "—"}</span></span>
+                        <span className="dg-hist-dato dg-hist-dato-flete"><Truck size={14} aria-hidden="true" /><span>{f.fletero || "Sin flete anotado"}</span></span>
+                      </span>
+                      <ChevronDown size={16} className="dg-hist-chev" aria-hidden="true" />
+                    </button>
+                    {open && (
+                      <div className="dg-hist-detalle">
+                        <ul>
+                          {f.celular && <li><span>Teléfono</span><a href={`tel:${String(f.celular).replace(/\D/g, "")}`}>{f.celular}</a></li>}
+                          {f.horario && <li><span>Horario</span>{f.horario}</li>}
+                          {f.tipo === "interior" && <li><span>Guía</span>{f.guia ? <a href={linkViaCargo(f.guia)} target="_blank" rel="noopener noreferrer">{f.guia} · ver en Vía Cargo</a> : "sin cargar"}</li>}
+                          {f.rendicion && <li><span>Rendición</span>{f.rendicion.fletero || "El flete"} entregó {money(f.rendicion.entregado)} el {fechaEntregaCorta(String(f.rendicion.fecha || "").slice(0, 10))}</li>}
+                          {f.tipo === "salida" && f.salida && <li><span>Tipo</span>{f.salida.label}</li>}
+                          {aclaracionEntregaDe(f.items) && <li><span>Aclaración</span>{aclaracionEntregaDe(f.items)}</li>}
+                        </ul>
+                        {fotos.length > 0 && (
+                          <div className="dg-hist-fotos">
+                            <span>Fotos de la entrega</span>
+                            <FotosCampo lista={fotos} carpeta={f.items[0].id} canEdit={false} onCambiar={() => {}} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -23145,60 +23180,77 @@ function Style() {
       .dg-chat-verif-row input { flex:1; letter-spacing:6px; text-align:center; font-size:18px; font-family:'JetBrains Mono', monospace; font-weight:700;
         border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:12px; padding:9px; background:var(--dg-surface-2); color:var(--dg-text); }
       .dg-chat-verif-row button { flex:none; padding:0 16px; border:none; border-radius:12px; background:var(--dg-accent); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
-      /* Historial de envíos (11/11/2026) */
+      /* Historial de envíos (11/11/2026, rediseño con color) */
       .dg-hist-filtros { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-bottom:12px; }
       .dg-hist-filtros select { width:auto; min-width:160px; font-weight:600; }
       .dg-hist-buscar { flex:1 1 260px; min-width:0; }
-      .dg-hist-resumen { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; margin:4px 0 18px; font-size:14px; color:var(--dg-text-dim); }
-      .dg-hist-resumen strong { color:var(--dg-text); font-family:'JetBrains Mono', monospace; font-size:17px; }
-      .dg-hist-resumen small { margin-left:auto; font-size:12px; }
-      .dg-hist-dia { margin-bottom:22px; }
-      .dg-hist-titulos { display:grid; grid-template-columns:minmax(170px,1.2fr) minmax(190px,1.6fr) minmax(130px,1.1fr) minmax(90px,.7fr) minmax(110px,.8fr) 18px; gap:12px; padding:0 6px 6px; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-faint); }
-      .dg-hist-titulo-cobro { text-align:right; }
-      .dg-hist-dia-tit { display:flex; align-items:baseline; gap:10px; margin:0 0 8px; padding-bottom:6px; border-bottom:2px solid rgba(var(--dg-line-rgb),.14); font-family:'Jost', sans-serif; font-size:17px; font-weight:700; color:var(--dg-text); }
-      .dg-hist-dia-tit small { font-size:13px; font-weight:500; color:var(--dg-text-dim); }
-      .dg-hist-lista { display:flex; flex-direction:column; }
-      .dg-hist-fila { border-bottom:1px solid rgba(var(--dg-line-rgb),.09); }
-      .dg-hist-fila:last-child { border-bottom:0; }
-      .dg-hist-linea { display:grid; grid-template-columns:minmax(170px,1.2fr) minmax(190px,1.6fr) minmax(130px,1.1fr) minmax(90px,.7fr) minmax(110px,.8fr) 18px; gap:12px; align-items:center; width:100%; padding:12px 6px; border:0; background:transparent; color:var(--dg-text); font:inherit; font-size:14px; text-align:left; cursor:pointer; }
-      .dg-hist-linea:hover { background:rgba(var(--dg-line-rgb),.04); }
-      .dg-hist-linea:focus-visible { outline:2px solid var(--dg-accent); outline-offset:-2px; border-radius:8px; }
-      .dg-hist-quien { display:flex; flex-direction:column; gap:3px; min-width:0; }
-      .dg-hist-quien strong { font-size:15px; font-weight:700; overflow-wrap:anywhere; }
-      .dg-hist-quien small { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:12px; color:var(--dg-text-dim); font-family:'JetBrains Mono', monospace; }
-      .dg-hist-chip { font-family:'Jost', sans-serif; font-size:11px; font-weight:600; padding:1px 7px; border-radius:999px; background:rgba(var(--dg-line-rgb),.09); color:var(--dg-text-dim); }
-      .dg-hist-interior .dg-hist-chip { color:var(--dg-interior, var(--dg-accent)); }
-      .dg-hist-donde, .dg-hist-que { color:var(--dg-text-dim); overflow-wrap:anywhere; }
-      .dg-hist-flete-col { font-weight:600; }
-      .dg-hist-cobro { display:flex; flex-direction:column; align-items:flex-end; text-align:right; }
-      .dg-hist-cobro strong { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-size:15px; }
-      .dg-hist-cobro small { font-size:11px; }
-      .dg-hist-ok { color:var(--dg-success); }
-      .dg-hist-pend { color:var(--dg-warning); }
-      .dg-hist-nada { color:var(--dg-text-faint); font-size:13px; }
-      .dg-hist-estado { font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px; background:rgba(var(--dg-line-rgb),.08); color:var(--dg-text-dim); }
-      .dg-hist-estado.dg-hist-ok { color:var(--dg-success); background:rgba(var(--dg-success-rgb),.12); }
-      .dg-hist-chev { color:var(--dg-text-faint); transition:transform .15s; }
+      .dg-hist-filtro-tipo { display:inline-flex; align-items:center; gap:7px; }
+      .dg-hist-filtro-tipo b { font-family:'JetBrains Mono', monospace; font-weight:700; }
+      .dg-hist-punto { width:9px; height:9px; border-radius:50%; background:var(--tc); flex:none; }
+      .dg-hist-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; margin:14px 0 22px; }
+      .dg-hist-stat { position:relative; display:flex; flex-direction:column; gap:3px; padding:14px 16px 13px; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); overflow:hidden; }
+      .dg-hist-stat::before { content:''; position:absolute; inset:0 auto 0 0; width:5px; background:var(--c); }
+      .dg-hist-stat span { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-hist-stat strong { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-size:24px; line-height:1.15; color:var(--c); }
+      .dg-hist-stat small { font-size:12px; color:var(--dg-text-dim); }
+      .dg-hist-stat-alerta { background:color-mix(in srgb, var(--dg-warning) 10%, var(--dg-surface-2)); border-color:color-mix(in srgb, var(--dg-warning) 40%, transparent); }
+      .dg-hist-dia { margin-bottom:26px; }
+      .dg-hist-dia-tit { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:0 0 10px; padding:10px 14px; border-radius:12px; background:var(--dg-surface-3); color:var(--dg-text); font-family:'Jost', sans-serif; font-size:17px; font-weight:700; }
+      .dg-hist-dia-tit svg { color:var(--dg-accent); }
+      .dg-hist-dia-hoy { background:color-mix(in srgb, var(--dg-accent) 22%, var(--dg-surface-3)); }
+      .dg-hist-dia-nombre { margin-right:auto; }
+      .dg-hist-dia-chips { display:flex; flex-wrap:wrap; gap:6px; }
+      .dg-hist-dia-chip { padding:3px 10px; border-radius:999px; background:rgba(var(--dg-line-rgb),.1); font-size:12px; font-weight:600; color:var(--dg-text); }
+      .dg-hist-dia-plata { font-family:'JetBrains Mono', monospace; color:var(--dg-success); background:rgba(var(--dg-success-rgb),.14); }
+      .dg-hist-lista { display:flex; flex-direction:column; gap:8px; }
+      .dg-hist-card { position:relative; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.12); box-shadow:0 2px 10px -6px var(--dg-shadow); overflow:hidden; }
+      .dg-hist-card::before { content:''; position:absolute; inset:0 auto 0 0; width:5px; background:var(--hc); }
+      .dg-hist-card-btn { position:relative; display:flex; flex-direction:column; gap:10px; width:100%; padding:14px 44px 14px 20px; border:0; background:transparent; color:var(--dg-text); font:inherit; text-align:left; cursor:pointer; }
+      .dg-hist-card-btn:hover { background:rgba(var(--hc-rgb),.06); }
+      .dg-hist-card-btn:focus-visible { outline:2px solid var(--hc); outline-offset:-2px; border-radius:14px; }
+      .dg-hist-card-arriba { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+      .dg-hist-card-quien { display:flex; flex-direction:column; gap:5px; min-width:0; }
+      .dg-hist-card-quien strong { font-family:'Jost', sans-serif; font-size:17px; font-weight:700; line-height:1.2; color:var(--dg-text); overflow-wrap:anywhere; }
+      .dg-hist-card-tags { display:flex; flex-wrap:wrap; gap:6px; }
+      .dg-hist-tipo { padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--hc); background:rgba(var(--hc-rgb),.16); border:1px solid rgba(var(--hc-rgb),.35); }
+      .dg-hist-orden { padding:2px 8px; border-radius:6px; font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--dg-text-dim); background:rgba(var(--dg-line-rgb),.08); }
+      .dg-hist-plata { display:flex; flex-direction:column; align-items:flex-end; gap:5px; flex:none; }
+      .dg-hist-plata strong { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-size:20px; line-height:1.1; }
+      .dg-hist-plata-rendido strong { color:var(--dg-success); }
+      .dg-hist-plata-sinrendir strong { color:var(--dg-warning); }
+      .dg-hist-plata-transferencia strong, .dg-hist-plata-cobrado strong { color:var(--dg-text); }
+      .dg-hist-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; white-space:nowrap; }
+      .dg-hist-pill-ok { color:var(--dg-success); background:rgba(var(--dg-success-rgb),.15); }
+      .dg-hist-pill-alerta { color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),.17); }
+      .dg-hist-pill-info { color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),.14); }
+      .dg-hist-pill-nada { color:var(--dg-text-faint); background:rgba(var(--dg-line-rgb),.07); }
+      .dg-hist-card-datos { display:flex; flex-wrap:wrap; gap:6px 22px; }
+      .dg-hist-dato { display:inline-flex; align-items:flex-start; gap:6px; font-size:14px; color:var(--dg-text-dim); min-width:0; }
+      .dg-hist-dato svg { flex:none; margin-top:2px; color:var(--hc); }
+      .dg-hist-dato span { overflow-wrap:anywhere; }
+      .dg-hist-dato-flete span { font-weight:700; color:var(--dg-text); }
+      .dg-hist-chev { position:absolute; right:16px; top:18px; color:var(--dg-text-faint); transition:transform .15s; }
       .dg-hist-abierta .dg-hist-chev { transform:rotate(180deg); }
-      .dg-hist-detalle { padding:4px 6px 14px; display:flex; flex-wrap:wrap; gap:12px 28px; }
-      .dg-hist-detalle ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; font-size:14px; }
+      .dg-hist-detalle { margin:0 14px 14px 20px; padding:12px 14px; border-radius:10px; background:rgba(var(--hc-rgb),.07); border:1px dashed rgba(var(--hc-rgb),.35); display:flex; flex-wrap:wrap; gap:12px 28px; }
+      .dg-hist-detalle ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px; font-size:14px; color:var(--dg-text); }
       .dg-hist-detalle li span, .dg-hist-fotos > span { display:inline-block; min-width:92px; margin-right:8px; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
-      .dg-hist-detalle a { color:var(--dg-accent); }
+      .dg-hist-detalle a { color:var(--dg-accent); font-weight:600; }
       .dg-hist-fotos { display:flex; flex-direction:column; gap:6px; }
       @media (prefers-reduced-motion: reduce) { .dg-hist-chev { transition:none; } }
+      @media (max-width: 900px) { .dg-hist-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
       @media (max-width: 760px) {
-        .dg-hist-titulos { display:none; }
         .dg-hist-filtros select { flex:1; min-width:0; font-size:16px; }
         .dg-hist-buscar, .dg-hist-filtros .dg-hist-flete { flex:1 1 100%; font-size:16px; }
         .dg-hist-filtros .dg-vxv-elegir { flex:1 1 100%; }
-        .dg-hist-resumen small { margin-left:0; width:100%; }
-        .dg-hist-linea { grid-template-columns:1fr auto; gap:6px 12px; padding:12px 2px; }
-        .dg-hist-quien { grid-column:1; grid-row:1; }
-        .dg-hist-cobro { grid-column:2; grid-row:1; }
-        .dg-hist-donde, .dg-hist-que, .dg-hist-flete-col { grid-column:1 / -1; font-size:13px; }
-        .dg-hist-donde::before, .dg-hist-que::before, .dg-hist-flete-col::before { content:attr(data-label) " · "; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-faint); }
-        .dg-hist-flete-col { font-weight:500; color:var(--dg-text-dim); }
+        .dg-hist-stat { padding:12px 13px 11px; }
+        .dg-hist-stat strong { font-size:19px; }
+        .dg-hist-dia-tit { font-size:16px; }
+        .dg-hist-dia-chips { width:100%; }
+        .dg-hist-card-btn { padding:13px 14px 13px 18px; }
+        .dg-hist-card-datos { flex-direction:column; gap:6px; }
+        .dg-hist-plata strong { font-size:17px; }
         .dg-hist-chev { display:none; }
+        .dg-hist-detalle { margin:0 10px 12px 16px; }
       }
       .dg-volver-paso { display:inline-flex; align-items:center; gap:5px; margin-top:8px; padding:4px 0; border:0; background:transparent; color:var(--dg-text-dim); font:inherit; font-size:12px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
       .dg-volver-paso:hover { color:var(--dg-text); }
