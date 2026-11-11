@@ -763,7 +763,20 @@ function fechaEnvioOListo(pedido) {
 }
 
 function costoEnvioPedido(pedido) {
+  if (pedido?.envioSinCargo) return 0;
   return Math.max(0, Number(pedido?.costoEnvio) || 0);
+}
+// Marcar el envío abonado (12/11/2026): el cliente ya lo pagó, así que lo
+// cobramos nosotros y el flete no lo cobra en la puerta. Desmarcarlo vuelve a
+// «sin definir» quién lo cobra (si estaba en «lo cobramos nosotros»).
+function cambioEnvioAbonado(p, abonado) {
+  if (abonado) return { envioPagado: true, envioCobro: "anticipado", envioSinCargo: false };
+  return { envioPagado: false, envioCobro: p?.envioCobro === "anticipado" ? "" : (p?.envioCobro || "") };
+}
+// Envío sin cargo para el cliente (12/11/2026): se anota a propósito, para que
+// un $0 no se lea como «monto a confirmar».
+function envioSinCargoDe(items) {
+  return (items || []).some((p) => p && p.envioSinCargo && esPedidoConEnvio(p));
 }
 
 function envioPendientePedido(pedido) {
@@ -791,6 +804,7 @@ function cuentaCobroEntrega(items) {
   const total = saldo + envioPendiente;
   const fleteSeQueda = Math.min(envioPendiente, viaje);
   return {
+    sinCargo: conEnvio && envioSinCargoDe(deEnvio),
     espejos: lista.length, conEnvio, saldo, costoEnvio, envioPendiente,
     envioPagado: conEnvio && costoEnvio > 0 && envioPendiente === 0,
     total, viaje, fleteSeQueda,
@@ -818,15 +832,17 @@ function textoCobroCliente(items) {
       : "✅ Ya está todo pagado: no tenés que abonar nada.";
   }
   if (c.total === 0) {
+    if (c.sinCargo) return `✅ ${varios ? "Los espejos ya están pagados" : "El espejo ya está pagado"} y el envío es sin cargo: no tenés que abonar nada.`;
     return c.costoEnvio > 0
       ? "✅ Ya está todo pagado (espejo y envío): no tenés que abonar nada."
       : `✅ ${varios ? "Los espejos ya están pagados" : "El espejo ya está pagado"}. El costo del envío te lo confirmamos.`;
   }
   const lineas = [`💰 *Para abonar ${cuando}:*`];
   lineas.push(c.saldo > 0 ? `• Saldo ${espejo}: ${money(c.saldo)}` : `• ${varios ? "Espejos" : "Espejo"}: ya pagado ✓`);
-  if (c.costoEnvio <= 0) lineas.push("• Envío: el costo te lo confirmamos");
+  if (c.sinCargo) lineas.push("• Envío: sin cargo 🎁");
+  else if (c.costoEnvio <= 0) lineas.push("• Envío: el costo te lo confirmamos");
   else lineas.push(c.envioPendiente > 0 ? `• Envío: ${money(c.envioPendiente)}` : "• Envío: ya pagado ✓");
-  lineas.push(c.costoEnvio > 0 ? `*Total: ${money(c.total)}*` : `*Total sin el envío: ${money(c.total)}*`);
+  lineas.push(c.costoEnvio > 0 || c.sinCargo ? `*Total: ${money(c.total)}*` : `*Total sin el envío: ${money(c.total)}*`);
   return lineas.join("\n");
 }
 function detalleCobroEntrega(pedido) { return textoCobroCliente([pedido]); }
@@ -838,7 +854,7 @@ function lineasCobroFlete(items, corto) {
   const lineas = [];
   if (c.total > 0) {
     const partes = [c.saldo > 0 ? `saldo ${money(c.saldo)}` : "", c.envioPendiente > 0 ? `envío ${money(c.envioPendiente)}` : ""].filter(Boolean);
-    const detalle = partes.length > 1 ? ` (${partes.join(" + ")})` : c.saldo === 0 ? " (solo el envío)" : " (saldo; el envío ya está pagado)";
+    const detalle = partes.length > 1 ? ` (${partes.join(" + ")})` : c.saldo === 0 ? " (solo el envío)" : c.sinCargo ? " (saldo; el envío es sin cargo para el cliente)" : " (saldo; el envío ya está pagado)";
     lineas.push(`💵 ${corto ? "COBRAR" : "COBRAR EN LA ENTREGA"}: ${money(c.total)}${c.conEnvio ? detalle : ""}`);
   } else {
     lineas.push(corto ? "💵 No cobra nada: está pagado." : "💵 No hay que cobrar nada: está todo pagado.");
@@ -849,6 +865,8 @@ function lineasCobroFlete(items, corto) {
     else if (c.fleteSeQueda > 0) como = c.fleteSeQueda === c.envioPendiente ? "te quedás con el envío que cobrás" : `te quedás con ${money(c.fleteSeQueda)} de lo que cobrás`;
     else como = "te lo pagamos nosotros";
     lineas.push(`🚚 Tu viaje: ${money(c.viaje)} — ${como}.`);
+  } else if (c.sinCargo) {
+    lineas.push("🚚 El envío es sin cargo para el cliente: tu viaje te lo pagamos nosotros.");
   }
   if (c.total > 0) lineas.push(`↩️ Nos entregás: ${money(c.fleteRinde)}`);
   return { lineas, c };
@@ -1635,7 +1653,8 @@ function cambiosDeUnPedido(a, d) {
   const flete = [];
   if (cambio(a, d, "fletero")) flete.push(d.fletero ? `lo lleva ${d.fletero}` : "sin flete");
   if (cambio(a, d, "fletePago")) flete.push(`se lleva ${money(Number(d.fletePago) || 0)}`);
-  if (cambio(a, d, "costoEnvio")) flete.push(`envío ${money(Number(d.costoEnvio) || 0)}`);
+  if (cambio(a, d, "costoEnvio") && !d.envioSinCargo) flete.push(`envío ${money(Number(d.costoEnvio) || 0)}`);
+  if (cambio(a, d, "envioSinCargo")) flete.push(d.envioSinCargo ? "envío sin cargo" : "el envío vuelve a cobrarse");
   if (cambio(a, d, "envioCobro")) flete.push(d.envioCobro === "anticipado" ? "lo cobramos nosotros" : d.envioCobro === "entrega" ? "lo cobra el flete" : "sin definir quién cobra");
   if (flete.length) pon("Cargó datos del flete", flete.join(", "));
   if (prendio(a, d, "envioPagado")) pon("Marcó el envío pagado");
@@ -4125,7 +4144,7 @@ function FletesPanel({ pedidos, onChangePedidos, onCreatePurchase }) {
   const [verPagados, setVerPagados] = useState(false);
   const [aviso, setAviso] = useState(null);
 
-  const entregados = (pedidos || []).filter((p) => p.estado === "Entregado" && esPedidoConEnvio(p) && costoEnvioPedido(p) > 0);
+  const entregados = (pedidos || []).filter((p) => p.estado === "Entregado" && esPedidoConEnvio(p) && fleteConViaje(p));
   const pendientes = entregados.filter((p) => !p.fleteLiquidado);
   const pagados = entregados.filter((p) => p.fleteLiquidado);
   const lista = verPagados ? pagados : pendientes;
@@ -7289,7 +7308,7 @@ function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
 const CAMPOS_DEL_PEDIDO = [
   "cliente", "celular", "dniCuit", "vendedor", "canalVenta", "fecha", "listo",
   "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
-  "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "costoEnvio", "destinoLat", "destinoLng",
+  "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "costoEnvio", "envioSinCargo", "envioPagado", "envioCobro", "destinoLat", "destinoLng",
   "aclaracionEntrega", "aclaracionInterna",
 ];
 // La factura y la comisión son de la venta entera, no de cada espejo: una
@@ -8530,13 +8549,18 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
 
 // --- LIQUIDACIÓN DEL FLETE ---
 // Un envío entra a liquidar cuando ya se entregó y tenía costo de flete.
+// Con envío sin cargo (12/11/2026) el cliente no paga el envío, pero al flete
+// hay que pagarle el viaje: entra si tiene cargado cuánto se lleva.
+function fleteConViaje(p) {
+  return costoEnvioPedido(p) > 0 || (!!p?.envioSinCargo && Number(p?.fletePago) > 0);
+}
 function fleteElegible(p) {
-  return !!p && p.estado === "Entregado" && esPedidoConEnvio(p) && costoEnvioPedido(p) > 0 && !p.fleteLiquidado;
+  return !!p && p.estado === "Entregado" && esPedidoConEnvio(p) && fleteConViaje(p) && !p.fleteLiquidado;
 }
 // Lo que hay que pagarle: solo lo que cobró la empresa por adelantado. Lo que
 // cobró él en la entrega ya lo tiene en la mano.
 function fleteSeLeDebe(p) {
-  return fleteElegible(p) && p.envioCobro === "anticipado";
+  return fleteElegible(p) && (p.envioCobro === "anticipado" || !!p.envioSinCargo);
 }
 // Lo que se lleva el flete por este envío. Puede ser menos que lo que le
 // cobramos al cliente: esa diferencia es lo que le queda a la empresa.
@@ -9144,6 +9168,14 @@ function prepararGuardadoPedido(pedidos, pedido, nuevoNumero) {
     : null;
   let withOrden = { ...pedido, orden: ordenDelGrupo || pedido.orden || nuevoNumero() };
   if (!withOrden.grupoId) withOrden = { ...withOrden, grupoId: withOrden.id };
+  // Pedidos con envío (12/11/2026): la fecha que se le indica al cliente al
+  // vender queda guardada como fecha de entrega (la «Salida» de Envíos). Solo
+  // la que se escribe a mano: la que pone la app sola es una estimación del
+  // taller. Si después PostVenta la cambia, no se pisa.
+  const fechaEscrita = !!withOrden.listo && (!exists || (previous && previous.listo !== withOrden.listo));
+  if (fechaEscrita && METODOS_ENVIO_GENERAL.includes(withOrden.metodo) && !withOrden.fechaEnvio && withOrden.estado !== "Cancelado") {
+    withOrden = { ...withOrden, fechaEnvio: withOrden.listo };
+  }
   // Si nadie le puso fecha de entrega, se la pone la app y queda fija, así
   // el pedido no se va al fondo de la lista cada vez que entra uno nuevo.
   if (!withOrden.listo && !pedidoEstaListo(withOrden) && withOrden.estado !== "Cancelado") {
@@ -10827,7 +10859,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
               if (nuevo === "Cancelado" && draft.estado !== "Cancelado") setPidiendoMotivoCancelacion(true);
               else set("estado", nuevo);
             }}>{estadoOptions.map((o) => (<option key={o}>{o}</option>))}</select></Field>
-            <Field label="Listo para (fecha)"><input type="date" disabled={readOnly} value={draft.listo} onChange={(e) => set("listo", e.target.value)} /></Field>
+            <Field label={METODOS_ENVIO_GENERAL.includes(draft.metodo) ? "Fecha de entrega" : "Listo para (fecha)"}><input type="date" disabled={readOnly} value={draft.listo} onChange={(e) => set("listo", e.target.value)} /></Field>
             <Field label="Método de entrega" error={err("metodo")}><select disabled={!canEditFull} value={draft.metodo} onChange={(e) => set("metodo", e.target.value)}>{METODO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
           <div className="dg-field-grid" style={{ marginTop: 12 }}>
@@ -10861,14 +10893,42 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                     <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
                   </>
                 )}
-                <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
+                <Field label="Costo del envío">
+                  <div className="dg-envio-costo">
+                    <input type="number" disabled={!canEditFull || !!draft.envioSinCargo} value={draft.envioSinCargo ? "" : draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder={draft.envioSinCargo ? "Sin cargo" : "0"} />
+                    <label className="dg-envio-sincargo">
+                      <input type="checkbox" disabled={!canEditFull} checked={!!draft.envioSinCargo}
+                        onChange={(e) => setDraft((d) => ({ ...d, envioSinCargo: e.target.checked, ...(e.target.checked ? { costoEnvio: "0", envioPagado: false } : {}) }))} />
+                      Sin cargo
+                    </label>
+                    <label className="dg-envio-sincargo">
+                      <input type="checkbox" disabled={!canEditFull || !!draft.envioSinCargo} checked={!!draft.envioPagado && !draft.envioSinCargo}
+                        onChange={(e) => setDraft((d) => ({ ...d, ...cambioEnvioAbonado(d, e.target.checked) }))} />
+                      Abonado
+                    </label>
+                  </div>
+                </Field>
               </>
             ) : (
               <>
                 <Field label="Barrio"><input disabled={!canEditFull} value={draft.barrio} onChange={(e) => set("barrio", e.target.value)} placeholder="Ej: Palermo, Centro..." /></Field>
                 <Field label="Dirección" error={err("detalleEntrega")}><input disabled={!canEditFull} value={draft.detalleEntrega} onChange={(e) => set("detalleEntrega", e.target.value)} placeholder="Calle y número" /></Field>
                 <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
-                <Field label="Costo del envío"><input type="number" disabled={!canEditFull} value={draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder="0" /></Field>
+                <Field label="Costo del envío">
+                  <div className="dg-envio-costo">
+                    <input type="number" disabled={!canEditFull || !!draft.envioSinCargo} value={draft.envioSinCargo ? "" : draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder={draft.envioSinCargo ? "Sin cargo" : "0"} />
+                    <label className="dg-envio-sincargo">
+                      <input type="checkbox" disabled={!canEditFull} checked={!!draft.envioSinCargo}
+                        onChange={(e) => setDraft((d) => ({ ...d, envioSinCargo: e.target.checked, ...(e.target.checked ? { costoEnvio: "0", envioPagado: false } : {}) }))} />
+                      Sin cargo
+                    </label>
+                    <label className="dg-envio-sincargo">
+                      <input type="checkbox" disabled={!canEditFull || !!draft.envioSinCargo} checked={!!draft.envioPagado && !draft.envioSinCargo}
+                        onChange={(e) => setDraft((d) => ({ ...d, ...cambioEnvioAbonado(d, e.target.checked) }))} />
+                      Abonado
+                    </label>
+                  </div>
+                </Field>
                 <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
               </>
             )}
@@ -12224,9 +12284,17 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                       </li>
                                       <li>
                                         <span>Envío al cliente</span>
-                                        {f.flete > 0
-                                          ? (envioPend > 0 ? <b>{money(f.flete)}</b> : <b className="dg-envios-pagado">{money(f.flete)} · pagado</b>)
-                                          : <b className="dg-envios-falta">sin cargar</b>}
+                                        <span className="dg-envio-abonado-fila">
+                                          {f.flete > 0
+                                            ? (envioPend > 0 ? <b>{money(f.flete)}</b> : <b className="dg-envios-pagado">{money(f.flete)} · abonado</b>)
+                                            : f.sinCargo ? <b className="dg-envios-pagado">sin cargo</b> : <b className="dg-envios-falta">sin cargar</b>}
+                                          {canEdit && f.flete > 0 && (
+                                            <button type="button" className={`dg-btn-ghost dg-mini-btn dg-envio-abonado-btn ${envioPend > 0 ? "" : "dg-envio-abonado-on"}`}
+                                              onClick={() => updateFila(f, cambioEnvioAbonado(p, envioPend > 0))}>
+                                              {envioPend > 0 ? <><Check size={12} /> Marcar abonado</> : <><RotateCcw size={12} /> Desmarcar</>}
+                                            </button>
+                                          )}
+                                        </span>
                                       </li>
                                       <li className="dg-salida-plata-total">
                                         <span>A cobrar en la entrega</span>
@@ -12534,6 +12602,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
               saldo: items.reduce((t, x) => t + Math.max(0, pedidoSaldo(x)), 0),
               flete: costoEnvioDeVarios(items),
               fletePagado: items.some((x) => x.envioPagado),
+              sinCargo: envioSinCargoDe(items),
               falta: faltaParaEntregar(items),
             };
           };
@@ -12567,6 +12636,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
             saldo: sub.reduce((t, x) => t + x.saldo, 0),
             flete: sub.reduce((t, x) => t + x.flete, 0),
             fletePagado: sub.every((x) => x.fletePagado),
+            sinCargo: sub.every((x) => x.sinCargo),
             falta: "",
           };
         });
@@ -12728,7 +12798,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                               ? <span className="dg-envios-falta">—</span>
                               : f.flete > 0
                                 ? (f.fletePagado ? <span className="dg-envios-pagado">{money(f.flete)}</span> : money(f.flete))
-                                : <span className="dg-envios-falta">sin cargar</span>}
+                                : f.sinCargo ? <span className="dg-envios-pagado">sin cargo</span> : <span className="dg-envios-falta">sin cargar</span>}
                           </td>
                           {/* El botón rápido: cerrar la salida sin bajar hasta
                               la tarjeta. Si todavía no se puede, queda apagado
@@ -23239,6 +23309,13 @@ function Style() {
       .dg-hist-filtro-tipo { display:inline-flex; align-items:center; gap:7px; }
       .dg-hist-filtro-tipo b { font-family:'JetBrains Mono', monospace; font-weight:700; }
       .dg-hist-punto { width:9px; height:9px; border-radius:50%; background:var(--tc); flex:none; }
+      .dg-envio-costo { display:flex; align-items:center; gap:10px; }
+      .dg-envio-costo > input { flex:1; min-width:0; }
+      .dg-envio-sincargo { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font-size:13px; font-weight:600; color:var(--dg-text); cursor:pointer; text-transform:none; letter-spacing:0; }
+      .dg-envio-sincargo input { width:16px; height:16px; margin:0; }
+      .dg-envio-abonado-fila { display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+      .dg-envio-abonado-btn { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; font-size:12px; color:var(--dg-success); border-color:rgba(var(--dg-success-rgb),.4); }
+      .dg-envio-abonado-on { color:var(--dg-text-dim); border-color:rgba(var(--dg-line-rgb),.2); }
       .dg-hist-aviso { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:0 0 18px; padding:12px 14px; border-radius:12px; font-size:14px; line-height:1.4; color:var(--dg-text); background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface-2)); border:1px solid color-mix(in srgb, var(--dg-warning) 45%, transparent); }
       .dg-hist-aviso > svg { color:var(--dg-warning); flex:none; }
       .dg-hist-aviso > span { flex:1 1 300px; }
@@ -27904,13 +27981,14 @@ function datosPagoPublico(items) {
   const lineas = [];
   if (c.saldo > 0) lineas.push({ label: varios ? "Saldo de los espejos" : "Saldo del espejo", valor: money(c.saldo) });
   if (c.conEnvio) {
-    if (c.costoEnvio <= 0) lineas.push({ label: "Envío", valor: "a confirmar" });
+    if (c.sinCargo) lineas.push({ label: "Envío", valor: "sin cargo 🎁" });
+    else if (c.costoEnvio <= 0) lineas.push({ label: "Envío", valor: "a confirmar" });
     else if (c.envioPendiente > 0) lineas.push({ label: "Envío", valor: money(c.envioPendiente) });
     else lineas.push({ label: "Envío", valor: "pagado ✓" });
   }
   return {
     entregado: false, lineas, total: c.total,
-    envioSinPrecio: c.conEnvio && c.costoEnvio <= 0,
+    envioSinPrecio: c.conEnvio && c.costoEnvio <= 0 && !c.sinCargo,
     cuando: momentoDePago(pendientes[0]),
   };
 }
