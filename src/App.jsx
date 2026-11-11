@@ -91,6 +91,7 @@ const SUBPAGE_ICONS = {
   finanzas: Wallet,
   comisiones: CircleDollarSign,
   vendedores: BarChart3,
+  historial: CalendarRange,
   sueldos: Users,
   materiales: Package,
   stock: Building2,
@@ -915,6 +916,7 @@ const SECTOR_SUBPAGES = {
     { id: "interior", label: "Envíos al interior" },
     { id: "retiros", label: "Retiros en el local" },
     { id: "rendicion", label: "Rendición del flete" },
+    { id: "historial", label: "Historial de envíos" },
     { id: "numeros", label: "Números" },
     { id: "facturas", label: "Facturas pendientes" },
     { id: "guia", label: "Guía y tareas" },
@@ -922,6 +924,7 @@ const SECTOR_SUBPAGES = {
   ],
   logistica: [
     { id: "envios", label: "Envíos confirmados" },
+    { id: "historial", label: "Historial de envíos" },
     { id: "tareas", label: "Avisos del sector", soloAdmin: true },
   ],
 };
@@ -13035,6 +13038,202 @@ function textoDiferencia(esperado, entregado) {
   return d < 0 ? { texto: `Faltan ${money(-d)}`, clase: "falta" } : { texto: `Sobran ${money(d)}`, clase: "sobra" };
 }
 
+// ===== Historial de envíos (11/11/2026) ====================================
+// Todo lo que ya salió, día por día, lo más nuevo arriba: entregas del flete
+// propio (una fila por entrega, aunque tenga varios espejos o vaya junta con
+// otro pedido), despachos al interior y salidas cargadas a mano ya hechas.
+function diaDelEnvio(p) {
+  if (p?.metodo === "Interior") return String(p.despachadoFecha || "").slice(0, 10) || diaLocalDe(p.entregadoFecha);
+  // Los entregados viejos que no tienen la fecha de entrega: el día que estaba agendado.
+  return diaLocalDe(p?.entregadoFecha) || String(p?.fechaEnvio || "").slice(0, 10);
+}
+function historialDeEnvios(pedidos, salidas) {
+  const porClave = new Map();
+  (pedidos || []).forEach((p) => {
+    if (!p || p.estado === "Cancelado") return;
+    const interior = p.metodo === "Interior";
+    if (interior ? !["Despachado", "Entregado"].includes(p.estado) : (p.estado !== "Entregado" || !METODOS_ENVIO_GENERAL.includes(p.metodo))) return;
+    if (!diaDelEnvio(p)) return;
+    const junto = envioJuntoDe([p]);
+    const clave = `${interior ? "int" : "fle"}|${junto ? `junto:${junto}` : (p.grupoId || p.id)}`;
+    if (!porClave.has(clave)) porClave.set(clave, { clave, tipo: interior ? "interior" : "flete", items: [] });
+    porClave.get(clave).items.push(p);
+  });
+  const filas = [...porClave.values()].map((f) => {
+    const items = f.items.slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    const p = items[0];
+    const dia = items.map(diaDelEnvio).filter(Boolean).sort().pop();
+    const cobro = f.tipo === "flete" ? cuentaDeRendicion(items) : null;
+    const direccion = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
+    return {
+      clave: f.clave, tipo: f.tipo, dia, items,
+      ordenes: [...new Set(items.map((x) => x.orden).filter(Boolean))],
+      cliente: p.cliente || "Sin nombre", celular: p.celular || "",
+      donde: f.tipo === "interior"
+        ? [[p.localidad, p.provincia].filter(Boolean).join(", "), entregaInteriorTexto(p)].filter(Boolean).join(" · ")
+        : [p.barrio, direccion].filter(Boolean).join(" · "),
+      espejos: totalUnidades(items),
+      productos: items.map((x) => `${Number(x.cant) > 1 ? `${x.cant}× ` : ""}${medidaEspejo(x) || "espejo"}`).join(", "),
+      fletero: f.tipo === "interior" ? "Vía Cargo" : (items.map((x) => String(x.fletero || "").trim()).find(Boolean) || ""),
+      cobrado: cobro ? cobro.saldo + cobro.envioEnLaPuerta : 0,
+      porTransferencia: !!cobro?.porTransferencia,
+      rendicion: items.map((x) => x.rendicionFlete).find(Boolean) || null,
+      guia: String(p.remitoNumeroGuia || "").trim(),
+      recibido: f.tipo === "interior" && items.every((x) => x.estado === "Entregado"),
+      horario: p.horarioEntrega || "",
+      metodo: p.metodo,
+    };
+  });
+  (salidas || []).forEach((m) => {
+    if (!m || !m.hecho) return;
+    const dia = String(m.hechoFecha || "").slice(0, 10);
+    if (!dia) return;
+    const t = tipoDeSalida(m);
+    filas.push({
+      clave: `sal|${m.id}`, tipo: "salida", dia, items: [], ordenes: [],
+      cliente: m.cliente || t.quien, celular: m.telefono || "",
+      donde: [m.barrio, [m.direccion, m.piso].filter(Boolean).join(", ")].filter(Boolean).join(" · "),
+      espejos: 0, productos: m.motivo || t.label,
+      fletero: String(m.fletero || "").trim(),
+      cobrado: Number(m.cobrar) || 0, porTransferencia: false, rendicion: null, guia: "", recibido: false,
+      horario: "", salida: t,
+    });
+  });
+  return filas.sort((a, b) => b.dia.localeCompare(a.dia) || a.cliente.localeCompare(b.cliente));
+}
+// Lo que se busca: nombre, teléfono, dirección, número de pedido, qué llevó, guía.
+function coincideHistorial(f, texto) {
+  const q = textoComparable(String(texto || "").trim());
+  if (!q) return true;
+  const enTexto = textoComparable([f.cliente, f.donde, f.productos, f.fletero, f.guia, f.ordenes.map((o) => `#${o} ${o}`).join(" ")].join(" "));
+  const digitos = String(texto).replace(/\D/g, "");
+  return enTexto.includes(q) || (digitos.length >= 4 && String(f.celular || "").replace(/\D/g, "").includes(digitos));
+}
+
+function HistorialEnviosPanel({ pedidos, salidas = [] }) {
+  const mesActual = isoLocal(new Date()).slice(0, 7);
+  const [mes, setMes] = useState(mesActual);
+  const [tipo, setTipo] = useState("todos");
+  const [flete, setFlete] = useState("");
+  const [busqueda, setBusqueda] = useState("");
+  const [abierta, setAbierta] = useState(null);
+  const todas = historialDeEnvios(pedidos, salidas);
+  const meses = [...new Set([mesActual, ...todas.map((f) => f.dia.slice(0, 7))])].sort().reverse();
+  const fletes = [...new Set(todas.map((f) => f.fletero).filter(Boolean))].sort();
+  const buscando = busqueda.trim().length > 0;
+  const filas = todas.filter((f) => (buscando || f.dia.startsWith(mes))
+    && (tipo === "todos" || f.tipo === tipo)
+    && (!flete || f.fletero === flete)
+    && coincideHistorial(f, busqueda));
+  const dias = [];
+  filas.forEach((f) => { const ult = dias[dias.length - 1]; if (ult && ult.dia === f.dia) ult.filas.push(f); else dias.push({ dia: f.dia, filas: [f] }); });
+  const totalEspejos = filas.reduce((t, f) => t + f.espejos, 0);
+  const totalCobrado = filas.reduce((t, f) => t + f.cobrado, 0);
+  const cuenta = (t) => todas.filter((f) => (buscando || f.dia.startsWith(mes)) && (!flete || f.fletero === flete) && coincideHistorial(f, busqueda) && (t === "todos" || f.tipo === t)).length;
+  const i = meses.indexOf(mes);
+  const nombreDia = (d) => { const t = fechaLargaCorta(d); return t.charAt(0).toUpperCase() + t.slice(1); };
+
+  return (
+    <div className="dg-page dg-hist">
+      <div className="dg-hist-filtros">
+        <div className="dg-vxv-elegir">
+          <button type="button" className="dg-icon-btn" aria-label="Mes anterior" disabled={buscando || i >= meses.length - 1} onClick={() => setMes(meses[i + 1])}><ChevronLeft size={16} /></button>
+          <select value={mes} onChange={(e) => setMes(e.target.value)} aria-label="Mes" disabled={buscando}>
+            {meses.map((m) => <option key={m} value={m}>{nombreMesLargo(m)}</option>)}
+          </select>
+          <button type="button" className="dg-icon-btn" aria-label="Mes siguiente" disabled={buscando || i <= 0} onClick={() => setMes(meses[i - 1])}><ChevronRight size={16} /></button>
+        </div>
+        <input className="dg-pedido-search dg-hist-buscar" placeholder="Buscar cliente, teléfono, dirección o #pedido" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} aria-label="Buscar en el historial" />
+        {fletes.length > 1 && (
+          <select value={flete} onChange={(e) => setFlete(e.target.value)} aria-label="Quién lo llevó" className="dg-hist-flete">
+            <option value="">Lo llevó: todos</option>
+            {fletes.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        )}
+      </div>
+      <div className="dg-quickviews">
+        {[["todos", "Todo"], ["flete", "Flete propio"], ["interior", "Interior"], ["salida", "Salidas a mano"]].map(([id, label]) => (
+          <button key={id} type="button" className={`dg-quickview-btn ${tipo === id ? "dg-quickview-on" : ""}`} onClick={() => setTipo(id)}>{label} ({cuenta(id)})</button>
+        ))}
+      </div>
+
+      <div className="dg-hist-resumen" aria-live="polite">
+        <span><strong>{filas.length}</strong> {filas.length === 1 ? "envío" : "envíos"}</span>
+        {totalEspejos > 0 && <span><strong>{totalEspejos}</strong> {totalEspejos === 1 ? "espejo" : "espejos"}</span>}
+        {totalCobrado > 0 && <span>cobrado en la puerta <strong>{money(totalCobrado)}</strong></span>}
+        <small>{buscando ? "buscando en todos los meses" : nombreMesLargo(mes)}</small>
+      </div>
+
+      {dias.length > 0 && (
+        <div className="dg-hist-titulos" aria-hidden="true">
+          <span>Cliente</span><span>Barrio y dirección</span><span>Qué llevó</span><span>Lo llevó</span><span className="dg-hist-titulo-cobro">Cobró en la puerta</span><span />
+        </div>
+      )}
+      {dias.length === 0 && <div className="dg-empty">{buscando ? "No hay envíos que coincidan con la búsqueda." : `No hay envíos en ${nombreMesLargo(mes)}.`}</div>}
+
+      {dias.map((d) => (
+        <section className="dg-hist-dia" key={d.dia} aria-label={nombreDia(d.dia)}>
+          <h3 className="dg-hist-dia-tit">
+            <span>{nombreDia(d.dia)}</span>
+            <small>{d.filas.length} {d.filas.length === 1 ? "envío" : "envíos"}{(() => { const n = d.filas.reduce((t, f) => t + f.espejos, 0); return n ? ` · ${n} ${n === 1 ? "espejo" : "espejos"}` : ""; })()}</small>
+          </h3>
+          <div className="dg-hist-lista">
+            {d.filas.map((f) => {
+              const open = abierta === f.clave;
+              const fotos = f.items.map((x) => x.fotosEntrega).find((l) => Array.isArray(l) && l.length) || [];
+              return (
+                <div className={`dg-hist-fila dg-hist-${f.tipo} ${open ? "dg-hist-abierta" : ""}`} key={f.clave}>
+                  <button type="button" className="dg-hist-linea" onClick={() => setAbierta(open ? null : f.clave)} aria-expanded={open}>
+                    <span className="dg-hist-quien">
+                      <strong>{f.cliente}</strong>
+                      <small>
+                        {f.ordenes.length ? `#${f.ordenes.join(", #")}` : ""}
+                        {f.tipo === "interior" && <span className="dg-hist-chip">Interior</span>}
+                        {f.tipo === "salida" && <span className="dg-hist-chip">{f.salida.label}</span>}
+                        {f.metodo === "Envío flex" && <span className="dg-hist-chip">Flex</span>}
+                        {f.metodo === "Colocación" && <span className="dg-hist-chip">Colocación</span>}
+                      </small>
+                    </span>
+                    <span className="dg-hist-donde" data-label="Dónde">{f.donde || "—"}</span>
+                    <span className="dg-hist-que" data-label="Qué llevó">{f.productos || "—"}</span>
+                    <span className="dg-hist-flete-col" data-label="Lo llevó">{f.fletero || "—"}</span>
+                    <span className="dg-hist-cobro" data-label={f.tipo === "interior" ? "Estado" : "Cobró"}>
+                      {f.tipo === "interior"
+                        ? <span className={`dg-hist-estado ${f.recibido ? "dg-hist-ok" : ""}`}>{f.recibido ? "Recibido" : "Despachado"}</span>
+                        : f.cobrado > 0
+                          ? <><strong>{money(f.cobrado)}</strong>{f.porTransferencia ? <small>por transferencia</small> : f.tipo === "flete" ? <small className={f.rendicion ? "dg-hist-ok" : "dg-hist-pend"}>{f.rendicion ? "rendido" : "sin rendir"}</small> : null}</>
+                          : <span className="dg-hist-nada">nada</span>}
+                    </span>
+                    <ChevronDown size={15} className="dg-hist-chev" aria-hidden="true" />
+                  </button>
+                  {open && (
+                    <div className="dg-hist-detalle">
+                      <ul>
+                        {f.celular && <li><span>Teléfono</span><a href={`tel:${String(f.celular).replace(/\D/g, "")}`}>{f.celular}</a></li>}
+                        {f.horario && <li><span>Horario</span>{f.horario}</li>}
+                        {f.tipo === "interior" && <li><span>Guía</span>{f.guia ? <a href={linkViaCargo(f.guia)} target="_blank" rel="noopener noreferrer">{f.guia} · ver en Vía Cargo</a> : "sin cargar"}</li>}
+                        {f.rendicion && <li><span>Rendición</span>{f.rendicion.fletero || "El flete"} entregó {money(f.rendicion.entregado)} el {fechaEntregaCorta(String(f.rendicion.fecha || "").slice(0, 10))}</li>}
+                        {f.tipo === "salida" && f.salida && <li><span>Tipo</span>{f.salida.label}</li>}
+                        {aclaracionEntregaDe(f.items) && <li><span>Aclaración</span>{aclaracionEntregaDe(f.items)}</li>}
+                      </ul>
+                      {fotos.length > 0 && (
+                        <div className="dg-hist-fotos">
+                          <span>Fotos de la entrega</span>
+                          <FotosCampo lista={fotos} carpeta={f.items[0].id} canEdit={false} onCambiar={() => {}} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function RendicionFletePanel({ pedidos, onChange, canEdit, onRegistrar }) {
   const [verRendidas, setVerRendidas] = useState(false);
   const [entrego, setEntrego] = useState({});
@@ -22763,6 +22962,11 @@ function SectorPage({
           : <LockedPage label="Envíos al interior" onLogin={onRequestLogin} />
       )}
 
+      {subpage === "historial" && (sector.id === "postventa" || sector.id === "logistica") && (
+        canSeePedidos ? <HistorialEnviosPanel pedidos={pedidos} salidas={enviosLogistica || []} />
+          : <LockedPage label="Historial de envíos" onLogin={onRequestLogin} />
+      )}
+
       {subpage === "rendicion" && sector.id === "postventa" && (
         canSeePedidos ? <RendicionFletePanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} onRegistrar={onRegistrar} />
           : <LockedPage label="Rendición del flete" onLogin={onRequestLogin} />
@@ -22941,6 +23145,61 @@ function Style() {
       .dg-chat-verif-row input { flex:1; letter-spacing:6px; text-align:center; font-size:18px; font-family:'JetBrains Mono', monospace; font-weight:700;
         border:1px solid rgba(var(--dg-line-rgb),0.2); border-radius:12px; padding:9px; background:var(--dg-surface-2); color:var(--dg-text); }
       .dg-chat-verif-row button { flex:none; padding:0 16px; border:none; border-radius:12px; background:var(--dg-accent); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+      /* Historial de envíos (11/11/2026) */
+      .dg-hist-filtros { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-bottom:12px; }
+      .dg-hist-filtros select { width:auto; min-width:160px; font-weight:600; }
+      .dg-hist-buscar { flex:1 1 260px; min-width:0; }
+      .dg-hist-resumen { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; margin:4px 0 18px; font-size:14px; color:var(--dg-text-dim); }
+      .dg-hist-resumen strong { color:var(--dg-text); font-family:'JetBrains Mono', monospace; font-size:17px; }
+      .dg-hist-resumen small { margin-left:auto; font-size:12px; }
+      .dg-hist-dia { margin-bottom:22px; }
+      .dg-hist-titulos { display:grid; grid-template-columns:minmax(170px,1.2fr) minmax(190px,1.6fr) minmax(130px,1.1fr) minmax(90px,.7fr) minmax(110px,.8fr) 18px; gap:12px; padding:0 6px 6px; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-faint); }
+      .dg-hist-titulo-cobro { text-align:right; }
+      .dg-hist-dia-tit { display:flex; align-items:baseline; gap:10px; margin:0 0 8px; padding-bottom:6px; border-bottom:2px solid rgba(var(--dg-line-rgb),.14); font-family:'Jost', sans-serif; font-size:17px; font-weight:700; color:var(--dg-text); }
+      .dg-hist-dia-tit small { font-size:13px; font-weight:500; color:var(--dg-text-dim); }
+      .dg-hist-lista { display:flex; flex-direction:column; }
+      .dg-hist-fila { border-bottom:1px solid rgba(var(--dg-line-rgb),.09); }
+      .dg-hist-fila:last-child { border-bottom:0; }
+      .dg-hist-linea { display:grid; grid-template-columns:minmax(170px,1.2fr) minmax(190px,1.6fr) minmax(130px,1.1fr) minmax(90px,.7fr) minmax(110px,.8fr) 18px; gap:12px; align-items:center; width:100%; padding:12px 6px; border:0; background:transparent; color:var(--dg-text); font:inherit; font-size:14px; text-align:left; cursor:pointer; }
+      .dg-hist-linea:hover { background:rgba(var(--dg-line-rgb),.04); }
+      .dg-hist-linea:focus-visible { outline:2px solid var(--dg-accent); outline-offset:-2px; border-radius:8px; }
+      .dg-hist-quien { display:flex; flex-direction:column; gap:3px; min-width:0; }
+      .dg-hist-quien strong { font-size:15px; font-weight:700; overflow-wrap:anywhere; }
+      .dg-hist-quien small { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:12px; color:var(--dg-text-dim); font-family:'JetBrains Mono', monospace; }
+      .dg-hist-chip { font-family:'Jost', sans-serif; font-size:11px; font-weight:600; padding:1px 7px; border-radius:999px; background:rgba(var(--dg-line-rgb),.09); color:var(--dg-text-dim); }
+      .dg-hist-interior .dg-hist-chip { color:var(--dg-interior, var(--dg-accent)); }
+      .dg-hist-donde, .dg-hist-que { color:var(--dg-text-dim); overflow-wrap:anywhere; }
+      .dg-hist-flete-col { font-weight:600; }
+      .dg-hist-cobro { display:flex; flex-direction:column; align-items:flex-end; text-align:right; }
+      .dg-hist-cobro strong { font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-size:15px; }
+      .dg-hist-cobro small { font-size:11px; }
+      .dg-hist-ok { color:var(--dg-success); }
+      .dg-hist-pend { color:var(--dg-warning); }
+      .dg-hist-nada { color:var(--dg-text-faint); font-size:13px; }
+      .dg-hist-estado { font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px; background:rgba(var(--dg-line-rgb),.08); color:var(--dg-text-dim); }
+      .dg-hist-estado.dg-hist-ok { color:var(--dg-success); background:rgba(var(--dg-success-rgb),.12); }
+      .dg-hist-chev { color:var(--dg-text-faint); transition:transform .15s; }
+      .dg-hist-abierta .dg-hist-chev { transform:rotate(180deg); }
+      .dg-hist-detalle { padding:4px 6px 14px; display:flex; flex-wrap:wrap; gap:12px 28px; }
+      .dg-hist-detalle ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; font-size:14px; }
+      .dg-hist-detalle li span, .dg-hist-fotos > span { display:inline-block; min-width:92px; margin-right:8px; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-hist-detalle a { color:var(--dg-accent); }
+      .dg-hist-fotos { display:flex; flex-direction:column; gap:6px; }
+      @media (prefers-reduced-motion: reduce) { .dg-hist-chev { transition:none; } }
+      @media (max-width: 760px) {
+        .dg-hist-titulos { display:none; }
+        .dg-hist-filtros select { flex:1; min-width:0; font-size:16px; }
+        .dg-hist-buscar, .dg-hist-filtros .dg-hist-flete { flex:1 1 100%; font-size:16px; }
+        .dg-hist-filtros .dg-vxv-elegir { flex:1 1 100%; }
+        .dg-hist-resumen small { margin-left:0; width:100%; }
+        .dg-hist-linea { grid-template-columns:1fr auto; gap:6px 12px; padding:12px 2px; }
+        .dg-hist-quien { grid-column:1; grid-row:1; }
+        .dg-hist-cobro { grid-column:2; grid-row:1; }
+        .dg-hist-donde, .dg-hist-que, .dg-hist-flete-col { grid-column:1 / -1; font-size:13px; }
+        .dg-hist-donde::before, .dg-hist-que::before, .dg-hist-flete-col::before { content:attr(data-label) " · "; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--dg-text-faint); }
+        .dg-hist-flete-col { font-weight:500; color:var(--dg-text-dim); }
+        .dg-hist-chev { display:none; }
+      }
       .dg-volver-paso { display:inline-flex; align-items:center; gap:5px; margin-top:8px; padding:4px 0; border:0; background:transparent; color:var(--dg-text-dim); font:inherit; font-size:12px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
       .dg-volver-paso:hover { color:var(--dg-text); }
       .dg-volver-paso:focus-visible { outline:2px solid var(--dg-accent); outline-offset:2px; border-radius:4px; }
