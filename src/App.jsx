@@ -8254,9 +8254,36 @@ function BotonNotificaciones({ session }) {
   );
 }
 
+// El mensaje para pegarle al cliente con el link (12/11/2026, texto de
+// Facundo). Si va al interior, suma la línea de Vía Cargo.
+function mensajeSeguimientoCliente(pedido, link) {
+  const lineas = [
+    "Por otro lado te envío el link del seguimiento de la producción para que puedas ver el estado del espejo en directo.",
+    "",
+    "Para acceder te pide los últimos 4 dígitos de tu celu, adentro podés encontrar:",
+    "- La garantía",
+    "- La factura de compra",
+    "- Un chat interno para consultas",
+  ];
+  if (pedido?.metodo === "Interior") lineas.push("- Link directo al seguimiento en la página de Vía Cargo");
+  lineas.push("", link);
+  return lineas.join("\n");
+}
+
 function BotonCompartirSeguimiento({ pedido }) {
   const [copiado, setCopiado] = useState(false);
+  const [mensajeCopiado, setMensajeCopiado] = useState(false);
   const link = linkSeguimiento(pedido);
+  async function copiarMensaje() {
+    const mensaje = mensajeSeguimientoCliente(pedido, link);
+    try {
+      await navigator.clipboard.writeText(mensaje);
+      setMensajeCopiado(true);
+      setTimeout(() => setMensajeCopiado(false), 2500);
+    } catch (e) {
+      window.prompt("Copiá el mensaje:", mensaje);
+    }
+  }
 
   async function compartir() {
     try {
@@ -8277,6 +8304,10 @@ function BotonCompartirSeguimiento({ pedido }) {
     <span className="dg-seg-botones">
       <button className="dg-btn-ghost dg-mini-btn" onClick={compartir} title="Copiar link para que el cliente vea el estado de su pedido">
         {copiado ? <><Check size={12} /> Copiado</> : <><ExternalLink size={12} /> Link<span className="dg-seg-largo"> de seguimiento</span></>}
+      </button>
+      <button className="dg-btn-ghost dg-mini-btn" onClick={copiarMensaje}
+        title={`Copiar el mensaje con el link para pegárselo al cliente${pedido.metodo === "Interior" ? " (con la línea de Vía Cargo)" : ""}`}>
+        {mensajeCopiado ? <><Check size={12} /> Mensaje copiado</> : <><Copy size={12} /> Copiar mensaje</>}
       </button>
       {wa && (
         <a className="dg-btn-ghost dg-mini-btn dg-seg-wa" href={`${wa}?text=${encodeURIComponent(texto)}`}
