@@ -8635,7 +8635,7 @@ function prepararEntregaDesdeVentas(pedidos, grupo, opciones) {
     if (!delGrupo.has(x.id)) return x;
     let nuevo = porTransferencia ? { ...x, saldoPorTransferencia: true } : x;
     if (!ids.has(x.id)) return nuevo;
-    nuevo = { ...nuevo, estado: "Entregado", entregadoFecha: o.entregadoFecha || new Date().toISOString() };
+    nuevo = { ...nuevo, estado: "Entregado", entregadoFecha: o.entregadoFecha || new Date().toISOString(), entregadoDesde: "Ventas por vendedor" };
     if (o.registraPlata) {
       const c = ingresoPorCambioDeMonto(nuevo, saldo > 0 ? o.medio : "");
       // La plata entró el día de la entrega, no el día que se anota.
@@ -13082,6 +13082,11 @@ function historialDeEnvios(pedidos, salidas) {
       recibido: f.tipo === "interior" && items.every((x) => x.estado === "Entregado"),
       horario: p.horarioEntrega || "",
       metodo: p.metodo,
+      // Marcado entregado sin pasar por la lista de Envíos (sin envío
+      // confirmado): desde «Ventas por vendedor» → «Entregado», o cambiando el
+      // estado a mano. En Envíos no se puede entregar sin confirmar el envío.
+      aMano: f.tipo === "flete" && !items.some((x) => x.envioConfirmado),
+      desde: items.map((x) => x.entregadoDesde).find(Boolean) || "",
     };
   });
   (salidas || []).forEach((m) => {
@@ -13096,7 +13101,7 @@ function historialDeEnvios(pedidos, salidas) {
       espejos: 0, productos: m.motivo || t.label,
       fletero: String(m.fletero || "").trim(),
       cobrado: Number(m.cobrar) || 0, porTransferencia: false, rendicion: null, guia: "", recibido: false,
-      horario: "", salida: t,
+      horario: "", salida: t, aMano: false, desde: "",
     });
   });
   return filas.sort((a, b) => b.dia.localeCompare(a.dia) || a.cliente.localeCompare(b.cliente));
@@ -13127,6 +13132,7 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
   const [flete, setFlete] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [abierta, setAbierta] = useState(null);
+  const [soloAMano, setSoloAMano] = useState(false);
   const todas = historialDeEnvios(pedidos, salidas);
   const meses = [...new Set([mesActual, ...todas.map((f) => f.dia.slice(0, 7))])].sort().reverse();
   const fletes = [...new Set(todas.map((f) => f.fletero).filter(Boolean))].sort();
@@ -13136,11 +13142,13 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
     && (!flete || f.fletero === flete)
     && coincideHistorial(f, busqueda));
   const dias = [];
-  filas.forEach((f) => { const ult = dias[dias.length - 1]; if (ult && ult.dia === f.dia) ult.filas.push(f); else dias.push({ dia: f.dia, filas: [f] }); });
   const totalEspejos = filas.reduce((t, f) => t + f.espejos, 0);
   const totalCobrado = filas.reduce((t, f) => t + f.cobrado, 0);
   const totalRendido = filas.filter((f) => f.tipo === "flete" && f.rendicion && !f.porTransferencia).reduce((t, f) => t + f.cobrado, 0);
   const totalSinRendir = filas.filter((f) => f.tipo === "flete" && !f.rendicion && !f.porTransferencia).reduce((t, f) => t + f.cobrado, 0);
+  const cuantosAMano = filas.filter((f) => f.aMano).length;
+  const filasVista = soloAMano && cuantosAMano > 0 ? filas.filter((f) => f.aMano) : filas;
+  filasVista.forEach((f) => { const ult = dias[dias.length - 1]; if (ult && ult.dia === f.dia) ult.filas.push(f); else dias.push({ dia: f.dia, filas: [f] }); });
   const cuenta = (t) => todas.filter((f) => (buscando || f.dia.startsWith(mes)) && (!flete || f.fletero === flete) && coincideHistorial(f, busqueda) && (t === "todos" || f.tipo === t)).length;
   const i = meses.indexOf(mes);
   const nombreDia = (d) => { const t = fechaLargaCorta(d); return t.charAt(0).toUpperCase() + t.slice(1); };
@@ -13186,6 +13194,17 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
         </div>
       </div>
 
+      {cuantosAMano > 0 && (
+        <div className="dg-hist-aviso" role="note">
+          <AlertTriangle size={16} aria-hidden="true" />
+          <span>
+            <strong>{cuantosAMano} {cuantosAMano === 1 ? "envío se marcó" : "envíos se marcaron"} entregado{cuantosAMano === 1 ? "" : "s"} sin pasar por la lista de Envíos.</strong>{" "}
+            Se dieron por entregados a mano (por ejemplo desde «Ventas por vendedor» → «Entregado», que deja elegir el día), sin aviso al cliente ni envío confirmado. Por eso no los viste en Envíos.
+          </span>
+          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setSoloAMano((v) => !v)}>{soloAMano ? "Ver todos" : "Ver solo esos"}</button>
+        </div>
+      )}
+
       {dias.length === 0 && <div className="dg-empty">{buscando ? "No hay envíos que coincidan con la búsqueda." : `No hay envíos en ${nombreMesLargo(mes)}.`}</div>}
 
       {dias.map((d) => {
@@ -13218,6 +13237,7 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
                           <span className="dg-hist-card-tags">
                             <span className="dg-hist-tipo">{col.nombre}</span>
                             {f.ordenes.length > 0 && <span className="dg-hist-orden">#{f.ordenes.join(" · #")}</span>}
+                            {f.aMano && <span className="dg-hist-amano" title="Se marcó entregado sin pasar por la lista de Envíos">Marcado a mano</span>}
                           </span>
                         </span>
                         <span className={`dg-hist-plata dg-hist-plata-${estadoPlata || "interior"}`}>
@@ -13248,6 +13268,7 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
                           {f.tipo === "interior" && <li><span>Guía</span>{f.guia ? <a href={linkViaCargo(f.guia)} target="_blank" rel="noopener noreferrer">{f.guia} · ver en Vía Cargo</a> : "sin cargar"}</li>}
                           {f.rendicion && <li><span>Rendición</span>{f.rendicion.fletero || "El flete"} entregó {money(f.rendicion.entregado)} el {fechaEntregaCorta(String(f.rendicion.fecha || "").slice(0, 10))}</li>}
                           {f.tipo === "salida" && f.salida && <li><span>Tipo</span>{f.salida.label}</li>}
+                          {f.aMano && <li><span>Cómo</span>Marcado entregado{f.desde ? ` desde «${f.desde}»` : " a mano"}, sin pasar por la lista de Envíos (sin aviso al cliente ni envío confirmado).</li>}
                           {aclaracionEntregaDe(f.items) && <li><span>Aclaración</span>{aclaracionEntregaDe(f.items)}</li>}
                         </ul>
                         {fotos.length > 0 && (
@@ -23187,6 +23208,10 @@ function Style() {
       .dg-hist-filtro-tipo { display:inline-flex; align-items:center; gap:7px; }
       .dg-hist-filtro-tipo b { font-family:'JetBrains Mono', monospace; font-weight:700; }
       .dg-hist-punto { width:9px; height:9px; border-radius:50%; background:var(--tc); flex:none; }
+      .dg-hist-aviso { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:0 0 18px; padding:12px 14px; border-radius:12px; font-size:14px; line-height:1.4; color:var(--dg-text); background:color-mix(in srgb, var(--dg-warning) 12%, var(--dg-surface-2)); border:1px solid color-mix(in srgb, var(--dg-warning) 45%, transparent); }
+      .dg-hist-aviso > svg { color:var(--dg-warning); flex:none; }
+      .dg-hist-aviso > span { flex:1 1 300px; }
+      .dg-hist-amano { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),.15); border:1px dashed rgba(var(--dg-warning-rgb),.5); }
       .dg-hist-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; margin:14px 0 22px; }
       .dg-hist-stat { position:relative; display:flex; flex-direction:column; gap:3px; padding:14px 16px 13px; border-radius:14px; background:var(--dg-surface-2); border:1px solid rgba(var(--dg-line-rgb),.1); overflow:hidden; }
       .dg-hist-stat::before { content:''; position:absolute; inset:0 auto 0 0; width:5px; background:var(--c); }
