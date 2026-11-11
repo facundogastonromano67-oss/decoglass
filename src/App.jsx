@@ -766,6 +766,26 @@ function costoEnvioPedido(pedido) {
   if (pedido?.envioSinCargo) return 0;
   return Math.max(0, Number(pedido?.costoEnvio) || 0);
 }
+// Pedidos con envío cargados ANTES del 12/11/2026 (pedido de Facundo): la
+// fecha de entrega de la venta («listo») pasa a ser la fecha de salida en
+// Envíos, si no tenían. Se hace una sola vez por pedido: queda la marca
+// «fechaEnvioDesdeVenta», así si después PostVenta la saca, no vuelve.
+// Los cargados desde el 12/11 ya la copian al guardarse (prepararGuardadoPedido).
+const FECHA_ENVIO_DESDE_VENTA_HASTA = "2026-11-12";
+function pedidosParaCopiarFechaEnvio(pedidos) {
+  return (pedidos || []).filter((p) => p
+    && METODOS_ENVIO_GENERAL.includes(p.metodo)
+    && !["Entregado", "Despachado", "Cancelado"].includes(p.estado)
+    && String(p.listo || "").trim() && !String(p.fechaEnvio || "").trim()
+    && !p.fechaEnvioDesdeVenta
+    && String(p.fecha || "").slice(0, 10) <= FECHA_ENVIO_DESDE_VENTA_HASTA);
+}
+function copiarFechaEnvioDesdeVenta(pedidos) {
+  const ids = new Set(pedidosParaCopiarFechaEnvio(pedidos).map((p) => p.id));
+  if (!ids.size) return null;
+  return (pedidos || []).map((p) => (ids.has(p.id) ? { ...p, fechaEnvio: String(p.listo).slice(0, 10), fechaEnvioDesdeVenta: true } : p));
+}
+
 // Marcar el envío abonado (12/11/2026): el cliente ya lo pagó, así que lo
 // cobramos nosotros y el flete no lo cobra en la puerta. Desmarcarlo vuelve a
 // «sin definir» quién lo cobra (si estaba en «lo cobramos nosotros»).
@@ -1944,6 +1964,23 @@ function App() {
     const id = window.setInterval(revisar, 5 * 60 * 1000);
     return () => window.clearInterval(id);
   }, [session, pedidos, trabasTaller]);
+
+  // La fecha de la venta como fecha de salida, para los pedidos con envío ya
+  // cargados (12/11/2026). Solo un admin o un encargado, una vez por sesión.
+  // Es seguro aunque lo hagan dos a la vez: solo completa lo que está vacío.
+  const fechaEnvioCopiada = useRef(false);
+  useEffect(() => {
+    if (fechaEnvioCopiada.current || !session || !Array.isArray(pedidos) || !pedidos.length) return;
+    const puede = session.role === "admin" || (session.role === "sector" && session.tipo !== "operario");
+    if (!puede) return;
+    fechaEnvioCopiada.current = true;
+    const nuevos = copiarFechaEnvioDesdeVenta(pedidos);
+    if (!nuevos) return;
+    const cuantos = pedidosParaCopiarFechaEnvio(pedidos).length;
+    persistPedidos(nuevos);
+    try { registrarActividad("Copió la fecha de entrega a los envíos", `${cuantos} pedido(s) con envío ya cargados: la fecha de la venta quedó como fecha de salida`); } catch (e) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, pedidos]);
 
   // Lo que hacen los demás llega en vivo (si la tabla del registro existe).
   useEffect(() => {
@@ -10895,7 +10932,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 )}
                 <Field label="Costo del envío">
                   <div className="dg-envio-costo">
-                    <input type="number" disabled={!canEditFull || !!draft.envioSinCargo} value={draft.envioSinCargo ? "" : draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder={draft.envioSinCargo ? "Sin cargo" : "0"} />
+                    <input type="number" inputMode="decimal" disabled={!canEditFull || !!draft.envioSinCargo} value={draft.envioSinCargo ? "" : draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder={draft.envioSinCargo ? "Sin cargo" : "Ej: 18000"} />
+                    <div className="dg-envio-checks">
                     <label className="dg-envio-sincargo">
                       <input type="checkbox" disabled={!canEditFull} checked={!!draft.envioSinCargo}
                         onChange={(e) => setDraft((d) => ({ ...d, envioSinCargo: e.target.checked, ...(e.target.checked ? { costoEnvio: "0", envioPagado: false } : {}) }))} />
@@ -10906,6 +10944,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                         onChange={(e) => setDraft((d) => ({ ...d, ...cambioEnvioAbonado(d, e.target.checked) }))} />
                       Abonado
                     </label>
+                    </div>
                   </div>
                 </Field>
               </>
@@ -10916,7 +10955,8 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 <Field label="Piso / Depto"><input disabled={!canEditFull} value={draft.piso} onChange={(e) => set("piso", e.target.value)} placeholder="Ej: 3° B — o 'casa'" /></Field>
                 <Field label="Costo del envío">
                   <div className="dg-envio-costo">
-                    <input type="number" disabled={!canEditFull || !!draft.envioSinCargo} value={draft.envioSinCargo ? "" : draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder={draft.envioSinCargo ? "Sin cargo" : "0"} />
+                    <input type="number" inputMode="decimal" disabled={!canEditFull || !!draft.envioSinCargo} value={draft.envioSinCargo ? "" : draft.costoEnvio} onChange={(e) => set("costoEnvio", e.target.value)} placeholder={draft.envioSinCargo ? "Sin cargo" : "Ej: 18000"} />
+                    <div className="dg-envio-checks">
                     <label className="dg-envio-sincargo">
                       <input type="checkbox" disabled={!canEditFull} checked={!!draft.envioSinCargo}
                         onChange={(e) => setDraft((d) => ({ ...d, envioSinCargo: e.target.checked, ...(e.target.checked ? { costoEnvio: "0", envioPagado: false } : {}) }))} />
@@ -10927,6 +10967,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                         onChange={(e) => setDraft((d) => ({ ...d, ...cambioEnvioAbonado(d, e.target.checked) }))} />
                       Abonado
                     </label>
+                    </div>
                   </div>
                 </Field>
                 <Field label="Horario de entrega"><input disabled={!canEditFull} value={draft.horarioEntrega} onChange={(e) => set("horarioEntrega", e.target.value)} placeholder="Ej: Mañana 9 a 13 hs" /></Field>
@@ -23309,8 +23350,11 @@ function Style() {
       .dg-hist-filtro-tipo { display:inline-flex; align-items:center; gap:7px; }
       .dg-hist-filtro-tipo b { font-family:'JetBrains Mono', monospace; font-weight:700; }
       .dg-hist-punto { width:9px; height:9px; border-radius:50%; background:var(--tc); flex:none; }
-      .dg-envio-costo { display:flex; align-items:center; gap:10px; }
-      .dg-envio-costo > input { flex:1; min-width:0; }
+      .dg-envio-costo { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+      .dg-envio-costo > input { width:100%; min-width:0; }
+      .dg-envio-checks { display:flex; flex-wrap:wrap; gap:6px 18px; }
+      @media (min-width: 700px) { .dg-field:has(> .dg-envio-costo) { grid-column:span 2; } }
+      .dg-envio-costo > input { font-size:16px; font-family:'JetBrains Mono', monospace; }
       .dg-envio-sincargo { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font-size:13px; font-weight:600; color:var(--dg-text); cursor:pointer; text-transform:none; letter-spacing:0; }
       .dg-envio-sincargo input { width:16px; height:16px; margin:0; }
       .dg-envio-abonado-fila { display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }

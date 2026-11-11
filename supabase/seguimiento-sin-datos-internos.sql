@@ -30,7 +30,7 @@ as $$
               - 'vendedor' - 'fletero' - 'fleteLiquidado' - 'fleteLiquidadoMonto'
               - 'aclaracionInterna' - 'aclaracionTaller' - 'ordenPapel'
               - 'fletePago' - 'fleteroTel' - 'pagos' - 'fotosEntrega'
-              - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer' - 'entregadoDesde'
+              - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer' - 'entregadoDesde' - 'fechaEnvioDesdeVenta'
   from pedidos_rows
   where id = p_id
 $$;
@@ -47,7 +47,7 @@ as $$
               - 'vendedor' - 'fletero' - 'fleteLiquidado' - 'fleteLiquidadoMonto'
               - 'aclaracionInterna' - 'aclaracionTaller' - 'ordenPapel'
               - 'fletePago' - 'fleteroTel' - 'pagos' - 'fotosEntrega'
-              - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer' - 'entregadoDesde'
+              - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer' - 'entregadoDesde' - 'fechaEnvioDesdeVenta'
   from pedidos_rows
   where data->>'grupoId' = p_grupo
 $$;
