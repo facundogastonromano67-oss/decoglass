@@ -6353,77 +6353,75 @@ function gruposDemorados(lista) {
   });
   return [...grupos.values()];
 }
-// La hoja para imprimir: una tabla compacta (A4 acostada), un renglón por
-// espejo, dividida por tipo de entrega. Antes era un recuadro por pedido y
-// gastaba muchas hojas (pedido de Facundo, 12/11/2026).
-// opciones.sinHacerDe: Map id → día que quedó sin hacer.
+// El nombre en poco lugar: nombre y primer apellido («Marcela Ferreyra de la
+// Torre» → «Marcela Ferreyra»). El número de pedido ya lo identifica.
+function nombreCortoHoja(nombre) {
+  const partes = String(nombre || "").trim().split(/\s+/).filter(Boolean);
+  return partes.slice(0, 2).join(" ") || "Sin nombre";
+}
+// La hoja para imprimir: una tabla compacta (A4 parada), un renglón por
+// espejo, dividida por tipo de entrega. Solo lo que hace falta para hacer el
+// espejo (12/11/2026, Facundo: sin «dónde está», sin vendedor y sin «por qué»).
+// opciones.todos queda por compatibilidad (no se usa).
 function hojaDemorados(lista, opciones) {
-  const { todos = [], sinHacerDe = new Map(), ahora = new Date(), titulo = "Espejos demorados" } = opciones || {};
+  const { ahora = new Date(), titulo = "Espejos demorados" } = opciones || {};
   const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const hoyIso = isoLocal(ahora);
   const pedidosN = gruposDemorados(lista).length;
   const espejos = totalUnidades(lista);
-  const COLS = 11;
-  const fila = (x, primero, otros) => {
-    const funciones = funcionesPedido(x, true).map((f) => f.label).join(", ");
-    const critico = nivelDemoraEtapa(x) === "critico";
+  const COLS = 8;
+  const fila = (x, primero) => {
+    const funciones = funcionesPedido(x, true).map((f) => `<span class="fx">${esc(f.label)}</span>`).join("");
     const atraso = diasDeAtrasoEntrega(x, hoyIso);
-    const dias = diasEnEtapa(x);
-    const motivos = motivosDemora(x, sinHacerDe.get(x.id) || "", true);
-    return `<tr class="${critico ? "critico" : ""}${primero ? " primero" : ""}">
-      <td>${primero ? `<b>#${esc(x.orden ?? "—")}</b> ${esc(x.cliente || "Sin nombre")}<div class="sub">${esc(x.celular || "")}${otros > 0 ? ` · +${otros} espejo${otros === 1 ? "" : "s"} al día` : ""}</div>` : `<span class="sub">#${esc(x.orden ?? "—")} (sigue)</span>`}</td>
+    const cliente = esc(nombreCortoHoja(x.cliente));
+    return `<tr class="${primero ? "primero" : "sigue"}">
+      <td class="ped" title="${esc(x.cliente || "")}"><b>#${esc(x.orden ?? "—")}</b> ${primero ? cliente : '<span class="sub">(sigue)</span>'}</td>
       <td class="n">${esc(Math.max(1, Number(x.cant) || 1))}</td>
       <td><b>${esc(medidaEspejo(x, { cm: false }) || "—")}</b></td>
       <td>${esc([formaAparte(x), x.tipo].filter(Boolean).join(" / ") || "—")}</td>
       <td>${esc(x.tono || "—")}</td>
       <td>${esc(medidaGrabado(x))}</td>
-      <td>${esc(funciones || "—")}</td>
-      <td>${esc(estadoProduccionLabel(x))}${dias != null ? ` <span class="sub">${dias}d</span>` : ""}</td>
-      <td>${critico ? '<b class="muy">MUY</b> ' : ""}${esc(motivos.join(" · ") || "—")}</td>
+      <td class="fxs">${funciones || "—"}</td>
       <td>${esc(fechaDeHoja(x.listo))}${atraso > 0 ? ` <b class="rojo">+${atraso}d</b>` : ""}</td>
-      <td>${esc(x.vendedor || "—")}</td>
-    </tr>${primero && aclaracionDe(x, "aclaracionTaller") ? `<tr class="acl"><td></td><td colspan="${COLS - 1}"><b>Para el taller:</b> ${esc(aclaracionDe(x, "aclaracionTaller"))}</td></tr>` : ""}`;
+    </tr>${primero && aclaracionDe(x, "aclaracionTaller") ? `<tr class="acl"><td colspan="${COLS}"><b>Para el taller:</b> ${esc(aclaracionDe(x, "aclaracionTaller"))}</td></tr>` : ""}`;
   };
   const cuerpo = demoradosPorEntrega(lista).map((g) => {
-    const filas = gruposDemorados(g.items).map((items) => {
-      const p = items[0];
-      const delPedido = (todos || []).filter((x) => (p.grupoId ? x.grupoId === p.grupoId : x.id === p.id) && x.estado !== "Cancelado");
-      const otros = Math.max(0, totalUnidades(delPedido) - totalUnidades(items));
-      return items.map((x, i) => fila(x, i === 0, otros)).join("");
-    }).join("");
+    const grupos = gruposDemorados(g.items);
+    const filas = grupos.map((items) => items.map((x, i) => fila(x, i === 0)).join("")).join("");
     const u = totalUnidades(g.items);
-    return `<tbody><tr class="grupo"><td colspan="${COLS}">${esc(g.label)} · ${gruposDemorados(g.items).length} pedido${gruposDemorados(g.items).length === 1 ? "" : "s"} · ${u} espejo${u === 1 ? "" : "s"}</td></tr>${filas}</tbody>`;
+    return `<tbody><tr class="grupo"><td colspan="${COLS}">${esc(g.label)} · ${grupos.length} pedido${grupos.length === 1 ? "" : "s"} · ${u} espejo${u === 1 ? "" : "s"}</td></tr>${filas}</tbody>`;
   }).join("");
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>${esc(titulo)}</title>
 <style>
-  @page { size: A4 landscape; margin: 8mm; }
+  @page { size: A4 portrait; margin: 8mm; }
   * { box-sizing:border-box; }
   body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:12px; font-size:10.5px; }
   h1 { font-size:14px; margin:0 0 6px; }
   h1 small { font-size:11px; font-weight:400; color:#444; }
   table { width:100%; border-collapse:collapse; table-layout:fixed; }
-  th, td { border:1px solid #999; padding:2px 4px; text-align:left; vertical-align:top; overflow-wrap:anywhere; line-height:1.25; }
+  th, td { border:1px solid #999; padding:2px 4px; text-align:left; vertical-align:middle; overflow-wrap:anywhere; line-height:1.25; }
   thead th { background:#e6e6e6; font-size:9px; text-transform:uppercase; letter-spacing:.2px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   thead { display:table-header-group; }
   tr { page-break-inside:avoid; break-inside:avoid; }
   tr.grupo td { background:#111; color:#fff; font-weight:700; font-size:10.5px; letter-spacing:.4px; text-transform:uppercase; padding:3px 6px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  tr.critico td:first-child { border-left:3px solid #111; }
-  tr.acl td { font-size:9.5px; background:#f3f3f3; border-top:none; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  tr.acl td { font-size:9.5px; background:#f3f3f3; border-top:none; padding-left:10px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  td.ped { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }
   td.n, th.n { text-align:center; }
+  td.fxs { line-height:1.5; }
+  .fx { display:inline-block; font-size:8.5px; font-weight:700; letter-spacing:.2px; border:1px solid #555; border-radius:3px; padding:0 3px; margin:1px 2px 1px 0; white-space:nowrap; line-height:1.35; }
   .sub { font-size:9px; color:#555; }
-  .muy { font-size:8.5px; border:1px solid #111; padding:0 2px; }
   .rojo { color:#B04A3D; }
   .vacio { padding:16px; border:1px dashed #999; text-align:center; color:#555; }
-  col.c-ped { width:17%; } col.c-cant { width:4%; } col.c-med { width:7%; } col.c-forma { width:10%; } col.c-tono { width:6%; }
-  col.c-grab { width:8%; } col.c-func { width:9%; } col.c-donde { width:8%; } col.c-porque { width:17%; } col.c-ent { width:7%; } col.c-vend { width:7%; }
+  col.c-ped { width:21%; } col.c-cant { width:5%; } col.c-med { width:9%; } col.c-forma { width:15%; }
+  col.c-tono { width:9%; } col.c-grab { width:11%; } col.c-func { width:19%; } col.c-ent { width:11%; }
   @media print { body { margin:0; } }
 </style></head>
 <body>
   <h1>DECOGLASS — ${esc(titulo)} <small>· ${esc(ahora.toLocaleDateString("es-AR"))} · ${pedidosN} pedido${pedidosN === 1 ? "" : "s"} · ${espejos} espejo${espejos === 1 ? "" : "s"}</small></h1>
   ${cuerpo ? `<table>
-    <colgroup><col class="c-ped"><col class="c-cant"><col class="c-med"><col class="c-forma"><col class="c-tono"><col class="c-grab"><col class="c-func"><col class="c-donde"><col class="c-porque"><col class="c-ent"><col class="c-vend"></colgroup>
-    <thead><tr><th>Pedido</th><th class="n">Cant</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Grabado</th><th>Funciones</th><th>Dónde está</th><th>Por qué está demorado</th><th>Entrega</th><th>Vendedor</th></tr></thead>
+    <colgroup><col class="c-ped"><col class="c-cant"><col class="c-med"><col class="c-forma"><col class="c-tono"><col class="c-grab"><col class="c-func"><col class="c-ent"></colgroup>
+    <thead><tr><th>Pedido</th><th class="n">Cant</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Grabado</th><th>Funciones</th><th>Entrega</th></tr></thead>
     ${cuerpo}
   </table>` : '<div class="vacio">No hay espejos demorados.</div>'}
   <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
@@ -17820,7 +17818,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   }
   // Lista por día: hoy abierto, el resto cerrado.
   const hoyTaller = isoLocal(new Date());
-  const [diasAbiertos, setDiasAbiertos] = useState(() => new Set([primerDiaTaller(isoLocal(new Date()))]));
+  const [diasAbiertos, setDiasAbiertos] = useState(() => new Set([primerDiaTaller(isoLocal(new Date())), "demorados"]));
   const [tarjetaMarcada, marcarTarjeta] = useTarjetaMarcada();
   function toggleDia(fecha) {
     setDiasAbiertos((prev) => {
@@ -17830,7 +17828,6 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     });
   }
   const [diaDestino, setDiaDestino] = useState(null);     // día sobre el que se está soltando al arrastrar
-  const [demoradosAbierto, setDemoradosAbierto] = useState(true);
   const puedeArrastrar = session?.role === "admin";
   function moverADia(pedidoId, dia, comoExtra = false) {
     // A un día trabado solo le entra un extra del editor único.
@@ -18528,23 +18525,6 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           </div>
         );
       })()}
-      {filtroEstado === "activos" && (() => {
-        const lista = demoradosTaller.map((x) => x.pedido).filter((p) => coincidePedido(p, busqueda));
-        if (lista.length === 0) return null;
-        const u = totalUnidades(lista);
-        return (
-          <div className={`dg-demorados-bloque ${demoradosAbierto ? "dg-demorados-bloque-abierto" : ""}`}>
-            <div className="dg-demorados-barra">
-              <button type="button" className="dg-demorados-texto dg-demorados-toggle" onClick={() => setDemoradosAbierto((v) => !v)} aria-expanded={demoradosAbierto}>
-                <strong><ChevronRight size={15} className={demoradosAbierto ? "dg-presu-chevron-on" : ""} /> <AlertTriangle size={15} /> Demorados · {u} espejo{u === 1 ? "" : "s"}</strong>
-                <small>Lo que quedó sin hacer de días anteriores y lo marcado demorado, todas las listas juntas</small>
-              </button>
-              <button type="button" className="dg-btn-primary" onClick={() => imprimirDemorados(lista, { todos: pedidos, sinHacerDe })}><Printer size={14} /> Imprimir la lista</button>
-            </div>
-            {demoradosAbierto && <div className="dg-demorados-cuerpo">{tarjetasDemoradas(lista)}</div>}
-          </div>
-        );
-      })()}
       {filtroEstado !== "historial" && filtroEstado !== "demorados" ? (
         <>
           <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
@@ -18719,6 +18699,36 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 );
               })()}
 
+              {(() => {
+                // «Demorados», como si fuera una lista más del día, la primera:
+                // lo que quedó sin hacer de días anteriores y lo marcado
+                // demorado a mano de esta lista, dividido por entrega.
+                const deEsta = demoradosTaller.filter((x) => x.lista === lista && coincide(x.pedido));
+                if (deEsta.length === 0) return null;
+                const abierto = diasAbiertos.has("demorados") || !!busqueda.trim();
+                const u = deEsta.reduce((t, x) => t + x.unidades, 0);
+                const todos = demoradosTaller.map((x) => x.pedido);
+                return (
+                  <div className={`dg-dia-taller dg-dia-taller-vencido dg-dia-demorados ${abierto ? "dg-dia-taller-abierto" : ""}`}>
+                    <button type="button" className="dg-dia-taller-head" onClick={() => toggleDia("demorados")} aria-expanded={abierto}>
+                      <ChevronRight size={16} className="dg-fab-grupo-chevron" />
+                      <span className="dg-dia-taller-nombre">Demorados</span>
+                      <span className="dg-dia-taller-mix">{u} espejo{u === 1 ? "" : "s"}</span>
+                      <span className="dg-dia-taller-vencido-chip">SIN HACER</span>
+                    </button>
+                    {abierto && (
+                      <div className="dg-dia-taller-body">
+                        <div className="dg-dia-traba">
+                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => imprimirDemorados(todos, { sinHacerDe })}>
+                            <Printer size={13} /> Imprimir los demorados{todos.length > deEsta.length ? " (todas las listas)" : ""}
+                          </button>
+                        </div>
+                        {tarjetasDemoradas(deEsta.map((x) => x.pedido))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {plan.map((dia) => {
                 const semana = tituloSemana(dia.fecha);
                 const separador = semana !== semanaAnterior ? <div className="dg-dias-semana" key={`sem-${dia.fecha}`}>{semana}</div> : null;
@@ -25450,17 +25460,13 @@ function Style() {
       .dg-demorados-texto strong { display:flex; align-items:center; gap:6px; color:var(--dg-danger); font-size:14px; }
       .dg-demorados-texto small { color:var(--dg-text-dim); font-size:12px; }
       .dg-demorados-barra .dg-btn-primary { flex:0 0 auto; }
-      .dg-demorados-bloque { margin:0 0 14px; }
-      .dg-demorados-bloque .dg-demorados-barra { margin:0; }
-      .dg-demorados-bloque-abierto .dg-demorados-barra { border-bottom-left-radius:0; border-bottom-right-radius:0; }
-      .dg-demorados-toggle { background:none; border:none; padding:0; text-align:left; cursor:pointer; font:inherit; color:inherit; flex:1 1 220px; }
-      .dg-demorados-cuerpo { display:flex; flex-direction:column; gap:12px; padding:12px; border:1px solid rgba(var(--dg-danger-rgb), .45); border-top:none; border-radius:0 0 10px 10px; }
       .dg-demorados-entrega { display:flex; flex-direction:column; gap:8px; }
+      .dg-dia-demorados .dg-dia-taller-body { display:flex; flex-direction:column; gap:12px; }
       .dg-demorados-entrega-tit { display:flex; align-items:baseline; gap:8px; padding-bottom:4px; border-bottom:1px solid rgba(var(--dg-line-rgb), .14); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--dg-text); }
       .dg-demorados-entrega-tit small { font-weight:500; text-transform:none; letter-spacing:0; color:var(--dg-text-dim); }
       .dg-demorados-interior .dg-demorados-entrega-tit { color:var(--dg-interior); }
       .dg-demorados-motivo { display:inline-flex; align-items:center; gap:5px; color:var(--dg-danger); font-weight:600; font-size:12px; }
-      @media print { .dg-demorados-barra, .dg-demorados-bloque { display:none !important; } }
+      @media print { .dg-demorados-barra { display:none !important; } }
       .dg-fab-flag-ok { color:var(--dg-success); font-weight:600; }
       .dg-fab-acciones { display:flex; align-items:center; gap:4px; min-width:0; }
       .dg-fab-btn-listo { display:flex; align-items:center; gap:6px; background: rgba(var(--dg-success-rgb),0.12); border:1px solid rgba(var(--dg-success-rgb),0.4);
