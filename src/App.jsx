@@ -18020,7 +18020,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       : stage.stage;
     const menuOpen = menuAbierto === p.id;
     return (
-      <div className={`dg-fab-card dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
+      <div className={`dg-fab-card dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""} ${menuOpen ? "dg-fab-card-menu" : ""}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
         {esEnvioInterior(p) && <FranjaInterior />}
         <div className="dg-fab-zona-datos">
           {totalUnidadesPedido > 1 && (
@@ -18153,7 +18153,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       { id: "embalado", hecho: "Embalados", pasado: "embalaron", n: 3 },
     ];
     return (
-      <div className={`dg-fab-card dg-fab-multi dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""}`} key={p.id}>
+      <div className={`dg-fab-card dg-fab-multi dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""} ${menuOpen ? "dg-fab-card-menu" : ""}`} key={p.id}>
         {esEnvioInterior(p) && <FranjaInterior />}
         <button type="button" className={`dg-fab-multi-head ${abierto ? "dg-fab-multi-abierto" : ""}`} onClick={() => toggleMulti(p.id)}>
           <ChevronRight size={16} className="dg-fab-multi-chevron" />
@@ -18257,6 +18257,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                     <>
                       <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
                       <div className="dg-fab-menu">
+                        {pasoParaVolver(p) && <button type="button" onClick={() => volverPasoFabrica(p.id)}><Undo2 size={13} /> Volver un paso <small>({pasoParaVolver(p).etiqueta})</small></button>}
+                        {esAdmin && <button type="button" onClick={() => { setMenuAbierto(null); setQuienPaso(p); }}><User size={13} /> ¿Quién lo pasó?</button>}
                         <button type="button" onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
                         <button type="button" onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
                         {puedeBorrar && <button type="button" className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
@@ -25008,7 +25010,10 @@ function Style() {
       .dg-fab-terminado { box-shadow: 0 0 0 2px var(--dg-success); }
       .dg-fab-terminado .dg-fab-zona-datos { background: rgba(var(--dg-success-rgb),0.06); }
 
-      .dg-fab-multi { padding:0; overflow:hidden; }
+      /* Sin overflow:hidden: recortaba el menú de los tres puntitos (12/11/2026). */
+      .dg-fab-multi { padding:0; }
+      /* La tarjeta con el menú abierto va adelante de las de abajo. */
+      .dg-fab-card-menu { z-index:40; }
       .dg-fab-multi-head { display:flex; align-items:flex-start; gap:9px; width:100%; text-align:left; cursor:pointer;
         background:var(--dg-surface); border:none; padding:13px 15px; font-family:'Jost',sans-serif; color:var(--dg-text); border-radius:8px; }
       .dg-fab-multi-chevron { flex:none; margin-top:3px; color:var(--dg-text-faint); transition:transform .15s ease; }
