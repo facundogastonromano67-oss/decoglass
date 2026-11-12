@@ -6243,6 +6243,154 @@ function estaDemoradoAuto(pedido) {
   return !pedidoEstaListo(pedido) && nivelDemoraEtapa(pedido) !== "ok";
 }
 
+// ===== ESPEJOS DEMORADOS: UNA SOLA LISTA PARA IMPRIMIR (12/11/2026) ========
+// Pedido de Facundo: «que todos los pedidos pendientes queden en 1 sola lista
+// de espejos demorados y lo pueda imprimir para ver el detalle de cada
+// pedido». Son los demorados de Fábrica de siempre (marcados a mano, o
+// frenados en una etapa más de lo normal), pero todos juntos, sin separarlos
+// por pestaña. Arriba los que llevan el doble de lo normal frenados.
+function esDemoradoFabrica(p) {
+  return !!p && p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado" && !pedidoEstaListo(p) && (!!p.demorado || estaDemoradoAuto(p));
+}
+const PESO_DEMORA = { critico: 0, alerta: 1, ok: 2 };
+function compararDemorados(a, b) {
+  const na = PESO_DEMORA[nivelDemoraEtapa(a)] ?? 2, nb = PESO_DEMORA[nivelDemoraEtapa(b)] ?? 2;
+  if (na !== nb) return na - nb;
+  const da = diasEnEtapa(a) ?? -1, db = diasEnEtapa(b) ?? -1;
+  if (da !== db) return db - da;
+  return String(a.listo || "9999-99-99").localeCompare(String(b.listo || "9999-99-99"));
+}
+// Por qué está en la lista, en palabras.
+function motivosDemora(p) {
+  const motivos = [];
+  if (nivelDemoraEtapa(p) !== "ok") motivos.push(`Frenado hace ${diasEnEtapa(p)} días en «${estadoProduccionLabel(p)}» (lo normal es hasta ${umbralEtapa(p)})`);
+  if (p?.demorado) motivos.push("Marcado demorado a mano");
+  if (trabajoAfueraVencido(p)) {
+    const campo = campoPrometidaAfuera(p);
+    motivos.push(`El ${pedidoListaFabrica(p) === "en_grabado" ? "grabador" : "biselador"} lo prometió para el ${fechaDeHoja(p[campo])}`);
+  }
+  return motivos;
+}
+// Días que pasaron de la fecha de entrega al cliente (0 si todavía no llegó).
+function diasDeAtrasoEntrega(p, hoyIso = isoLocal(new Date())) {
+  const listo = String(p?.listo || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(listo) || listo >= hoyIso) return 0;
+  return Math.round((new Date(hoyIso + "T12:00:00") - new Date(listo + "T12:00:00")) / 86400000);
+}
+function fechaDeHoja(v) {
+  const t = String(v || "");
+  if (!t) return "—";
+  const m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? t : d.toLocaleDateString("es-AR");
+}
+// Un bloque por pedido (los espejos de un mismo pedido van juntos), en el
+// orden de la lista.
+function gruposDemorados(lista) {
+  const grupos = new Map();
+  (lista || []).forEach((p) => {
+    const k = p.grupoId || p.id;
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(p);
+  });
+  return [...grupos.values()];
+}
+function hojaDemorados(lista, todos = [], ahora = new Date()) {
+  const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const hoyIso = isoLocal(ahora);
+  const grupos = gruposDemorados(lista);
+  const espejos = totalUnidades(lista);
+  const criticos = grupos.filter((g) => g.some((p) => nivelDemoraEtapa(p) === "critico")).length;
+  const bloques = grupos.map((items) => {
+    const p = items[0];
+    const critico = items.some((x) => nivelDemoraEtapa(x) === "critico");
+    const atraso = Math.max(...items.map((x) => diasDeAtrasoEntrega(x, hoyIso)));
+    const delPedido = (todos || []).filter((x) => (p.grupoId ? x.grupoId === p.grupoId : x.id === p.id) && x.estado !== "Cancelado");
+    const otros = Math.max(0, totalUnidades(delPedido) - totalUnidades(items));
+    const destino = [p.barrio, p.localidad, p.provincia].filter(Boolean).join(", ");
+    const filas = items.map((x) => {
+      const funciones = funcionesPedido(x, true).map((f) => f.label).join(", ");
+      const proceso = TALLER_MODELOS.find((m) => m.id === pedidoProcesoTaller(x))?.label || "";
+      return `<tr>
+        <td class="n">${esc(Math.max(1, Number(x.cant) || 1))}</td>
+        <td><strong>${esc(medidaEspejo(x) || "—")}</strong></td>
+        <td>${esc([formaAparte(x), x.tipo].filter(Boolean).join(" / ") || "—")}${proceso ? `<div class="sub">${esc(proceso)}</div>` : ""}</td>
+        <td>${esc(x.tono || "—")}</td>
+        <td>${esc(medidaGrabado(x))}</td>
+        <td>${esc(funciones || "—")}</td>
+        <td><strong>${esc(estadoProduccionLabel(x))}</strong>${diasEnEtapa(x) != null ? `<div class="sub">hace ${diasEnEtapa(x)} día${diasEnEtapa(x) === 1 ? "" : "s"}</div>` : ""}</td>
+        <td>${motivosDemora(x).map((m) => `<div>${esc(m)}</div>`).join("") || "—"}</td>
+      </tr>`;
+    }).join("");
+    const aclaraciones = [...new Set(items.map((x) => aclaracionDe(x, "aclaracionTaller")).filter(Boolean))];
+    return `<section class="ped${critico ? " critico" : ""}">
+      <div class="cab">
+        <span class="num">#${esc(p.orden ?? "—")}</span>
+        <span class="cli">${esc(p.cliente || "Sin nombre")}</span>
+        ${critico ? '<span class="sello">MUY DEMORADO</span>' : '<span class="sello suave">DEMORADO</span>'}
+      </div>
+      <div class="datos">
+        <div><span>Vendedor</span>${esc(p.vendedor || "—")}</div>
+        <div><span>Venta</span>${esc(fechaDeHoja(p.fecha))}</div>
+        <div><span>Entrega al cliente</span>${esc(fechaDeHoja(p.listo))}${atraso > 0 ? ` <b class="rojo">(pasada hace ${atraso} día${atraso === 1 ? "" : "s"})</b>` : ""}</div>
+        <div><span>Objetivo de fábrica</span>${esc(fechaDeHoja(fechaObjetivoFabrica(p)))}</div>
+        <div><span>Entrega</span>${esc(p.metodo || "—")}${destino ? ` · ${esc(destino)}` : ""}</div>
+        <div><span>Teléfono</span>${esc(p.celular || "—")}</div>
+      </div>
+      <table>
+        <colgroup><col class="c-cant"><col class="c-med"><col class="c-forma"><col class="c-tono"><col class="c-grab"><col class="c-func"><col class="c-donde"><col class="c-porque"></colgroup>
+        <thead><tr><th class="n">Cant.</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Grabado</th><th>Funciones</th><th>Dónde está</th><th>Por qué está demorado</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      ${otros > 0 ? `<div class="nota">El pedido tiene ${otros} espejo${otros === 1 ? "" : "s"} más que no está${otros === 1 ? "" : "n"} demorado${otros === 1 ? "" : "s"}.</div>` : ""}
+      ${aclaraciones.map((a) => `<div class="aclara"><span>Para el taller:</span> ${esc(a)}</div>`).join("")}
+    </section>`;
+  }).join("");
+  return `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Espejos demorados</title>
+<style>
+  * { box-sizing:border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:18px; font-size:12px; }
+  h1 { font-size:18px; margin:0 0 2px; letter-spacing:.3px; }
+  .resumen { font-size:12px; color:#444; margin-bottom:14px; }
+  .resumen b { color:#111; }
+  .ped { border:1.5px solid #555; border-radius:6px; padding:10px 12px; margin-bottom:12px; page-break-inside:avoid; break-inside:avoid; }
+  .ped.critico { border:2.5px solid #111; }
+  .cab { display:flex; align-items:baseline; gap:10px; margin-bottom:6px; }
+  .num { font-size:20px; font-weight:800; }
+  .cli { font-size:15px; font-weight:700; flex:1; }
+  .sello { font-size:10.5px; font-weight:800; letter-spacing:.8px; padding:3px 8px; border-radius:4px; background:#111; color:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .sello.suave { background:#fff; color:#111; border:1.5px solid #111; }
+  .datos { display:grid; grid-template-columns:repeat(3, 1fr); gap:4px 14px; margin-bottom:8px; }
+  .datos span { display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; color:#666; }
+  .rojo { color:#B04A3D; }
+  /* Ancho fijo: entra en una hoja A4 parada sin cortar la última columna. */
+  table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; }
+  th, td { border:1px solid #aaa; padding:4px 5px; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
+  col.c-cant { width:6%; } col.c-med { width:12%; } col.c-forma { width:13%; } col.c-tono { width:9%; }
+  col.c-grab { width:11%; } col.c-func { width:12%; } col.c-donde { width:13%; } col.c-porque { width:24%; }
+  .ped { max-width:100%; }
+  th { background:#eee; font-size:9.5px; text-transform:uppercase; letter-spacing:.3px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  td.n, th.n { text-align:center; }
+  .sub { font-size:10.5px; color:#555; }
+  .nota { margin-top:6px; font-size:11px; color:#444; }
+  .aclara { margin-top:6px; padding:5px 8px; border-left:3px solid #111; background:#f4f4f4; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .aclara span { font-weight:700; }
+  .vacio { padding:20px; border:1px dashed #999; text-align:center; color:#555; }
+  @media print { body { margin:8px; } }
+</style></head>
+<body>
+  <h1>DECOGLASS — Espejos demorados</h1>
+  <div class="resumen">${esc(ahora.toLocaleDateString("es-AR"))} · <b>${grupos.length} pedido${grupos.length === 1 ? "" : "s"}</b> · ${espejos} espejo${espejos === 1 ? "" : "s"} · todas las listas de Fábrica juntas${criticos ? ` · <b>${criticos} muy demorado${criticos === 1 ? "" : "s"}</b> (frenados el doble de lo normal)` : ""}</div>
+  ${bloques || '<div class="vacio">No hay espejos demorados.</div>'}
+  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+}
+function imprimirDemorados(lista, todos) {
+  abrirParaImprimir(hojaDemorados(lista, todos));
+}
+
 // --- Objetivo de fábrica: la fecha que se le muestra al taller es la entrega
 //     al cliente menos un colchón, así terminan con margen para coordinar.
 const COLCHON_FABRICA_DIAS = 3;
@@ -17697,7 +17845,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
   const activos = enFabrica.filter((p) => !pedidoEstaListo(p));
   const historial = enFabrica.filter((p) => pedidoEstaListo(p));
-  const demorados = activos.filter((p) => p.demorado || estaDemoradoAuto(p));
+  const demorados = activos.filter(esDemoradoFabrica);
   const afuera = activos.filter(estaAfueraDelTaller);
   let baseVisibles = filtroEstado === "activos"
     ? activos
@@ -17715,11 +17863,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     acc[item.id] = totalUnidades(baseVisibles.filter((p) => pestanaTaller(p) === item.id));
     return acc;
   }, {});
-  let visibles = (filtroEstado === "historial" || filtroEstado === "afuera") ? [...baseVisibles] : baseVisibles.filter((p) => pestanaTaller(p) === lista);
+  // Historial, afuera y demorados van todos juntos, sin separar por pestaña.
+  let visibles = (filtroEstado === "historial" || filtroEstado === "afuera" || filtroEstado === "demorados") ? [...baseVisibles] : baseVisibles.filter((p) => pestanaTaller(p) === lista);
   visibles = filtroEstado === "historial"
     ? visibles.sort((a, b) => (b.produccionListaFecha || b.fecha || "").localeCompare(a.produccionListaFecha || a.fecha || ""))
     : filtroEstado === "afuera"
     ? visibles.sort((a, b) => (a[campoPrometidaAfuera(a)] || "9999-99-99").localeCompare(b[campoPrometidaAfuera(b)] || "9999-99-99"))
+    : filtroEstado === "demorados"
+    ? visibles.sort(compararDemorados)
     : esPestanaDeArmar(lista)
     ? visibles.sort((a, b) => {
         const pa = prioridadListaArmar(a), pb = prioridadListaArmar(b);
@@ -17736,7 +17887,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         return a.listo < b.listo ? -1 : a.listo > b.listo ? 1 : 0;
       });
   // Urgentes / reclamos primero (sort estable: mantiene el orden entre los del mismo nivel).
-  visibles = [...visibles].sort((a, b) => (esUrgente(b) ? 1 : 0) - (esUrgente(a) ? 1 : 0));
+  // (En demorados manda cuánto hace que está frenado.)
+  if (filtroEstado !== "demorados") visibles = [...visibles].sort((a, b) => (esUrgente(b) ? 1 : 0) - (esUrgente(a) ? 1 : 0));
 
   function setEstado(id, estado) {
     onChange(pedidos.map((p) => {
@@ -18309,7 +18461,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           </div>
         );
       })()}
-      {filtroEstado !== "historial" ? (
+      {filtroEstado !== "historial" && filtroEstado !== "demorados" ? (
         <>
           <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
             {TALLER_PESTANAS.map((item) => (
@@ -18333,7 +18485,21 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <button className="dg-btn-ghost" onClick={() => window.print()}><Printer size={14} /> Imprimir esta vista</button>
       </div>
 
-      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
+      {filtroEstado === "demorados" && visibles.length > 0 && (() => {
+        const grupos = gruposDemorados(visibles).length;
+        const muy = gruposDemorados(visibles).filter((g) => g.some((x) => nivelDemoraEtapa(x) === "critico")).length;
+        return (
+          <div className="dg-demorados-barra">
+            <div className="dg-demorados-texto">
+              <strong><AlertTriangle size={15} /> {grupos} pedido{grupos === 1 ? "" : "s"} · {totalUnidades(visibles)} espejo{totalUnidades(visibles) === 1 ? "" : "s"} demorado{totalUnidades(visibles) === 1 ? "" : "s"}</strong>
+              <small>Todas las listas juntas{muy ? ` · ${muy} muy demorado${muy === 1 ? "" : "s"} arriba de todo` : ""}</small>
+            </div>
+            <button type="button" className="dg-btn-primary" onClick={() => imprimirDemorados(visibles, pedidos)}><Printer size={14} /> Imprimir el detalle</button>
+          </div>
+        );
+      })()}
+
+      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller, lista);
@@ -18594,7 +18760,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               })}
             </>
           );
-        })() : (esPestanaDeArmar(lista) && filtroEstado !== "afuera" && filtroEstado !== "historial") ? (() => {
+        })() : (esPestanaDeArmar(lista) && filtroEstado !== "afuera" && filtroEstado !== "historial" && filtroEstado !== "demorados") ? (() => {
           const mapaGrupos = new Map();
           visibles.forEach((p) => {
             const grupo = grupoListaArmar(p);
@@ -18641,7 +18807,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               ? `REMITO — Espejos entregados a grabado · ${new Date().toLocaleDateString("es-AR")}`
               : (esPestanaDeArmar(lista) && filtroEstado === "activos")
               ? `${infoPestana(lista)?.label || "Lista del día"} — ${nombreDiaTaller(primerDiaTaller(hoyTaller), hoyTaller)}`
-              : `${filtroEstado === "historial" ? "Historial de fabricación" : infoPestana(lista)?.label || lista} — ${new Date().toLocaleDateString("es-AR")} · ${totalUnidades(visibles)} espejo(s)`}
+              : `${filtroEstado === "historial" ? "Historial de fabricación" : filtroEstado === "demorados" ? "Espejos demorados (todas las listas)" : infoPestana(lista)?.label || lista} — ${new Date().toLocaleDateString("es-AR")} · ${totalUnidades(visibles)} espejo(s)`}
           </div>
         </div>
         {/* El papel que va al grabador sirve de remito: lo que se entrega,
@@ -25192,6 +25358,12 @@ function Style() {
       .dg-fab-foot { display:flex; align-items:center; gap:10px; padding-top:10px; border-top:0.5px solid rgba(var(--dg-line-rgb),0.07); flex-wrap:wrap; }
       .dg-fab-foot-txt { font-size:11px; color:var(--dg-text-faint); flex:1 1 220px; min-width:0; }
       .dg-fab-flag-demora { color:var(--dg-danger); font-weight:600; }
+      .dg-demorados-barra { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:0 0 12px; padding:10px 14px; border-radius:10px; border:1px solid rgba(var(--dg-danger-rgb), .45); background:rgba(var(--dg-danger-rgb), .10); }
+      .dg-demorados-texto { display:flex; flex-direction:column; gap:2px; min-width:0; }
+      .dg-demorados-texto strong { display:flex; align-items:center; gap:6px; color:var(--dg-danger); font-size:14px; }
+      .dg-demorados-texto small { color:var(--dg-text-dim); font-size:12px; }
+      .dg-demorados-barra .dg-btn-primary { flex:0 0 auto; }
+      @media print { .dg-demorados-barra { display:none !important; } }
       .dg-fab-flag-ok { color:var(--dg-success); font-weight:600; }
       .dg-fab-acciones { display:flex; align-items:center; gap:4px; min-width:0; }
       .dg-fab-btn-listo { display:flex; align-items:center; gap:6px; background: rgba(var(--dg-success-rgb),0.12); border:1px solid rgba(var(--dg-success-rgb),0.4);
