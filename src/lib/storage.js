@@ -607,6 +607,17 @@ export const registroStore = {
     if (error) throw error;
     return data || [];
   },
+  // Lo anotado de UN pedido (#orden), para «¿Quién lo pasó?» en Fábrica.
+  async dePedido(orden) {
+    if (!orden) return [];
+    const { data, error } = await supabase
+      .from("registro_acciones").select("fecha, accion, detalle, quien, persona")
+      .ilike("detalle", `#${orden} %`)
+      .in("accion", ["Cargó un pedido", "Verificó un pedido"])
+      .order("fecha", { ascending: true }).limit(20);
+    if (error) throw error;
+    return data || [];
+  },
   subscribe(onInsert) {
     const channel = supabase
       .channel("registro-" + Math.random().toString(36).slice(2, 8))

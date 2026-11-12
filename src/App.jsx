@@ -9381,9 +9381,11 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
     pedido = prep.pedido;
     const { exists, withOrden, cambio } = prep;
     let toSave = withOrden;
+    // Quién lo cargó (12/11/2026): queda en el pedido.
+    if (!exists && !toSave.cargadoPor) toSave = { ...toSave, cargadoPor: quienSoy || "", cargadoFecha: new Date().toISOString() };
     if (cambio && onCreateIncome) {
       onCreateIncome(cambio.ingreso);
-      toSave = { ...withOrden, montoRegistrado: cambio.cobrado };
+      toSave = { ...toSave, montoRegistrado: cambio.cobrado };
     }
     const pedidosActualizados = exists ? pedidos.map((p) => (p.id === pedido.id ? toSave : p)) : [...pedidos, toSave];
     onChange(normalizarOrdenesPorGrupo(pedidosActualizados));
@@ -9434,7 +9436,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
   function marcarVerificado(p) {
     if (p.estado !== "Sin pasar a fábrica") return;
     const estadoInicialFabrica = (pedidoProcesoTaller(p) === "biselados" && !biseladoPrearmado(p)) ? "Sin pedir" : "Verificado";
-    onChange(guardarPaso(pedidos, pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString() } : x)), "Verificado", quienSoy));
+    onChange(guardarPaso(pedidos, pedidos.map((x) => (x.id === p.id ? { ...x, estado: estadoInicialFabrica, pedidoVerificadoFecha: new Date().toISOString(), pedidoVerificadoPor: quienSoy || "" } : x)), "Verificado", quienSoy));
     if (onRegistrar) onRegistrar("Verificó un pedido", `#${p.orden} — ${p.cliente} — habilitado para fábrica`);
   }
   // Editar cliente y entrega de un pedido entero (todos sus espejos).
@@ -17494,7 +17496,67 @@ function NumerosFabricaPanel({ pedidos }) {
   );
 }
 
-function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas }) {
+// ===== ¿Quién pasó el pedido? (12/11/2026) =================================
+// Para el admin, desde la lista de Fábrica: quién lo vendió, quién lo cargó y
+// quién lo verificó (lo pasó a fábrica). Desde el 12/11 queda en el pedido;
+// para los de antes se busca en el registro de actividad.
+function quienPasoElPedido(p, registros) {
+  const prefijo = `#${p?.orden} `;
+  const delPedido = (registros || []).filter((r) => String(r.detalle || "").startsWith(prefijo)).sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  const nombre = (r) => (r ? (r.persona || r.quien || "") : "");
+  const cargo = delPedido.find((r) => r.accion === "Cargó un pedido");
+  const verifico = [...delPedido].reverse().find((r) => r.accion === "Verificó un pedido");
+  return {
+    vendedor: p?.vendedor || "",
+    cargo: { quien: p?.cargadoPor || nombre(cargo), fecha: p?.cargadoFecha || (cargo && cargo.fecha) || p?.fecha || "" },
+    verifico: { quien: p?.pedidoVerificadoPor || nombre(verifico), fecha: p?.pedidoVerificadoFecha || (verifico && verifico.fecha) || "" },
+  };
+}
+function cuandoCorto(f) {
+  if (!f) return "";
+  const d = new Date(String(f).length === 10 ? `${f}T12:00:00` : f);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("es-AR", { day: "numeric", month: "short" }) + (String(f).length > 10 ? ` · ${d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}` : "");
+}
+function QuienPasoModal({ pedido, auditoria, onCerrar }) {
+  const [registros, setRegistros] = useState(auditoria || []);
+  const [buscando, setBuscando] = useState(false);
+  const info = quienPasoElPedido(pedido, registros);
+  const falta = !info.cargo.quien || (!info.verifico.quien && pedido.pedidoVerificadoFecha);
+  useEffect(() => {
+    if (!falta || !pedido?.orden) return undefined;
+    let vivo = true;
+    setBuscando(true);
+    registroStore.dePedido(pedido.orden)
+      .then((r) => { if (vivo && r.length) setRegistros((prev) => [...prev, ...r]); })
+      .catch(() => {})
+      .finally(() => { if (vivo) setBuscando(false); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedido?.id]);
+  const fila = (titulo, quien, fecha) => (
+    <li><span>{titulo}</span><b>{quien || (buscando ? "buscando…" : "no quedó anotado")}</b>{fecha && <small>{cuandoCorto(fecha)}</small>}</li>
+  );
+  return (
+    <div className="dg-overlay" onClick={onCerrar}>
+      <div className="dg-modal dg-quien-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div className="dg-modal-title">¿Quién lo pasó? · #{pedido.orden} {pedido.cliente || ""}</div>
+          <button className="dg-icon-btn" onClick={onCerrar} aria-label="Cerrar"><X size={18} /></button>
+        </div>
+        <ul className="dg-quien-lista">
+          {fila("Lo vendió", info.vendedor, "")}
+          {fila("Lo cargó", info.cargo.quien, info.cargo.fecha)}
+          {fila("Lo pasó a fábrica (verificó)", info.verifico.quien, info.verifico.fecha)}
+        </ul>
+        <p className="dg-hint" style={{ margin: "10px 0 0" }}>Solo lo ve el administrador.</p>
+      </div>
+    </div>
+  );
+}
+
+function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas, auditoria = [] }) {
+  const [quienPaso, setQuienPaso] = useState(null);
   // El "editor único" de las listas: la única persona que puede meter espejos
   // de más en un día cuando surge una urgencia. Se configura por nombre en
   // Ajustes; si no hay nadie puesto, no puede nadie.
@@ -17760,6 +17822,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     onChange(pedidos.map((x) => (x.id === id ? volverUnPaso(x) : x)));
     if (onRegistrar) onRegistrar("Volvió un paso", `#${p.orden} — ${p.cliente || "Sin nombre"} — deshizo «${u.etiqueta}»`);
   }
+  const ventanaQuienPaso = quienPaso ? <QuienPasoModal pedido={pedidos.find((x) => x.id === quienPaso.id) || quienPaso} auditoria={auditoria} onCerrar={() => setQuienPaso(null)} /> : null;
   function reabrirProduccion(id) { setMenuAbierto(null); setPedidoParaReabrir(id); }
   function confirmarReabrirProduccion(motivo, etapaElegida) {
     // etapaElegida: "" (nada hecho, ni cortar) | "cortado" | "armado" (ya cortado y armado, falta embalar)
@@ -18029,6 +18092,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                       <div className="dg-fab-menu-backdrop" onClick={() => setMenuAbierto(null)} />
                       <div className="dg-fab-menu">
                         {pasoParaVolver(p) && <button onClick={() => volverPasoFabrica(p.id)}><Undo2 size={13} /> Volver un paso <small>({pasoParaVolver(p).etiqueta})</small></button>}
+                        {esAdmin && <button onClick={() => { setMenuAbierto(null); setQuienPaso(p); }}><User size={13} /> ¿Quién lo pasó?</button>}
                         {terminado && (perUnidad
                           ? <button onClick={() => reabrirUnidad(p.id, unidad - 1)}><RotateCcw size={13} /> Reabrir esta unidad</button>
                           : <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>)}
@@ -18616,6 +18680,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           onConfirmar={confirmarCancelar}
         />
       )}
+      {ventanaQuienPaso}
       {pedidoParaReabrir && (
         <ModalMotivo
           titulo="¿Por qué hay que rehacerlo?"
@@ -23071,7 +23136,7 @@ function SectorPage({
       )}
 
       {subpage === "pedidos" && sector.id === "fabrica" && (
-        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} editorListas={editorListas} trabasTaller={trabasTaller} onCambiarTrabas={onCambiarTrabas} />
+        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} editorListas={editorListas} trabasTaller={trabasTaller} onCambiarTrabas={onCambiarTrabas} auditoria={auditoria || []} />
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
 
@@ -23353,6 +23418,12 @@ function Style() {
       .dg-envio-costo { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
       .dg-envio-costo > input { width:100%; min-width:0; }
       .dg-envio-checks { display:flex; flex-wrap:wrap; gap:6px 18px; }
+      .dg-quien-modal { max-width:440px; }
+      .dg-quien-lista { list-style:none; margin:4px 0 0; padding:0; display:flex; flex-direction:column; gap:12px; }
+      .dg-quien-lista li { display:flex; flex-direction:column; gap:2px; padding:10px 12px; border-radius:10px; background:rgba(var(--dg-line-rgb),.05); border:1px solid rgba(var(--dg-line-rgb),.1); }
+      .dg-quien-lista li span { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-quien-lista li b { font-size:16px; color:var(--dg-text); }
+      .dg-quien-lista li small { font-size:12px; color:var(--dg-text-dim); }
       @media (min-width: 700px) { .dg-field:has(> .dg-envio-costo) { grid-column:span 2; } }
       .dg-envio-costo > input { font-size:16px; font-family:'JetBrains Mono', monospace; }
       .dg-envio-sincargo { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font-size:13px; font-weight:600; color:var(--dg-text); cursor:pointer; text-transform:none; letter-spacing:0; }

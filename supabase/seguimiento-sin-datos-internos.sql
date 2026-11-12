@@ -31,6 +31,7 @@ as $$
               - 'aclaracionInterna' - 'aclaracionTaller' - 'ordenPapel'
               - 'fletePago' - 'fleteroTel' - 'pagos' - 'fotosEntrega'
               - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer' - 'entregadoDesde' - 'fechaEnvioDesdeVenta'
+              - 'cargadoPor' - 'cargadoFecha' - 'pedidoVerificadoPor'
   from pedidos_rows
   where id = p_id
 $$;
@@ -48,6 +49,7 @@ as $$
               - 'aclaracionInterna' - 'aclaracionTaller' - 'ordenPapel'
               - 'fletePago' - 'fleteroTel' - 'pagos' - 'fotosEntrega'
               - 'rendicionFlete' - 'saldoPorTransferencia' - 'pasosDeshacer' - 'entregadoDesde' - 'fechaEnvioDesdeVenta'
+              - 'cargadoPor' - 'cargadoFecha' - 'pedidoVerificadoPor'
   from pedidos_rows
   where data->>'grupoId' = p_grupo
 $$;
