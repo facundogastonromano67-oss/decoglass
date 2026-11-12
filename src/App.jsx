@@ -17892,15 +17892,26 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
   const activos = enFabrica.filter((p) => !pedidoEstaListo(p));
   const historial = enFabrica.filter((p) => pedidoEstaListo(p));
-  // Lo que quedó sin hacer de días pasados + lo marcado a mano: sale de las
-  // listas de los días y va al bloque «Demorados» de arriba.
+  // «Demorados» (12/11/2026, Facundo: «me faltan pedidos, aparece en el
+  // filtro y no en la lista»): la lista de la vista principal y el filtro son
+  // LOS MISMOS — marcados a mano, frenados más de lo normal en cualquier
+  // etapa (también grabado, biselado e interior esperando embalaje) y lo que
+  // quedó sin hacer de días anteriores. En la vista principal salen de su día
+  // y de su pestaña y se juntan en una sola lista, la primera. El plan y el
+  // cupo de los días no cambian: es solo dónde se muestran.
   const demoradosTaller = demoradosDelTaller(pedidos, hoyTaller);
   const enDemoradosTaller = new Set(demoradosTaller.map((x) => x.pedido.id));
   const sinHacerDe = new Map(demoradosTaller.filter((x) => x.sinHacerDesde).map((x) => [x.pedido.id, x.sinHacerDesde]));
+  // Los espejos que le faltan a cada uno (lo que quedó sin hacer puede ser
+  // parte del pedido); al resto se le cuentan todos.
+  const unidadesDemorado = new Map(demoradosTaller.map((x) => [x.pedido.id, x.unidades]));
+  const faltanDemorado = (p) => (unidadesDemorado.has(p.id) ? unidadesDemorado.get(p.id) : Math.max(1, Number(p.cant) || 1));
+  const ordenDemorados = (a, b) => (sinHacerDe.get(a.id) || "9999-99-99").localeCompare(sinHacerDe.get(b.id) || "9999-99-99") || compararDemorados(a, b);
   const demorados = activos.filter((p) => esDemoradoFabrica(p) || enDemoradosTaller.has(p.id));
+  const idsDemorados = new Set(demorados.map((p) => p.id));
   const afuera = activos.filter(estaAfueraDelTaller);
   let baseVisibles = filtroEstado === "activos"
-    ? activos
+    ? activos.filter((p) => !idsDemorados.has(p.id))
     : filtroEstado === "historial"
       ? historial
       : filtroEstado === "demorados"
@@ -17922,7 +17933,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     : filtroEstado === "afuera"
     ? visibles.sort((a, b) => (a[campoPrometidaAfuera(a)] || "9999-99-99").localeCompare(b[campoPrometidaAfuera(b)] || "9999-99-99"))
     : filtroEstado === "demorados"
-    ? visibles.sort((a, b) => (sinHacerDe.get(a.id) || "9999-99-99").localeCompare(sinHacerDe.get(b.id) || "9999-99-99") || compararDemorados(a, b))
+    ? visibles.sort(ordenDemorados)
     : esPestanaDeArmar(lista)
     ? visibles.sort((a, b) => {
         const pa = prioridadListaArmar(a), pb = prioridadListaArmar(b);
@@ -18354,6 +18365,35 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       })}
     </div>
   ));
+  // La lista «Demorados» de la vista principal: la primera, con todas las
+  // listas juntas (los mismos del filtro).
+  const seccionDemorados = () => {
+    const lista = demorados.filter((p) => coincidePedido(p, busqueda)).sort(ordenDemorados);
+    if (lista.length === 0) return null;
+    const abierto = diasAbiertos.has("demorados") || !!busqueda.trim();
+    const u = lista.reduce((t, p) => t + faltanDemorado(p), 0);
+    const pedidosN = gruposDemorados(lista).length;
+    return (
+      <div className={`dg-dia-taller dg-dia-taller-vencido dg-dia-demorados ${abierto ? "dg-dia-taller-abierto" : ""}`} key="dia-demorados">
+        <button type="button" className="dg-dia-taller-head" onClick={() => toggleDia("demorados")} aria-expanded={abierto}>
+          <ChevronRight size={16} className="dg-fab-grupo-chevron" />
+          <span className="dg-dia-taller-nombre">Demorados</span>
+          <span className="dg-dia-taller-mix">{pedidosN} pedido{pedidosN === 1 ? "" : "s"} · {u} espejo{u === 1 ? "" : "s"}</span>
+          <span className="dg-dia-taller-vencido-chip">TODAS LAS LISTAS</span>
+        </button>
+        {abierto && (
+          <div className="dg-dia-taller-body">
+            <div className="dg-dia-traba">
+              <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => imprimirDemorados(lista, { sinHacerDe, unidadesDe: unidadesDemorado })}>
+                <Printer size={13} /> Imprimir los demorados
+              </button>
+            </div>
+            {tarjetasDemoradas(lista)}
+          </div>
+        )}
+      </div>
+    );
+  };
   const renderMultiCard = (p, cant) => {
     const unids = unidadesDePedido(p);
     const hechos = (n) => unids.filter((u) => unidadPasosCompletados(u) >= n).length;
@@ -18559,19 +18599,21 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       {filtroEstado === "demorados" && visibles.length > 0 && (() => {
         const grupos = gruposDemorados(visibles).length;
         const muy = gruposDemorados(visibles).filter((g) => g.some((x) => nivelDemoraEtapa(x) === "critico")).length;
+        const u = visibles.reduce((t, p) => t + faltanDemorado(p), 0);
         return (
           <div className="dg-demorados-barra">
             <div className="dg-demorados-texto">
-              <strong><AlertTriangle size={15} /> {grupos} pedido{grupos === 1 ? "" : "s"} · {totalUnidades(visibles)} espejo{totalUnidades(visibles) === 1 ? "" : "s"} demorado{totalUnidades(visibles) === 1 ? "" : "s"}</strong>
+              <strong><AlertTriangle size={15} /> {grupos} pedido{grupos === 1 ? "" : "s"} · {u} espejo{u === 1 ? "" : "s"} demorado{u === 1 ? "" : "s"}</strong>
               <small>Todas las listas juntas{muy ? ` · ${muy} muy demorado${muy === 1 ? "" : "s"} arriba de todo` : ""}</small>
             </div>
-            <button type="button" className="dg-btn-primary" onClick={() => imprimirDemorados(visibles, { todos: pedidos, sinHacerDe })}><Printer size={14} /> Imprimir la lista</button>
+            <button type="button" className="dg-btn-primary" onClick={() => imprimirDemorados(visibles, { sinHacerDe, unidadesDe: unidadesDemorado })}><Printer size={14} /> Imprimir la lista</button>
           </div>
         );
       })()}
 
-      {visibles.length === 0 && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
+      {visibles.length === 0 && !(filtroEstado === "activos" && demorados.length > 0) && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
+        {filtroEstado === "activos" && !esPestanaDeArmar(lista) && seccionDemorados()}
         {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller, lista);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
@@ -18608,7 +18650,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               {(() => {
                 const hoyPlan = diaDeHoyDelPlan(plan);
                 if (!hoyPlan) return null;
-                const filas = hoyPlan.items.filter((x) => coincide(x.pedido) && !enDemoradosTaller.has(x.pedido.id));
+                const filas = hoyPlan.items.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id));
                 if (filas.length === 0) return null;
                 const irATarjeta = (ev, x) => {
                   ev.stopPropagation();
@@ -18706,38 +18748,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 );
               })()}
 
-              {(() => {
-                // «Demorados», como si fuera una lista más del día, la primera:
-                // lo que quedó sin hacer de días anteriores y lo marcado
-                // demorado a mano de esta lista, dividido por entrega.
-                const deEsta = demoradosTaller.filter((x) => x.lista === lista && coincide(x.pedido));
-                if (deEsta.length === 0) return null;
-                const abierto = diasAbiertos.has("demorados") || !!busqueda.trim();
-                const u = deEsta.reduce((t, x) => t + x.unidades, 0);
-                const pedidosN = gruposDemorados(deEsta.map((x) => x.pedido)).length;
-                const todos = demoradosTaller.map((x) => x.pedido);
-                const unidadesDe = new Map(demoradosTaller.map((x) => [x.pedido.id, x.unidades]));
-                return (
-                  <div className={`dg-dia-taller dg-dia-taller-vencido dg-dia-demorados ${abierto ? "dg-dia-taller-abierto" : ""}`}>
-                    <button type="button" className="dg-dia-taller-head" onClick={() => toggleDia("demorados")} aria-expanded={abierto}>
-                      <ChevronRight size={16} className="dg-fab-grupo-chevron" />
-                      <span className="dg-dia-taller-nombre">Demorados</span>
-                      <span className="dg-dia-taller-mix">{pedidosN} pedido{pedidosN === 1 ? "" : "s"} · {u} espejo{u === 1 ? "" : "s"}</span>
-                      <span className="dg-dia-taller-vencido-chip">SIN HACER</span>
-                    </button>
-                    {abierto && (
-                      <div className="dg-dia-taller-body">
-                        <div className="dg-dia-traba">
-                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => imprimirDemorados(todos, { sinHacerDe, unidadesDe })}>
-                            <Printer size={13} /> Imprimir los demorados{todos.length > deEsta.length ? " (todas las listas)" : ""}
-                          </button>
-                        </div>
-                        {tarjetasDemoradas(deEsta.map((x) => x.pedido))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
+              {seccionDemorados()}
               {plan.map((dia) => {
                 const semana = tituloSemana(dia.fecha);
                 const separador = semana !== semanaAnterior ? <div className="dg-dias-semana" key={`sem-${dia.fecha}`}>{semana}</div> : null;
@@ -18747,8 +18758,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const hechosU = contar(hechosDia);
                 // Los demorados (lo que quedó sin hacer y lo marcado a mano)
                 // están en el bloque de arriba, no acá.
-                const items = dia.items.filter((x) => coincide(x.pedido) && !enDemoradosTaller.has(x.pedido.id));
-                const espejosDia = dia.espejos - dia.items.filter((x) => enDemoradosTaller.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0);
+                const items = dia.items.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id));
+                const espejosDia = dia.espejos - dia.items.filter((x) => idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0);
                 if (dia.pasado && items.length === 0 && dia.porEmbalarU === 0) return null;
                 if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && !diasAbiertos.has(dia.fecha)) return null;
                 // A un día que ya pasó no se le puede mandar trabajo nuevo, y
@@ -18805,7 +18816,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                             // además les faltan espejos por hacer) no se
                             // repiten: desde esa misma tarjeta se embalan.
                             const conTarjeta = new Set(items.map((x) => x.pedido.id));
-                            const sueltos = dia.porEmbalar.filter((x) => coincide(x.pedido) && !conTarjeta.has(x.pedido.id));
+                            const sueltos = dia.porEmbalar.filter((x) => coincide(x.pedido) && !conTarjeta.has(x.pedido.id) && !idsDemorados.has(x.pedido.id));
                             return (
                               <div className="dg-embalar">
                                 <div className="dg-embalar-tit"><Package size={14} /> Falta embalar {dia.porEmbalarU} espejo{dia.porEmbalarU === 1 ? "" : "s"}</div>
