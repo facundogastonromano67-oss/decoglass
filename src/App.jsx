@@ -6363,20 +6363,27 @@ function nombreCortoHoja(nombre) {
 // espejo, dividida por tipo de entrega. Solo lo que hace falta para hacer el
 // espejo (12/11/2026, Facundo: sin «dónde está», sin vendedor y sin «por qué»).
 // opciones.todos queda por compatibilidad (no se usa).
+// opciones.unidadesDe: Map id → espejos que le faltan hacer (los de la lista
+// «Demorados»). Sin eso, cuenta todos los del pedido.
 function hojaDemorados(lista, opciones) {
-  const { ahora = new Date(), titulo = "Espejos demorados" } = opciones || {};
+  const { ahora = new Date(), titulo = "Espejos demorados", unidadesDe = new Map() } = opciones || {};
   const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const hoyIso = isoLocal(ahora);
+  const cantDe = (x) => Math.max(1, Number(x.cant) || 1);
+  const faltanDe = (x) => (unidadesDe.has(x.id) ? Math.max(0, Number(unidadesDe.get(x.id)) || 0) : cantDe(x));
+  const contar = (arr) => arr.reduce((t, x) => t + faltanDe(x), 0);
   const pedidosN = gruposDemorados(lista).length;
-  const espejos = totalUnidades(lista);
+  const espejos = contar(lista);
   const COLS = 8;
   const fila = (x, primero) => {
+    const faltan = faltanDe(x);
+    const cant = cantDe(x);
     const funciones = funcionesPedido(x, true).map((f) => `<span class="fx">${esc(f.label)}</span>`).join("");
     const atraso = diasDeAtrasoEntrega(x, hoyIso);
     const cliente = esc(nombreCortoHoja(x.cliente));
     return `<tr class="${primero ? "primero" : "sigue"}">
       <td class="ped" title="${esc(x.cliente || "")}"><b>#${esc(x.orden ?? "—")}</b> ${primero ? cliente : '<span class="sub">(sigue)</span>'}</td>
-      <td class="n">${esc(Math.max(1, Number(x.cant) || 1))}</td>
+      <td class="n">${faltan < cant ? `${faltan} <span class="sub">de ${cant}</span>` : esc(cant)}</td>
       <td><b>${esc(medidaEspejo(x, { cm: false }) || "—")}</b></td>
       <td>${esc([formaAparte(x), x.tipo].filter(Boolean).join(" / ") || "—")}</td>
       <td>${esc(x.tono || "—")}</td>
@@ -6388,7 +6395,7 @@ function hojaDemorados(lista, opciones) {
   const cuerpo = demoradosPorEntrega(lista).map((g) => {
     const grupos = gruposDemorados(g.items);
     const filas = grupos.map((items) => items.map((x, i) => fila(x, i === 0)).join("")).join("");
-    const u = totalUnidades(g.items);
+    const u = contar(g.items);
     return `<tbody><tr class="grupo"><td colspan="${COLS}">${esc(g.label)} · ${grupos.length} pedido${grupos.length === 1 ? "" : "s"} · ${u} espejo${u === 1 ? "" : "s"}</td></tr>${filas}</tbody>`;
   }).join("");
   return `<!doctype html>
@@ -6418,7 +6425,7 @@ function hojaDemorados(lista, opciones) {
   @media print { body { margin:0; } }
 </style></head>
 <body>
-  <h1>DECOGLASS — ${esc(titulo)} <small>· ${esc(ahora.toLocaleDateString("es-AR"))} · ${pedidosN} pedido${pedidosN === 1 ? "" : "s"} · ${espejos} espejo${espejos === 1 ? "" : "s"}</small></h1>
+  <h1>DECOGLASS — ${esc(titulo)} <small>· ${esc(ahora.toLocaleDateString("es-AR"))} · <b>${pedidosN} pedido${pedidosN === 1 ? "" : "s"} · ${espejos} espejo${espejos === 1 ? "" : "s"}</b></small></h1>
   ${cuerpo ? `<table>
     <colgroup><col class="c-ped"><col class="c-cant"><col class="c-med"><col class="c-forma"><col class="c-tono"><col class="c-grab"><col class="c-func"><col class="c-ent"></colgroup>
     <thead><tr><th>Pedido</th><th class="n">Cant</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Grabado</th><th>Funciones</th><th>Entrega</th></tr></thead>
@@ -18707,19 +18714,21 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 if (deEsta.length === 0) return null;
                 const abierto = diasAbiertos.has("demorados") || !!busqueda.trim();
                 const u = deEsta.reduce((t, x) => t + x.unidades, 0);
+                const pedidosN = gruposDemorados(deEsta.map((x) => x.pedido)).length;
                 const todos = demoradosTaller.map((x) => x.pedido);
+                const unidadesDe = new Map(demoradosTaller.map((x) => [x.pedido.id, x.unidades]));
                 return (
                   <div className={`dg-dia-taller dg-dia-taller-vencido dg-dia-demorados ${abierto ? "dg-dia-taller-abierto" : ""}`}>
                     <button type="button" className="dg-dia-taller-head" onClick={() => toggleDia("demorados")} aria-expanded={abierto}>
                       <ChevronRight size={16} className="dg-fab-grupo-chevron" />
                       <span className="dg-dia-taller-nombre">Demorados</span>
-                      <span className="dg-dia-taller-mix">{u} espejo{u === 1 ? "" : "s"}</span>
+                      <span className="dg-dia-taller-mix">{pedidosN} pedido{pedidosN === 1 ? "" : "s"} · {u} espejo{u === 1 ? "" : "s"}</span>
                       <span className="dg-dia-taller-vencido-chip">SIN HACER</span>
                     </button>
                     {abierto && (
                       <div className="dg-dia-taller-body">
                         <div className="dg-dia-traba">
-                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => imprimirDemorados(todos, { sinHacerDe })}>
+                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => imprimirDemorados(todos, { sinHacerDe, unidadesDe })}>
                             <Printer size={13} /> Imprimir los demorados{todos.length > deEsta.length ? " (todas las listas)" : ""}
                           </button>
                         </div>
