@@ -1944,8 +1944,8 @@ function App() {
   }, [turnos]);
 
   // Las listas del taller se traban solas (ver trabasAutomaticas): la de hoy
-  // al abrir la app y la de mañana a las 19:00. Se revisa al entrar y cada 5
-  // minutos, para agarrar las 19:00 con la app abierta. Solo con los pedidos
+  // al abrir la app y las que vienen cuando llegan a su tope. Se revisa al
+  // entrar y cada 5 minutos, para agarrar el momento en que una se llena. Solo con los pedidos
   // ya cargados: si no, se trabaría una lista vacía. Y cada traba se intenta
   // una sola vez por sesión, por si el guardado no queda (mismo freno que el
   // día que se le anota a cada espejo).
@@ -1955,9 +1955,12 @@ function App() {
     const revisar = () => {
       const nuevo = trabasAutomaticas(pedidos, trabasTaller);
       if (!nuevo) return;
-      const claves = Object.keys(nuevo).filter((k) => !trabasTaller[k]);
-      if (!claves.some((k) => !trabasIntentadas.current.has(k))) return;
-      claves.forEach((k) => trabasIntentadas.current.add(k));
+      // Cada cambio (trabar o destrabar) se intenta una sola vez por sesión.
+      const nuevas = Object.keys(nuevo).filter((k) => !trabasTaller[k]);
+      const sacadas = Object.keys(trabasTaller).filter((k) => !nuevo[k] && trabasTaller[k]?.auto);
+      const firma = [...nuevas.map((k) => `+${k}`), ...sacadas.map((k) => `-${k}`)].sort().join(",");
+      if (!firma || trabasIntentadas.current.has(firma)) return;
+      trabasIntentadas.current.add(firma);
       persistTrabasTaller(nuevo);
     };
     revisar();
@@ -6384,8 +6387,8 @@ const diaDeLaLista = (listaId) => (listaSinTope(listaId) ? diaMovidoAMano : diaP
 // entra después no se mete ahí: va al primer día que no esté trabado. Si se
 // termina algo antes, el lugar queda libre; no se rellena solo.
 //
-// Se traba sola: la de mañana a las 19:00, y la de hoy la primera vez que
-// alguien abre la app en el día, si nadie la trabó la noche anterior. Las tres
+// Se traba sola: la de hoy la primera vez que alguien abre la app en el día, y
+// las que vienen recién cuando llegan a su tope (ver trabasAutomaticas). Las tres
 // listas (esmerilados p/armar se sumó el 21/10 a pedido de Facundo: lo que
 // vuelve del grabador a la tarde pasa al día siguiente). Si se la destraba a
 // mano queda «abierta» y la app no la vuelve a trabar.
@@ -6429,25 +6432,42 @@ function idsDelDiaTaller(pedidos, hoyIso, listaId, fecha, trabas) {
   const dia = planTaller(pedidos, hoyIso, listaId, trabas).find((d) => d.fecha === fecha && !d.pasado);
   return [...new Set((dia?.items || []).map((x) => x.pedido.id))];
 }
-// Qué hay que trabar solo a esta hora. Devuelve el objeto nuevo entero, o
+// Qué hay que trabar (o destrabar) solo. Devuelve el objeto nuevo entero, o
 // null si no hay nada para hacer (así no se le escribe a la base de gusto).
+//
+// Cuándo se traba una lista sola (12/11/2026, pedido de Facundo: «me quedan
+// días con 4 espejos y el siguiente con 10»):
+//   · la de HOY, cuando cambia el día (la primera vez que se abre la app);
+//   · las de los días que vienen, recién cuando llegan a su tope (10 en
+//     simples, 3 los sábados, 20 en esmerilados p/cortar). Hasta ahí se siguen
+//     llenando con lo que entra a fábrica.
+// Antes la de mañana se trababa a las 19:00 con lo que tuviera. Las que se
+// trabaron solas así sin llenarse se destraban, para que se completen. Las
+// que alguien trabó o destrabó a mano no se tocan.
 function trabasAutomaticas(pedidos, trabas, ahora = new Date()) {
   const hoyIso = isoLocal(ahora);
   const primero = primerDiaTaller(hoyIso);
-  const dias = [primero];
-  // A la noche se traba también la del día siguiente. El domingo «primero» ya
-  // es el lunes, así que no se suma nada más.
-  if (primero === hoyIso && ahora.getHours() >= HORA_TRABA_LISTAS) dias.push(siguienteDiaTaller(primero));
   let nuevo = null;
-  dias.forEach((fecha) => LISTAS_QUE_SE_TRABAN_SOLAS.forEach((listaId) => {
-    const clave = claveTraba(listaId, fecha);
-    // Trabada o destrabada a mano: no se toca.
-    if ((nuevo || trabas || {})[clave]) return;
-    const base = nuevo || limpiarTrabasViejas(trabas, primero);
-    const ids = idsDelDiaTaller(pedidos, hoyIso, listaId, fecha, trabasDeLaLista(listaId, base));
-    base[clave] = { estado: "trabada", ids, por: "La app", cuando: ahora.toISOString(), auto: true };
-    nuevo = base;
-  }));
+  const actual = () => nuevo || trabas || {};
+  const editable = () => { if (!nuevo) nuevo = limpiarTrabasViejas(trabas, primero); return nuevo; };
+  LISTAS_QUE_SE_TRABAN_SOLAS.forEach((listaId) => {
+    const plan = planTaller(pedidos, hoyIso, listaId, trabasDeLaLista(listaId, actual()));
+    plan.filter((d) => !d.pasado).forEach((d) => {
+      const clave = claveTraba(listaId, d.fecha);
+      const t = actual()[clave];
+      const tope = topeDelDia(listaId, d.sabado);
+      const cargados = (Number(d.total) || 0) - (Number(d.extras) || 0);
+      const lleno = Number.isFinite(tope) && tope > 0 && cargados >= tope;
+      const esHoy = d.fecha === primero;
+      if (t) {
+        if (t.auto && t.estado === "trabada" && !esHoy && !lleno) delete editable()[clave];
+        return;
+      }
+      if (!esHoy && !lleno) return;
+      const ids = [...new Set((d.items || []).map((x) => x.pedido.id))];
+      editable()[clave] = { estado: "trabada", ids, por: "La app", cuando: ahora.toISOString(), auto: true, motivo: esHoy ? "cambió el día" : "llegó al tope" };
+    });
+  });
   return nuevo;
 }
 // ===== FIN LISTAS TRABADAS ==================================================
