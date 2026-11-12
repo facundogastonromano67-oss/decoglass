@@ -6261,14 +6261,18 @@ function compararDemorados(a, b) {
   return String(a.listo || "9999-99-99").localeCompare(String(b.listo || "9999-99-99"));
 }
 // Por qué está en la lista, en palabras.
-function motivosDemora(p) {
+// corto: para la hoja impresa, donde «Dónde está» ya dice la etapa y los días.
+function motivosDemora(p, sinHacerDesde = "", corto = false) {
   const motivos = [];
-  if (nivelDemoraEtapa(p) !== "ok") motivos.push(`Frenado hace ${diasEnEtapa(p)} días en «${estadoProduccionLabel(p)}» (lo normal es hasta ${umbralEtapa(p)})`);
-  if (p?.demorado) motivos.push("Marcado demorado a mano");
+  if (sinHacerDesde) motivos.push(corto ? `Sin hacer desde el ${diaCortoTaller(sinHacerDesde)}` : `Era para el ${diaCortoTaller(sinHacerDesde)} y quedó sin hacer`);
+  if (nivelDemoraEtapa(p) !== "ok") motivos.push(corto ? `frenado (lo normal: ${umbralEtapa(p)}d)` : `Frenado hace ${diasEnEtapa(p)} días en «${estadoProduccionLabel(p)}» (lo normal es hasta ${umbralEtapa(p)})`);
+  if (p?.demorado) motivos.push(corto ? "marcado a mano" : "Marcado demorado a mano");
   if (trabajoAfueraVencido(p)) {
     const campo = campoPrometidaAfuera(p);
-    motivos.push(`El ${pedidoListaFabrica(p) === "en_grabado" ? "grabador" : "biselador"} lo prometió para el ${fechaDeHoja(p[campo])}`);
+    const quien = pedidoListaFabrica(p) === "en_grabado" ? "grabador" : "biselador";
+    motivos.push(corto ? `${quien}: prometido ${fechaDeHoja(p[campo])}` : `El ${quien} lo prometió para el ${fechaDeHoja(p[campo])}`);
   }
+  if (corto && motivos[0]) motivos[0] = motivos[0][0].toUpperCase() + motivos[0].slice(1);
   return motivos;
 }
 // Días que pasaron de la fecha de entrega al cliente (0 si todavía no llegó).
@@ -6285,8 +6289,61 @@ function fechaDeHoja(v) {
   const d = new Date(t);
   return Number.isNaN(d.getTime()) ? t : d.toLocaleDateString("es-AR");
 }
-// Un bloque por pedido (los espejos de un mismo pedido van juntos), en el
-// orden de la lista.
+// «lunes 10/11»
+function diaCortoTaller(iso) {
+  const [y, m, d] = String(iso || "").split("-").map(Number);
+  if (!y || !m || !d) return String(iso || "");
+  return `${DIAS_TALLER[new Date(y, m - 1, d).getDay()].toLowerCase()} ${d}/${m}`;
+}
+// Los demorados de la vista principal (12/11/2026, pedido de Facundo: «en vez
+// de dividirse por las listas de los días, que se acumulen en la lista general
+// de demorados, divididos por tipo de entrega»). Son:
+//   · lo que tenía un día que ya pasó y quedó sin hacer (antes se quedaba en
+//     ese día viejo con el cartel «SIN HACER»);
+//   · lo que alguien marcó demorado a mano.
+// Las listas de hoy y de los días que vienen NO cambian: el cupo no se toca.
+const LISTAS_CON_DIAS = ["simples", "esm_cortar", "esm_armar"];
+function demoradosDelTaller(pedidos, hoyIso) {
+  const porId = new Map();
+  LISTAS_CON_DIAS.forEach((lista) => {
+    planTaller(pedidos, hoyIso, lista).filter((d) => d.pasado).forEach((d) => {
+      d.items.forEach((x) => {
+        const previo = porId.get(x.pedido.id);
+        if (previo) {
+          previo.unidades += x.unidades;
+          if (d.fecha < previo.sinHacerDesde) previo.sinHacerDesde = d.fecha;
+          return;
+        }
+        porId.set(x.pedido.id, { pedido: x.pedido, unidades: x.unidades, sinHacerDesde: d.fecha, lista });
+      });
+    });
+  });
+  (pedidos || []).forEach((p) => {
+    if (!p?.demorado || porId.has(p.id) || !entraEnPlanTaller(p) || esperaEmbalajeInterior(p) || !quedaTrabajoTaller(p)) return;
+    porId.set(p.id, { pedido: p, unidades: unidadesPendientesTaller(p), sinHacerDesde: "", lista: pestanaTaller(p) });
+  });
+  return [...porId.values()].sort((a, b) =>
+    (a.sinHacerDesde || "9999-99-99").localeCompare(b.sinHacerDesde || "9999-99-99") || compararPrioridadTaller(a.pedido, b.pedido));
+}
+// Divididos por cómo se entregan.
+const TIPOS_ENTREGA_DEMORADOS = [
+  { id: "retiro", label: "Retiro en el local" },
+  { id: "envio", label: "Envío" },
+  { id: "interior", label: "Interior (Vía Cargo)" },
+  { id: "otro", label: "Sin definir la entrega" },
+];
+function tipoEntregaDemorado(p) {
+  if (esEnvioInterior(p)) return "interior";
+  if (METODOS_ENVIO_GENERAL.includes(p?.metodo)) return "envio";
+  if (p?.metodo === "Retira") return "retiro";
+  return "otro";
+}
+function demoradosPorEntrega(lista, dePedido = (x) => x) {
+  return TIPOS_ENTREGA_DEMORADOS
+    .map((t) => ({ ...t, items: (lista || []).filter((x) => tipoEntregaDemorado(dePedido(x)) === t.id) }))
+    .filter((g) => g.items.length > 0);
+}
+// Los espejos de un mismo pedido van juntos, en el orden de la lista.
 function gruposDemorados(lista) {
   const grupos = new Map();
   (lista || []).forEach((p) => {
@@ -6296,99 +6353,84 @@ function gruposDemorados(lista) {
   });
   return [...grupos.values()];
 }
-function hojaDemorados(lista, todos = [], ahora = new Date()) {
+// La hoja para imprimir: una tabla compacta (A4 acostada), un renglón por
+// espejo, dividida por tipo de entrega. Antes era un recuadro por pedido y
+// gastaba muchas hojas (pedido de Facundo, 12/11/2026).
+// opciones.sinHacerDe: Map id → día que quedó sin hacer.
+function hojaDemorados(lista, opciones) {
+  const { todos = [], sinHacerDe = new Map(), ahora = new Date(), titulo = "Espejos demorados" } = opciones || {};
   const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const hoyIso = isoLocal(ahora);
-  const grupos = gruposDemorados(lista);
+  const pedidosN = gruposDemorados(lista).length;
   const espejos = totalUnidades(lista);
-  const criticos = grupos.filter((g) => g.some((p) => nivelDemoraEtapa(p) === "critico")).length;
-  const bloques = grupos.map((items) => {
-    const p = items[0];
-    const critico = items.some((x) => nivelDemoraEtapa(x) === "critico");
-    const atraso = Math.max(...items.map((x) => diasDeAtrasoEntrega(x, hoyIso)));
-    const delPedido = (todos || []).filter((x) => (p.grupoId ? x.grupoId === p.grupoId : x.id === p.id) && x.estado !== "Cancelado");
-    const otros = Math.max(0, totalUnidades(delPedido) - totalUnidades(items));
-    const destino = [p.barrio, p.localidad, p.provincia].filter(Boolean).join(", ");
-    const filas = items.map((x) => {
-      const funciones = funcionesPedido(x, true).map((f) => f.label).join(", ");
-      const proceso = TALLER_MODELOS.find((m) => m.id === pedidoProcesoTaller(x))?.label || "";
-      return `<tr>
-        <td class="n">${esc(Math.max(1, Number(x.cant) || 1))}</td>
-        <td><strong>${esc(medidaEspejo(x) || "—")}</strong></td>
-        <td>${esc([formaAparte(x), x.tipo].filter(Boolean).join(" / ") || "—")}${proceso ? `<div class="sub">${esc(proceso)}</div>` : ""}</td>
-        <td>${esc(x.tono || "—")}</td>
-        <td>${esc(medidaGrabado(x))}</td>
-        <td>${esc(funciones || "—")}</td>
-        <td><strong>${esc(estadoProduccionLabel(x))}</strong>${diasEnEtapa(x) != null ? `<div class="sub">hace ${diasEnEtapa(x)} día${diasEnEtapa(x) === 1 ? "" : "s"}</div>` : ""}</td>
-        <td>${motivosDemora(x).map((m) => `<div>${esc(m)}</div>`).join("") || "—"}</td>
-      </tr>`;
+  const COLS = 11;
+  const fila = (x, primero, otros) => {
+    const funciones = funcionesPedido(x, true).map((f) => f.label).join(", ");
+    const critico = nivelDemoraEtapa(x) === "critico";
+    const atraso = diasDeAtrasoEntrega(x, hoyIso);
+    const dias = diasEnEtapa(x);
+    const motivos = motivosDemora(x, sinHacerDe.get(x.id) || "", true);
+    return `<tr class="${critico ? "critico" : ""}${primero ? " primero" : ""}">
+      <td>${primero ? `<b>#${esc(x.orden ?? "—")}</b> ${esc(x.cliente || "Sin nombre")}<div class="sub">${esc(x.celular || "")}${otros > 0 ? ` · +${otros} espejo${otros === 1 ? "" : "s"} al día` : ""}</div>` : `<span class="sub">#${esc(x.orden ?? "—")} (sigue)</span>`}</td>
+      <td class="n">${esc(Math.max(1, Number(x.cant) || 1))}</td>
+      <td><b>${esc(medidaEspejo(x, { cm: false }) || "—")}</b></td>
+      <td>${esc([formaAparte(x), x.tipo].filter(Boolean).join(" / ") || "—")}</td>
+      <td>${esc(x.tono || "—")}</td>
+      <td>${esc(medidaGrabado(x))}</td>
+      <td>${esc(funciones || "—")}</td>
+      <td>${esc(estadoProduccionLabel(x))}${dias != null ? ` <span class="sub">${dias}d</span>` : ""}</td>
+      <td>${critico ? '<b class="muy">MUY</b> ' : ""}${esc(motivos.join(" · ") || "—")}</td>
+      <td>${esc(fechaDeHoja(x.listo))}${atraso > 0 ? ` <b class="rojo">+${atraso}d</b>` : ""}</td>
+      <td>${esc(x.vendedor || "—")}</td>
+    </tr>${primero && aclaracionDe(x, "aclaracionTaller") ? `<tr class="acl"><td></td><td colspan="${COLS - 1}"><b>Para el taller:</b> ${esc(aclaracionDe(x, "aclaracionTaller"))}</td></tr>` : ""}`;
+  };
+  const cuerpo = demoradosPorEntrega(lista).map((g) => {
+    const filas = gruposDemorados(g.items).map((items) => {
+      const p = items[0];
+      const delPedido = (todos || []).filter((x) => (p.grupoId ? x.grupoId === p.grupoId : x.id === p.id) && x.estado !== "Cancelado");
+      const otros = Math.max(0, totalUnidades(delPedido) - totalUnidades(items));
+      return items.map((x, i) => fila(x, i === 0, otros)).join("");
     }).join("");
-    const aclaraciones = [...new Set(items.map((x) => aclaracionDe(x, "aclaracionTaller")).filter(Boolean))];
-    return `<section class="ped${critico ? " critico" : ""}">
-      <div class="cab">
-        <span class="num">#${esc(p.orden ?? "—")}</span>
-        <span class="cli">${esc(p.cliente || "Sin nombre")}</span>
-        ${critico ? '<span class="sello">MUY DEMORADO</span>' : '<span class="sello suave">DEMORADO</span>'}
-      </div>
-      <div class="datos">
-        <div><span>Vendedor</span>${esc(p.vendedor || "—")}</div>
-        <div><span>Venta</span>${esc(fechaDeHoja(p.fecha))}</div>
-        <div><span>Entrega al cliente</span>${esc(fechaDeHoja(p.listo))}${atraso > 0 ? ` <b class="rojo">(pasada hace ${atraso} día${atraso === 1 ? "" : "s"})</b>` : ""}</div>
-        <div><span>Objetivo de fábrica</span>${esc(fechaDeHoja(fechaObjetivoFabrica(p)))}</div>
-        <div><span>Entrega</span>${esc(p.metodo || "—")}${destino ? ` · ${esc(destino)}` : ""}</div>
-        <div><span>Teléfono</span>${esc(p.celular || "—")}</div>
-      </div>
-      <table>
-        <colgroup><col class="c-cant"><col class="c-med"><col class="c-forma"><col class="c-tono"><col class="c-grab"><col class="c-func"><col class="c-donde"><col class="c-porque"></colgroup>
-        <thead><tr><th class="n">Cant.</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Grabado</th><th>Funciones</th><th>Dónde está</th><th>Por qué está demorado</th></tr></thead>
-        <tbody>${filas}</tbody>
-      </table>
-      ${otros > 0 ? `<div class="nota">El pedido tiene ${otros} espejo${otros === 1 ? "" : "s"} más que no está${otros === 1 ? "" : "n"} demorado${otros === 1 ? "" : "s"}.</div>` : ""}
-      ${aclaraciones.map((a) => `<div class="aclara"><span>Para el taller:</span> ${esc(a)}</div>`).join("")}
-    </section>`;
+    const u = totalUnidades(g.items);
+    return `<tbody><tr class="grupo"><td colspan="${COLS}">${esc(g.label)} · ${gruposDemorados(g.items).length} pedido${gruposDemorados(g.items).length === 1 ? "" : "s"} · ${u} espejo${u === 1 ? "" : "s"}</td></tr>${filas}</tbody>`;
   }).join("");
   return `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Espejos demorados</title>
+<html lang="es"><head><meta charset="utf-8"><title>${esc(titulo)}</title>
 <style>
+  @page { size: A4 landscape; margin: 8mm; }
   * { box-sizing:border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:18px; font-size:12px; }
-  h1 { font-size:18px; margin:0 0 2px; letter-spacing:.3px; }
-  .resumen { font-size:12px; color:#444; margin-bottom:14px; }
-  .resumen b { color:#111; }
-  .ped { border:1.5px solid #555; border-radius:6px; padding:10px 12px; margin-bottom:12px; page-break-inside:avoid; break-inside:avoid; }
-  .ped.critico { border:2.5px solid #111; }
-  .cab { display:flex; align-items:baseline; gap:10px; margin-bottom:6px; }
-  .num { font-size:20px; font-weight:800; }
-  .cli { font-size:15px; font-weight:700; flex:1; }
-  .sello { font-size:10.5px; font-weight:800; letter-spacing:.8px; padding:3px 8px; border-radius:4px; background:#111; color:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  .sello.suave { background:#fff; color:#111; border:1.5px solid #111; }
-  .datos { display:grid; grid-template-columns:repeat(3, 1fr); gap:4px 14px; margin-bottom:8px; }
-  .datos span { display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; color:#666; }
-  .rojo { color:#B04A3D; }
-  /* Ancho fijo: entra en una hoja A4 parada sin cortar la última columna. */
-  table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; }
-  th, td { border:1px solid #aaa; padding:4px 5px; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
-  col.c-cant { width:6%; } col.c-med { width:12%; } col.c-forma { width:13%; } col.c-tono { width:9%; }
-  col.c-grab { width:11%; } col.c-func { width:12%; } col.c-donde { width:13%; } col.c-porque { width:24%; }
-  .ped { max-width:100%; }
-  th { background:#eee; font-size:9.5px; text-transform:uppercase; letter-spacing:.3px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:12px; font-size:10.5px; }
+  h1 { font-size:14px; margin:0 0 6px; }
+  h1 small { font-size:11px; font-weight:400; color:#444; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  th, td { border:1px solid #999; padding:2px 4px; text-align:left; vertical-align:top; overflow-wrap:anywhere; line-height:1.25; }
+  thead th { background:#e6e6e6; font-size:9px; text-transform:uppercase; letter-spacing:.2px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  thead { display:table-header-group; }
+  tr { page-break-inside:avoid; break-inside:avoid; }
+  tr.grupo td { background:#111; color:#fff; font-weight:700; font-size:10.5px; letter-spacing:.4px; text-transform:uppercase; padding:3px 6px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  tr.critico td:first-child { border-left:3px solid #111; }
+  tr.acl td { font-size:9.5px; background:#f3f3f3; border-top:none; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   td.n, th.n { text-align:center; }
-  .sub { font-size:10.5px; color:#555; }
-  .nota { margin-top:6px; font-size:11px; color:#444; }
-  .aclara { margin-top:6px; padding:5px 8px; border-left:3px solid #111; background:#f4f4f4; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  .aclara span { font-weight:700; }
-  .vacio { padding:20px; border:1px dashed #999; text-align:center; color:#555; }
-  @media print { body { margin:8px; } }
+  .sub { font-size:9px; color:#555; }
+  .muy { font-size:8.5px; border:1px solid #111; padding:0 2px; }
+  .rojo { color:#B04A3D; }
+  .vacio { padding:16px; border:1px dashed #999; text-align:center; color:#555; }
+  col.c-ped { width:17%; } col.c-cant { width:4%; } col.c-med { width:7%; } col.c-forma { width:10%; } col.c-tono { width:6%; }
+  col.c-grab { width:8%; } col.c-func { width:9%; } col.c-donde { width:8%; } col.c-porque { width:17%; } col.c-ent { width:7%; } col.c-vend { width:7%; }
+  @media print { body { margin:0; } }
 </style></head>
 <body>
-  <h1>DECOGLASS — Espejos demorados</h1>
-  <div class="resumen">${esc(ahora.toLocaleDateString("es-AR"))} · <b>${grupos.length} pedido${grupos.length === 1 ? "" : "s"}</b> · ${espejos} espejo${espejos === 1 ? "" : "s"} · todas las listas de Fábrica juntas${criticos ? ` · <b>${criticos} muy demorado${criticos === 1 ? "" : "s"}</b> (frenados el doble de lo normal)` : ""}</div>
-  ${bloques || '<div class="vacio">No hay espejos demorados.</div>'}
+  <h1>DECOGLASS — ${esc(titulo)} <small>· ${esc(ahora.toLocaleDateString("es-AR"))} · ${pedidosN} pedido${pedidosN === 1 ? "" : "s"} · ${espejos} espejo${espejos === 1 ? "" : "s"}</small></h1>
+  ${cuerpo ? `<table>
+    <colgroup><col class="c-ped"><col class="c-cant"><col class="c-med"><col class="c-forma"><col class="c-tono"><col class="c-grab"><col class="c-func"><col class="c-donde"><col class="c-porque"><col class="c-ent"><col class="c-vend"></colgroup>
+    <thead><tr><th>Pedido</th><th class="n">Cant</th><th>Medida</th><th>Forma / Tipo</th><th>Tono</th><th>Grabado</th><th>Funciones</th><th>Dónde está</th><th>Por qué está demorado</th><th>Entrega</th><th>Vendedor</th></tr></thead>
+    ${cuerpo}
+  </table>` : '<div class="vacio">No hay espejos demorados.</div>'}
   <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
 }
-function imprimirDemorados(lista, todos) {
-  abrirParaImprimir(hojaDemorados(lista, todos));
+function imprimirDemorados(lista, opciones) {
+  abrirParaImprimir(hojaDemorados(lista, opciones));
 }
 
 // --- Objetivo de fábrica: la fecha que se le muestra al taller es la entrega
@@ -17788,6 +17830,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     });
   }
   const [diaDestino, setDiaDestino] = useState(null);     // día sobre el que se está soltando al arrastrar
+  const [demoradosAbierto, setDemoradosAbierto] = useState(true);
   const puedeArrastrar = session?.role === "admin";
   function moverADia(pedidoId, dia, comoExtra = false) {
     // A un día trabado solo le entra un extra del editor único.
@@ -17845,7 +17888,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const enFabrica = pedidos.filter((p) => p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado");
   const activos = enFabrica.filter((p) => !pedidoEstaListo(p));
   const historial = enFabrica.filter((p) => pedidoEstaListo(p));
-  const demorados = activos.filter(esDemoradoFabrica);
+  // Lo que quedó sin hacer de días pasados + lo marcado a mano: sale de las
+  // listas de los días y va al bloque «Demorados» de arriba.
+  const demoradosTaller = demoradosDelTaller(pedidos, hoyTaller);
+  const enDemoradosTaller = new Set(demoradosTaller.map((x) => x.pedido.id));
+  const sinHacerDe = new Map(demoradosTaller.filter((x) => x.sinHacerDesde).map((x) => [x.pedido.id, x.sinHacerDesde]));
+  const demorados = activos.filter((p) => esDemoradoFabrica(p) || enDemoradosTaller.has(p.id));
   const afuera = activos.filter(estaAfueraDelTaller);
   let baseVisibles = filtroEstado === "activos"
     ? activos
@@ -17870,7 +17918,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     : filtroEstado === "afuera"
     ? visibles.sort((a, b) => (a[campoPrometidaAfuera(a)] || "9999-99-99").localeCompare(b[campoPrometidaAfuera(b)] || "9999-99-99"))
     : filtroEstado === "demorados"
-    ? visibles.sort(compararDemorados)
+    ? visibles.sort((a, b) => (sinHacerDe.get(a.id) || "9999-99-99").localeCompare(sinHacerDe.get(b.id) || "9999-99-99") || compararDemorados(a, b))
     : esPestanaDeArmar(lista)
     ? visibles.sort((a, b) => {
         const pa = prioridadListaArmar(a), pb = prioridadListaArmar(b);
@@ -18283,6 +18331,25 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     );
   };
 
+  // Las tarjetas de los demorados, divididas por tipo de entrega.
+  const tarjetasDemoradas = (lista) => demoradosPorEntrega(lista).map((g) => (
+    <div className={`dg-demorados-entrega dg-demorados-${g.id}`} key={`dem-${g.id}`}>
+      <div className="dg-demorados-entrega-tit">
+        <span>{g.label}</span>
+        <small>{totalUnidades(g.items)} espejo{totalUnidades(g.items) === 1 ? "" : "s"}</small>
+      </div>
+      {g.items.map((p) => {
+        const cant = Math.max(1, Number(p.cant) || 1);
+        const motivo = motivosDemora(p, sinHacerDe.get(p.id) || "").join(" · ");
+        return (
+          <div className="dg-dia-item dg-demorados-item" key={`dem-item-${p.id}`}>
+            {motivo && <div className="dg-dia-item-bar"><span className="dg-demorados-motivo"><AlertTriangle size={12} /> {motivo}</span></div>}
+            {cant <= 1 ? renderCard(p, 1, 1) : esPedidoMultiUnidad(p) ? renderMultiCard(p, cant) : Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant))}
+          </div>
+        );
+      })}
+    </div>
+  ));
   const renderMultiCard = (p, cant) => {
     const unids = unidadesDePedido(p);
     const hechos = (n) => unids.filter((u) => unidadPasosCompletados(u) >= n).length;
@@ -18461,6 +18528,23 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           </div>
         );
       })()}
+      {filtroEstado === "activos" && (() => {
+        const lista = demoradosTaller.map((x) => x.pedido).filter((p) => coincidePedido(p, busqueda));
+        if (lista.length === 0) return null;
+        const u = totalUnidades(lista);
+        return (
+          <div className={`dg-demorados-bloque ${demoradosAbierto ? "dg-demorados-bloque-abierto" : ""}`}>
+            <div className="dg-demorados-barra">
+              <button type="button" className="dg-demorados-texto dg-demorados-toggle" onClick={() => setDemoradosAbierto((v) => !v)} aria-expanded={demoradosAbierto}>
+                <strong><ChevronRight size={15} className={demoradosAbierto ? "dg-presu-chevron-on" : ""} /> <AlertTriangle size={15} /> Demorados · {u} espejo{u === 1 ? "" : "s"}</strong>
+                <small>Lo que quedó sin hacer de días anteriores y lo marcado demorado, todas las listas juntas</small>
+              </button>
+              <button type="button" className="dg-btn-primary" onClick={() => imprimirDemorados(lista, { todos: pedidos, sinHacerDe })}><Printer size={14} /> Imprimir la lista</button>
+            </div>
+            {demoradosAbierto && <div className="dg-demorados-cuerpo">{tarjetasDemoradas(lista)}</div>}
+          </div>
+        );
+      })()}
       {filtroEstado !== "historial" && filtroEstado !== "demorados" ? (
         <>
           <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
@@ -18494,7 +18578,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <strong><AlertTriangle size={15} /> {grupos} pedido{grupos === 1 ? "" : "s"} · {totalUnidades(visibles)} espejo{totalUnidades(visibles) === 1 ? "" : "s"} demorado{totalUnidades(visibles) === 1 ? "" : "s"}</strong>
               <small>Todas las listas juntas{muy ? ` · ${muy} muy demorado${muy === 1 ? "" : "s"} arriba de todo` : ""}</small>
             </div>
-            <button type="button" className="dg-btn-primary" onClick={() => imprimirDemorados(visibles, pedidos)}><Printer size={14} /> Imprimir el detalle</button>
+            <button type="button" className="dg-btn-primary" onClick={() => imprimirDemorados(visibles, { todos: pedidos, sinHacerDe })}><Printer size={14} /> Imprimir la lista</button>
           </div>
         );
       })()}
@@ -18537,7 +18621,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               {(() => {
                 const hoyPlan = diaDeHoyDelPlan(plan);
                 if (!hoyPlan) return null;
-                const filas = hoyPlan.items.filter((x) => coincide(x.pedido));
+                const filas = hoyPlan.items.filter((x) => coincide(x.pedido) && !enDemoradosTaller.has(x.pedido.id));
                 if (filas.length === 0) return null;
                 const irATarjeta = (ev, x) => {
                   ev.stopPropagation();
@@ -18642,7 +18726,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const hechosDia = dia.hechos;
                 const abierto = diasAbiertos.has(dia.fecha) || (!!busqueda.trim() && dia.items.some((x) => coincide(x.pedido)));
                 const hechosU = contar(hechosDia);
-                const items = dia.items.filter((x) => coincide(x.pedido));
+                // Los demorados (lo que quedó sin hacer y lo marcado a mano)
+                // están en el bloque de arriba, no acá.
+                const items = dia.items.filter((x) => coincide(x.pedido) && !enDemoradosTaller.has(x.pedido.id));
+                const espejosDia = dia.espejos - dia.items.filter((x) => enDemoradosTaller.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0);
+                if (dia.pasado && items.length === 0 && dia.porEmbalarU === 0) return null;
                 if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && !diasAbiertos.has(dia.fecha)) return null;
                 // A un día que ya pasó no se le puede mandar trabajo nuevo, y
                 // a uno trabado tampoco (ni sacarle lo suyo).
@@ -18662,9 +18750,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         <span className="dg-dia-taller-nombre">{nombreDiaTaller(dia.fecha, hoyTaller)}</span>
                         {dia.sabado && <span className="dg-dia-taller-medio">medio día</span>}
                         {dia.trabada && <span className="dg-dia-taller-trabada" title={`Trabada por ${traba?.por || "la app"}`}><Lock size={12} /> trabada</span>}
-                        <span className="dg-dia-taller-mix">{dia.espejos} espejo{dia.espejos === 1 ? "" : "s"}</span>
+                        <span className="dg-dia-taller-mix">{espejosDia} espejo{espejosDia === 1 ? "" : "s"}</span>
                         {dia.extras > 0 && <span className="dg-dia-taller-extra-chip">+{dia.extras} extra</span>}
-                        {dia.sinHacerU > 0 && <span className="dg-dia-taller-vencido-chip">SIN HACER {dia.sinHacerU}</span>}
                         {dia.porEmbalarU > 0 && <span className="dg-dia-taller-embalar"><Package size={12} /> falta embalar {dia.porEmbalarU}</span>}
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
                       </button>
@@ -18791,7 +18878,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               </div>
             );
           });
-        })() : visibles.flatMap((p) => {
+        })() : filtroEstado === "demorados" ? tarjetasDemoradas(visibles) : visibles.flatMap((p) => {
           const cant = Math.max(1, Number(p.cant) || 1);
           if (cant <= 1) return [renderCard(p, 1, 1)];
           if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
@@ -25363,7 +25450,17 @@ function Style() {
       .dg-demorados-texto strong { display:flex; align-items:center; gap:6px; color:var(--dg-danger); font-size:14px; }
       .dg-demorados-texto small { color:var(--dg-text-dim); font-size:12px; }
       .dg-demorados-barra .dg-btn-primary { flex:0 0 auto; }
-      @media print { .dg-demorados-barra { display:none !important; } }
+      .dg-demorados-bloque { margin:0 0 14px; }
+      .dg-demorados-bloque .dg-demorados-barra { margin:0; }
+      .dg-demorados-bloque-abierto .dg-demorados-barra { border-bottom-left-radius:0; border-bottom-right-radius:0; }
+      .dg-demorados-toggle { background:none; border:none; padding:0; text-align:left; cursor:pointer; font:inherit; color:inherit; flex:1 1 220px; }
+      .dg-demorados-cuerpo { display:flex; flex-direction:column; gap:12px; padding:12px; border:1px solid rgba(var(--dg-danger-rgb), .45); border-top:none; border-radius:0 0 10px 10px; }
+      .dg-demorados-entrega { display:flex; flex-direction:column; gap:8px; }
+      .dg-demorados-entrega-tit { display:flex; align-items:baseline; gap:8px; padding-bottom:4px; border-bottom:1px solid rgba(var(--dg-line-rgb), .14); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--dg-text); }
+      .dg-demorados-entrega-tit small { font-weight:500; text-transform:none; letter-spacing:0; color:var(--dg-text-dim); }
+      .dg-demorados-interior .dg-demorados-entrega-tit { color:var(--dg-interior); }
+      .dg-demorados-motivo { display:inline-flex; align-items:center; gap:5px; color:var(--dg-danger); font-weight:600; font-size:12px; }
+      @media print { .dg-demorados-barra, .dg-demorados-bloque { display:none !important; } }
       .dg-fab-flag-ok { color:var(--dg-success); font-weight:600; }
       .dg-fab-acciones { display:flex; align-items:center; gap:4px; min-width:0; }
       .dg-fab-btn-listo { display:flex; align-items:center; gap:6px; background: rgba(var(--dg-success-rgb),0.12); border:1px solid rgba(var(--dg-success-rgb),0.4);
