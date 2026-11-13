@@ -7981,6 +7981,33 @@ const ACLARACIONES = [
 const aclaracionDe = (p, campo) => String(p?.[campo] || "").trim();
 // La de la entrega es del pedido entero: la primera que haya entre sus espejos.
 const aclaracionEntregaDe = (items) => (items || []).map((x) => aclaracionDe(x, "aclaracionEntrega")).find(Boolean) || "";
+// En la tarjeta de Fábrica (13/11/2026): lo que cambió después de verificado,
+// con el valor que vale AHORA («tono de luz → Cálida»). Si un dato cambió dos
+// veces, queda el último. Corto, como un dato más del espejo: nada de
+// explicaciones (regla del taller). En los terminados no se muestra.
+function cambiosParaElTaller(pedido) {
+  const lista = Array.isArray(pedido?.cambiosTrasVerificar) ? pedido.cambiosTrasVerificar : [];
+  const ahora = new Map();
+  lista.forEach((c) => {
+    String(c?.texto || "").split(" · ").forEach((parte) => {
+      const m = parte.match(/^(.+?): (.*) → (.*)$/);
+      if (m) ahora.set(m[1], m[3]);
+    });
+  });
+  return [...ahora.entries()].map(([campo, valor]) => `${campo} → ${valor}`);
+}
+function CambioTrasVerificarTaller({ pedido }) {
+  if (!pedido || pedidoEstaListo(pedido)) return null;
+  const cambios = cambiosParaElTaller(pedido);
+  if (!cambios.length) return null;
+  const ultimo = pedido.cambiosTrasVerificar[pedido.cambiosTrasVerificar.length - 1];
+  return (
+    <div className="dg-fab-cambio">
+      <span>Cambió {fechaCortaTimeline(ultimo?.fecha)}</span>
+      {cambios.join(" · ")}
+    </div>
+  );
+}
 function AclaracionesDelPedido({ pedido, cuales = ACLARACIONES.map((a) => a.campo), titulo = true }) {
   const lista = ACLARACIONES.filter((a) => cuales.includes(a.campo) && aclaracionDe(pedido, a.campo));
   if (!lista.length) return null;
@@ -18343,6 +18370,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           )}
 
           {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+          <CambioTrasVerificarTaller pedido={p} />
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
           <LinksOrdenPapel pedido={p} />
           {/* La foto del espejo terminado (27/10/2026): control antes de
@@ -18533,6 +18561,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               <div className="dg-fab-funciones">{funciones.map((f, i) => (<span className="dg-fab-func" key={i}>{f.label}</span>))}</div>
             )}
             {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
+          <CambioTrasVerificarTaller pedido={p} />
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
           <LinksOrdenPapel pedido={p} />
           {/* La foto del espejo terminado (27/10/2026): control antes de
@@ -25466,6 +25495,8 @@ function Style() {
       /* Las aclaraciones: un recuadro con borde a la izquierda, que se vea
          distinto de las observaciones del grabado. */
       .dg-aclaraciones { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+      .dg-fab-cambio { padding:7px 10px; border-radius:9px; border-left:3px solid var(--dg-warning); background:rgba(var(--dg-warning-rgb),.12); font-size:13px; font-weight:600; line-height:1.4; color:var(--dg-text); overflow-wrap:break-word; }
+      .dg-fab-cambio > span { display:block; font-size:10.5px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--dg-warning); margin-bottom:2px; }
       .dg-aclaracion { padding:7px 10px; border-radius:9px; border-left:3px solid var(--dg-accent); background:rgba(var(--dg-accent-rgb),.08); font-size:13px; line-height:1.4; color:var(--dg-text); white-space:pre-wrap; overflow-wrap:break-word; }
       .dg-aclaracion > span { display:block; font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); margin-bottom:2px; }
       .dg-aclaracion-taller { border-left-color:var(--dg-warning); background:rgba(var(--dg-warning-rgb),.10); }
