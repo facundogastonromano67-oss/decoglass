@@ -1661,6 +1661,20 @@ const ETIQUETAS_CAMPO_ESPEJO = {
   touch: "touch", desemp: "desempañante", desempTipo: "tipo de desempañante", desempCantidad: "cantidad de desempañantes",
   horaTemp: "hora y temperatura", bluetooth: "bluetooth",
 };
+// Quién está usando la app (para anotarlo en el pedido).
+function nombreDeLaSesion() {
+  try { return JSON.parse(localStorage.getItem("dg-session-v1") || "{}").nombre || ""; } catch (e) { return ""; }
+}
+// Los cambios en el espejo después de verificado también quedan en el
+// pedido (13/11/2026, Facundo: «que el cambio también se vea adentro del
+// pedido»): una lista de { fecha, quien, texto }, la última al final.
+function conCambiosTrasVerificar(previo, nuevo, quien = nombreDeLaSesion(), ahora = new Date()) {
+  if (!previo || !nuevo || !estabaVerificado(previo)) return nuevo;
+  const cambios = cambiosEnElEspejo(previo, nuevo);
+  if (!cambios.length) return nuevo;
+  const antes = Array.isArray(previo.cambiosTrasVerificar) ? previo.cambiosTrasVerificar : [];
+  return { ...nuevo, cambiosTrasVerificar: [...antes, { fecha: ahora.toISOString(), quien: quien || "", texto: cambios.join(" · ") }].slice(-30) };
+}
 function estabaVerificado(p) {
   return !!p && (!!p.pedidoVerificadoFecha || (!!p.estado && p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado"));
 }
@@ -1726,7 +1740,7 @@ function cambiosDeUnPedido(a, d) {
   if ((Array.isArray(d.fotosEntrega) ? d.fotosEntrega.length : 0) > (Array.isArray(a.fotosEntrega) ? a.fotosEntrega.length : 0)) pon("Sacó la foto de la entrega");
   if ((Array.isArray(d.pagos) ? d.pagos.length : 0) > (Array.isArray(a.pagos) ? a.pagos.length : 0)) pon("Registró un pago");
   if (ordenesPapelDe(d).length < ordenesPapelDe(a).length) pon("Quitó la foto de la orden");
-  if (["detalleEntrega", "barrio", "piso", "celular", "localidad", "provincia", "codigoPostal", "interiorTipo", "sucursalViaCargo"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
+  if (["detalleEntrega", "barrio", "piso", "celular", "celular2", "localidad", "provincia", "codigoPostal", "interiorTipo", "sucursalViaCargo"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
   const plata = [];
   if (cambio(a, d, "monto")) plata.push(`monto ${money(Number(d.monto) || 0)}`);
   if (cambio(a, d, "anticipo")) plata.push(`anticipo ${money(Number(d.anticipo) || 0)}`);
@@ -5755,7 +5769,7 @@ function MoneyPage({ kind, entries, sectors, onChange, proveedores, onChangeProv
 function emptyPedido(prefill) {
   return {
     id: uid(), orden: prefill?.orden || null, grupoId: prefill?.grupoId || null, fecha: new Date().toISOString().slice(0, 10),
-    vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", dniCuit: prefill?.dniCuit || "",
+    vendedor: prefill?.vendedor || "", cliente: prefill?.cliente || "", celular: prefill?.celular || "", celular2: prefill?.celular2 || "", dniCuit: prefill?.dniCuit || "",
     provincia: prefill?.provincia || "", localidad: prefill?.localidad || "", codigoPostal: prefill?.codigoPostal || "",
     ancho: "", alto: "", cant: 1, pulido: "No", forma: "Rectangular", tipo: "Simple", grabado: prefill?.grabado || "",
     touch: "No", desemp: "No", desempTipo: "Touch", desempCantidad: 1, horaTemp: "No", bluetooth: "No", tono: "3 tonos",
@@ -5825,7 +5839,7 @@ function textoComparable(value) {
    =========================================================================== */
 const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
 // "A confirmar" no es un método de entrega: es que todavía no se sabe.
-const DATOS_QUE_SE_REPITEN = ["celular", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "canalVenta", "tipoFactura"];
+const DATOS_QUE_SE_REPITEN = ["celular", "celular2", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "canalVenta", "tipoFactura"];
 
 function clientesDeLosPedidos(pedidos) {
   const mapa = new Map();
@@ -7598,7 +7612,7 @@ function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
 
 // Datos del PEDIDO, no de cada espejo: si se cambian, cambian para todos.
 const CAMPOS_DEL_PEDIDO = [
-  "cliente", "celular", "dniCuit", "vendedor", "canalVenta", "fecha", "listo",
+  "cliente", "celular", "celular2", "dniCuit", "vendedor", "canalVenta", "fecha", "listo",
   "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
   "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "costoEnvio", "envioSinCargo", "envioPagado", "envioCobro", "destinoLat", "destinoLng",
   "aclaracionEntrega", "aclaracionInterna",
@@ -7935,7 +7949,7 @@ function coincidePedido(p, q) {
       // Un número solo: una de las dos medidas, el número de pedido, o (con 3
       // cifras o más) parte del teléfono.
       const n = Number(w);
-      return n === ancho || n === alto || String(p.orden ?? "") === w || coincideTelefono(p.celular, w);
+      return n === ancho || n === alto || String(p.orden ?? "") === w || coincideTelefono(p.celular, w) || coincideTelefono(p.celular2, w);
     }
     return texto.includes(w);
   });
@@ -8483,6 +8497,7 @@ function VerificacionModal({ pedido, onClose, onConfirmar, kommoSubdominio, onEd
         <div className="dg-verif-contacto">
           <span className="dg-verif-cliente">{pedido.cliente || "Sin nombre"}</span>
           <span className="dg-pago-meta">{pedido.celular || "Sin celular cargado"}</span>
+          {pedido.celular2 && <span className="dg-pago-meta">Otro teléfono: {pedido.celular2}</span>}
         </div>
 
         <div className="dg-verif-links">
@@ -9494,6 +9509,7 @@ function prepararGuardadoPedido(pedidos, pedido, nuevoNumero) {
   }
 
   if (reclamoSinCargo(withOrden)) withOrden = { ...withOrden, monto: 0, anticipo: 0 };
+  withOrden = conCambiosTrasVerificar(previous, withOrden);
 
   // Cuánto plata entró realmente por este pedido:
   // si ya se entregó, se cobró todo; si no, solo el anticipo.
@@ -11072,6 +11088,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
               </select>
             </Field>
             <Field label="Celular" error={err("celular")}><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
+            <Field label="Otro teléfono"><input disabled={!canEditFull} inputMode="tel" value={draft.celular2 || ""} onChange={(e) => set("celular2", e.target.value)} placeholder="Opcional" /></Field>
             <Field label="DNI/CUIT"><input disabled={!canEditFull} value={draft.dniCuit} onChange={(e) => set("dniCuit", e.target.value)} /></Field>
             <Field label="Tipo factura" error={err("tipoFactura")}><select disabled={!canEditFull} value={draft.tipoFactura} onChange={(e) => set("tipoFactura", e.target.value)}>{TIPOFACTURA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Facturado">
@@ -11255,6 +11272,20 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {Array.isArray(draft.cambiosTrasVerificar) && draft.cambiosTrasVerificar.length > 0 && (
+          <div className="dg-section-card dg-cambios-verif">
+            <div className="dg-cambios-verif-tit"><AlertTriangle size={14} /> Cambios después de verificado</div>
+            <ul>
+              {[...draft.cambiosTrasVerificar].reverse().map((c, i) => (
+                <li key={`${c.fecha}-${i}`}>
+                  <span className="dg-cambios-verif-cuando">{fechaCortaTimeline(c.fecha)}{c.quien ? ` · ${c.quien}` : ""}</span>
+                  <span className="dg-cambios-verif-que">{c.texto}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -12131,7 +12162,7 @@ function bloqueEntregaPedido(items, i) {
   const donde = [p.detalleEntrega, p.piso].filter(Boolean).join(", ");
   const cobro = lineasCobroFlete(items, true);
   const texto = [
-    `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}`,
+    `${i + 1}) ${p.cliente || "(sin nombre)"}${p.celular ? ` — ${p.celular}` : ""}${p.celular2 ? ` / otro: ${p.celular2}` : ""}`,
     `📍 ${donde || "(falta la dirección)"}${p.barrio ? ` — ${p.barrio}` : ""}`,
     `📦 ${bultos} ${bultos === 1 ? "espejo" : "espejos"}${medidas ? ` (${medidas})` : ""} · 🕐 ${p.horarioEntrega || "a coordinar"}`,
     ...(aclaracionEntregaDe(items) ? [`📝 ${aclaracionEntregaDe(items)}`] : []),
@@ -12707,6 +12738,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                                       <div className="dg-salida-tit">Datos de entrega</div>
                                       <div className="dg-salida-campos">
                                         <label><span>Teléfono</span><CampoTextoGuardado value={p.celular} onGuardar={(v) => updateFila(f, { celular: v })} placeholder="Ej: 1122334455" /></label>
+                                        <label><span>Otro teléfono</span><CampoTextoGuardado value={p.celular2} onGuardar={(v) => updateFila(f, { celular2: v })} placeholder="Opcional" /></label>
                                         <label><span>Barrio</span><CampoTextoGuardado value={p.barrio} onGuardar={(v) => updateFila(f, { barrio: v })} placeholder="Ej: Palermo" /></label>
                                         <label><span>Dirección</span><CampoTextoGuardado value={p.detalleEntrega} onGuardar={(v) => updateFila(f, { detalleEntrega: v })} placeholder="Calle y número" /></label>
                                         <label><span>Piso / Depto</span><CampoTextoGuardado value={p.piso} onGuardar={(v) => updateFila(f, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></label>
@@ -24851,6 +24883,12 @@ function Style() {
       .dg-cierre-falta { color:var(--dg-text-dim); }
       .dg-cierre-falta > svg { color:var(--dg-warning); }
 
+      .dg-cambios-verif { border-color:rgba(var(--dg-warning-rgb), .5); background:rgba(var(--dg-warning-rgb), .08); }
+      .dg-cambios-verif-tit { display:flex; align-items:center; gap:7px; font-family:'Jost', sans-serif; font-weight:600; font-size:13px; color:var(--dg-warning); margin-bottom:8px; }
+      .dg-cambios-verif ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+      .dg-cambios-verif li { display:flex; flex-direction:column; gap:2px; }
+      .dg-cambios-verif-cuando { font-size:11px; color:var(--dg-text-dim); }
+      .dg-cambios-verif-que { font-size:13px; color:var(--dg-text); }
       .dg-timeline-card > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:7px; font-family:'Jost', sans-serif; font-weight:600; font-size:13px; color:var(--dg-text); }
       .dg-timeline-card > summary::-webkit-details-marker { display:none; }
       .dg-timeline-card > summary > svg { color:var(--dg-accent); }
