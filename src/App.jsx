@@ -1651,10 +1651,50 @@ const ESTADO_A_ACCION = {
   "Cancelado": "Canceló un pedido",
   "Despachado": "Despachó por Vía Cargo",
 };
+// Cambios en el espejo con el pedido ya verificado (13/11/2026, Facundo:
+// «que en el registro se agregue si hubo modificaciones en el pedido, algún
+// tono de luz y eso, después de la verificación final»). Dice qué había y qué
+// quedó: «tono de luz: Cálida → Fría · medida: 80×60 → 90×60».
+const ACCION_CAMBIO_VERIFICADO = "Modificó un pedido ya verificado";
+const ETIQUETAS_CAMPO_ESPEJO = {
+  cant: "cantidad", forma: "forma", tipo: "tipo", tono: "tono de luz", pulido: "pulido", grabado: "grabado",
+  touch: "touch", desemp: "desempañante", desempTipo: "tipo de desempañante", desempCantidad: "cantidad de desempañantes",
+  horaTemp: "hora y temperatura", bluetooth: "bluetooth",
+};
+function estabaVerificado(p) {
+  return !!p && (!!p.pedidoVerificadoFecha || (!!p.estado && p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado"));
+}
+// Lo que la pantalla muestra cuando el campo está vacío.
+const DEFECTO_CAMPO_ESPEJO = { tono: "3 tonos" };
+function cambiosEnElEspejo(antes, despues) {
+  // Se comparan como quedan al guardar: la app completa sola algunos valores
+  // (por ejemplo el tipo de desempañante) y eso no es un cambio de nadie.
+  const a = normalizarPedidoFunciones(antes || {});
+  const d = normalizarPedidoFunciones(despues || {});
+  // Vacío y «No» son lo mismo: si no, abrir y guardar un pedido viejo (que no
+  // tenía el campo) parecería un cambio. Y vacío es lo que muestra la pantalla.
+  const valor = (p, c) => { const v = String(p?.[c] ?? "").trim(); return v === "No" ? "" : (v || DEFECTO_CAMPO_ESPEJO[c] || ""); };
+  const mostrar = (v) => v || "no";
+  // El tipo y la cantidad de desempañantes solo importan si lleva.
+  const conDesemp = pedidoTieneDesempanante(a) || pedidoTieneDesempanante(d);
+  const out = [];
+  if (valor(a, "ancho") !== valor(d, "ancho") || valor(a, "alto") !== valor(d, "alto")) {
+    out.push(`medida: ${medidaEspejo(a, { cm: false }) || "sin medida"} → ${medidaEspejo(d, { cm: false }) || "sin medida"}`);
+  }
+  Object.keys(ETIQUETAS_CAMPO_ESPEJO).forEach((c) => {
+    if ((c === "desempTipo" || c === "desempCantidad") && !conDesemp) return;
+    if (valor(a, c) !== valor(d, c)) out.push(`${ETIQUETAS_CAMPO_ESPEJO[c]}: ${mostrar(valor(a, c))} → ${mostrar(valor(d, c))}`);
+  });
+  return out;
+}
 // Lo que cambió en UN pedido, como una lista de { accion, texto }.
 function cambiosDeUnPedido(a, d) {
   const out = [];
   const pon = (accion, texto = "") => out.push({ accion, texto });
+  if (estabaVerificado(a)) {
+    const espejo = cambiosEnElEspejo(a, d);
+    if (espejo.length) pon(ACCION_CAMBIO_VERIFICADO, espejo.join(" · "));
+  }
   if (cambio(a, d, "estado")) pon(ESTADO_A_ACCION[d.estado] || "Cambió el estado", `pasó a «${d.estado}»`);
   [["produccionCortadoFecha", "cortado"], ["produccionArmadoFecha", "armado"], ["produccionEmbaladoFecha", "embalado"]].forEach(([c, label]) => {
     if (prendio(a, d, c)) pon("Actualizó producción", label);
@@ -2804,7 +2844,7 @@ function App() {
     if (!cambios || !cambios.length) return;
     window.setTimeout(() => {
       const recientes = anotadoAMano.current.filter((x) => Date.now() - x.ts < 4000);
-      const yaAnotado = (c) => !!c.orden && recientes.some((x) => new RegExp(`#${c.orden}(?!\\d)`).test(x.detalle));
+      const yaAnotado = (c) => c.accion !== ACCION_CAMBIO_VERIFICADO && !!c.orden && recientes.some((x) => new RegExp(`#${c.orden}(?!\\d)`).test(x.detalle));
       const quedan = cambios.filter((c) => !yaAnotado(c));
       // Si un solo guardado cambia muchísimas cosas es una tarea masiva: una
       // línea que lo diga, no cien.
@@ -11900,7 +11940,16 @@ const TURNOS_ENVIO = [
 // la sigue mandando la columna «Salida». Se guarda en «orden-salidas», una
 // lista de filas por día, y lo ven todos. El mensaje al flete y la ruta de
 // Google Maps salen en este orden. Lo nuevo de un día ya ordenado va al final.
-function bloqueDeSalida(f) { return `${f.enProduccion ? "prod" : "listo"}|${f.fecha || "sin-fecha"}`; }
+// Lo que sigue en fábrica y ya se le pasó el día va todo junto, como un solo
+// día «Pasados de fecha» (13/11/2026, Facundo: «no me los dividas en varios
+// días porque queda muy cargada la lista»). Cada fila sigue mostrando su
+// fecha en la columna «Salida».
+const DIA_PASADOS = "pasados";
+function diaDeSalida(f, hoy = isoLocal(new Date())) {
+  if (f?.enProduccion && f.fecha && f.fecha < hoy) return DIA_PASADOS;
+  return f?.fecha || "";
+}
+function bloqueDeSalida(f) { return `${f.enProduccion ? "prod" : "listo"}|${diaDeSalida(f) || "sin-fecha"}`; }
 function ordenarConGuardado(filas, orden) {
   const salida = [];
   let i = 0;
@@ -12972,8 +13021,9 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       const abierta = filaAbierta === f.clave;
                       // Un renglón por día con qué sale: «5 entregas · 2 retiros…».
                       const empiezaSeccion = hayProduccion && (i === 0 || !!filas[i - 1].enProduccion !== !!f.enProduccion);
-                      const empiezaDia = empiezaSeccion || i === 0 || (filas[i - 1].fecha || "") !== (f.fecha || "");
-                      const delDia = empiezaDia ? filas.filter((x) => (x.fecha || "") === (f.fecha || "") && !!x.enProduccion === !!f.enProduccion) : [];
+                      const dia = diaDeSalida(f, semana.hoy);
+                      const empiezaDia = empiezaSeccion || i === 0 || diaDeSalida(filas[i - 1], semana.hoy) !== dia;
+                      const delDia = empiezaDia ? filas.filter((x) => diaDeSalida(x, semana.hoy) === dia && !!x.enProduccion === !!f.enProduccion) : [];
                       return (
                         <Fragment key={f.clave}>
                         {empiezaSeccion && (
@@ -12986,10 +13036,10 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           </tr>
                         )}
                         {empiezaDia && (
-                          <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""}`}>
+                          <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""} ${dia === DIA_PASADOS ? "dg-envios-dia-pasados" : ""}`}>
                             <td colSpan={8}>
-                              <b>{f.fecha ? fechaLargaCorta(f.fecha) : "A coordinar"}</b>
-                              <small>{delDia.length} {delDia.length === 1 ? "salida" : "salidas"} · {resumenDeSalidas(delDia)}</small>
+                              <b>{dia === DIA_PASADOS ? "Pasados de fecha" : f.fecha ? fechaLargaCorta(f.fecha) : "A coordinar"}</b>
+                              <small>{delDia.length} {delDia.length === 1 ? "salida" : "salidas"} · {dia === DIA_PASADOS ? "ya se pasó el día que tenían y siguen en fábrica" : resumenDeSalidas(delDia)}</small>
                             </td>
                           </tr>
                         )}
@@ -24244,6 +24294,7 @@ function Style() {
       .dg-envios-tabla tbody tr.dg-envios-dia:hover { background:transparent; }
       .dg-envios-dia > td { padding:10px 12px 6px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.05); white-space:normal; }
       .dg-envios-dia b { font-size:13px; font-weight:700; color:var(--dg-text); text-transform:capitalize; }
+      .dg-envios-dia-pasados b { text-transform:none; color:var(--dg-danger); }
       .dg-envios-dia small { margin-left:10px; font-size:12px; color:var(--dg-text-dim); }
       .dg-envios-dia-atrasado b { color:color-mix(in srgb, var(--dg-danger) 70%, var(--dg-text)); }
       .dg-cargar-salida { margin-left:auto; }
