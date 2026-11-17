@@ -1754,6 +1754,8 @@ function cambiosDeUnPedido(a, d) {
   if (!!a.saldoPorTransferencia !== !!d.saldoPorTransferencia) pon(d.saldoPorTransferencia ? "Anotó que el saldo se pagó por transferencia" : "Anotó que el saldo se pagó en efectivo al flete");
   if ((Array.isArray(d.fotosTerminado) ? d.fotosTerminado.length : 0) > (Array.isArray(a.fotosTerminado) ? a.fotosTerminado.length : 0)) pon("Sacó la foto del espejo terminado");
   if (prendio(a, d, "demorado")) pon("Marcó demorado");
+  if (prendio(a, d, "esperandoMadera")) pon("Marcó que falta madera");
+  if (apago(a, d, "esperandoMadera")) pon("Llegó la madera");
   if (prendio(a, d, "urgente")) pon("Marcó urgente");
   if (cambio(a, d, "diaTaller")) pon("Movió un espejo de día", d.diaTaller ? `al ${diaMesCorto(d.diaTaller)}` : "que lo reparta la app");
   // La fecha de entrega que pone la app sola no es una acción de nadie.
@@ -7788,7 +7790,61 @@ function pasosVisualesFabrica(pedido) {
   }
 
   const actual = pasos.findIndex((paso) => !paso.done);
-  return pasos.map((paso, index) => ({ ...paso, current: !terminado && index === actual }));
+  return conNombresDeEspera(pasos.map((paso, index) => ({ ...paso, current: !terminado && index === actual })), pedido);
+}
+
+// ===== PASOS EN FORMA DE ESPERA (17/11/2026) ===============================
+// Pedido de Facundo: «cuando mando el espejo a fábrica dice que está cortado,
+// y cuando lo cortan aparece como armado». No era el dato: la tira pintaba el
+// paso que FALTABA con su nombre en pasado («Cortado»). Ahora cada paso tiene
+// tres nombres: hecho («Cortado»), el que se está esperando («Esperando
+// corte») y el que viene más adelante («Armado»). Y el estado de la tarjeta
+// dice dónde está: «Cortado · esperando armado».
+const ESPERA_DE_PASO = {
+  cortado: { hecho: "Cortado", espera: "Esperando corte", futuro: "Corte" },
+  mandar_grabar: { hecho: "Fue al grabador", espera: "Esperando ir al grabador", futuro: "Al grabador" },
+  en_grabado: { hecho: "Volvió del grabador", espera: "En el grabador", futuro: "Grabador", lugar: true },
+  pedir_biselado: { hecho: "Biselado pedido", espera: "Esperando pedir el biselado", futuro: "Pedir biselado" },
+  en_biseladora: { hecho: "Volvió de la biseladora", espera: "En la biseladora", futuro: "Biseladora", lugar: true },
+  armado: { hecho: "Armado", espera: "Esperando armado", futuro: "Armado" },
+  embalado: { hecho: "Embalado", espera: "Esperando embalaje", futuro: "Embalado", estado: "secando, esperando embalaje" },
+};
+// Interior: armado, pero sin madera para el cajón no se puede embalar. Es un
+// paso de espera de verdad, que el taller marca con su botón.
+function esperaMadera(pedido) {
+  return !!pedido?.esperandoMadera && esEnvioInterior(pedido) && !pedidoEstaListo(pedido);
+}
+function conNombresDeEspera(pasos, pedido) {
+  return (pasos || []).map((paso) => {
+    const n = ESPERA_DE_PASO[paso.id];
+    if (!n) return paso;
+    const espera = paso.id === "embalado" && esperaMadera(pedido) ? "Esperando madera" : n.espera;
+    return { ...paso, label: paso.done ? n.hecho : paso.current ? espera : n.futuro, espera };
+  });
+}
+// Dónde está, en una línea: «Esperando corte», «Cortado · esperando armado»,
+// «En el grabador», «Armado · secando, esperando embalaje», «Embalado · listo».
+function textoDeEspera(pasos, pedido) {
+  const lista = pasos || [];
+  const actual = lista.find((p) => !p.done);
+  if (!actual) return "Embalado · listo";
+  const n = ESPERA_DE_PASO[actual.id] || {};
+  const previos = lista.filter((p) => p.done);
+  const ultimo = previos.length ? (ESPERA_DE_PASO[previos[previos.length - 1].id]?.hecho || previos[previos.length - 1].label) : "";
+  const madera = actual.id === "embalado" && esperaMadera(pedido);
+  const espera = madera ? "esperando madera" : (n.estado || String(n.espera || actual.label || "").toLowerCase());
+  if (n.lugar || !ultimo) return n.espera || actual.label;
+  return `${ultimo} · ${espera}`;
+}
+function estadoDeEsperaTaller(pedido) {
+  if (pedidoEstaListo(pedido)) return "Embalado · listo";
+  return textoDeEspera(pasosVisualesFabrica(pedido), pedido);
+}
+// Los pasos de UNA unidad (simples de varios espejos).
+function pasosDeUnaUnidad(unidad, pedido) {
+  const c = unidadPasosCompletados(unidad);
+  const terminada = unidad?.etapa === "embalado";
+  return conNombresDeEspera(PRODUCCION_PASOS.map((paso, i) => ({ id: paso.id, label: paso.label, done: i < c, current: !terminada && i === c })), pedido);
 }
 
 function registrosFabrica(pedido) {
@@ -7818,12 +7874,10 @@ function registrosFabrica(pedido) {
   ];
 }
 
+// Antes devolvía el paso que faltaba con nombre en pasado («Cortado») y la
+// lista de Pedidos decía «2/5 · Cortado» sin haberlo cortado (17/11/2026).
 function proximoControlTaller(pedido) {
-  if (pedido?.estado === "Mandar a grabar") return "Mandar a grabar";
-  if (pedido?.estado === "En grabado") return "Esperando regreso del grabado";
-  if (!biseladoPrearmado(pedido) && (["Sin pedir", "Pedir biselado"].includes(pedido?.estado) || (pedidoProcesoTaller(pedido) === "biselados" && !pedido?.produccionEtapa && pedido?.estado === "Verificado"))) return "Pedir biselado";
-  if (pedido?.estado === "En biseladora") return "Esperando regreso de la biseladora";
-  return PRODUCCION_PASOS[pasosProduccionCompletados(pedido)]?.label || "Producción";
+  return estadoDeEsperaTaller(pedido) || "Producción";
 }
 
 function partesDetallePedido(detalle) {
@@ -18281,6 +18335,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     if (onRegistrar && pedidoActual) onRegistrar("Reabrió producción", `#${pedidoActual.orden} — ${pedidoActual.cliente} — unidad ${idx + 1} — motivo: ${motivo}`);
     setUnidadParaReabrir(null);
   }
+  function toggleMadera(id) {
+    onChange(pedidos.map((p) => (p.id === id ? { ...p, esperandoMadera: !p.esperandoMadera, esperandoMaderaFecha: !p.esperandoMadera ? new Date().toISOString() : "" } : p)));
+  }
   function toggleDemorado(id) { onChange(pedidos.map((p) => (p.id === id ? { ...p, demorado: !p.demorado } : p))); setMenuAbierto(null); }
   function setCampoPedido(id, patch) { onChange(pedidos.map((p) => (p.id === id ? { ...p, ...patch } : p))); }
   function marcarTodosVistosFabrica() {
@@ -18307,7 +18364,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const listaInfo = TALLER_LISTAS.find((item) => item.id === listaActual);
     const stage = pedidoEstaListo(p)
       ? (ESTADO_STAGE[p.estado] || { stage: p.estado || "Terminado", color: "var(--dg-success)" })
-      : { stage: estadoProduccionLabel(p), color: listaInfo?.color || "var(--dg-text-dim)" };
+      : { stage: estadoDeEsperaTaller(p), color: listaInfo?.color || "var(--dg-text-dim)" };
     const entrega = ENTREGA_ESTILO[p.metodo] || ENTREGA_ESTILO.default;
     const procesoInfo = TALLER_MODELOS.find((item) => item.id === pedidoProcesoTaller(p));
     const funciones = funcionesPedido(p, true);
@@ -18318,9 +18375,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const uni = perUnidad ? (unidadesDePedido(p)[unidad - 1] || unidadNueva()) : null;
     const compUni = uni ? unidadPasosCompletados(uni) : 0;
     const terminado = perUnidad ? (uni.etapa === "embalado") : (produccionCompletada >= PRODUCCION_PASOS.length);
-    const pasosVisuales = perUnidad
-      ? PRODUCCION_PASOS.map((paso, i) => ({ id: paso.id, label: paso.label, done: i < compUni, current: uni.etapa !== "embalado" && i === compUni }))
-      : pasosVisualesFabrica(p);
+    const pasosVisuales = perUnidad ? pasosDeUnaUnidad(uni, p) : pasosVisualesFabrica(p);
     const registros = perUnidad
       ? [
           { label: "Cortado", fecha: uni.produccionCortadoFecha, responsable: uni.produccionCortadoPor },
@@ -18339,9 +18394,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     const tocaEmbalar = perUnidad ? PRODUCCION_PASOS[compUni]?.id === "embalado" : (listaActual === "armar" && proximoPaso?.id === "embalado");
     const accionVisible = tocaEmbalar && esEnvioInterior(p) ? "Embalar para el INTERIOR" : accionPrincipal;
     const onAccionPrincipal = perUnidad ? () => avanzarUnidad(p.id, unidad - 1) : () => avanzarFlujoFabrica(p.id);
-    const stageTxt = perUnidad
-      ? (uni.etapa === "embalado" ? "Unidad embalada" : PRODUCCION_PASOS[compUni] ? `Falta ${PRODUCCION_PASOS[compUni].label.toLowerCase()}` : "En producción")
-      : stage.stage;
+    const stageTxt = perUnidad ? textoDeEspera(pasosVisuales, p) : stage.stage;
+    // Interior armado sin madera para el cajón: su propio botón.
+    const puedeMarcarMadera = !terminado && tocaEmbalar && esEnvioInterior(p);
     const menuOpen = menuAbierto === p.id;
     return (
       <div className={`dg-fab-card dg-fab-${entrega.clase} ${terminado ? "dg-fab-terminado" : ""} ${menuOpen ? "dg-fab-card-menu" : ""}`} key={totalUnidadesPedido > 1 ? `${p.id}-${unidad}` : p.id}>
@@ -18429,6 +18484,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             </span>
             {canEdit && (
               <div className="dg-fab-acciones">
+                {canEdit && puedeMarcarMadera && (
+                  <button type="button" className={`dg-fab-btn-madera ${p.esperandoMadera ? "dg-fab-btn-madera-on" : ""}`} onClick={() => toggleMadera(p.id)}>
+                    <Package size={14} /> {p.esperandoMadera ? "Llegó la madera" : "Falta madera"}
+                  </button>
+                )}
                 {!terminado && <button className={`dg-fab-btn-listo ${accionVisible !== accionPrincipal ? "dg-fab-btn-interior" : ""}`} onClick={onAccionPrincipal}>{accionVisible !== accionPrincipal ? <Truck size={14} /> : <Check size={14} />} {accionVisible}</button>}
                 <div className="dg-fab-menu-wrap">
                   <button className="dg-icon-btn" aria-label="Más acciones" onClick={() => setMenuAbierto(menuOpen ? null : p.id)}><MoreVertical size={16} /></button>
@@ -18606,7 +18666,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                   return (
                     <div className="dg-fab-multi-uni" key={i}>
                       <span className="dg-fab-multi-uni-n">#{i + 1}</span>
-                      <span className="dg-fab-multi-uni-est">{c === 0 ? "Falta cortar" : c >= 3 ? "Embalada" : `Falta ${PRODUCCION_PASOS[c].label.toLowerCase()}`}</span>
+                      <span className="dg-fab-multi-uni-est">{textoDeEspera(pasosDeUnaUnidad(u, p), p)}</span>
                       {canEdit && sig && <button type="button" className="dg-fab-multi-uni-btn" onClick={() => avanzarUnidad(p.id, i)}><Check size={11} /> {sig.label}</button>}
                       {canEdit && c >= 3 && <button type="button" className="dg-fab-multi-uni-btn dg-fab-multi-uni-reab" onClick={() => reabrirUnidad(p.id, i)}><RotateCcw size={11} /></button>}
                     </div>
@@ -25484,8 +25544,12 @@ function Style() {
         border:1px solid rgba(var(--dg-line-rgb),0.15); font-style:normal; font-size:11px; color:var(--dg-text-faint); }
       .dg-fab-step-done { color:var(--dg-success); }
       .dg-fab-step-done svg { color:var(--dg-success); }
-      .dg-fab-step-current { color:var(--dg-accent); }
-      .dg-fab-step-current em { border-color:var(--dg-accent); color:var(--dg-accent); }
+      /* El paso que se está esperando: ámbar, con un punto (no un número que
+         se lea como hecho). */
+      .dg-fab-step-current { color:var(--dg-warning); }
+      .dg-fab-step-current em { border-color:var(--dg-warning); background:var(--dg-warning); color:transparent; width:9px; height:9px; margin:3px; }
+      .dg-fab-btn-madera { display:inline-flex; align-items:center; gap:6px; padding:8px 12px; border-radius:10px; border:1px solid rgba(var(--dg-warning-rgb),.5); background:transparent; color:var(--dg-warning); font-weight:600; font-size:13px; cursor:pointer; }
+      .dg-fab-btn-madera-on { background:rgba(var(--dg-warning-rgb),.15); }
 
       .dg-fab-funciones { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
       .dg-fab-func { font-size:11px; font-weight:600; padding:4px 9px; border-radius:8px; background: rgba(var(--dg-success-rgb),0.13); color:var(--dg-success); }
@@ -26394,6 +26458,9 @@ function Style() {
       .dg-checkbox-field-on { background: rgba(var(--dg-success-rgb),0.12); border-color:var(--dg-success); color:var(--dg-success); font-weight:600; }
       .dg-checkbox-field:disabled { cursor:not-allowed; opacity:0.6; }
       .dg-print-table { display:none; }
+      /* El encabezado de la hoja de Fábrica y de Pedidos se veía abajo de la
+         lista en pantalla (17/11/2026). Solo sale al imprimir. */
+      @media screen { .dg-print-fabrica, .dg-print-pedidos { display:none; } }
 
       @media print {
         body * { visibility:hidden; }
@@ -27336,8 +27403,11 @@ function etapaFabricaPublica(pedido) {
     if (pedido?.estado === "En grabado") return "Tu espejo está en el taller de grabado.";
     if (pedido?.grabadoRegresoFecha || pedido?.estado === "Para armar") return "El espejo ya volvió del grabado. Ahora en armado y embalado.";
   }
+  // Dicho para el cliente: dónde está, no el paso que falta (17/11/2026).
   const completados = pasosProduccionCompletados(pedido);
-  if (completados < PRODUCCION_PASOS.length) return `Etapa actual en fábrica: ${PRODUCCION_PASOS[completados]?.label || "producción"}.`;
+  if (completados === 0) return "Tu espejo está en la fila para cortar.";
+  if (completados === 1) return "Tu espejo ya está cortado. Sigue el armado.";
+  if (completados === 2) return esperaMadera(pedido) ? "Tu espejo ya está armado. Estamos preparando el cajón para el viaje." : "Tu espejo ya está armado. Está secando antes de embalarlo.";
   return null;
 }
 
