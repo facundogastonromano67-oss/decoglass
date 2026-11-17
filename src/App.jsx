@@ -6381,6 +6381,29 @@ function demoradosDelTaller(pedidos, hoyIso) {
   return [...porId.values()].sort((a, b) =>
     (a.sinHacerDesde || "9999-99-99").localeCompare(b.sinHacerDesde || "9999-99-99") || compararPrioridadTaller(a.pedido, b.pedido));
 }
+// Solo los de SEMANAS ANTERIORES van a la lista «Demorados» (17/11/2026,
+// Facundo: «los demorados de esta semana quiero que se sigan dividiendo por
+// los días»). La semana de un demorado es la del día que tenía en el taller
+// (el que quedó sin hacer o el que le tocó en el plan); si no tiene día
+// —grabado, biselado, interior por embalar— la del día que entró a fábrica.
+function diaDeReferenciaDemorado(p, sinHacerDe, diaDelPlan) {
+  return (sinHacerDe && sinHacerDe.get(p.id)) || (diaDelPlan && diaDelPlan.get(p.id))
+    || diaLocalDe(p.pedidoVerificadoFecha) || String(p.fecha || "").slice(0, 10);
+}
+function vaALaListaDeDemorados(p, hoyIso, sinHacerDe, diaDelPlan) {
+  const dia = diaDeReferenciaDemorado(p, sinHacerDe, diaDelPlan);
+  return !!dia && dia < lunesDeLaSemana(hoyIso);
+}
+// El día de cada pedido en el plan del taller (el primero, si está en varios).
+function diasDelPlanTaller(pedidos, hoyIso) {
+  const dias = new Map();
+  LISTAS_CON_DIAS.forEach((lista) => {
+    planTaller(pedidos, hoyIso, lista).forEach((d) => {
+      [...(d.items || []), ...(d.porEmbalar || [])].forEach((x) => { if (x?.pedido && !dias.has(x.pedido.id)) dias.set(x.pedido.id, d.fecha); });
+    });
+  });
+  return dias;
+}
 // Divididos por cómo se entregan.
 const TIPOS_ENTREGA_DEMORADOS = [
   { id: "retiro", label: "Retiro en el local" },
@@ -18071,7 +18094,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const faltanDemorado = (p) => (unidadesDemorado.has(p.id) ? unidadesDemorado.get(p.id) : Math.max(1, Number(p.cant) || 1));
   const ordenDemorados = (a, b) => (sinHacerDe.get(a.id) || "9999-99-99").localeCompare(sinHacerDe.get(b.id) || "9999-99-99") || compararDemorados(a, b);
   const demorados = activos.filter((p) => esDemoradoFabrica(p) || enDemoradosTaller.has(p.id));
-  const idsDemorados = new Set(demorados.map((p) => p.id));
+  // La lista «Demorados» de la vista principal: solo los de semanas
+  // anteriores. Los de esta semana siguen en su día (el filtro los trae a todos).
+  const diaDelPlan = diasDelPlanTaller(pedidos, hoyTaller);
+  const demoradosLista = demorados.filter((p) => vaALaListaDeDemorados(p, hoyTaller, sinHacerDe, diaDelPlan));
+  const idsDemorados = new Set(demoradosLista.map((p) => p.id));
   const afuera = activos.filter(estaAfueraDelTaller);
   let baseVisibles = filtroEstado === "activos"
     ? activos.filter((p) => !idsDemorados.has(p.id))
@@ -18538,7 +18565,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   // La lista «Demorados» de la vista principal: la primera, con todas las
   // listas juntas (los mismos del filtro).
   const seccionDemorados = () => {
-    const lista = demorados.filter((p) => coincidePedido(p, busqueda)).sort(ordenDemorados);
+    const lista = demoradosLista.filter((p) => coincidePedido(p, busqueda)).sort(ordenDemorados);
     if (lista.length === 0) return null;
     const abierto = diasAbiertos.has("demorados") || !!busqueda.trim();
     const u = lista.reduce((t, p) => t + faltanDemorado(p), 0);
@@ -18549,7 +18576,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <ChevronRight size={16} className="dg-fab-grupo-chevron" />
           <span className="dg-dia-taller-nombre">Demorados</span>
           <span className="dg-dia-taller-mix">{pedidosN} pedido{pedidosN === 1 ? "" : "s"} · {u} espejo{u === 1 ? "" : "s"}</span>
-          <span className="dg-dia-taller-vencido-chip">TODAS LAS LISTAS</span>
+          <span className="dg-dia-taller-vencido-chip">SEMANAS ANTERIORES</span>
         </button>
         {abierto && (
           <div className="dg-dia-taller-body">
@@ -18782,7 +18809,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         );
       })()}
 
-      {visibles.length === 0 && !(filtroEstado === "activos" && demorados.length > 0) && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
+      {visibles.length === 0 && !(filtroEstado === "activos" && demoradosLista.length > 0) && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {filtroEstado === "activos" && !esPestanaDeArmar(lista) && seccionDemorados()}
         {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
@@ -18931,6 +18958,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 // están en el bloque de arriba, no acá.
                 const items = dia.items.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id));
                 const espejosDia = dia.espejos - dia.items.filter((x) => idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0);
+                const sinHacerVisible = dia.pasado ? dia.items.filter((x) => !idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0) : 0;
                 if (dia.pasado && items.length === 0 && dia.porEmbalarU === 0) return null;
                 if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && !diasAbiertos.has(dia.fecha)) return null;
                 // A un día que ya pasó no se le puede mandar trabajo nuevo, y
@@ -18953,6 +18981,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         {dia.trabada && <span className="dg-dia-taller-trabada" title={`Trabada por ${traba?.por || "la app"}`}><Lock size={12} /> trabada</span>}
                         <span className="dg-dia-taller-mix">{espejosDia} espejo{espejosDia === 1 ? "" : "s"}</span>
                         {dia.extras > 0 && <span className="dg-dia-taller-extra-chip">+{dia.extras} extra</span>}
+                        {sinHacerVisible > 0 && <span className="dg-dia-taller-vencido-chip">SIN HACER {sinHacerVisible}</span>}
                         {dia.porEmbalarU > 0 && <span className="dg-dia-taller-embalar"><Package size={12} /> falta embalar {dia.porEmbalarU}</span>}
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
                       </button>
