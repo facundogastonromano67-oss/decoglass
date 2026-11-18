@@ -9,7 +9,7 @@ import {
   Instagram, MessageCircle, UserPlus, Users, Filter, ExternalLink, BarChart3,
   Wrench, Package, CheckCircle2, XCircle, CircleDollarSign, ArrowLeft, Download, PackagePlus, ChevronRight, CalendarDays, MoreVertical, Sun, Moon, Phone, MapPin, Bell, BellOff, Bluetooth, AlertCircle, Camera, Search, Send, MessageSquare,
   Mic, NotebookPen, CalendarClock, Undo2, Scissors, Ruler,
-  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList, ChevronUp, ChevronDown, ChevronLeft, GripVertical
+  Landmark, Receipt, PiggyBank, CalendarRange, LayoutList, ChevronUp, ChevronDown, ChevronLeft, GripVertical, Eye
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -1753,6 +1753,8 @@ function cambiosDeUnPedido(a, d) {
   if (prendio(a, d, "resenaPedida")) pon("Pidió una reseña");
   if (!!a.saldoPorTransferencia !== !!d.saldoPorTransferencia) pon(d.saldoPorTransferencia ? "Anotó que el saldo se pagó por transferencia" : "Anotó que el saldo se pagó en efectivo al flete");
   if ((Array.isArray(d.fotosTerminado) ? d.fotosTerminado.length : 0) > (Array.isArray(a.fotosTerminado) ? a.fotosTerminado.length : 0)) pon("Sacó la foto del espejo terminado");
+  if (fotosPlanoDe(d).length > fotosPlanoDe(a).length) pon("Subió la foto de los planos");
+  if (fotosPlanoDe(d).length < fotosPlanoDe(a).length) pon("Quitó la foto de los planos");
   if (prendio(a, d, "demorado")) pon("Marcó demorado");
   if (prendio(a, d, "esperandoMadera")) pon("Marcó que falta madera");
   if (apago(a, d, "esperandoMadera")) pon("Llegó la madera");
@@ -10807,6 +10809,28 @@ function FotosCampo({ lista: listaProp, carpeta, prefijo = "foto", canEdit, onCa
   );
 }
 
+// Fotos de los planos (18/11/2026, Facundo: «agregar una foto de los planos
+// para que los vean en el taller, y que ellos tengan un botón: ver imagen»).
+// Van por espejo, en el bucket privado; se abren con un toque (sin miniatura,
+// por el egreso de Supabase).
+function fotosPlanoDe(p) {
+  return Array.isArray(p?.fotosPlano) ? p.fotosPlano.filter(Boolean) : [];
+}
+function VerPlanos({ pedido }) {
+  const lista = fotosPlanoDe(pedido);
+  if (!lista.length) return null;
+  return (
+    <div className="dg-ver-planos">
+      {lista.map((ruta, i) => (
+        <BotonArchivo key={ruta} bucket="facturas" valor={ruta} className="dg-btn-ghost dg-mini-btn dg-ver-plano-btn">
+          <Eye size={13} /> {lista.length > 1 ? `Ver imagen ${i + 1}` : "Ver imagen"}
+        </BotonArchivo>
+      ))}
+      <span className="dg-ver-planos-txt">{lista.length > 1 ? "planos" : "plano"}</span>
+    </div>
+  );
+}
+
 // Para mirarla desde Ventas y Fábrica, sin poder tocarla.
 function LinksOrdenPapel({ pedido }) {
   const lista = ordenesPapelDe(pedido);
@@ -11094,6 +11118,11 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             <label>Aclaración para el taller <small>— lo que no entra en las funciones de arriba</small></label>
             <CampoQueCrece rows={2} disabled={!canEditFull} value={draft.aclaracionTaller || ""} placeholder="Ej: el cliente quiere los bordes sin pulir, lleva perforación para la canilla…"
               onChange={(e) => set("aclaracionTaller", e.target.value)} />
+          </div>
+          <div className="dg-aclaracion-campo dg-planos-campo">
+            <label>Foto de los planos <small>— el taller la ve con «Ver imagen»</small></label>
+            <FotosCampo lista={draft.fotosPlano} carpeta={draft.id} prefijo="plano" canEdit={canEditFull}
+              onCambiar={(l) => set("fotosPlano", l)} textoSubir="Sacar o subir la foto de los planos" />
           </div>
         </div>}
 
@@ -18489,6 +18518,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
           <CambioTrasVerificarTaller pedido={p} />
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
+          <VerPlanos pedido={p} />
           <LinksOrdenPapel pedido={p} />
           {/* La foto del espejo terminado (27/10/2026): control antes de
               embalar, y el cliente la ve en su link. Aparece cuando ya está
@@ -18697,6 +18727,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
             {observaciones && <div className="dg-fab-obs"><span>Observaciones</span> {observaciones}</div>}
           <CambioTrasVerificarTaller pedido={p} />
           <AclaracionesDelPedido pedido={p} cuales={["aclaracionTaller"]} />
+          <VerPlanos pedido={p} />
           <LinksOrdenPapel pedido={p} />
           {/* La foto del espejo terminado (27/10/2026): control antes de
               embalar, y el cliente la ve en su link. Aparece cuando ya está
@@ -18955,6 +18986,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                       {esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}
                                       {estaAtrasadoTaller(p, hoyTaller) && <span className="dg-tdia-atrasado" title="Ya tendría que estar terminado">ATRASADO</span>}
                                       {aclaracionDe(p, "aclaracionTaller") && <span className="dg-tdia-aclaracion" title={p.aclaracionTaller}>NOTA</span>}
+                                      {fotosPlanoDe(p).length > 0 && <span className="dg-tdia-aclaracion dg-tdia-plano" title="Tiene foto de los planos">PLANO</span>}
                                     </td>
                                     <td className="dg-num">{x.unidades > 1 ? `${x.unidades}${x.partes > 1 ? ` de ${x.total}` : ""}` : "1"}</td>
                                     <td className="dg-num dg-tdia-medida">{medidaEspejo(p, { cm: false })}</td>
@@ -18975,6 +19007,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                           <span><b>Terminar</b> <RelojObjetivoFabrica pedido={p} /></span>
                                           {obs && <span className="dg-tdia-detalle-obs"><b>Observaciones</b> {obs}</span>}
                                           {aclaracionDe(p, "aclaracionTaller") && <span className="dg-tdia-detalle-obs dg-tdia-detalle-aclaracion"><b>Aclaración</b> {p.aclaracionTaller}</span>}
+                                          <VerPlanos pedido={p} />
                                           <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={(ev) => irATarjeta(ev, x)}><ChevronRight size={13} /> Ir a la tarjeta</button>
                                         </div>
                                       </td>
@@ -25648,6 +25681,11 @@ function Style() {
       .dg-aclaracion-campo textarea { width:100%; box-sizing:border-box; }
       .dg-field-ancho { grid-column:1 / -1; }
       .dg-orden-papel { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+      .dg-ver-planos { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:10px; }
+      .dg-ver-plano-btn { border-color:rgba(var(--dg-accent-rgb),.55); color:var(--dg-accent); font-weight:700; }
+      .dg-ver-planos-txt { font-size:11px; color:var(--dg-text-dim); }
+      .dg-tdia-detalle-in .dg-ver-planos { margin-bottom:0; }
+      .dg-tdia-plano { background:rgba(var(--dg-accent-rgb),.18); color:var(--dg-accent); }
       .dg-fotos-campo { align-items:center; }
       .dg-resena { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:6px 0 10px; }
       .dg-resena small { font-size:12px; color:var(--dg-text-dim); }
