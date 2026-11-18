@@ -6404,6 +6404,26 @@ function diasDelPlanTaller(pedidos, hoyIso) {
   });
   return dias;
 }
+// Traer un demorado de vuelta a una lista (18/11/2026, Facundo: «en la lista
+// de demorados poder traer de vuelta espejos a las listas nuevas»). Los días
+// que vienen de SU lista (simples / esm. p/cortar / esm. p/armar). Un día
+// trabado solo lo ofrece al editor único, y entra como extra (arriba del cupo),
+// igual que «Sumar un espejo a este día».
+function puedeVolverAUnDia(p) {
+  return entraEnPlanTaller(p) && !esperaEmbalajeInterior(p) && LISTAS_CON_DIAS.includes(pestanaTaller(p));
+}
+function diasParaTraerDemorado(p, hoyIso, trabas, puedeExtra, cuantos = 10) {
+  if (!puedeVolverAUnDia(p)) return [];
+  const lista = pestanaTaller(p);
+  const dias = [];
+  let fecha = primerDiaTaller(hoyIso);
+  for (let i = 0; i < 40 && dias.length < cuantos; i++) {
+    const trabado = (trabas || {})[claveTraba(lista, fecha)]?.estado === "trabada";
+    if (!trabado || puedeExtra) dias.push({ fecha, trabado });
+    fecha = siguienteDiaTaller(fecha);
+  }
+  return dias;
+}
 // Divididos por cómo se entregan.
 const TIPOS_ENTREGA_DEMORADOS = [
   { id: "retiro", label: "Retiro en el local" },
@@ -18022,6 +18042,21 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   }
   const [diaDestino, setDiaDestino] = useState(null);     // día sobre el que se está soltando al arrastrar
   const puedeArrastrar = session?.role === "admin";
+  // Trae un espejo de «Demorados» a un día de su lista. Si el día está
+  // trabado entra como extra (solo lo ofrece al editor único).
+  function traerDemorado(pedidoId, dia) {
+    const p = pedidos.find((x) => x.id === pedidoId);
+    if (!p || !dia) return;
+    const trabado = trabasTaller?.[claveTraba(pestanaTaller(p), dia)]?.estado === "trabada";
+    if (trabado && !soyEditorUnico) return;
+    const quien = session?.nombre || (session?.role === "admin" ? "Administrador" : "Fábrica");
+    onChange(pedidos.map((x) => (x.id === pedidoId
+      ? { ...x, diaTaller: dia, diaTallerPor: quien, diaTallerExtra: trabado, diaPlan: "" }
+      : x)));
+    setDiasAbiertos((prev) => new Set(prev).add(dia));
+    if (onRegistrar) onRegistrar("Trajo un espejo demorado a un día",
+      `#${p.orden} — ${p.cliente} — ${nombreDiaTaller(dia, isoLocal(new Date()))}${trabado ? " (extra, arriba del cupo)" : ""}`);
+  }
   function moverADia(pedidoId, dia, comoExtra = false) {
     // A un día trabado solo le entra un extra del editor único.
     if (dia && estaTrabado(dia) && !comoExtra) return;
@@ -18555,7 +18590,19 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         const motivo = motivosDemora(p, sinHacerDe.get(p.id) || "").join(" · ");
         return (
           <div className="dg-dia-item dg-demorados-item" key={`dem-item-${p.id}`}>
-            {motivo && <div className="dg-dia-item-bar"><span className="dg-demorados-motivo"><AlertTriangle size={12} /> {motivo}</span></div>}
+            {(motivo || (canEdit && puedeVolverAUnDia(p))) && (
+              <div className="dg-dia-item-bar">
+                {motivo && <span className="dg-demorados-motivo"><AlertTriangle size={12} /> {motivo}</span>}
+                {canEdit && puedeVolverAUnDia(p) && (
+                  <select className="dg-dia-item-mover dg-demorados-traer" value="" onChange={(e) => { if (e.target.value) traerDemorado(p.id, e.target.value); }} aria-label="Traer a un día">
+                    <option value="">Traer a un día…</option>
+                    {diasParaTraerDemorado(p, hoyTaller, trabasTaller, soyEditorUnico).map((d) => (
+                      <option key={d.fecha} value={d.fecha}>{nombreDiaTaller(d.fecha, hoyTaller)}{d.trabado ? " · trabado, va como extra" : ""}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
             {cant <= 1 ? renderCard(p, 1, 1) : esPedidoMultiUnidad(p) ? renderMultiCard(p, cant) : Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant))}
           </div>
         );
@@ -25698,6 +25745,7 @@ function Style() {
       .dg-demorados-entrega-tit { display:flex; align-items:baseline; gap:8px; padding-bottom:4px; border-bottom:1px solid rgba(var(--dg-line-rgb), .14); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--dg-text); }
       .dg-demorados-entrega-tit small { font-weight:500; text-transform:none; letter-spacing:0; color:var(--dg-text-dim); }
       .dg-demorados-interior .dg-demorados-entrega-tit { color:var(--dg-interior); }
+      .dg-demorados-traer { margin-left:auto; border-color:rgba(var(--dg-accent-rgb),.5); color:var(--dg-accent); font-weight:600; }
       .dg-demorados-motivo { display:inline-flex; align-items:center; gap:5px; color:var(--dg-danger); font-weight:600; font-size:12px; }
       @media print { .dg-demorados-barra { display:none !important; } }
       .dg-fab-flag-ok { color:var(--dg-success); font-weight:600; }
