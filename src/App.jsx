@@ -27270,6 +27270,8 @@ function Style() {
       .dg-seguimiento-footer { text-align:center; font-size:11px; color:var(--dg-text-faint); margin-top:16px; }
       .dg-seguimiento-whatsapp { justify-content:center; text-decoration:none; width:100%; margin-top:18px; background:linear-gradient(145deg, #25D366, #1DA851); }
       .dg-seguimiento-docs { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+      .dg-seg-fecha-aprox { display:flex; align-items:center; gap:8px; margin:10px 0 0; padding:8px 12px; border-radius:10px; font-size:13px; line-height:1.35; color:var(--dg-text); background:rgba(var(--dg-accent-rgb),.10); border:1px solid rgba(var(--dg-accent-rgb),.30); }
+      .dg-seg-fecha-aprox svg { flex-shrink:0; color:var(--dg-accent); }
       .dg-seg-entrega { margin-top:16px; padding:14px 15px; border-radius:12px; background:rgba(var(--dg-line-rgb),0.04); border:1px solid rgba(var(--dg-line-rgb),0.12); }
       .dg-seg-entrega-titulo { display:flex; align-items:center; gap:7px; font-family:'Jost', sans-serif; font-weight:700; font-size:14px; color:var(--dg-text); }
       .dg-seg-entrega-titulo svg { color:var(--dg-accent); flex:none; }
@@ -28664,6 +28666,38 @@ function PuertaSeguimiento({ onProbar, tema }) {
   );
 }
 
+// ===== Fecha aproximada de entrega en el seguimiento (18/11/2026) =========
+// Facundo: «que el seguimiento muestre también la fecha aproximada de entrega,
+// excepto para los esmerilados o biselados» (dependen del grabador / la
+// biseladora, la fecha no la manejamos nosotros). Es la fecha de salida
+// coordinada, si no la de la venta. Si ya pasó y todavía no se entregó, no se
+// muestra: una fecha vencida en el link solo genera reclamos.
+function fechaAproximadaPublica(p, hoyIso) {
+  if (!p || p.estado === "Entregado" || p.estado === "Cancelado") return "";
+  if (pedidoProcesoTaller(p) !== "simples") return "";
+  const f = String(fechaEnvioOListo(p) || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return "";
+  if (hoyIso && f < hoyIso) return "";
+  return f;
+}
+function textoFechaAproximada(fechaIso) {
+  const d = new Date(fechaIso + "T12:00:00");
+  if (Number.isNaN(d.getTime())) return fechaIso;
+  const t = d.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+function FechaAproximadaPublica({ pedido }) {
+  const f = fechaAproximadaPublica(pedido, isoLocal(new Date()));
+  if (!f) return null;
+  const retira = pedido.metodo === "Retira";
+  return (
+    <p className="dg-seg-fecha-aprox">
+      <CalendarDays size={14} aria-hidden="true" />
+      <span>{retira ? "Fecha aproximada para retirar" : "Fecha aproximada de entrega"}: <strong>{textoFechaAproximada(f)}</strong></span>
+    </p>
+  );
+}
+
 // ===== Cómo recibe el pedido el cliente (04/11/2026) ======================
 // En el link de seguimiento: la forma de entrega y sus datos. Si retira, la
 // dirección del local y los horarios (LOCAL_PUBLICO, junto a DIRECCION_LOCAL).
@@ -28890,9 +28924,7 @@ function SeguimientoPublico({ pedidoId }) {
           {pasoActual === 1 && etapaFabricaPublica(pedido) && (
             <p className="dg-hint" style={{ marginTop: 10 }}><strong>{etapaFabricaPublica(pedido)}</strong></p>
           )}
-          {fechaEnvioOListo(pedido) && pasoActual < pasosPub.length && (
-            <p className="dg-hint" style={{ marginTop: 6 }}>Fecha de entrega estimada: <strong>{fechaEntregaCorta(fechaEnvioOListo(pedido)) || fechaEnvioOListo(pedido)}</strong></p>
-          )}
+          {pasoActual < pasosPub.length && <FechaAproximadaPublica pedido={pedido} />}
           {pasoActual === 3 && !esInterior && (
             enViaje
               ? <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-accent)" }}><strong>🚚 El flete está en viaje con tu pedido.</strong></p>
@@ -29092,6 +29124,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
                   {pasoActual === 1 && etapaFabricaPublica(pedido) && (
                     <p className="dg-hint" style={{ marginTop: 8 }}><strong>{etapaFabricaPublica(pedido)}</strong></p>
                   )}
+                  {pasoActual < pasosPub.length && <FechaAproximadaPublica pedido={pedido} />}
                   {pasoActual === 3 && !esInterior && (
                     enViaje
                       ? <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-accent)" }}><strong>🚚 El flete está en viaje con tu pedido.</strong></p>
