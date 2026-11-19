@@ -28686,7 +28686,23 @@ function textoFechaAproximada(fechaIso) {
   const t = d.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
+const METODOS_FECHA_EN_ENVIO = ["Envío", "Envío flex", "Colocación"];
+// La fila «Fecha de entrega» del recuadro del envío. Con varios espejos: si
+// todos salen el mismo día, una fecha; si no, cada espejo con la suya. Los
+// esmerilados y biselados no suman fecha (fechaAproximadaPublica da "").
+function filaFechaEnvioPublica(items, hoyIso) {
+  const lista = (items || []).filter((p) => p && p.estado !== "Cancelado");
+  const conFecha = lista
+    .map((p, i) => ({ n: i + 1, f: METODOS_FECHA_EN_ENVIO.includes(p.metodo) ? fechaAproximadaPublica(p, hoyIso) : "" }))
+    .filter((x) => x.f);
+  if (!conFecha.length) return null;
+  const distintas = [...new Set(conFecha.map((x) => x.f))];
+  if (distintas.length === 1) return { label: "Fecha de entrega", valor: textoFechaAproximada(distintas[0]), sub: "Aproximada" };
+  return { label: "Fecha de entrega", valor: conFecha.map((x) => `Espejo ${x.n}: ${textoFechaAproximada(x.f)}`).join(" · "), sub: "Aproximada" };
+}
 function FechaAproximadaPublica({ pedido }) {
+  // Los envíos la muestran en el recuadro del envío (filaFechaEnvioPublica).
+  if (METODOS_FECHA_EN_ENVIO.includes(pedido?.metodo)) return null;
   const f = fechaAproximadaPublica(pedido, isoLocal(new Date()));
   if (!f) return null;
   const retira = pedido.metodo === "Retira";
@@ -28799,7 +28815,10 @@ function DatosClientePublico(props) {
 }
 
 function EntregaPublica(props) {
-  const d = datosEntregaPublica(props.pedido);
+  const base = datosEntregaPublica(props.pedido);
+  const filaFecha = (base.tipo === "envio" || base.tipo === "colocacion")
+    ? filaFechaEnvioPublica(props.items || [props.pedido], isoLocal(new Date())) : null;
+  const d = filaFecha ? { ...base, filas: [...base.filas, filaFecha] } : base;
   const Icono = d.tipo === "retiro" ? Building2 : d.tipo === "colocacion" ? Wrench : d.tipo === "confirmar" ? Package : Truck;
   return (
     <section className="dg-seg-entrega" aria-label="Cómo recibís tu pedido">
@@ -28942,7 +28961,7 @@ function SeguimientoPublico({ pedidoId }) {
           )}
 
           <DatosClientePublico items={[pedido]} />
-          {pedido.estado !== "Entregado" && <EntregaPublica pedido={pedido} />}
+          {pedido.estado !== "Entregado" && <EntregaPublica pedido={pedido} items={[pedido]} />}
 
           <div className="dg-verif-specs" style={{ marginTop: 16 }}>
             <div className="dg-fab-medida">
@@ -29141,7 +29160,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
             })}
 
             <DatosClientePublico items={activos} />
-            {activos.some((e) => e.estado !== "Entregado") && <EntregaPublica pedido={activos.find((e) => e.estado !== "Entregado") || primero} />}
+            {activos.some((e) => e.estado !== "Entregado") && <EntregaPublica pedido={activos.find((e) => e.estado !== "Entregado") || primero} items={activos} />}
 
             <div className="dg-seguimiento-docs">
               {puedeDescargarFactura && (
