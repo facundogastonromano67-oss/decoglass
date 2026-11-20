@@ -2007,6 +2007,36 @@ function App() {
     return () => window.clearInterval(id);
   }, [turnos]);
 
+  // La foto de las listas del día (20/11/2026): se lee una vez por día y por
+  // sesión, y solo se escribe cuando hay algo que agregar. Antes de escribir se
+  // vuelve a leer, para no pisar lo que haya agregado otro.
+  const fotoListasHoy = useRef({ fecha: "", foto: undefined, guardando: false });
+  useEffect(() => {
+    if (!session || !Array.isArray(pedidos) || !pedidos.length || !trabasTaller) return;
+    const hoyIso = isoLocal(new Date());
+    if (primerDiaTaller(hoyIso) !== hoyIso) return;
+    const ref = fotoListasHoy.current;
+    if (ref.guardando) return;
+    const quien = session.nombre || (session.role === "admin" ? "Administrador" : "");
+    const leer = async () => {
+      const fila = await storage.get(CLAVE_FOTO_LISTAS(hoyIso), true);
+      return fila && fila.value ? JSON.parse(fila.value) : null;
+    };
+    (async () => {
+      try {
+        if (ref.fecha !== hoyIso) { ref.fecha = hoyIso; ref.foto = await leer(); }
+        if (!fotoListasActualizada(ref.foto, pedidos, hoyIso, new Date().toISOString(), quien)) return;
+        ref.guardando = true;
+        const fresca = await leer();
+        const nueva = fotoListasActualizada(fresca, pedidos, hoyIso, new Date().toISOString(), quien);
+        if (nueva) await storage.set(CLAVE_FOTO_LISTAS(hoyIso), JSON.stringify(nueva), true);
+        ref.foto = nueva || fresca;
+      } catch (e) { /* sin conexión: se intenta en el próximo cambio */ }
+      finally { ref.guardando = false; }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, pedidos, trabasTaller]);
+
   // Las listas del taller se traban solas (ver trabasAutomaticas): la de hoy
   // al abrir la app y las que vienen cuando llegan a su tope. Se revisa al
   // entrar y cada 5 minutos, para agarrar el momento en que una se llena. Solo con los pedidos
@@ -6798,6 +6828,71 @@ function trabasAutomaticas(pedidos, trabas, ahora = new Date()) {
   return nuevo;
 }
 // ===== FIN LISTAS TRABADAS ==================================================
+
+// ===== LA FOTO DE CADA LISTA, CADA DÍA (20/11/2026) ===========================
+// Facundo: «necesito ver cómo estaba la lista cada día, para ver si hubo algún
+// error en la información de algún pedido; tiene que ser una fotocopia: si
+// después hubo un cambio y se modifica ese historial, no tiene sentido».
+// Se saca el primer rato del día (la primera vez que alguien abre la app) con
+// los datos COPIADOS de cada espejo, no con su id: si después se corrige el
+// pedido, la foto sigue diciendo lo que decía. Lo que se suma ese día a la lista
+// (un extra, uno traído de «Demorados») se agrega abajo con la hora; lo que ya
+// estaba no se toca nunca. Una clave por día en kv: «fotos-listas:AAAA-MM-DD»
+// (no entra en la sincronización de siempre: se lee solo al mirarla).
+const CLAVE_FOTO_LISTAS = (fecha) => `fotos-listas:${fecha}`;
+const CAMPOS_FOTO_LISTA = [...CAMPOS_DEL_ESPEJO, "orden", "cliente", "metodo", "aclaracionTaller", "urgente", "tipoPedido", "listo", "grupoId"];
+function copiaParaFotoLista(p) {
+  const espejo = {};
+  CAMPOS_FOTO_LISTA.forEach((c) => { const v = p?.[c]; if (v !== undefined && v !== null && v !== "") espejo[c] = v; });
+  return espejo;
+}
+// Lo que tiene hoy la lista: lo que falta hacer y lo que ya se hizo hoy.
+function itemsDeLaListaDelDia(pedidos, listaId, fecha, hoyIso) {
+  const dia = planTaller(pedidos, hoyIso, listaId).find((d) => d.fecha === fecha && !d.pasado);
+  if (!dia) return [];
+  const porId = new Map();
+  [...(dia.hechos || []), ...(dia.items || [])].forEach((x) => {
+    if (!x?.pedido?.id) return;
+    const previo = porId.get(x.pedido.id);
+    if (previo) { previo.unidades += x.unidades || 0; return; }
+    porId.set(x.pedido.id, { pedido: x.pedido, unidades: x.unidades || 0, total: x.total || Math.max(1, Number(x.pedido.cant) || 1), extra: !!x.extra });
+  });
+  return [...porId.values()];
+}
+// La foto del día con lo que falte sumarle. null si no hay nada nuevo.
+// Solo agrega: lo que ya estaba en la foto queda como estaba.
+function fotoListasActualizada(foto, pedidos, hoyIso, ahoraIso, quien) {
+  if (primerDiaTaller(hoyIso) !== hoyIso) return null; // domingo: no hay lista
+  const base = foto && typeof foto === "object" ? foto : { fecha: hoyIso, listas: {} };
+  if (base.fecha && base.fecha !== hoyIso) return null;
+  let cambio = false;
+  const listas = { ...(base.listas || {}) };
+  const hora = String(ahoraIso || "").slice(11, 16);
+  LISTAS_CON_DIAS.forEach((listaId) => {
+    const items = itemsDeLaListaDelDia(pedidos, listaId, hoyIso, hoyIso);
+    const previa = listas[listaId];
+    if (!previa) {
+      if (!items.length) return;
+      listas[listaId] = { sacada: ahoraIso, por: quien || "", items: items.map((x) => ({ id: x.pedido.id, unidades: x.unidades, total: x.total, extra: x.extra, espejo: copiaParaFotoLista(x.pedido) })) };
+      cambio = true;
+      return;
+    }
+    const ya = new Set((previa.items || []).map((x) => x.id));
+    const nuevos = items.filter((x) => !ya.has(x.pedido.id));
+    if (!nuevos.length) return;
+    listas[listaId] = { ...previa, items: [...(previa.items || []), ...nuevos.map((x) => ({ id: x.pedido.id, unidades: x.unidades, total: x.total, extra: x.extra, agregado: hora, espejo: copiaParaFotoLista(x.pedido) }))] };
+    cambio = true;
+  });
+  return cambio ? { ...base, fecha: hoyIso, listas } : null;
+}
+// Qué dice HOY el pedido distinto de lo que decía en la foto.
+function cambiosDesdeLaFoto(item, pedidoActual) {
+  if (!pedidoActual) return ["el pedido ya no existe"];
+  const out = cambiosEnElEspejo(item.espejo || {}, pedidoActual);
+  const antes = String(item.espejo?.aclaracionTaller || "").trim(), ahora = String(pedidoActual.aclaracionTaller || "").trim();
+  if (antes !== ahora) out.push(`aclaración: ${antes || "nada"} → ${ahora || "nada"}`);
+  return out;
+}
 
 // Ya tendría que estar terminado: su fecha objetivo quedó atrás.
 function estaAtrasadoTaller(pedido, hoyIso) {
@@ -18666,6 +18761,107 @@ function QuienPasoModal({ pedido, auditoria, onCerrar }) {
   );
 }
 
+// Fábrica › Historial de listas: la foto de cada lista, día por día.
+function FotosDeListasPanel({ pedidos, hoyIso, listaInicial }) {
+  const [fecha, setFecha] = useState(hoyIso);
+  const [listaId, setListaId] = useState(LISTAS_CON_DIAS.includes(listaInicial) ? listaInicial : "simples");
+  const [foto, setFoto] = useState(undefined); // undefined = cargando, null = no hay
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let vivo = true;
+    setFoto(undefined); setError("");
+    storage.get(CLAVE_FOTO_LISTAS(fecha), true)
+      .then((fila) => { if (vivo) setFoto(fila && fila.value ? JSON.parse(fila.value) : null); })
+      .catch(() => { if (vivo) { setFoto(null); setError("No se pudo leer. Revisá la conexión."); } });
+    return () => { vivo = false; };
+  }, [fecha]);
+  const mover = (dias) => {
+    const d = new Date(`${fecha}T12:00:00`);
+    d.setDate(d.getDate() + dias);
+    if (d.getDay() === 0) d.setDate(d.getDate() + (dias > 0 ? 1 : -1));
+    const iso = isoLocal(d);
+    if (iso <= hoyIso) setFecha(iso);
+  };
+  const porId = new Map((pedidos || []).map((p) => [p.id, p]));
+  const datos = foto?.listas?.[listaId] || null;
+  const items = datos?.items || [];
+  const espejosDe = (l) => (l?.items || []).reduce((t, x) => t + (x.unidades || 0), 0);
+  const nombreLista = (id) => infoPestana(id)?.label || id;
+  const cambiados = items.filter((x) => cambiosDesdeLaFoto(x, porId.get(x.id)).length > 0).length;
+  return (
+    <div className="dg-fotos-listas">
+      <div className="dg-fotos-listas-barra">
+        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => mover(-1)} aria-label="Día anterior"><ChevronLeft size={14} /></button>
+        <input type="date" value={fecha} max={hoyIso} onChange={(e) => e.target.value && setFecha(e.target.value)} aria-label="Día" />
+        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => mover(1)} disabled={fecha >= hoyIso} aria-label="Día siguiente"><ChevronRight size={14} /></button>
+        <span className="dg-fotos-listas-dia">{nombreDiaTaller(fecha, hoyIso)}</span>
+      </div>
+      <div className="dg-fotos-listas-tabs" role="tablist">
+        {LISTAS_CON_DIAS.map((id) => (
+          <button key={id} type="button" role="tab" aria-selected={listaId === id}
+            className={`dg-reclamo-opcion ${listaId === id ? "dg-reclamo-opcion-on" : ""}`} onClick={() => setListaId(id)}>
+            {nombreLista(id)}{foto?.listas?.[id] ? <small>{espejosDe(foto.listas[id])} espejos</small> : <small>sin foto</small>}
+          </button>
+        ))}
+      </div>
+      {foto === undefined && <div className="dg-loading" style={{ padding: 24 }}><Loader2 className="dg-spin" size={20} /><span>Buscando la foto…</span></div>}
+      {error && <div className="dg-error">{error}</div>}
+      {foto !== undefined && !datos && !error && (
+        <div className="dg-empty">No hay foto de {nombreLista(listaId).toLowerCase()} de ese día. Las fotos se guardan desde el 20/11/2026: cada día, la primera vez que alguien abre la app.</div>
+      )}
+      {datos && (
+        <>
+          <p className="dg-fotos-listas-info">
+            Foto sacada el {fechaLargaCorta(String(datos.sacada || "").slice(0, 10)) || "—"} a las {diaLocalDe(datos.sacada) ? new Date(datos.sacada).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "—"}
+            {datos.por ? ` (abrió ${datos.por})` : ""} · {espejosDe(datos)} espejos
+            {cambiados > 0 && <span className="dg-fotos-listas-cambios"> · {cambiados} {cambiados === 1 ? "pedido cambió" : "pedidos cambiaron"} después</span>}
+          </p>
+          <div className="dg-envios-tabla-scroll">
+            <table className="dg-envios-tabla dg-fotos-listas-tabla">
+              <thead>
+                <tr><th>Pedido</th><th className="dg-num">Cant</th><th>Medida</th><th>Forma</th><th>Tono</th><th>Funciones</th><th>Grabado</th></tr>
+              </thead>
+              <tbody>
+                {items.map((x) => {
+                  const e = x.espejo || {};
+                  const funcs = funcionesPedido(e, true);
+                  const cambios = cambiosDesdeLaFoto(x, porId.get(x.id));
+                  return (
+                    <Fragment key={x.id}>
+                      <tr className={`dg-envios-fila ${cambios.length ? "dg-fotos-listas-fila-cambio" : ""}`}>
+                        <td className="dg-envios-nombre">
+                          <b>#{e.orden || "—"}</b> {e.cliente || "Sin nombre"}
+                          {(e.urgente || e.tipoPedido === "reclamo") && <span className="dg-pedido-flag">{e.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}
+                          {x.agregado && <span className="dg-envios-chip-tipo" title="Se sumó a la lista ese día">+ {x.agregado}</span>}
+                          {x.extra && <span className="dg-envios-chip-tipo">extra</span>}
+                        </td>
+                        <td className="dg-num">{x.total > x.unidades ? `${x.unidades} de ${x.total}` : x.unidades}</td>
+                        <td className="dg-num">{medidaEspejo(e, { cm: false }) || "—"}</td>
+                        <td>{[e.forma, e.tipo].filter(Boolean).join(" · ") || "—"}</td>
+                        <td>{e.tono || "—"}</td>
+                        <td>{funcs.length ? funcs.map((f) => f.label).join(" · ") : "—"}</td>
+                        <td>{medidaGrabado(e) || "—"}</td>
+                      </tr>
+                      {(e.aclaracionTaller || cambios.length > 0) && (
+                        <tr className="dg-fotos-listas-sub">
+                          <td colSpan={7}>
+                            {e.aclaracionTaller && <span><b>Aclaración:</b> {e.aclaracionTaller}</span>}
+                            {cambios.length > 0 && <span className="dg-fotos-listas-hoy"><b>Hoy el pedido dice:</b> {cambios.join(" · ")}</span>}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas, auditoria = [] }) {
   const [quienPaso, setQuienPaso] = useState(null);
   // El "editor único" de las listas: la única persona que puede meter espejos
@@ -19526,6 +19722,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
           <option value="activos">En producción ({activos.length})</option>
           <option value="historial">Historial de terminados ({historial.length})</option>
+          <option value="fotos">Historial de listas (cómo estaban cada día)</option>
           <option value="demorados">Demorados ({demorados.length})</option>
           <option value="afuera">Afuera del taller ({afuera.length})</option>
           <option value="todos">Todos ({enFabrica.length})</option>
@@ -19549,10 +19746,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         );
       })()}
 
-      {visibles.length === 0 && !(filtroEstado === "activos" && demoradosLista.length > 0) && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
+      {filtroEstado !== "fotos" && visibles.length === 0 && !(filtroEstado === "activos" && demoradosLista.length > 0) && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
         {filtroEstado === "activos" && !esPestanaDeArmar(lista) && seccionDemorados()}
-        {(esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
+        {filtroEstado === "fotos" ? <FotosDeListasPanel pedidos={pedidos} hoyIso={hoyTaller} listaInicial={lista} /> : (esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller, lista);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
           // Todo lo que está pendiente en esta pestaña, por si hay que sumar
@@ -25253,6 +25450,18 @@ function Style() {
       .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
       /* La tabla de reclamos tiene una columna menos y textos más largos. */
       .dg-reclamos-tabla { min-width:700px; }
+      .dg-fotos-listas { display:flex; flex-direction:column; gap:12px; }
+      .dg-fotos-listas-barra { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+      .dg-fotos-listas-barra input[type=date] { width:auto; }
+      .dg-fotos-listas-dia { font-weight:700; }
+      .dg-fotos-listas-tabs { display:flex; flex-wrap:wrap; gap:8px; }
+      .dg-fotos-listas-info { margin:0; font-size:13px; color:var(--dg-text-dim); }
+      .dg-fotos-listas-cambios { color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); font-weight:700; }
+      .dg-fotos-listas-tabla { min-width:720px; }
+      .dg-fotos-listas-fila-cambio td:first-child { box-shadow:inset 3px 0 0 var(--dg-warning); }
+      .dg-fotos-listas-sub td { padding-top:0 !important; font-size:12px; color:var(--dg-text-dim); }
+      .dg-fotos-listas-sub span { display:block; margin-top:2px; }
+      .dg-fotos-listas-hoy { color:color-mix(in srgb, var(--dg-warning) 60%, var(--dg-text)); }
       .dg-fab-hist-listas { flex:1; min-width:0; margin-left:4px; font-size:12px; font-weight:500; color:var(--dg-text-dim); text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .dg-fab-hist-lista { margin:12px 2px 6px; font-size:12px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
       .dg-fab-hist-lista small { text-transform:none; letter-spacing:0; font-weight:500; margin-left:4px; }
