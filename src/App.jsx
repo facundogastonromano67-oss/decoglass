@@ -6325,8 +6325,20 @@ function estaDemoradoAuto(pedido) {
 // pedido». Son los demorados de Fábrica de siempre (marcados a mano, o
 // frenados en una etapa más de lo normal), pero todos juntos, sin separarlos
 // por pestaña. Arriba los que llevan el doble de lo normal frenados.
+// Esmerilados y biselados (20/11/2026, Facundo: «solo se pueden demorar una
+// vez que regresaron del grabado»). Antes de volver, la demora depende de
+// afuera: el espejo sigue en su lista (los esmerilados «para cortar» siguen
+// en «para cortar») y no va a «Demorados». Los biselados, al volver de la
+// biseladora; los redondos prearmados no van, así que cuentan desde el inicio.
+function puedeDemorarseEnTaller(p) {
+  if (!p) return false;
+  const proceso = pedidoProcesoTaller(p);
+  if (proceso === "esmerilados") return !!p.grabadoRegresoFecha || pestanaTaller(p) === "esm_armar";
+  if (proceso === "biselados") return !!p.biseladoRegresoFecha || biseladoPrearmado(p);
+  return true;
+}
 function esDemoradoFabrica(p) {
-  return !!p && p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado" && !pedidoEstaListo(p) && (!!p.demorado || estaDemoradoAuto(p));
+  return !!p && p.estado !== "Sin pasar a fábrica" && p.estado !== "Cancelado" && !pedidoEstaListo(p) && puedeDemorarseEnTaller(p) && (!!p.demorado || estaDemoradoAuto(p));
 }
 const PESO_DEMORA = { critico: 0, alerta: 1, ok: 2 };
 function compararDemorados(a, b) {
@@ -6384,6 +6396,7 @@ function demoradosDelTaller(pedidos, hoyIso) {
   LISTAS_CON_DIAS.forEach((lista) => {
     planTaller(pedidos, hoyIso, lista).filter((d) => d.pasado).forEach((d) => {
       d.items.forEach((x) => {
+        if (!puedeDemorarseEnTaller(x.pedido)) return;
         const previo = porId.get(x.pedido.id);
         if (previo) {
           previo.unidades += x.unidades;
@@ -6395,7 +6408,7 @@ function demoradosDelTaller(pedidos, hoyIso) {
     });
   });
   (pedidos || []).forEach((p) => {
-    if (!p?.demorado || porId.has(p.id) || !entraEnPlanTaller(p) || esperaEmbalajeInterior(p) || !quedaTrabajoTaller(p)) return;
+    if (!p?.demorado || porId.has(p.id) || !puedeDemorarseEnTaller(p) || !entraEnPlanTaller(p) || esperaEmbalajeInterior(p) || !quedaTrabajoTaller(p)) return;
     porId.set(p.id, { pedido: p, unidades: unidadesPendientesTaller(p), sinHacerDesde: "", lista: pestanaTaller(p) });
   });
   return [...porId.values()].sort((a, b) =>
@@ -19188,7 +19201,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 <span className={`dg-fab-reloj dg-fab-reloj-${nivelDemoraEtapa(p)}`}> · {diasEnEtapa(p) === 0 ? "hoy" : `hace ${diasEnEtapa(p)}d`} acá</span>
               )}
               <RelojObjetivoFabrica pedido={p} />
-              {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
+              {p.demorado && puedeDemorarseEnTaller(p) && <span className="dg-fab-flag-demora"> · demorado</span>}
               {p.clienteAvisado && <span className="dg-fab-flag-ok"> · cliente avisado</span>}
             </span>
             {canEdit && (
@@ -19210,7 +19223,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         {terminado && (perUnidad
                           ? <button onClick={() => reabrirUnidad(p.id, unidad - 1)}><RotateCcw size={13} /> Reabrir esta unidad</button>
                           : <button onClick={() => reabrirProduccion(p.id)}><RotateCcw size={13} /> Reabrir producción</button>)}
-                        <button onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
+                        {(p.demorado || puedeDemorarseEnTaller(p)) && <button onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>}
                         <button onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
                         {puedeBorrar && <button className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
                       </div>
@@ -19404,7 +19417,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                   <span className={`dg-fab-reloj dg-fab-reloj-${nivelDemoraEtapa(p)}`}> · hace {diasEnEtapa(p)}d acá</span>
                 )}
                 <RelojObjetivoFabrica pedido={p} />
-                {p.demorado && <span className="dg-fab-flag-demora"> · demorado</span>}
+                {p.demorado && puedeDemorarseEnTaller(p) && <span className="dg-fab-flag-demora"> · demorado</span>}
               </span>
               {canEdit && (
                 <div className="dg-fab-menu-wrap">
@@ -19415,7 +19428,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                       <div className="dg-fab-menu">
                         {pasoParaVolver(p) && <button type="button" onClick={() => volverPasoFabrica(p.id)}><Undo2 size={13} /> Volver un paso <small>({pasoParaVolver(p).etiqueta})</small></button>}
                         {esAdmin && <button type="button" onClick={() => { setMenuAbierto(null); setQuienPaso(p); }}><User size={13} /> ¿Quién lo pasó?</button>}
-                        <button type="button" onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>
+                        {(p.demorado || puedeDemorarseEnTaller(p)) && <button type="button" onClick={() => toggleDemorado(p.id)}><AlertTriangle size={13} /> {p.demorado ? "Quitar demora" : "Marcar demorado"}</button>}
                         <button type="button" onClick={() => cancelar(p.id)}><XCircle size={13} /> Cancelar pedido</button>
                         {puedeBorrar && <button type="button" className="dg-fab-menu-danger" onClick={() => borrar(p.id)}><Trash2 size={13} /> Borrar</button>}
                       </div>
