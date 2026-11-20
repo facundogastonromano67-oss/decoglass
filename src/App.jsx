@@ -7435,6 +7435,37 @@ function sabadoDeLaSemana(iso) {
   const faltan = (6 - f.getDay() + 7) % 7;
   return isoLocal(new Date(f.getFullYear(), f.getMonth(), f.getDate() + faltan));
 }
+// El historial de terminados por día (20/11/2026, Facundo: «en el historial
+// necesito ver primero lo último que se hizo, dividido por las listas de los
+// días anteriores»). El día es el de la lista en que se hizo: el día en que se
+// armó (el día del taller no cierra hasta embalar, pero el espejo queda en el
+// día que se armó); si no, el día en que quedó listo. Adentro, por lista
+// (simples, esmerilados, biselados) y el último terminado arriba.
+function diaDelHistorialTaller(p) {
+  return diaLocalDe(p?.produccionArmadoFecha) || diaLocalDe(p?.produccionListaFecha) || String(p?.fecha || "").slice(0, 10) || "sin-fecha";
+}
+function historialPorDias(lista) {
+  const dias = new Map();
+  (lista || []).forEach((p) => {
+    const dia = diaDelHistorialTaller(p);
+    const listaId = pedidoProcesoTaller(p);
+    if (!dias.has(dia)) dias.set(dia, new Map());
+    const listas = dias.get(dia);
+    if (!listas.has(listaId)) listas.set(listaId, []);
+    listas.get(listaId).push(p);
+  });
+  const unidades = (arr) => arr.reduce((t, p) => t + Math.max(1, Number(p.cant) || 1), 0);
+  const cuando = (p) => String(p.produccionListaFecha || p.produccionArmadoFecha || p.fecha || "");
+  return [...dias.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([fecha, listas]) => {
+      const porLista = TALLER_MODELOS.filter((m) => listas.has(m.id)).map((m) => {
+        const items = listas.get(m.id).slice().sort((a, b) => cuando(b).localeCompare(cuando(a)));
+        return { id: m.id, label: m.label, items, unidades: unidades(items) };
+      });
+      return { fecha, listas: porLista, unidades: porLista.reduce((t, l) => t + l.unidades, 0) };
+    });
+}
 function nombreDiaTaller(iso, hoyIso) {
   const [y, m, d] = iso.split("-").map(Number);
   const f = new Date(y, m - 1, d);
@@ -18681,6 +18712,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const [pedidoParaReabrir, setPedidoParaReabrir] = useState(null);
   const [unidadParaReabrir, setUnidadParaReabrir] = useState(null);
   const [gruposArmarAbiertos, setGruposArmarAbiertos] = useState(() => new Set()); // vacío = los 3 empiezan cerrados
+  const [historialAbiertos, setHistorialAbiertos] = useState(null); // null = solo el día más reciente
   function toggleGrupoArmar(grupo) {
     setGruposArmarAbiertos((prev) => {
       const next = new Set(prev);
@@ -18835,7 +18867,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       });
   // Urgentes / reclamos primero (sort estable: mantiene el orden entre los del mismo nivel).
   // (En demorados manda cuánto hace que está frenado.)
-  if (filtroEstado !== "demorados") visibles = [...visibles].sort((a, b) => (esUrgente(b) ? 1 : 0) - (esUrgente(a) ? 1 : 0));
+  if (filtroEstado !== "demorados" && filtroEstado !== "historial") visibles = [...visibles].sort((a, b) => (esUrgente(b) ? 1 : 0) - (esUrgente(a) ? 1 : 0));
 
   function setEstado(id, estado) {
     onChange(pedidos.map((p) => {
@@ -19815,6 +19847,35 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                   if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
                   return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
                 })}
+              </div>
+            );
+          });
+        })() : filtroEstado === "historial" ? (() => {
+          const dias = historialPorDias(visibles);
+          const abiertos = historialAbiertos || new Set(dias.length ? [dias[0].fecha] : []);
+          const tarjetas = (items) => items.flatMap((p) => {
+            const cant = Math.max(1, Number(p.cant) || 1);
+            if (cant <= 1) return [renderCard(p, 1, 1)];
+            if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
+            return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
+          });
+          return dias.map((d) => {
+            const abierto = abiertos.has(d.fecha) || !!busqueda.trim();
+            return (
+              <div className="dg-fab-grupo-bloque dg-fab-hist-dia" key={`hist-${d.fecha}`}>
+                <button type="button" className={`dg-fab-grupo-header ${abierto ? "dg-fab-grupo-abierto" : ""}`} aria-expanded={abierto}
+                  onClick={() => setHistorialAbiertos(() => { const n = new Set(abiertos); if (n.has(d.fecha)) n.delete(d.fecha); else n.add(d.fecha); return n; })}>
+                  <ChevronRight size={16} className="dg-fab-grupo-chevron" />
+                  <span>{d.fecha === "sin-fecha" ? "Sin fecha" : nombreDiaTaller(d.fecha, hoyTaller)}</span>
+                  <span className="dg-fab-hist-listas">{d.listas.map((l) => `${l.label} ${l.unidades}`).join(" · ")}</span>
+                  <span className="dg-fab-grupo-count">{d.unidades}</span>
+                </button>
+                {abierto && d.listas.map((l) => (
+                  <Fragment key={`hist-${d.fecha}-${l.id}`}>
+                    <div className="dg-fab-hist-lista">{l.label} <small>{l.unidades} {l.unidades === 1 ? "espejo" : "espejos"}</small></div>
+                    {tarjetas(l.items)}
+                  </Fragment>
+                ))}
               </div>
             );
           });
@@ -25192,6 +25253,9 @@ function Style() {
       .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
       /* La tabla de reclamos tiene una columna menos y textos más largos. */
       .dg-reclamos-tabla { min-width:700px; }
+      .dg-fab-hist-listas { flex:1; min-width:0; margin-left:4px; font-size:12px; font-weight:500; color:var(--dg-text-dim); text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .dg-fab-hist-lista { margin:12px 2px 6px; font-size:12px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-fab-hist-lista small { text-transform:none; letter-spacing:0; font-weight:500; margin-left:4px; }
       .dg-reclamo-paso-tit { display:flex; align-items:center; gap:8px; margin:16px 0 8px; font-size:12px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
       .dg-reclamo-paso-tit em { font-style:normal; display:inline-grid; place-items:center; width:20px; height:20px; border-radius:50%; background:rgba(var(--dg-accent-rgb),.15); color:var(--dg-accent); font-size:11px; }
       .dg-reclamo-paso-tit small { text-transform:none; letter-spacing:0; font-weight:500; }
