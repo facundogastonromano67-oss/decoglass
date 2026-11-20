@@ -1802,6 +1802,10 @@ function describirCambiosReclamos(antes, despues) {
     else if (apago(a, d, "finalizado")) { accion = "Reabrió un reclamo"; }
     else if (prendio(a, d, "visitaHecha")) { accion = "Fue al domicilio"; }
     else if (prendio(a, d, "aDomicilio")) { accion = "Programó una visita"; }
+    else if (cambio(a, d, "solucionId") && d.solucionId) { accion = "Eligió la solución de un reclamo"; textos.push(RECLAMO_SOLUCIONES[d.solucionId]?.label || d.solucionId); }
+    else if (cambio(a, d, "paso") && d.paso) { accion = "Avanzó un reclamo"; textos.push(`pasó a «${estadoReclamo(d)}»`); }
+    else if (["fechaColecta", "fechaEntrega", "fechaVisita"].some((c) => cambio(a, d, c))) { accion = "Puso fecha en un reclamo"; }
+    else if (cambio(a, d, "pedidoOrigenId") && d.pedidoOrigenId) { accion = "Ató un reclamo a su pedido"; textos.push(`#${d.ordenOrigen || "—"}`); }
     else if (cambio(a, d, "solucion") && String(d.solucion || "").trim()) { accion = "Le ofreció una solución"; textos.push(String(d.solucion).trim().slice(0, 80)); }
     else if (cambio(a, d, "fechaEnvio")) { accion = "Puso fecha de visita"; textos.push(d.fechaEnvio ? `para el ${diaMesCorto(d.fechaEnvio)}` : "la sacó"); }
     else if (cambio(a, d, "estado")) { textos.push(`pasó a «${d.estado}»`); }
@@ -2042,6 +2046,18 @@ function App() {
     try { registrarActividad("Copió la fecha de entrega a los envíos", `${cuantos} pedido(s) con envío ya cargados: la fecha de la venta quedó como fecha de salida`); } catch (e) {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, pedidos]);
+
+  // Reclamos con espejo nuevo (20/11/2026): sus pasos siguen al pedido de
+  // cambio (fábrica → listo → fecha de salida → entregado). Solo escribe si
+  // algo cambió, y solo un admin o un encargado.
+  useEffect(() => {
+    if (!session || !Array.isArray(pedidos) || !Array.isArray(reclamos)) return;
+    const puede = session.role === "admin" || (session.role === "sector" && session.tipo !== "operario");
+    if (!puede) return;
+    const nuevos = sincronizarReclamosNuevos(reclamos, pedidos, isoLocal(new Date()));
+    if (nuevos) persistReclamos(nuevos);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, pedidos, reclamos]);
 
   // Lo que hacen los demás llega en vivo (si la tabla del registro existe).
   useEffect(() => {
@@ -8290,6 +8306,8 @@ function ingresoPorCambioDeMonto(pedido, medioPedido = "") {
 
 const RECLAMO_CICLO = ["Abierto", "Solución ofrecida", "Cliente aceptó", "Espejo en fábrica", "Resuelto"];
 function estadoReclamo(r) {
+  if (solucionDeReclamo(r)) return reclamoFinalizado(r) ? "Resuelto" : (pasoActualReclamo(r).paso?.nombre || "Abierto");
+  if (r.motivo && !reclamoFinalizado(r)) return "Sin solución";
   if (reclamoFinalizado(r)) return "Resuelto";
   if (r.pedidoCreado) return "Espejo en fábrica";
   if (r.clienteAcepto) return "Cliente aceptó";
@@ -12661,10 +12679,12 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
 
   // Un reclamo a domicilio es, para postventa, una salida más: hay que
   // coordinar el día e ir. Entra en la misma tabla que los envíos.
+  // Desde el 20/11/2026 un reclamo sale cuando su paso actual es una salida:
+  // la colecta, la devolución del espejo arreglado o la visita.
   const visitas = (reclamos || [])
-    .filter(reclamoVisitaPendiente)
-    .filter((r) => !busqueda.trim() || String(r.cliente || "").toLowerCase().includes(busqueda.toLowerCase())
-      || coincideTelefono(r.celular, cifrasSiEsTelefono(busqueda)));
+    .map(salidaDeReclamo).filter(Boolean)
+    .filter((sal) => !busqueda.trim() || String(sal.r.cliente || "").toLowerCase().includes(busqueda.toLowerCase())
+      || coincideTelefono(sal.r.celular, cifrasSiEsTelefono(busqueda)));
   function updateReclamo(id, patch) {
     if (onChangeReclamos) onChangeReclamos(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
@@ -12688,7 +12708,14 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
   }
   // Una visita hecha sale de la tabla, pero el reclamo sigue abierto: todavía
   // hay que cerrarlo con el cliente.
-  function marcarVisitaHecha(r) {
+  function marcarVisitaHecha(sal) {
+    const r = sal.original;
+    if (sal.avanza) {
+      if (!window.confirm(`«${sal.hecho}» — ${r.cliente || "este cliente"}\n\nEl reclamo pasa al paso siguiente.`)) return;
+      if (onChangeReclamos) onChangeReclamos(reclamos.map((x) => (x.id === r.id ? reclamoAvanzado(x, isoLocal(new Date())) : x)));
+      setFilaAbierta(null);
+      return;
+    }
     if (!window.confirm(`¿Ya fuiste al domicilio de ${r.cliente || "este cliente"}?\n\nSale de esta tabla, pero el reclamo queda abierto hasta que lo cierres en Reclamos.`)) return;
     updateReclamo(r.id, { visitaHecha: new Date().toISOString().slice(0, 10) });
     setFilaAbierta(null);
@@ -13168,12 +13195,12 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
         // Las visitas por reclamo entran con los mismos campos que un envío,
         // así la tabla no tiene que saber de dónde salió cada fila. Lo único
         // propio es el color y el cartelito.
-        const filasVisita = visitas.map((r) => ({
-          clave: `visita-${r.id}`, r, visita: true, flex: false, grupo: 2, sePaso: `${String(r.fecha || r.creado || "").slice(0, 10) || "9999"}|`,
-          fecha: r.fechaEnvio || "",
-          cliente: r.cliente || "Sin nombre",
-          donde: [r.barrio, r.detalleEntrega, r.piso].filter(Boolean).join(" · "),
-          productos: r.tipo || "Reclamo",
+        const filasVisita = visitas.map((sal) => ({
+          clave: `visita-${sal.r.id}`, r: sal.r, sal, visita: true, flex: false, grupo: 2, sePaso: `${String(sal.r.fecha || sal.r.creado || "").slice(0, 10) || "9999"}|`,
+          fecha: sal.r.fechaEnvio || "",
+          cliente: sal.r.cliente || "Sin nombre",
+          donde: [sal.r.barrio, sal.r.detalleEntrega, sal.r.piso].filter(Boolean).join(" · "),
+          productos: `Reclamo: ${etiquetaMotivoReclamo(sal.r)}`,
           saldo: 0, flete: 0, fletePagado: false, falta: "",
         }));
         const filasManual = manualesPendientes.map((m) => {
@@ -13294,7 +13321,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                             {f.manual
                               ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver la salida"}>{f.cliente}</button><span className={`dg-envios-chip-tipo ${f.tipo.clase ? `dg-chip-${f.tipo.clase}` : ""}`}>{f.tipo.corto}</span></span>
                               : f.visita
-                              ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span></span>
+                              ? <span className="dg-envios-visita-nombre">{f.cliente}<span className="dg-envios-chip-visita"><Wrench size={11} /> {f.sal ? f.sal.chip : "A domicilio"}</span></span>
                               : f.flex
                                 ? <span className="dg-envios-visita-nombre"><button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button><span className="dg-envios-chip-flex"><Zap size={11} /> Flex</span></span>
                                 : <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el envío"}>{f.cliente}</button>}
@@ -13334,8 +13361,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                               type="button"
                               className={`dg-envios-hecho ${f.falta || f.multi ? "dg-envios-hecho-off" : ""}`}
                               disabled={!canEdit}
-                              title={f.manual ? `Marcar como ${f.tipo.verbo}` : f.visita ? "Ya fuimos al domicilio" : f.multi ? "Abrí la fila para entregar cada envío" : (f.falta || "Marcar este pedido como entregado")}
-                              onClick={(ev) => { ev.stopPropagation(); if (f.manual) marcarSalidaHecha(f.m); else if (f.visita) marcarVisitaHecha(f.r); else if (f.multi) setFilaAbierta(f.clave); else entregarDesdeLaTabla(f); }}>
+                              title={f.manual ? `Marcar como ${f.tipo.verbo}` : f.visita ? f.sal.hecho : f.multi ? "Abrí la fila para entregar cada envío" : (f.falta || "Marcar este pedido como entregado")}
+                              onClick={(ev) => { ev.stopPropagation(); if (f.manual) marcarSalidaHecha(f.m); else if (f.visita) marcarVisitaHecha(f.sal); else if (f.multi) setFilaAbierta(f.clave); else entregarDesdeLaTabla(f); }}>
                               <Check size={15} />
                             </button>
                           </td>
@@ -13371,12 +13398,12 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                               ) : f.visita ? (
                                 <div className="dg-envios-detalle-in" onClick={(ev) => ev.stopPropagation()}>
                                   <label className="dg-envios-detalle-fecha">
-                                    <span>Fecha de la visita</span>
-                                    <input type="date" disabled={!canEdit} value={f.r.fechaEnvio || ""} onChange={(e) => updateReclamo(f.r.id, { fechaEnvio: e.target.value })} />
+                                    <span>{f.sal.fechaLabel}</span>
+                                    <input type="date" disabled={!canEdit} value={f.r.fechaEnvio || ""} onChange={(e) => updateReclamo(f.r.id, { [f.sal.campoFecha]: e.target.value })} />
                                   </label>
                                   <span><b>Teléfono</b> {f.r.celular || "—"}</span>
                                   <span><b>Horario</b> {f.r.horarioEntrega || "a coordinar"}</span>
-                                  <span><b>Reclamo</b> {f.r.notas || f.r.tipo}</span>
+                                  <span><b>Reclamo</b> {etiquetaMotivoReclamo(f.r)}{solucionDeReclamo(f.r) ? ` · ${solucionDeReclamo(f.r).label}` : ""}{f.r.ordenOrigen ? ` · pedido #${f.r.ordenOrigen}` : ""}{f.r.notas ? ` — ${f.r.notas}` : ""}</span>
                                 </div>
                               ) : f.multi ? detalleCliente(f) : detalleEnvio(f)}
                             </td>
@@ -14329,6 +14356,232 @@ function FacturasManualesPanel({ facturas, onChange, isAdmin }) {
   );
 }
 
+// ===== RECLAMOS COMO PEDIDOS (20/11/2026) =====================================
+// Facundo: «quiero que cada reclamo funcione como un pedido». Se carga con su
+// motivo, el cliente (y el espejo, buscándolo entre sus pedidos), la solución
+// y, si se arregla en el taller, cómo nos llega el espejo. Cada solución tiene
+// sus pasos —los mismos que ve el cliente en su link de seguimiento— y se van
+// marcando como los de fábrica. Los reclamos de antes (sin solucionId) siguen
+// andando con lo que tenían.
+const RECLAMO_MOTIVOS = [
+  { id: "roto", label: "Llegó roto", soluciones: ["nuevo", "recortar"] },
+  { id: "oxidado", label: "Espejo oxidado", soluciones: ["pulir", "recortar_oxido", "nuevo"] },
+  { id: "insumo", label: "Falla de un insumo", ayuda: "LED, touch, desempañante, fuente, bluetooth, reloj", soluciones: ["domicilio", "taller_insumo", "repuesto"] },
+  { id: "demora", label: "Entrega demorada", soluciones: ["envio_gratis", "descuento"] },
+  { id: "error", label: "Error en el pedido", ayuda: "medida, tono, forma, funciones", soluciones: ["nuevo", "corregir"] },
+  { id: "pieza", label: "Falta una pieza", ayuda: "soporte, tornillos, fuente", soluciones: ["pieza", "pieza_visita"] },
+  { id: "rayado", label: "Rayado o defecto de fábrica", soluciones: ["nuevo", "reparar"] },
+  { id: "colocacion", label: "Problema con la colocación", soluciones: ["visita_colocacion"] },
+  { id: "atencion", label: "Atención o trato", soluciones: ["atencion"] },
+  { id: "otro", label: "Otro", soluciones: ["medida"] },
+];
+const RECLAMO_SOLUCIONES = {
+  nuevo: { label: "Espejo nuevo", flujo: "nuevo" },
+  recortar: { label: "Recortar la parte rota", flujo: "taller" },
+  pulir: { label: "Pulir el borde", flujo: "taller" },
+  recortar_oxido: { label: "Recortarlo", flujo: "taller" },
+  domicilio: { label: "Arreglo en el domicilio", flujo: "domicilio" },
+  taller_insumo: { label: "Arreglo en el taller", flujo: "taller" },
+  repuesto: { label: "Le mandamos el repuesto", flujo: "repuesto" },
+  envio_gratis: { label: "Envío sin cargo", flujo: "beneficio" },
+  descuento: { label: "Descuento en el saldo", flujo: "beneficio" },
+  corregir: { label: "Corregirlo en el taller", flujo: "taller" },
+  pieza: { label: "Le mandamos la pieza", flujo: "repuesto" },
+  pieza_visita: { label: "La llevamos en una visita", flujo: "domicilio" },
+  reparar: { label: "Repararlo en el taller", flujo: "taller" },
+  visita_colocacion: { label: "Visita a domicilio", flujo: "domicilio" },
+  atencion: { label: "Lo hablamos con el cliente", flujo: "atencion" },
+  medida: { label: "Solución a medida", flujo: "medida" },
+};
+const COMO_LLEGA_RECLAMO = [
+  { id: "retiramos", label: "Lo retiramos nosotros" },
+  { id: "trae", label: "Lo trae el cliente" },
+];
+const fechaDeReclamo = (iso) => fechaLargaCorta(String(iso || "").slice(0, 10));
+// Cada paso: nombre (lo que ve el equipo), texto (lo que ve el cliente; puede
+// depender de la fecha), accion (el botón que lo da por hecho). Los que tienen
+// «salida» aparecen en PostVenta › Envíos mientras son el paso actual.
+const PASO_COLA = { id: "cola", nombre: "En cola", texto: "Espejo en el taller, en cola para reparación", accion: "Empezamos a repararlo" };
+const PASO_REPARACION = { id: "reparacion", nombre: "En reparación", texto: "En reparación", accion: "Ya está reparado" };
+const RECLAMO_FLUJOS = {
+  taller_retiro: [
+    { id: "colecta", nombre: "Colecta", texto: (r) => (r.fechaColecta ? `Colecta programada para el ${fechaDeReclamo(r.fechaColecta)}` : "Colecta a coordinar"),
+      fecha: "fechaColecta", fechaLabel: "Día de la colecta", salida: "Colecta", accion: "Ya lo retiramos" },
+    PASO_COLA,
+    PASO_REPARACION,
+    { id: "coordinar", nombre: "Coordinar entrega", texto: (r) => (r.fechaEntrega ? `Entrega programada para el ${fechaDeReclamo(r.fechaEntrega)}` : "Esperando coordinar la fecha de entrega"),
+      fecha: "fechaEntrega", fechaLabel: "Día de la entrega", salida: "Devolución", accion: "Ya se lo entregamos" },
+    { id: "entregado", nombre: "Entregado", texto: "Entregado", fin: true },
+  ],
+  taller_trae: [
+    { id: "esperando", nombre: "Esperando el espejo", texto: "Esperando que nos traigas el espejo", accion: "Ya lo trajo" },
+    PASO_COLA,
+    PASO_REPARACION,
+    { id: "listo", nombre: "Listo para retirar", texto: "Listo para retirar", accion: "Ya lo retiró" },
+    { id: "retirado", nombre: "Retirado", texto: "Retirado", fin: true },
+  ],
+  domicilio: [
+    { id: "visita", nombre: "Visita", texto: (r) => (r.fechaVisita ? `Visita programada para el ${fechaDeReclamo(r.fechaVisita)}` : "Visita a coordinar"),
+      fecha: "fechaVisita", fechaLabel: "Día de la visita", salida: "A domicilio", accion: "Ya fuimos" },
+    { id: "reparacion", nombre: "En reparación", texto: "En reparación", accion: "Quedó resuelto" },
+    { id: "finalizado", nombre: "Finalizado", texto: "Finalizado", fin: true },
+  ],
+  repuesto: [
+    { id: "preparando", nombre: "Preparando el repuesto", texto: "Preparando el repuesto", accion: "Ya lo mandamos" },
+    { id: "enviado", nombre: "Repuesto enviado", texto: (r) => (r.pasosFechas?.enviado ? `Enviado el ${fechaDeReclamo(r.pasosFechas.enviado)}` : "Enviado"), accion: "Ya lo recibió" },
+    { id: "finalizado", nombre: "Finalizado", texto: "Finalizado", fin: true },
+  ],
+  nuevo: [
+    { id: "fabricacion", nombre: "En fabricación", texto: "Espejo nuevo en fabricación", accion: "Ya está listo" },
+    { id: "coordinar", nombre: "Coordinar entrega", texto: (r) => (r.fechaEntrega ? `Entrega programada para el ${fechaDeReclamo(r.fechaEntrega)} · ese día retiramos el espejo anterior` : "Esperando coordinar la entrega"),
+      accion: "Ya se lo entregamos" },
+    { id: "entregado", nombre: "Entregado", texto: "Entregado", fin: true },
+  ],
+  beneficio: [
+    { id: "aplicar", nombre: "Aplicar al pedido", texto: "Estamos aplicando el beneficio a tu pedido", accion: "Aplicar al pedido" },
+    { id: "aplicado", nombre: "Aplicado", texto: (r) => (r.solucionId === "envio_gratis" ? "Te bonificamos el envío" : `Te descontamos ${money(Number(r.descuento) || 0)} del saldo`), fin: true },
+  ],
+  atencion: [
+    { id: "revision", nombre: "En revisión", texto: "Estamos revisando lo que pasó", accion: "Ya lo contactamos" },
+    { id: "contactamos", nombre: "Contactado", texto: "Te contactamos", accion: "Cerrar el reclamo" },
+    { id: "finalizado", nombre: "Finalizado", texto: "Finalizado", fin: true },
+  ],
+  medida: [
+    { id: "revision", nombre: "En revisión", texto: "En revisión", accion: "Empezamos" },
+    { id: "proceso", nombre: "En proceso", texto: "En proceso", accion: "Quedó resuelto" },
+    { id: "finalizado", nombre: "Finalizado", texto: "Finalizado", fin: true },
+  ],
+};
+function motivoDeReclamo(r) {
+  return RECLAMO_MOTIVOS.find((m) => m.id === r?.motivo) || null;
+}
+// El nombre del motivo para listas y números (los viejos traen su «tipo»).
+function etiquetaMotivoReclamo(r) {
+  return motivoDeReclamo(r)?.label || String(r?.tipo || "").trim() || "Sin tipo";
+}
+function solucionDeReclamo(r) {
+  return RECLAMO_SOLUCIONES[r?.solucionId] || null;
+}
+function flujoDeReclamo(r) {
+  const sol = solucionDeReclamo(r);
+  if (!sol) return "";
+  if (sol.flujo === "taller") return r.comoLlega === "trae" ? "taller_trae" : "taller_retiro";
+  return sol.flujo;
+}
+function pasosDeReclamo(r) {
+  return RECLAMO_FLUJOS[flujoDeReclamo(r)] || [];
+}
+function pasoActualReclamo(r) {
+  const pasos = pasosDeReclamo(r);
+  let idx = pasos.findIndex((p) => p.id === r?.paso);
+  if (idx < 0) idx = 0;
+  return { pasos, idx, paso: pasos[idx] || null };
+}
+function textoPasoReclamo(paso, r) {
+  if (!paso) return "";
+  return typeof paso.texto === "function" ? paso.texto(r || {}) : paso.texto;
+}
+// Lo que ve el cliente arriba de todo: en qué anda su reclamo.
+function textoPublicoReclamo(r) {
+  if (!r) return "";
+  if (!solucionDeReclamo(r)) return reclamoFinalizado(r) ? "Reclamo resuelto" : "Recibimos tu reclamo y lo estamos revisando";
+  return textoPasoReclamo(pasoActualReclamo(r).paso, r);
+}
+// Elegir (o cambiar) la solución: arranca en el primer paso.
+function reclamoConSolucion(r, solucionId, comoLlega, hoyIso) {
+  const nuevo = { ...r, solucionId, comoLlega: comoLlega || r.comoLlega || "retiramos" };
+  if (RECLAMO_SOLUCIONES[solucionId]?.flujo !== "taller") nuevo.comoLlega = "";
+  const pasos = pasosDeReclamo(nuevo);
+  const primero = pasos[0];
+  return {
+    ...nuevo,
+    paso: primero ? primero.id : "",
+    pasosFechas: primero ? { [primero.id]: hoyIso } : {},
+    finalizado: false, estado: "Pendiente", finalizadoFecha: "",
+  };
+}
+// Dar por hecho el paso actual. Llegar al último cierra el reclamo.
+function reclamoAvanzado(r, hoyIso) {
+  const { pasos, idx } = pasoActualReclamo(r);
+  const sig = pasos[idx + 1];
+  if (!sig) return r;
+  const nuevo = { ...r, paso: sig.id, pasosFechas: { ...(r.pasosFechas || {}), [sig.id]: hoyIso } };
+  if (sig.fin) return { ...nuevo, finalizado: true, estado: "Finalizado", finalizadoFecha: hoyIso };
+  return nuevo;
+}
+function reclamoRetrocedido(r) {
+  const { pasos, idx } = pasoActualReclamo(r);
+  if (idx <= 0) return r;
+  const actual = pasos[idx];
+  const fechas = { ...(r.pasosFechas || {}) };
+  delete fechas[actual.id];
+  return { ...r, paso: pasos[idx - 1].id, pasosFechas: fechas, finalizado: false, estado: "Pendiente", finalizadoFecha: "" };
+}
+// Los datos que el reclamo toma del espejo elegido.
+function espejoTextoReclamo(p) {
+  return [medidaEspejo(p), p?.forma, p?.tipo, p?.tono].filter(Boolean).join(" · ");
+}
+function datosDeReclamoDesdePedido(p) {
+  if (!p) return {};
+  return {
+    pedidoOrigenId: p.id, grupoOrigenId: p.grupoId || "", ordenOrigen: p.orden || null,
+    espejoTexto: espejoTextoReclamo(p),
+    cliente: p.cliente || "", celular: p.celular || "",
+    barrio: p.barrio || "", detalleEntrega: p.detalleEntrega || "", piso: p.piso || "",
+    horarioEntrega: p.horarioEntrega || "", localidad: p.localidad || "",
+    fleteOrigen: p.fletero || "",
+  };
+}
+// Espejo nuevo: el pedido de cambio lleva el id del reclamo (reclamoId). Su
+// avance en fábrica y en Envíos mueve solo los pasos del reclamo.
+function pedidoDeCambioDe(r, pedidos) {
+  if (!r?.id) return null;
+  return (pedidos || []).find((p) => p && p.reclamoId === r.id && p.estado !== "Cancelado") || null;
+}
+function pasoSegunPedidoDeCambio(p) {
+  if (!p) return "";
+  if (p.estado === "Entregado") return "entregado";
+  if (pedidoEstaListo(p)) return "coordinar";
+  return "fabricacion";
+}
+// Lo que cambió en los reclamos de espejo nuevo según sus pedidos de cambio.
+// Solo avanza (nunca vuelve atrás sola) y copia la fecha de salida. null si
+// no hay nada que tocar.
+function sincronizarReclamosNuevos(reclamos, pedidos, hoyIso) {
+  let cambio = false;
+  const lista = (reclamos || []).map((r) => {
+    if (!r || flujoDeReclamo(r) !== "nuevo" || reclamoFinalizado(r)) return r;
+    const p = pedidoDeCambioDe(r, pedidos);
+    if (!p) return r;
+    let nuevo = r;
+    const fecha = String(p.fechaEnvio || "").slice(0, 10);
+    if (fecha !== String(r.fechaEntrega || "")) nuevo = { ...nuevo, fechaEntrega: fecha };
+    const pasos = RECLAMO_FLUJOS.nuevo;
+    const objetivo = pasos.findIndex((x) => x.id === pasoSegunPedidoDeCambio(p));
+    while (pasoActualReclamo(nuevo).idx < objetivo) nuevo = reclamoAvanzado(nuevo, hoyIso);
+    if (nuevo !== r) cambio = true;
+    return nuevo;
+  });
+  return cambio ? lista : null;
+}
+// Si el paso actual es una salida (colecta, devolución, visita), el reclamo
+// va a la tabla de PostVenta › Envíos. Los de antes, con su visita marcada.
+function salidaDeReclamo(r) {
+  if (!r || reclamoFinalizado(r)) return null;
+  if (solucionDeReclamo(r)) {
+    if (flujoDeReclamo(r) === "nuevo") return null; // sale el pedido de cambio, no el reclamo
+    const { paso } = pasoActualReclamo(r);
+    if (!paso || !paso.salida) return null;
+    return { r: { ...r, fechaEnvio: r[paso.fecha] || "" }, original: r, chip: paso.salida, campoFecha: paso.fecha, fechaLabel: paso.fechaLabel, hecho: paso.accion, avanza: true };
+  }
+  if (reclamoVisitaPendiente(r)) return { r, original: r, chip: "A domicilio", campoFecha: "fechaEnvio", fechaLabel: "Fecha de la visita", hecho: "Ya fuimos", avanza: false };
+  return null;
+}
+// Los flujos que necesitan la dirección del cliente.
+function reclamoNecesitaDireccion(r) {
+  return ["taller_retiro", "domicilio"].includes(flujoDeReclamo(r));
+}
+
 function reclamoFinalizado(r) {
   return r.finalizado === true || (typeof r.estado === "string" && r.estado.toLowerCase().includes("final"));
 }
@@ -14354,9 +14607,9 @@ function resumenDeReclamos(reclamos) {
   const abiertos = (reclamos || []).filter((r) => !reclamoFinalizado(r));
   return {
     abiertos: abiertos.length,
-    sinRespuesta: abiertos.filter((r) => !String(r.solucion || "").trim()).length,
+    sinRespuesta: abiertos.filter((r) => !solucionDeReclamo(r) && !String(r.solucion || "").trim()).length,
     demorados: abiertos.filter((r) => diasDesde(r.fecha) >= DIAS_RECLAMO_DEMORADO).length,
-    visitas: abiertos.filter(reclamoVisitaPendiente).length,
+    visitas: abiertos.filter((r) => !!salidaDeReclamo(r)).length,
   };
 }
 
@@ -14389,23 +14642,204 @@ function CampoTextoGuardado({ value, onGuardar, placeholder, className }) {
   );
 }
 
-function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
+// Buscar el espejo del reclamo entre los pedidos: por nombre, teléfono,
+// número de pedido o medida (la misma búsqueda de Pedidos).
+function BuscarPedidoReclamo({ pedidos, onElegir, autoFocus = false }) {
+  const [q, setQ] = useState("");
+  const resultados = q.trim().length < 2 ? [] : (pedidos || [])
+    .filter((p) => p && p.estado !== "Cancelado" && p.tipoPedido !== "reclamo" && coincidePedido(p, q))
+    .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")))
+    .slice(0, 8);
+  return (
+    <div className="dg-reclamo-buscar">
+      <input value={q} autoFocus={autoFocus} onChange={(e) => setQ(e.target.value)} placeholder="Buscar el pedido: nombre, teléfono, número o medida" aria-label="Buscar el pedido del reclamo" />
+      {q.trim().length >= 2 && (
+        <ul className="dg-reclamo-buscar-lista">
+          {resultados.length === 0 && <li className="dg-reclamo-buscar-vacio">No encontramos pedidos con eso. Podés cargar el reclamo igual, con el nombre y el teléfono.</li>}
+          {resultados.map((p) => (
+            <li key={p.id}>
+              <button type="button" onClick={() => { onElegir(p); setQ(""); }}>
+                <b>#{p.orden}</b> {p.cliente || "Sin nombre"}
+                <small>{espejoTextoReclamo(p) || "sin medida"}{p.fecha ? ` · ${fechaEntregaCorta(String(p.fecha).slice(0, 10))}` : ""} · {p.estado}</small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// El espejo del reclamo, ya elegido.
+function EspejoDelReclamo({ r, onCambiar, onQuitar }) {
+  if (!r.pedidoOrigenId) return null;
+  return (
+    <div className="dg-reclamo-espejo">
+      <Package size={14} aria-hidden="true" />
+      <span><b>#{r.ordenOrigen || "—"}</b> {r.espejoTexto || "Espejo"}</span>
+      {onCambiar && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onCambiar}>Cambiar</button>}
+      {onQuitar && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onQuitar}>Quitar</button>}
+    </div>
+  );
+}
+
+// Elegir la solución entre las del motivo, y cómo llega el espejo si se
+// arregla en el taller.
+function SolucionDelReclamo({ r, onElegir, onComoLlega, disabled }) {
+  const motivo = motivoDeReclamo(r) || RECLAMO_MOTIVOS.find((m) => m.id === "otro");
+  const sol = solucionDeReclamo(r);
+  return (
+    <>
+      <div className="dg-reclamo-opciones" role="radiogroup" aria-label="Solución">
+        {motivo.soluciones.map((id) => (
+          <button key={id} type="button" role="radio" aria-checked={r.solucionId === id} disabled={disabled}
+            className={`dg-reclamo-opcion ${r.solucionId === id ? "dg-reclamo-opcion-on" : ""}`}
+            onClick={() => onElegir(id)}>
+            {RECLAMO_SOLUCIONES[id].label}
+          </button>
+        ))}
+      </div>
+      {sol && sol.flujo === "taller" && (
+        <div className="dg-reclamo-llega">
+          <span>¿Cómo llega el espejo al taller?</span>
+          <div className="dg-salida-turnos">
+            {COMO_LLEGA_RECLAMO.map((c) => (
+              <button key={c.id} type="button" disabled={disabled}
+                className={`dg-salida-turno ${(r.comoLlega || "retiramos") === c.id ? "dg-salida-turno-on" : ""}`}
+                onClick={() => onComoLlega(c.id)}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function NuevoReclamoForm({ pedidos, onGuardar }) {
+  const vacio = () => ({ id: uid(), motivo: "", cliente: "", celular: "", notas: "", solucionId: "", comoLlega: "retiramos", fotos: [] });
+  const [r, setR] = useState(vacio);
+  const [buscando, setBuscando] = useState(true);
+  const set = (patch) => setR((x) => ({ ...x, ...patch }));
+  const motivo = motivoDeReclamo(r);
+  function guardar() {
+    if (!r.motivo) return;
+    const hoy = isoLocal(new Date());
+    let nuevo = {
+      ...r, tipo: motivo.label, cliente: String(r.cliente || "").trim(), celular: String(r.celular || "").trim(),
+      notas: String(r.notas || "").trim(), solucion: "", finalizado: false, estado: "Pendiente",
+      fecha: hoy, creado: new Date().toISOString(),
+    };
+    if (!nuevo.fotos.length) delete nuevo.fotos;
+    if (r.solucionId) nuevo = reclamoConSolucion(nuevo, r.solucionId, r.comoLlega, hoy);
+    else { delete nuevo.solucionId; delete nuevo.comoLlega; }
+    onGuardar(nuevo);
+    setR(vacio()); setBuscando(true);
+  }
+  return (
+    <div className="dg-section-card">
+      <div className="dg-section-header"><AlertTriangle size={14} /> Cargar reclamo</div>
+      <div className="dg-reclamo-paso-tit"><em>1</em> Motivo</div>
+      <div className="dg-reclamo-opciones dg-reclamo-motivos">
+        {RECLAMO_MOTIVOS.map((m) => (
+          <button key={m.id} type="button" className={`dg-reclamo-opcion ${r.motivo === m.id ? "dg-reclamo-opcion-on" : ""}`}
+            onClick={() => set({ motivo: m.id, solucionId: m.soluciones.length === 1 ? m.soluciones[0] : (m.soluciones.includes(r.solucionId) ? r.solucionId : "") })}>
+            {m.label}{m.ayuda && <small>{m.ayuda}</small>}
+          </button>
+        ))}
+      </div>
+      {motivo && (
+        <>
+          <div className="dg-reclamo-paso-tit"><em>2</em> Cliente y pedido</div>
+          {r.pedidoOrigenId && !buscando
+            ? <EspejoDelReclamo r={r} onCambiar={() => setBuscando(true)} />
+            : <BuscarPedidoReclamo pedidos={pedidos} autoFocus onElegir={(p) => { set(datosDeReclamoDesdePedido(p)); setBuscando(false); }} />}
+          <div className="dg-field-grid" style={{ marginTop: 10 }}>
+            <Field label="Cliente"><input value={r.cliente} onChange={(e) => set({ cliente: e.target.value })} placeholder="Nombre" /></Field>
+            <Field label="Teléfono"><input value={r.celular} onChange={(e) => set({ celular: e.target.value })} placeholder="Ej: 1122334455" /></Field>
+            <Field label="Qué pasó"><input value={r.notas} onChange={(e) => set({ notas: e.target.value })} placeholder="Detalle del problema" /></Field>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <FotosCampo lista={r.fotos} carpeta={`reclamo-${r.id}`} canEdit onCambiar={(l) => set({ fotos: l })} textoSubir="Fotos del problema (opcional)" />
+          </div>
+          <div className="dg-reclamo-paso-tit"><em>3</em> Solución <small>— se puede elegir después</small></div>
+          <SolucionDelReclamo r={r} onElegir={(id) => set({ solucionId: r.solucionId === id && motivo.soluciones.length > 1 ? "" : id })} onComoLlega={(c) => set({ comoLlega: c })} />
+          {r.solucionId && (
+            <p className="dg-hint" style={{ marginTop: 8 }}>
+              Pasos: {pasosDeReclamo(r).map((p) => p.nombre).join(" → ")}
+            </p>
+          )}
+          <div className="dg-form-actions" style={{ marginTop: 12 }}>
+            <button type="button" className="dg-btn-ghost" onClick={() => { setR(vacio()); setBuscando(true); }}>Cancelar</button>
+            <button type="button" className="dg-btn-primary" onClick={guardar}><Check size={14} /> Guardar reclamo</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Los pasos del reclamo, para el equipo: hecho / ahora / falta.
+function PasosDelReclamo({ r, editable, onAvanzar, onVolver, onFecha, accionEspecial }) {
+  const { pasos, idx, paso } = pasoActualReclamo(r);
+  const cerrado = reclamoFinalizado(r);
+  return (
+    <>
+      <ol className="dg-reclamo-pasos">
+        {pasos.map((p, i) => {
+          const hecho = i < idx || (cerrado && i === idx);
+          const ahora = !cerrado && i === idx;
+          const fecha = r.pasosFechas?.[p.id];
+          return (
+            <li key={p.id} className={hecho ? "dg-reclamo-paso-hecho" : ahora ? "dg-reclamo-paso-ahora" : ""}>
+              <span className="dg-salida-marca" aria-hidden="true">{hecho ? <Check size={13} /> : i + 1}</span>
+              <span>{p.nombre}{fecha && (hecho || ahora) ? <small> · {fechaEntregaCorta(fecha)}</small> : null}</span>
+            </li>
+          );
+        })}
+      </ol>
+      {!cerrado && paso && (
+        <div className="dg-reclamo-ahora">
+          <span className="dg-reclamo-ahora-txt">El cliente ve: «{textoPasoReclamo(paso, r)}»</span>
+          {paso.fecha && (
+            <label className="dg-reclamo-fecha">
+              <span>{paso.fechaLabel}</span>
+              <input type="date" disabled={!editable} value={r[paso.fecha] || ""} onChange={(e) => onFecha(paso.fecha, e.target.value)} />
+            </label>
+          )}
+          {editable && (
+            <div className="dg-salida-acciones">
+              {accionEspecial || (pasos[idx + 1] && (
+                <button type="button" className="dg-btn-primary dg-mini-btn" onClick={onAvanzar}><Check size={13} /> {paso.accion}</button>
+              ))}
+              {idx > 0 && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onVolver}><Undo2 size={13} /> Volver un paso</button>}
+            </div>
+          )}
+        </div>
+      )}
+      {cerrado && editable && idx > 0 && (
+        <div className="dg-salida-acciones" style={{ marginTop: 8 }}>
+          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={onVolver}><Undo2 size={13} /> Volver un paso</button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function ReclamosPanel({ reclamos, onChange, onCrearPedido, onChangePedidos, pedidos = [] }) {
   // Los clientes que ya compraron, para saber qué espejo le hicimos y con qué
   // datos mandar a hacer el de reemplazo.
   const clientesConocidos = clientesDeLosPedidos(pedidos);
-  const [tipo, setTipo] = useState(null);
-  const [cliente, setCliente] = useState("");
-  const [celular, setCelular] = useState("");
-  const [notas, setNotas] = useState("");
-  // Las fotos se pueden subir antes de guardar: el reclamo ya tiene su id.
-  const [idNuevo, setIdNuevo] = useState(() => uid());
-  const [fotosNuevas, setFotosNuevas] = useState([]);
   const [vista, setVista] = useState("activos");
   const [tablaAbierta, setTablaAbierta] = useState(true);
   const [filaAbierta, setFilaAbierta] = useState(null);
+  const [buscandoPedido, setBuscandoPedido] = useState(null);
   const [copiadoId, setCopiadoId] = useState(null);
   const [avisandoId, setAvisandoId] = useState(null);
+  const hoy = isoLocal(new Date());
   function setCampoReclamo(id, patch) { onChange(reclamos.map((r) => (r.id === id ? { ...r, ...patch } : r))); }
+  function cambiarReclamo(id, fn) { onChange(reclamos.map((r) => (r.id === id ? fn(r) : r))); }
   async function avisarEquipo(r) {
     setAvisandoId(r.id);
     try {
@@ -14420,28 +14854,71 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
     } catch (e) { window.alert("No se pudo conectar con el servidor."); }
     finally { setAvisandoId(null); }
   }
-
-  function addReclamo() {
-    if (!tipo) return;
-    onChange([{
-      id: idNuevo, tipo, cliente: cliente.trim(), celular: celular.trim(), notas: notas.trim(),
-      solucion: "", finalizado: false, fecha: new Date().toISOString().slice(0, 10),
-      ...(fotosNuevas.length ? { fotos: fotosNuevas } : {}),
-    }, ...reclamos]);
-    setTipo(null); setCliente(""); setCelular(""); setNotas("");
-    setIdNuevo(uid()); setFotosNuevas([]);
+  function removeReclamo(r) {
+    if (!window.confirm(`¿Borrar el reclamo de ${r.cliente || "este cliente"}? No se puede deshacer.`)) return;
+    onChange(reclamos.filter((x) => x.id !== r.id));
   }
-  function removeReclamo(id) { onChange(reclamos.filter((r) => r.id !== id)); }
-  function setSolucion(id, solucion) { onChange(reclamos.map((r) => (r.id === id ? { ...r, solucion } : r))); }
-  function setClienteAcepto(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, clienteAcepto: new Date().toISOString().slice(0, 10) } : r))); }
-  function finalizar(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: true, estado: "Finalizado", finalizadoFecha: new Date().toISOString().slice(0, 10) } : r))); }
-  function reabrir(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: false, estado: "Pendiente" } : r))); }
-
+  function finalizar(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: true, estado: "Finalizado", finalizadoFecha: hoy } : r))); }
+  function reabrir(id) { onChange(reclamos.map((r) => (r.id === id ? { ...r, finalizado: false, estado: "Pendiente", finalizadoFecha: "" } : r))); }
+  function elegirSolucion(r, id, comoLlega) {
+    const avanzado = pasoActualReclamo(r).idx > 0;
+    if (r.solucionId && r.solucionId !== id && avanzado && !window.confirm("Cambiar la solución vuelve los pasos al principio. ¿Seguimos?")) return;
+    cambiarReclamo(r.id, (x) => reclamoConSolucion({ ...x, ...(reclamoNecesitaDireccion({ ...x, solucionId: id, comoLlega }) ? direccionSiFalta(x) : {}) }, id, comoLlega, hoy));
+  }
+  // Si el reclamo no tiene dirección y el cliente ya compró, la tomamos de ahí.
+  function direccionSiFalta(r) {
+    if (r.detalleEntrega) return {};
+    const ficha = clienteDelReclamo(clientesConocidos, r);
+    const d = ficha ? datosDelCliente(ficha) : {};
+    return { barrio: r.barrio || d.barrio || "", detalleEntrega: d.detalleEntrega || "", piso: r.piso || d.piso || "", horarioEntrega: r.horarioEntrega || d.horarioEntrega || "" };
+  }
+  // Envío sin cargo o descuento: se marca en el pedido del reclamo, así el
+  // saldo, los mensajes y el seguimiento ya salen bien.
+  function aplicarBeneficio(r) {
+    if (!onChangePedidos) return;
+    const origen = pedidos.find((p) => p.id === r.pedidoOrigenId);
+    if (!origen) { window.alert("Primero elegí el pedido del reclamo (en «El reclamo»)."); return; }
+    const grupo = pedidos.filter((p) => (origen.grupoId ? p.grupoId === origen.grupoId : p.id === origen.id));
+    if (r.solucionId === "envio_gratis") {
+      if (!window.confirm(`¿Dejar el envío del pedido #${origen.orden} sin cargo?`)) return;
+      const ids = new Set(grupo.map((p) => p.id));
+      onChangePedidos(pedidos.map((p) => (ids.has(p.id) ? { ...p, envioSinCargo: true, reclamoBeneficio: r.id } : p)));
+    } else {
+      const monto = Math.round(Number(r.descuento) || 0);
+      if (monto <= 0) { window.alert("Escribí de cuánto es el descuento."); return; }
+      const espejo = grupo.filter((p) => p.estado !== "Entregado" && p.estado !== "Cancelado")
+        .sort((a, b) => pendienteDeCobrarPedido(b) - pendienteDeCobrarPedido(a))[0];
+      if (!espejo) { window.alert("Ese pedido ya se entregó: no le queda saldo para descontar."); return; }
+      const saldo = pendienteDeCobrarPedido(espejo);
+      if (monto > saldo) { window.alert(`El descuento no puede ser más que el saldo que le queda (${money(saldo)}).`); return; }
+      if (!window.confirm(`¿Descontar ${money(monto)} del saldo del pedido #${origen.orden}? El saldo queda en ${money(saldo - monto)}.`)) return;
+      onChangePedidos(pedidos.map((p) => (p.id === espejo.id
+        ? { ...p, monto: Math.max(0, (Number(p.monto) || 0) - monto), descuentoReclamo: (Number(p.descuentoReclamo) || 0) + monto, reclamoBeneficio: r.id }
+        : p)));
+    }
+    cambiarReclamo(r.id, (x) => ({ ...reclamoAvanzado(x, hoy), beneficioAplicado: hoy }));
+  }
+  function mandarEspejoNuevo(r) {
+    if (!onCrearPedido) return;
+    const origen = pedidos.find((p) => p.id === r.pedidoOrigenId);
+    const ficha = clienteDelReclamo(clientesConocidos, r);
+    const motivo = etiquetaMotivoReclamo(r);
+    onCrearPedido({
+      ...(ficha ? datosDelCliente(ficha) : {}),
+      ...(origen ? { ...datosDelCliente({ nombre: origen.cliente, ...origen }), ...espejoParaRepetir(origen) } : {}),
+      tipoPedido: "reclamo", urgente: true, sinCargo: true, tipoFactura: "Cambio de espejo",
+      cliente: r.cliente || origen?.cliente || (ficha ? ficha.nombre : ""),
+      celular: r.celular || origen?.celular || (ficha ? ficha.celular : ""),
+      reclamoId: r.id,
+      aclaracionTaller: `Cambio por reclamo (${motivo})${r.notas ? `: ${r.notas}` : ""}`,
+      aclaracionEntrega: "Es un cambio por reclamo: ese día retirar el espejo anterior.",
+    });
+    setCampoReclamo(r.id, { pedidoCreado: true });
+  }
   function enviarWhatsapp(r) {
     const link = waLink(r.celular);
     if (!link) return;
-    const url = `${link}?text=${encodeURIComponent(mensajeSolucionReclamo(r))}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    window.open(`${link}?text=${encodeURIComponent(mensajeSolucionReclamo(r))}`, "_blank", "noopener,noreferrer");
     setCopiadoId(r.id);
     setTimeout(() => setCopiadoId(null), 2000);
   }
@@ -14450,74 +14927,47 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
   const finalizados = reclamos.filter((r) => reclamoFinalizado(r));
   const visibles = vista === "activos" ? activos : finalizados;
 
-  const chartData = RECLAMO_TIPOS.map((t, i) => ({ tipo: t, cantidad: reclamos.filter((r) => r.tipo === t).length, fill: RECLAMO_COLORS[i] }));
+  const porMotivo = new Map();
+  reclamos.forEach((r) => { const k = etiquetaMotivoReclamo(r); porMotivo.set(k, (porMotivo.get(k) || 0) + 1); });
+  const chartData = [...porMotivo.entries()].sort((a, b) => b[1] - a[1]).map(([tipo, cantidad], i) => ({ tipo, cantidad, fill: RECLAMO_COLORS[i % RECLAMO_COLORS.length] }));
 
   return (
     <div className="dg-page">
-      <div className="dg-chart-card" style={{ marginBottom: 16 }}>
-        <div className="dg-chart-title">Reclamos por tipo — qué falla más seguido</div>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={chartData} layout="vertical" margin={{ left: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--dg-line-rgb),0.06)" horizontal={false} />
-            <XAxis type="number" stroke="var(--dg-text-dim)" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-            <YAxis type="category" dataKey="tipo" stroke="var(--dg-text-dim)" fontSize={11} tickLine={false} axisLine={false} width={130} />
-            <Tooltip contentStyle={{ background: "var(--dg-surface)", border: "1px solid rgba(var(--dg-line-rgb),0.1)", borderRadius: 8, fontSize: 13 }} />
-            <Bar dataKey="cantidad" radius={[0, 4, 4, 0]}>
-              {chartData.map((d, i) => (<Cell key={i} fill={d.fill} />))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="dg-section-card">
-        <div className="dg-section-header"><AlertTriangle size={14} /> Cargar reclamo</div>
-        <div className="dg-quick-buttons" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-          {RECLAMO_TIPOS.map((t, i) => (
-            <button key={t} className="dg-quick-btn" style={{ "--c": RECLAMO_COLORS[i], opacity: tipo === t ? 1 : 0.75 }} onClick={() => setTipo(t)}>
-              <AlertTriangle size={18} /><span>{t}</span>
-            </button>
-          ))}
+      {chartData.length > 0 && (
+        <div className="dg-chart-card" style={{ marginBottom: 16 }}>
+          <div className="dg-chart-title">Reclamos por motivo — qué falla más seguido</div>
+          <ResponsiveContainer width="100%" height={Math.max(120, chartData.length * 28)}>
+            <BarChart data={chartData} layout="vertical" margin={{ left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--dg-line-rgb),0.06)" horizontal={false} />
+              <XAxis type="number" stroke="var(--dg-text-dim)" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+              <YAxis type="category" dataKey="tipo" stroke="var(--dg-text-dim)" fontSize={11} tickLine={false} axisLine={false} width={150} />
+              <Tooltip contentStyle={{ background: "var(--dg-surface)", border: "1px solid rgba(var(--dg-line-rgb),0.1)", borderRadius: 8, fontSize: 13 }} />
+              <Bar dataKey="cantidad" radius={[0, 4, 4, 0]}>
+                {chartData.map((d, i) => (<Cell key={i} fill={d.fill} />))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-        {tipo && (
-          <EnterFlow onSubmit={addReclamo} autoFocus={false}>
-            <div className="dg-field-grid" style={{ marginTop: 12 }}>
-              <Field label="Cliente"><input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre (opcional)" /></Field>
-              <Field label="Celular"><input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="Ej: 1122334455" /></Field>
-              <Field label="Notas"><input value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Opcional" /></Field>
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <FotosCampo lista={fotosNuevas} carpeta={`reclamo-${idNuevo}`} canEdit onCambiar={setFotosNuevas} textoSubir="Fotos del problema (opcional)" />
-            </div>
-            <div className="dg-form-actions" style={{ marginTop: 10 }}>
-              <button className="dg-btn-ghost" onClick={() => setTipo(null)}>Cancelar</button>
-              <button className="dg-btn-primary" onClick={addReclamo}><Check size={14} /> Guardar reclamo: {tipo}</button>
-            </div>
-          </EnterFlow>
-        )}
-      </div>
+      )}
+
+      <NuevoReclamoForm pedidos={pedidos} onGuardar={(nuevo) => { onChange([nuevo, ...reclamos]); setVista("activos"); setFilaAbierta(nuevo.id); }} />
 
       <div className="dg-quickviews" style={{ margin: "16px 0" }}>
         <button className={`dg-quickview-btn ${vista === "activos" ? "dg-quickview-on" : ""}`} onClick={() => setVista("activos")}>Activos ({activos.length})</button>
         <button className={`dg-quickview-btn ${vista === "finalizados" ? "dg-quickview-on" : ""}`} onClick={() => setVista("finalizados")}>Finalizados ({finalizados.length})</button>
       </div>
 
-      {/* La misma tabla que la de envíos: de un vistazo quién, por qué, en qué
-          estado y hace cuánto. Las tarjetas de abajo son para trabajar cada
-          reclamo; esto es para ver el conjunto. */}
       {visibles.length > 0 && (() => {
         const filas = visibles
           .map((r) => ({
             r,
-            // Un reclamo cerrado ya no "lleva abierto" nada: lo que interesa
-            // es cuánto tardamos en resolverlo.
             dias: reclamoFinalizado(r) && r.finalizadoFecha ? (diasEntreDias(r.fecha, r.finalizadoFecha) ?? diasDesde(r.fecha)) : diasDesde(r.fecha),
             demorado: !reclamoFinalizado(r) && diasDesde(r.fecha) >= DIAS_RECLAMO_DEMORADO,
-            visita: reclamoVisitaPendiente(r),
+            salida: salidaDeReclamo(r),
           }))
-          // Los más viejos primero: son los que hay que destrabar.
           .sort((a, b) => (a.r.fecha || "") < (b.r.fecha || "") ? -1 : (a.r.fecha || "") > (b.r.fecha || "") ? 1 : 0);
         const demorados = filas.filter((f) => f.demorado).length;
-        const visitas = filas.filter((f) => f.visita).length;
+        const salidas = filas.filter((f) => f.salida).length;
         return (
           <div className={`dg-section-card dg-envios-tabla-card ${tablaAbierta ? "dg-envios-tabla-abierta" : ""}`}>
             <button type="button" className="dg-envios-tabla-head" onClick={() => setTablaAbierta((v) => !v)} aria-expanded={tablaAbierta}>
@@ -14525,7 +14975,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                 <strong><LayoutList size={14} /> Todos los reclamos {vista === "activos" ? "activos" : "finalizados"}</strong>
                 <small>
                   {filas.length} {filas.length === 1 ? "reclamo" : "reclamos"}
-                  {visitas > 0 && ` · ${visitas} para ir al domicilio`}
+                  {salidas > 0 && ` · ${salidas} con salida en Envíos`}
                   {demorados > 0 && <span className="dg-envios-tabla-atraso"> · {demorados} hace {DIAS_RECLAMO_DEMORADO} días o más</span>}
                 </small>
               </span>
@@ -14536,7 +14986,7 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                 <table className="dg-envios-tabla dg-reclamos-tabla">
                   <thead>
                     <tr>
-                      <th>Fecha</th><th>Cliente</th><th>Motivo</th><th>Estado</th><th>Qué se le dijo</th>
+                      <th>Fecha</th><th>Cliente</th><th>Motivo</th><th>Solución</th><th>En qué anda</th>
                       <th className="dg-num">{vista === "activos" ? "Días abierto" : "Días que llevó"}</th>
                     </tr>
                   </thead>
@@ -14544,73 +14994,69 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                     {filas.map((f) => {
                       const r = f.r;
                       const abierta = filaAbierta === r.id;
-                      const clase = { "Abierto": "abierto", "Solución ofrecida": "ofrecida", "Cliente aceptó": "acepto", "Espejo en fábrica": "fabrica", "Resuelto": "resuelto" }[estadoReclamo(r)] || "abierto";
+                      const sol = solucionDeReclamo(r);
+                      const clase = reclamoFinalizado(r) ? "resuelto" : sol ? (f.salida ? "fabrica" : "acepto") : String(r.solucion || "").trim() ? "ofrecida" : "abierto";
                       return (
                         <Fragment key={r.id}>
                         <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${f.demorado ? "dg-envios-fila-atrasada" : ""} ${f.visita ? "dg-envios-fila-visita" : ""}`}
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${f.demorado ? "dg-envios-fila-atrasada" : ""} ${f.salida ? "dg-envios-fila-visita" : ""}`}
                           onClick={() => setFilaAbierta(abierta ? null : r.id)}
                           aria-expanded={abierta}>
                           <td className="dg-envios-fecha">{r.fecha ? fechaEntregaCorta(r.fecha) : <span className="dg-envios-falta">—</span>}</td>
                           <td className="dg-envios-nombre">
                             <button type="button" className="dg-envios-nombre-btn" title={abierta ? "Cerrar" : "Ver todo el reclamo"}>{r.cliente || "Sin nombre"}</button>
+                            {r.ordenOrigen && <span className="dg-envios-chip-tipo">#{r.ordenOrigen}</span>}
+                            {r.desdeLink && <span className="dg-envios-chip-tipo dg-chip-nota" title="Lo cargó el cliente desde su link">Desde el link</span>}
                             {Array.isArray(r.fotos) && r.fotos.length > 0 && <span className="dg-envios-chip-tipo" title="Tiene fotos"><Camera size={11} /> {r.fotos.length}</span>}
-                            {f.visita && <span className="dg-envios-chip-visita"><Wrench size={11} /> A domicilio</span>}
+                            {f.salida && <span className="dg-envios-chip-visita"><Truck size={11} /> {f.salida.chip}</span>}
                           </td>
-                          <td className="dg-envios-productos">{r.tipo}</td>
-                          <td><span className={`dg-reclamo-estado dg-reclamo-estado-${clase}`}>{estadoReclamo(r)}</span></td>
-                          <td className="dg-envios-dir" data-label="Se le dijo">{r.solucion || <span className="dg-envios-falta">sin respuesta todavía</span>}</td>
+                          <td className="dg-envios-productos">{etiquetaMotivoReclamo(r)}</td>
+                          <td className="dg-envios-dir" data-label="Solución">{sol ? sol.label : String(r.solucion || "").trim() || <span className="dg-envios-falta">sin elegir</span>}</td>
+                          <td data-label="En qué anda"><span className={`dg-reclamo-estado dg-reclamo-estado-${clase}`}>{estadoReclamo(r)}</span></td>
                           <td className="dg-num" data-label={vista === "activos" ? "Días abierto" : "Días que llevó"}>{f.dias}</td>
                         </tr>
                         {abierta && (
                           <tr className="dg-envios-detalle">
                             <td colSpan={6}>
                               {(() => {
-                                // Todo el reclamo adentro de la fila: en qué
-                                // anda, qué le hicimos antes, qué se le ofreció
-                                // y si hay que ir al domicilio. Desde que esto
-                                // está completo, abajo no hacen falta tarjetas.
                                 const cerrado = reclamoFinalizado(r);
                                 const ficha = clienteDelReclamo(clientesConocidos, r);
                                 const compras = ficha ? ficha.pedidos.slice(0, 4) : [];
                                 const tieneCelular = !!waLink(r.celular);
-                                const conSolucion = !!String(r.solucion || "").trim();
+                                const pedidoCambio = pedidoDeCambioDe(r, pedidos);
+                                const flujo = flujoDeReclamo(r);
+                                const { paso } = pasoActualReclamo(r);
+                                const accionEspecial = flujo === "beneficio" && paso?.id === "aplicar"
+                                  ? <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => aplicarBeneficio(r)}><Check size={13} /> Aplicar al pedido</button>
+                                  : flujo === "nuevo" && paso?.id === "fabricacion" && !pedidoCambio
+                                    ? <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => mandarEspejoNuevo(r)}><Plus size={13} /> Mandar a hacer el espejo nuevo</button>
+                                    : null;
                                 return (
                                 <div className="dg-salida-panel" onClick={(ev) => ev.stopPropagation()}>
 
                                   <div className="dg-salida-bloque">
                                     <div className="dg-salida-tit">En qué anda</div>
-                                    <ul className="dg-salida-checks">
-                                      <li className="dg-salida-ok">
-                                        <span className="dg-salida-marca" aria-hidden="true"><Check size={13} /></span>
-                                        Reclamo cargado<small> · {r.fecha ? fechaEntregaCorta(r.fecha) : "sin fecha"}</small>
-                                      </li>
-                                      <li className={conSolucion ? "dg-salida-ok" : ""}>
-                                        <span className="dg-salida-marca" aria-hidden="true">{conSolucion ? <Check size={13} /> : null}</span>
-                                        Solución ofrecida
-                                      </li>
-                                      <li>
-                                        <button type="button" className={`dg-salida-check ${r.clienteAcepto ? "dg-salida-check-on" : ""}`}
-                                          disabled={cerrado || !conSolucion || !!r.clienteAcepto}
-                                          title={conSolucion ? "El cliente aceptó la solución" : "Primero cargá qué le vas a ofrecer"}
-                                          onClick={() => setClienteAcepto(r.id)}>
-                                          <span className="dg-salida-marca" aria-hidden="true">{r.clienteAcepto ? <Check size={13} /> : null}</span>
-                                          El cliente aceptó
-                                        </button>
-                                      </li>
-                                      <li className={r.pedidoCreado ? "dg-salida-ok" : ""}>
-                                        <span className="dg-salida-marca" aria-hidden="true">{r.pedidoCreado ? <Check size={13} /> : null}</span>
-                                        Espejo nuevo en fábrica
-                                      </li>
-                                      <li>
-                                        <button type="button" className={`dg-salida-check ${cerrado ? "dg-salida-check-on" : ""}`}
-                                          disabled={cerrado}
-                                          onClick={() => finalizar(r.id)}>
-                                          <span className="dg-salida-marca" aria-hidden="true">{cerrado ? <Check size={13} /> : null}</span>
-                                          Resuelto{cerrado && r.finalizadoFecha ? <small> · {fechaEntregaCorta(r.finalizadoFecha)}</small> : null}
-                                        </button>
-                                      </li>
-                                    </ul>
+                                    {sol ? (
+                                      <PasosDelReclamo r={r} editable
+                                        accionEspecial={accionEspecial}
+                                        onAvanzar={() => cambiarReclamo(r.id, (x) => reclamoAvanzado(x, hoy))}
+                                        onVolver={() => cambiarReclamo(r.id, (x) => reclamoRetrocedido(x))}
+                                        onFecha={(campo, v) => setCampoReclamo(r.id, { [campo]: v })} />
+                                    ) : (
+                                      <>
+                                        <p className="dg-salida-nota">{cerrado ? "Resuelto." : "Elegí la solución (abajo) y aparecen sus pasos."}</p>
+                                        {r.aDomicilio && (
+                                          <p className="dg-salida-nota">
+                                            Visita a domicilio{r.fechaEnvio ? ` el ${fechaEntregaCorta(r.fechaEnvio)}` : " sin fecha"}{r.visitaHecha ? ` · fuimos el ${fechaEntregaCorta(r.visitaHecha)}` : ""}.
+                                            {!r.visitaHecha && !cerrado && <button type="button" className="dg-btn-ghost dg-mini-btn" style={{ marginLeft: 6 }} onClick={() => setCampoReclamo(r.id, { visitaHecha: hoy })}><Check size={12} /> Ya fuimos</button>}
+                                          </p>
+                                        )}
+                                        {!cerrado && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => finalizar(r.id)}><Check size={13} /> Darlo por resuelto</button>}
+                                      </>
+                                    )}
+                                    {flujo === "nuevo" && pedidoCambio && (
+                                      <p className="dg-salida-nota">Pedido de cambio <b>#{pedidoCambio.orden}</b> · {pedidoCambio.estado}. Sus pasos se mueven solos con el pedido.</p>
+                                    )}
                                     {!cerrado && diasDesde(r.fecha) >= DIAS_RECLAMO_DEMORADO && (
                                       <p className="dg-salida-falta">Abierto hace {diasDesde(r.fecha)} días.</p>
                                     )}
@@ -14618,17 +15064,35 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
 
                                   <div className="dg-salida-bloque">
                                     <div className="dg-salida-tit">El reclamo</div>
-                                    <div className="dg-salida-campos">
+                                    {buscandoPedido === r.id
+                                      ? <BuscarPedidoReclamo pedidos={pedidos} autoFocus onElegir={(p) => {
+                                          const datos = datosDeReclamoDesdePedido(p);
+                                          // Lo ya escrito en el reclamo manda; el pedido completa lo que falta.
+                                          const patch = {};
+                                          Object.entries(datos).forEach(([k, v]) => { if (["pedidoOrigenId", "grupoOrigenId", "ordenOrigen", "espejoTexto", "fleteOrigen"].includes(k) || !String(r[k] || "").trim()) patch[k] = v; });
+                                          setCampoReclamo(r.id, patch); setBuscandoPedido(null);
+                                        }} />
+                                      : r.pedidoOrigenId
+                                        ? <EspejoDelReclamo r={r} onCambiar={() => setBuscandoPedido(r.id)} />
+                                        : <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setBuscandoPedido(r.id)}><Search size={13} /> Elegir el pedido del reclamo</button>}
+                                    <div className="dg-salida-campos" style={{ marginTop: 10 }}>
                                       <label>
                                         <span>Motivo</span>
-                                        <select value={r.tipo} onChange={(e) => setCampoReclamo(r.id, { tipo: e.target.value })}>
-                                          {RECLAMO_TIPOS.map((t) => (<option key={t} value={t}>{t}</option>))}
+                                        <select value={r.motivo || ""} onChange={(e) => {
+                                          const m = RECLAMO_MOTIVOS.find((x) => x.id === e.target.value);
+                                          if (!m) return;
+                                          const sigue = m.soluciones.includes(r.solucionId);
+                                          cambiarReclamo(r.id, (x) => (sigue ? { ...x, motivo: m.id, tipo: m.label } : { ...x, motivo: m.id, tipo: m.label, solucionId: "", comoLlega: "", paso: "", pasosFechas: {} }));
+                                        }}>
+                                          {!r.motivo && <option value="">{r.tipo || "Elegí el motivo"}</option>}
+                                          {RECLAMO_MOTIVOS.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
                                         </select>
                                       </label>
                                       <label><span>Cliente</span><CampoTextoGuardado value={r.cliente} onGuardar={(v) => setCampoReclamo(r.id, { cliente: v })} placeholder="Nombre" /></label>
                                       <label><span>Teléfono</span><CampoTextoGuardado value={r.celular} onGuardar={(v) => setCampoReclamo(r.id, { celular: v })} placeholder="Ej: 1122334455" /></label>
                                       <label><span>Qué pasó</span><CampoTextoGuardado value={r.notas} onGuardar={(v) => setCampoReclamo(r.id, { notas: v })} placeholder="Detalle del problema" /></label>
                                     </div>
+                                    {r.detalleCliente && <p className="dg-salida-nota"><b>Lo que escribió el cliente:</b> {r.detalleCliente}</p>}
                                     <div className="dg-reclamo-fotos">
                                       <span>Fotos</span>
                                       <FotosCampo lista={r.fotos} carpeta={`reclamo-${r.id}`} canEdit onCambiar={(l) => setCampoReclamo(r.id, { fotos: l })} textoSubir="Subir fotos del problema" />
@@ -14655,77 +15119,25 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                                     ) : (
                                       <p className="dg-salida-nota">No encontramos compras de este cliente. Fijate que el nombre o el teléfono coincidan con los del pedido.</p>
                                     )}
-                                    {!cerrado && onCrearPedido && (
-                                      <div className="dg-salida-acciones">
-                                        {r.pedidoCreado
-                                          ? <span className="dg-envios-pagado"><Check size={12} /> Pedido de cambio creado</span>
-                                          : <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => {
-                                              // Con la ficha del cliente va todo: DNI, dirección,
-                                              // forma de envío. Sin ella, lo que traiga el reclamo.
-                                              onCrearPedido({
-                                                ...(ficha ? datosDelCliente(ficha) : {}),
-                                                tipoPedido: "reclamo", urgente: true, tipoFactura: "Cambio de espejo",
-                                                cliente: r.cliente || (ficha ? ficha.nombre : ""),
-                                                celular: r.celular || (ficha ? ficha.celular : ""),
-                                                reclamoId: r.id,
-                                                grabado: r.notas ? `Reclamo (${r.tipo}): ${r.notas}` : `Reclamo: ${r.tipo}`,
-                                              });
-                                              setCampoReclamo(r.id, { pedidoCreado: true });
-                                            }}><Plus size={13} /> Mandar a hacer uno nuevo{ficha ? " (con sus datos)" : ""}</button>}
-                                      </div>
-                                    )}
                                   </div>
 
                                   <div className="dg-salida-bloque dg-salida-bloque-ancho">
-                                    <div className="dg-salida-tit">Qué se le ofrece</div>
-                                    <CampoTextoGuardado className="dg-reclamo-solucion" value={r.solucion} onGuardar={(v) => setSolucion(r.id, v)} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
-                                    <div className="dg-salida-acciones">
-                                      {tieneCelular && (
-                                        <a className="dg-btn-ghost dg-mini-btn" href={`${waLink(r.celular)}?text=${encodeURIComponent(saludoReclamo(r))}`} target="_blank" rel="noopener noreferrer">
-                                          <MessageCircle size={13} /> Escribirle
-                                        </a>
-                                      )}
-                                      {tieneCelular && conSolucion && (
-                                        <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => enviarWhatsapp(r)}>
-                                          <MessageCircle size={13} /> {copiadoId === r.id ? "Abriendo…" : "Mandarle la solución"}
-                                        </button>
-                                      )}
-                                      {!tieneCelular && <span className="dg-salida-nota" style={{ margin: 0 }}>Cargale el teléfono y se le puede escribir desde acá.</span>}
-                                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
-                                        <Bell size={13} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar otra vez" : "Avisar al equipo"}
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  {/* Cuando hay que ir a la casa del cliente, el reclamo deja
-                                      de ser un llamado y pasa a ser una salida: necesita
-                                      dirección y día, igual que un envío. */}
-                                  <div className={`dg-salida-bloque dg-salida-bloque-ancho dg-reclamo-visita ${r.aDomicilio ? "dg-reclamo-visita-on" : ""}`}>
-                                    <label className="dg-reclamo-visita-check">
-                                      <input type="checkbox" checked={!!r.aDomicilio} onChange={(e) => {
-                                        const prende = e.target.checked;
-                                        // Si ya le vendimos alguna vez, la dirección la tenemos.
-                                        const datos = prende && ficha ? datosDelCliente(ficha) : null;
-                                        setCampoReclamo(r.id, {
-                                          aDomicilio: prende,
-                                          ...(datos ? {
-                                            barrio: r.barrio || datos.barrio || "",
-                                            detalleEntrega: r.detalleEntrega || datos.detalleEntrega || "",
-                                            piso: r.piso || datos.piso || "",
-                                            horarioEntrega: r.horarioEntrega || datos.horarioEntrega || "",
-                                            celular: r.celular || datos.celular || "",
-                                          } : {}),
-                                        });
-                                      }} />
-                                      <span><Wrench size={13} /> Hay que ir al domicilio a cambiarlo o arreglarlo</span>
-                                    </label>
-                                    {r.aDomicilio && (
+                                    <div className="dg-salida-tit">Solución</div>
+                                    <SolucionDelReclamo r={r} disabled={cerrado}
+                                      onElegir={(id) => elegirSolucion(r, id, r.comoLlega)}
+                                      onComoLlega={(c) => elegirSolucion(r, r.solucionId, c)} />
+                                    {r.solucionId === "descuento" && (
+                                      <label className="dg-reclamo-fecha" style={{ marginTop: 10 }}>
+                                        <span>Descuento ($)</span>
+                                        <CampoTextoGuardado value={r.descuento ? String(r.descuento) : ""} onGuardar={(v) => setCampoReclamo(r.id, { descuento: Math.max(0, Math.round(Number(String(v).replace(/[^\d]/g, "")) || 0)) })} placeholder="Ej: 10000" />
+                                      </label>
+                                    )}
+                                    {reclamoNecesitaDireccion(r) && (
                                       <>
                                         <div className="dg-salida-campos" style={{ marginTop: 10 }}>
                                           <label><span>Barrio</span><CampoTextoGuardado value={r.barrio} onGuardar={(v) => setCampoReclamo(r.id, { barrio: v })} placeholder="Ej: Palermo" /></label>
                                           <label><span>Dirección</span><CampoTextoGuardado value={r.detalleEntrega} onGuardar={(v) => setCampoReclamo(r.id, { detalleEntrega: v })} placeholder="Calle y número" /></label>
                                           <label><span>Piso / Depto</span><CampoTextoGuardado value={r.piso} onGuardar={(v) => setCampoReclamo(r.id, { piso: v })} placeholder="Ej: 3 B — o la palabra casa" /></label>
-                                          <label><span>Fecha de la visita</span><input type="date" value={r.fechaEnvio || ""} onChange={(e) => setCampoReclamo(r.id, { fechaEnvio: e.target.value })} /></label>
                                         </div>
                                         <div className="dg-salida-horario">
                                           <span>Horario</span>
@@ -14740,19 +15152,28 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                                           </div>
                                           <CampoTextoGuardado className="dg-salida-horario-libre" value={r.horarioEntrega} onGuardar={(v) => setCampoReclamo(r.id, { horarioEntrega: v })} placeholder="o escribilo: 13 a 17 hs" />
                                         </div>
-                                        <div className="dg-reclamo-visita-pie">
-                                          {r.visitaHecha
-                                            ? <>
-                                                <span className="dg-envios-pagado"><Check size={12} /> Fuimos el {fechaEntregaCorta(r.visitaHecha)}</span>
-                                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: "" })}><RotateCcw size={12} /> Todavía hay que volver</button>
-                                              </>
-                                            : <>
-                                                <span className="dg-pago-meta">Aparece en la tabla de Envíos marcada como visita.</span>
-                                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setCampoReclamo(r.id, { visitaHecha: new Date().toISOString().slice(0, 10) })}><Check size={12} /> Ya fuimos</button>
-                                              </>}
-                                        </div>
                                       </>
                                     )}
+                                    <div className="dg-reclamo-dijo">
+                                      <span>Qué se le dijo</span>
+                                      <CampoTextoGuardado className="dg-reclamo-solucion" value={r.solucion} onGuardar={(v) => setCampoReclamo(r.id, { solucion: v })} placeholder="Ej: te reemplazamos el espejo sin cargo esta semana" />
+                                    </div>
+                                    <div className="dg-salida-acciones">
+                                      {tieneCelular && (
+                                        <a className="dg-btn-ghost dg-mini-btn" href={`${waLink(r.celular)}?text=${encodeURIComponent(saludoReclamo(r))}`} target="_blank" rel="noopener noreferrer">
+                                          <MessageCircle size={13} /> Escribirle
+                                        </a>
+                                      )}
+                                      {tieneCelular && String(r.solucion || "").trim() && (
+                                        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => enviarWhatsapp(r)}>
+                                          <MessageCircle size={13} /> {copiadoId === r.id ? "Abriendo…" : "Mandarle lo que se le dijo"}
+                                        </button>
+                                      )}
+                                      {!tieneCelular && <span className="dg-salida-nota" style={{ margin: 0 }}>Cargale el teléfono y se le puede escribir desde acá.</span>}
+                                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
+                                        <Bell size={13} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar otra vez" : "Avisar al equipo"}
+                                      </button>
+                                    </div>
                                   </div>
 
                                   <div className="dg-salida-pie">
@@ -14762,8 +15183,8 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, pedidos = [] }) {
                                         : `Abierto hace ${f.dias} ${f.dias === 1 ? "día" : "días"}`}
                                     </span>
                                     {cerrado
-                                      ? <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => reabrir(r.id)}><RotateCcw size={13} /> Reabrir</button>
-                                      : <button type="button" className="dg-icon-btn dg-task-del" title="Borrar este reclamo" onClick={() => removeReclamo(r.id)}><Trash2 size={14} /></button>}
+                                      ? <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => (sol ? cambiarReclamo(r.id, reclamoRetrocedido) : reabrir(r.id))}><RotateCcw size={13} /> Reabrir</button>
+                                      : <button type="button" className="dg-icon-btn dg-task-del" title="Borrar este reclamo" onClick={() => removeReclamo(r)}><Trash2 size={14} /></button>}
                                   </div>
                                 </div>
                                 );
@@ -16659,7 +17080,7 @@ function pendientesPostventaHoy(pedidos, reclamos) {
     saldoSinCobrar: conSaldo.reduce((t, p) => t + pendienteDeCobrarPedido(p), 0),
     pedidosDebiendo: new Set(conSaldo.map((p) => p.grupoId || p.id)).size,
     reclamosAbiertos: abiertos.length,
-    reclamosSinSolucion: abiertos.filter((r) => !String(r.solucion || "").trim()).length,
+    reclamosSinSolucion: abiertos.filter((r) => !solucionDeReclamo(r) && !String(r.solucion || "").trim()).length,
     sinFacturar: entregadoSinFactura.length,
   };
 }
@@ -23869,7 +24290,7 @@ function SectorPage({
       )}
 
       {subpage === "reclamos" && (
-        canSeePedidos ? <ReclamosPanel reclamos={reclamos} onChange={onChangeReclamos} pedidos={pedidos} onCrearPedido={(prefill) => onChangePedidos(normalizarOrdenesPorGrupo([...pedidos, emptyPedido(prefill)]))} />
+        canSeePedidos ? <ReclamosPanel reclamos={reclamos} onChange={onChangeReclamos} pedidos={pedidos} onChangePedidos={onChangePedidos} onCrearPedido={(prefill) => onChangePedidos(normalizarOrdenesPorGrupo([...pedidos, { ...emptyPedido(prefill), ...prefill, orden: pedidos.reduce((m, p) => Math.max(m, Number(p.orden) || 0), 0) + 1 }]))} />
           : <LockedPage label="Reclamos" onLogin={onRequestLogin} />
       )}
     </div>
@@ -24595,6 +25016,39 @@ function Style() {
       .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
       /* La tabla de reclamos tiene una columna menos y textos más largos. */
       .dg-reclamos-tabla { min-width:700px; }
+      .dg-reclamo-paso-tit { display:flex; align-items:center; gap:8px; margin:16px 0 8px; font-size:12px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-reclamo-paso-tit em { font-style:normal; display:inline-grid; place-items:center; width:20px; height:20px; border-radius:50%; background:rgba(var(--dg-accent-rgb),.15); color:var(--dg-accent); font-size:11px; }
+      .dg-reclamo-paso-tit small { text-transform:none; letter-spacing:0; font-weight:500; }
+      .dg-reclamo-opciones { display:flex; flex-wrap:wrap; gap:8px; }
+      .dg-reclamo-opcion { display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:9px 12px; border-radius:10px; border:1px solid rgba(var(--dg-line-rgb),.16); background:transparent; color:var(--dg-text); font:inherit; font-size:13px; font-weight:600; cursor:pointer; text-align:left; }
+      .dg-reclamo-opcion small { font-size:11px; font-weight:500; color:var(--dg-text-dim); }
+      .dg-reclamo-opcion:hover:not(:disabled) { border-color:rgba(var(--dg-accent-rgb),.5); }
+      .dg-reclamo-opcion:focus-visible { outline:2px solid var(--dg-accent); outline-offset:2px; }
+      .dg-reclamo-opcion-on { border-color:var(--dg-accent); background:rgba(var(--dg-accent-rgb),.12); }
+      .dg-reclamo-opcion:disabled { opacity:.55; cursor:default; }
+      .dg-reclamo-motivos .dg-reclamo-opcion { flex:1 1 170px; }
+      .dg-reclamo-llega { margin-top:10px; display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-reclamo-buscar input { width:100%; }
+      .dg-reclamo-buscar-lista { list-style:none; margin:6px 0 0; padding:0; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:10px; overflow:hidden; }
+      .dg-reclamo-buscar-lista li + li { border-top:1px solid rgba(var(--dg-line-rgb),.08); }
+      .dg-reclamo-buscar-lista button { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; width:100%; padding:9px 12px; border:0; background:transparent; color:var(--dg-text); font:inherit; font-size:13px; text-align:left; cursor:pointer; }
+      .dg-reclamo-buscar-lista button:hover, .dg-reclamo-buscar-lista button:focus-visible { background:rgba(var(--dg-accent-rgb),.10); outline:none; }
+      .dg-reclamo-buscar-lista small { color:var(--dg-text-dim); font-size:12px; }
+      .dg-reclamo-buscar-vacio { padding:10px 12px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-reclamo-espejo { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; background:rgba(var(--dg-accent-rgb),.08); font-size:13px; }
+      .dg-reclamo-espejo svg { color:var(--dg-accent); }
+      .dg-reclamo-pasos { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+      .dg-reclamo-pasos li { display:flex; align-items:center; font-size:13px; color:var(--dg-text-dim); }
+      .dg-reclamo-pasos .dg-salida-marca { color:var(--dg-text-dim); font-size:10px; font-weight:700; }
+      .dg-reclamo-pasos small { font-weight:500; color:var(--dg-text-dim); }
+      .dg-reclamo-pasos .dg-reclamo-paso-hecho { color:var(--dg-text); }
+      .dg-reclamo-paso-hecho .dg-salida-marca { border-color:color-mix(in srgb, var(--dg-success) 45%, transparent); background:color-mix(in srgb, var(--dg-success) 22%, transparent); color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); }
+      .dg-reclamo-pasos .dg-reclamo-paso-ahora { color:var(--dg-text); font-weight:700; }
+      .dg-reclamo-paso-ahora .dg-salida-marca { border-color:color-mix(in srgb, var(--dg-warning) 60%, transparent); background:color-mix(in srgb, var(--dg-warning) 18%, transparent); color:color-mix(in srgb, var(--dg-warning) 55%, var(--dg-text)); }
+      .dg-reclamo-ahora { margin-top:12px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),.16); display:flex; flex-direction:column; gap:8px; }
+      .dg-reclamo-ahora-txt { font-size:12px; color:var(--dg-text-dim); }
+      .dg-reclamo-fecha { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dg-text-dim); max-width:220px; }
+      .dg-reclamo-dijo { margin-top:12px; display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dg-text-dim); }
       .dg-reclamos-tabla .dg-envios-dir { min-width:200px; color:var(--dg-text-dim); }
 
       /* El bloque de visita adentro de la tarjeta del reclamo */
