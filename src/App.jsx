@@ -681,6 +681,55 @@ const TALLER_PESTANAS = [
   { id: "bisel_pedidos", label: "Biselados pedidos", cola: "bisel_pedidos", color: "var(--dg-estado-biseladora)" },
 ];
 const infoPestana = (id) => TALLER_PESTANAS.find((x) => x.id === id);
+// ===== EL ORDEN DE FÁBRICA, A MANO (20/11/2026) ==============================
+// Facundo: «necesito poder de orden: el orden de las pestañas, agregar espejos
+// en las listas como yo quiera (que embalen 2 de interior, que armen 2
+// esmerilados que volvieron) y que se vea claro». Se guarda en el kv
+// «orden-fabrica»: { pestanas: [ids], listas: { lista: [ids de pedidos] },
+// sumados: { "simples|fecha": [{ id, desde }] } }.
+function pestanasOrdenadas(orden) {
+  const ids = Array.isArray(orden?.pestanas) ? orden.pestanas : [];
+  return [...ids.map(infoPestana).filter(Boolean), ...TALLER_PESTANAS.filter((t) => !ids.includes(t.id))];
+}
+// Las listas sin días (todas menos Pedidos Simples): todo junto, también los
+// demorados, y primero los más viejos (los urgentes y cambios, arriba de todo).
+function ordenPorDefectoPlana(a, b) {
+  const ua = esUrgente(a) ? 0 : 1, ub = esUrgente(b) ? 0 : 1;
+  if (ua !== ub) return ua - ub;
+  const fa = String(a.pedidoVerificadoFecha || a.fecha || "9999"), fb = String(b.pedidoVerificadoFecha || b.fecha || "9999");
+  if (fa !== fb) return fa.localeCompare(fb);
+  return (Number(a.orden) || 0) - (Number(b.orden) || 0);
+}
+// El orden que se dejó a mano manda; lo nuevo va abajo, en su orden de siempre.
+function aplicarOrdenGuardado(lista, idsGuardados) {
+  const pos = new Map((idsGuardados || []).map((id, i) => [id, i]));
+  return (lista || []).map((p, i) => ({ p, i })).sort((a, b) => {
+    const pa = pos.has(a.p.id) ? pos.get(a.p.id) : null, pb = pos.has(b.p.id) ? pos.get(b.p.id) : null;
+    if (pa !== null && pb !== null) return pa - pb;
+    if (pa !== null) return -1;
+    if (pb !== null) return 1;
+    return a.i - b.i;
+  }).map((x) => x.p);
+}
+function moverEnOrden(ids, id, paso) {
+  const arr = [...(ids || [])];
+  const i = arr.indexOf(id), j = i + paso;
+  if (i < 0 || j < 0 || j >= arr.length) return null;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  return arr;
+}
+const claveSumados = (listaId, fecha) => `${listaId}|${fecha}`;
+function sumadosDelDia(orden, listaId, fecha) {
+  const l = orden?.sumados?.[claveSumados(listaId, fecha)];
+  return Array.isArray(l) ? l : [];
+}
+const TITULO_SUMADOS = {
+  int_embalar: "Para embalar · Interior",
+  esm_armar: "Para armar · Esmerilados que volvieron",
+  esm_cortar: "Para cortar · Esmerilados",
+};
+// Las listas que se pueden sumar a un día de Pedidos Simples.
+const LISTAS_PARA_SUMAR = ["int_embalar", "esm_armar", "esm_cortar"];
 const esPestanaDeArmar = (id) => infoPestana(id)?.cola === "armar";
 // En qué pestaña cae cada pedido.
 function pestanaTaller(pedido) {
@@ -1896,7 +1945,7 @@ const SHARED_SYNC_KEYS = [
   "empleados-sueldo", "liquidaciones-sueldo",
   "auditoria", "admins", "integraciones", "proveedores", "gastos-fijos-plantillas",
   "marketing-biblioteca", "marketing-contenido", "deudas-v2", "anotador-notas", "misiones",
-  "tareas-sector", "trabas-taller", "orden-salidas",
+  "tareas-sector", "trabas-taller", "orden-salidas", "orden-fabrica",
 ];
 
 function App() {
@@ -1926,6 +1975,7 @@ function App() {
   const [trabasTaller, setTrabasTaller] = useState(null);
   // El orden que eligió PostVenta para las salidas de cada día (05/11/2026).
   const [ordenSalidas, setOrdenSalidas] = useState(null);
+  const [ordenFabrica, setOrdenFabrica] = useState(null);
   fijarTrabasTaller(trabasTaller);
   const [reclamos, setReclamos] = useState(null);
   const [stockEspejos, setStockEspejos] = useState(null);
@@ -2224,6 +2274,7 @@ function App() {
       "envios-logistica": setEnviosLogistica,
       "trabas-taller": (v) => setTrabasTaller(v && typeof v === "object" && !Array.isArray(v) ? v : {}),
       "orden-salidas": (v) => setOrdenSalidas(v && typeof v === "object" && !Array.isArray(v) ? v : {}),
+      "orden-fabrica": (v) => setOrdenFabrica(v && typeof v === "object" && !Array.isArray(v) ? v : {}),
       "empleados-sueldo": setEmpleadosSueldo,
       "liquidaciones-sueldo": setLiquidaciones,
       // Se MEZCLA con lo que ya hay: si pisara, se perderían las acciones que
@@ -2659,6 +2710,11 @@ function App() {
       setOrdenSalidas(leido && typeof leido === "object" && !Array.isArray(leido) ? leido : {});
     } catch (e) { setOrdenSalidas({}); }
     try {
+      const of = await storage.get("orden-fabrica", true);
+      const leido = of ? JSON.parse(of.value) : {};
+      setOrdenFabrica(leido && typeof leido === "object" && !Array.isArray(leido) ? leido : {});
+    } catch (e) { setOrdenFabrica({}); }
+    try {
       let reclamosGuardados = await reclamosStore.getAll();
       if (reclamosGuardados.length === 0) {
         try {
@@ -2861,6 +2917,7 @@ function App() {
   const persistTurnosAnotado = conRegistro(persistTurnos, () => turnos, (a, b) => describirCambiosTurnos(a, b, tituloDeTarea));
   async function persistTrabasTaller(next) { guardar("trabas-taller", next, () => setTrabasTaller(next)); }
   async function persistOrdenSalidas(next) { guardar("orden-salidas", next, () => setOrdenSalidas(next)); }
+  async function persistOrdenFabrica(next) { guardar("orden-fabrica", next, () => setOrdenFabrica(next)); }
   async function persistAdmins(next) { guardar("admins", next, () => setAdmins(next)); }
   async function persistIntegraciones(next) { guardar("integraciones", next, () => setIntegraciones(next)); }
   async function persistProveedores(next) { guardar("proveedores", next, () => setProveedores(next)); }
@@ -3192,6 +3249,8 @@ function App() {
             onCambiarTrabas={persistTrabasTaller}
             ordenSalidas={ordenSalidas || {}}
             onChangeOrdenSalidas={persistOrdenSalidas}
+            ordenFabrica={ordenFabrica || {}}
+            onChangeOrdenFabrica={persistOrdenFabrica}
             driveFacturasUrl={integraciones?.driveFacturasUrl || ""}
             sectors={sectors}
             recursos={recursos} onChangeRecursos={persistRecursos}
@@ -18899,7 +18958,7 @@ function FotosDeListasPanel({ pedidos, hoyIso, listaInicial }) {
   );
 }
 
-function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas, auditoria = [] }) {
+function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas, auditoria = [], ordenFabrica = {}, onChangeOrdenFabrica }) {
   const [quienPaso, setQuienPaso] = useState(null);
   // El "editor único" de las listas: la única persona que puede meter espejos
   // de más en un día cuando surge una urgencia. Se configura por nombre en
@@ -18917,6 +18976,33 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const puedoTocarElCandado = !!onCambiarTrabas
     && (nombreEditor ? soyEditorUnico : session?.role === "admin");
   const estaTrabado = (fecha) => trabasTaller?.[claveTraba(lista, fecha)]?.estado === "trabada";
+  // Quién puede ordenar: un administrador o el editor único.
+  const puedeOrdenar = !!onChangeOrdenFabrica && canEdit && (session?.role === "admin" || soyEditorUnico);
+  const pestanas = pestanasOrdenadas(ordenFabrica);
+  function moverPestana(id, paso) {
+    const nuevo = moverEnOrden(pestanas.map((t) => t.id), id, paso);
+    if (nuevo) onChangeOrdenFabrica({ ...ordenFabrica, pestanas: nuevo });
+  }
+  function moverEnLista(ids, id, paso) {
+    const nuevo = moverEnOrden(ids, id, paso);
+    if (nuevo) onChangeOrdenFabrica({ ...ordenFabrica, listas: { ...(ordenFabrica.listas || {}), [lista]: nuevo } });
+  }
+  function sumarDeOtraLista(fecha, valor) {
+    const [desde, id] = String(valor || "").split("::");
+    if (!desde || !id) return;
+    const clave = claveSumados(lista, fecha);
+    const ya = sumadosDelDia(ordenFabrica, lista, fecha);
+    if (ya.some((x) => x.id === id)) return;
+    // Los días que ya pasaron se limpian solos.
+    const sumados = Object.fromEntries(Object.entries(ordenFabrica.sumados || {}).filter(([k]) => (k.split("|")[1] || "") >= hoyTaller));
+    onChangeOrdenFabrica({ ...ordenFabrica, sumados: { ...sumados, [clave]: [...ya, { id, desde }] } });
+    const p = pedidos.find((x) => x.id === id);
+    if (onRegistrar && p) onRegistrar("Sumó un espejo de otra lista a un día", `#${p.orden} — ${p.cliente} — ${infoPestana(desde)?.label || desde} → ${nombreDiaTaller(fecha, hoyTaller)}`);
+  }
+  function sacarSumado(fecha, id) {
+    const clave = claveSumados(lista, fecha);
+    onChangeOrdenFabrica({ ...ordenFabrica, sumados: { ...(ordenFabrica.sumados || {}), [clave]: sumadosDelDia(ordenFabrica, lista, fecha).filter((x) => x.id !== id) } });
+  }
   function cambiarTraba(fecha, trabar) {
     if (!puedoTocarElCandado) return;
     const clave = claveTraba(lista, fecha);
@@ -18939,7 +19025,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   }
   const [filtroEstado, setFiltroEstado] = useState("activos");
   const [busqueda, setBusqueda] = useState("");
-  const [lista, setLista] = useState("simples");
+  // Arranca en la primera pestaña del orden que eligió Facundo.
+  const [lista, setLista] = useState(() => pestanasOrdenadas(ordenFabrica)[0]?.id || "simples");
+  const [ordenandoPestanas, setOrdenandoPestanas] = useState(false);
   const [menuAbierto, setMenuAbierto] = useState(null);
   const [pedidoParaCancelar, setPedidoParaCancelar] = useState(null);
   const [pedidoParaReabrir, setPedidoParaReabrir] = useState(null);
@@ -19059,7 +19147,10 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   // La lista «Demorados» de la vista principal: solo los de semanas
   // anteriores. Los de esta semana siguen en su día (el filtro los trae a todos).
   const diaDelPlan = diasDelPlanTaller(pedidos, hoyTaller);
-  const demoradosLista = demorados.filter((p) => vaALaListaDeDemorados(p, hoyTaller, sinHacerDe, diaDelPlan));
+  // Desde el 20/11/2026 solo los de Pedidos Simples: los de interior para
+  // embalar y los esmerilados se quedan en su pestaña, todos juntos y marcados
+  // (Facundo: «estaban escondidos en la lista de demorados»).
+  const demoradosLista = demorados.filter((p) => pestanaTaller(p) === "simples" && vaALaListaDeDemorados(p, hoyTaller, sinHacerDe, diaDelPlan));
   const idsDemorados = new Set(demoradosLista.map((p) => p.id));
   const afuera = activos.filter(estaAfueraDelTaller);
   let baseVisibles = filtroEstado === "activos"
@@ -19095,6 +19186,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     ? visibles.sort((a, b) => (a[campoPrometidaAfuera(a)] || "9999-99-99").localeCompare(b[campoPrometidaAfuera(b)] || "9999-99-99"))
     : filtroEstado === "demorados"
     ? visibles.sort(ordenDemorados)
+    : filtroEstado === "activos" && lista !== "simples"
+    ? aplicarOrdenGuardado(visibles.sort(ordenPorDefectoPlana), ordenFabrica?.listas?.[lista])
     : esPestanaDeArmar(lista)
     ? visibles.sort((a, b) => {
         const pa = prioridadListaArmar(a), pb = prioridadListaArmar(b);
@@ -19112,8 +19205,50 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       });
   // Urgentes / reclamos primero (sort estable: mantiene el orden entre los del mismo nivel).
   // (En demorados manda cuánto hace que está frenado.)
-  if (filtroEstado !== "demorados" && filtroEstado !== "historial") visibles = [...visibles].sort((a, b) => (esUrgente(b) ? 1 : 0) - (esUrgente(a) ? 1 : 0));
+  if (filtroEstado !== "demorados" && filtroEstado !== "historial" && !(filtroEstado === "activos" && lista !== "simples")) visibles = [...visibles].sort((a, b) => (esUrgente(b) ? 1 : 0) - (esUrgente(a) ? 1 : 0));
 
+  // En qué día de Pedidos Simples se sumó cada espejo de otra lista (hoy o después).
+  const enDiaSumado = new Map();
+  Object.entries(ordenFabrica?.sumados || {}).forEach(([k, l]) => {
+    const [listaK, fechaK] = k.split("|");
+    if (listaK !== "simples" || !fechaK || fechaK < hoyTaller || !Array.isArray(l)) return;
+    l.forEach((x) => { if (!enDiaSumado.has(x.id) || fechaK < enDiaSumado.get(x.id)) enDiaSumado.set(x.id, fechaK); });
+  });
+  function tarjetasDe(p) {
+    const cant = Math.max(1, Number(p.cant) || 1);
+    if (cant <= 1) return [renderCard(p, 1, 1)];
+    if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
+    return Array.from({ length: cant }, (_, i) => renderCard(p, i + 1, cant));
+  }
+  function tarjetasPlanas(lista_) {
+    const idsDem = new Set(demorados.map((p) => p.id));
+    const ids = lista_.map((p) => p.id);
+    const nDem = lista_.filter((p) => idsDem.has(p.id)).length;
+    return [
+      lista_.length > 0 && (
+        <div className="dg-plana-aviso" key="plana-aviso">
+          <AlertTriangle size={14} aria-hidden="true" />
+          <span>Están todos juntos{nDem ? `, también los ${nDem} demorado${nDem === 1 ? "" : "s"}` : ""}. <b>Prioridad de arriba para abajo: los más viejos van primero.</b>{puedeOrdenar && !busqueda.trim() ? " Con las flechas cambiás el orden." : ""}</span>
+        </div>
+      ),
+      ...lista_.map((p, i) => (
+        <div className={`dg-plana-item ${idsDem.has(p.id) ? "dg-plana-item-demorado" : ""}`} key={`plana-${p.id}`}>
+          <div className="dg-plana-bar">
+            <span className="dg-plana-pos">{i + 1}</span>
+            {idsDem.has(p.id) && <span className="dg-plana-demorado"><AlertTriangle size={11} /> Demorado{diasEnEtapa(p) ? ` · ${diasEnEtapa(p)} días acá` : ""}</span>}
+            {enDiaSumado.has(p.id) && <span className="dg-plana-sumado">También en la lista del {nombreDiaTaller(enDiaSumado.get(p.id), hoyTaller).toLowerCase()}</span>}
+            {puedeOrdenar && !busqueda.trim() && (
+              <span className="dg-plana-flechas">
+                <button type="button" className="dg-icon-btn" disabled={i === 0} onClick={() => moverEnLista(ids, p.id, -1)} aria-label="Subir"><ChevronUp size={15} /></button>
+                <button type="button" className="dg-icon-btn" disabled={i === lista_.length - 1} onClick={() => moverEnLista(ids, p.id, 1)} aria-label="Bajar"><ChevronDown size={15} /></button>
+              </span>
+            )}
+          </div>
+          {tarjetasDe(p)}
+        </div>
+      )),
+    ];
+  }
   function setEstado(id, estado) {
     onChange(pedidos.map((p) => {
       if (p.id !== id) return p;
@@ -19758,12 +19893,31 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       {filtroEstado !== "historial" && filtroEstado !== "demorados" ? (
         <>
           <div className="dg-process-tabs dg-factory-queue-tabs" role="tablist" aria-label="Listas de fabricación">
-            {TALLER_PESTANAS.map((item) => (
+            {pestanas.map((item) => (
               <button key={item.id} role="tab" aria-selected={lista === item.id} className={lista === item.id ? "dg-process-tab-on" : ""} style={{ "--pc": item.color }} onClick={() => setLista(item.id)}>
                 <span>{item.label}<small>{listaCounts[item.id] || 0}</small></span>
               </button>
             ))}
           </div>
+          {puedeOrdenar && (
+            <div className="dg-orden-fab">
+              <button type="button" className={`dg-btn-ghost dg-mini-btn ${ordenandoPestanas ? "dg-orden-fab-on" : ""}`} onClick={() => setOrdenandoPestanas((v) => !v)}>
+                <GripVertical size={13} /> {ordenandoPestanas ? "Listo" : "Ordenar las pestañas"}
+              </button>
+              {ordenandoPestanas && (
+                <ol className="dg-orden-fab-lista">
+                  {pestanas.map((t, i) => (
+                    <li key={t.id} style={{ "--pc": t.color }}>
+                      <span className="dg-orden-fab-n">{i + 1}</span>
+                      <span className="dg-orden-fab-nombre">{t.label}</span>
+                      <button type="button" className="dg-icon-btn" disabled={i === 0} onClick={() => moverPestana(t.id, -1)} aria-label={`Subir ${t.label}`}><ChevronUp size={15} /></button>
+                      <button type="button" className="dg-icon-btn" disabled={i === pestanas.length - 1} onClick={() => moverPestana(t.id, 1)} aria-label={`Bajar ${t.label}`}><ChevronDown size={15} /></button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
         </>
       ) : null}
       <div className="dg-crm-filters">
@@ -19797,8 +19951,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
       {filtroEstado !== "fotos" && visibles.length === 0 && !(filtroEstado === "activos" && demoradosLista.length > 0) && <div className="dg-empty">{filtroEstado === "demorados" ? "No hay espejos demorados." : filtroEstado === "historial" ? "Todavía no hay espejos terminados en el historial." : `No hay espejos en “${infoPestana(lista)?.label || "esta lista"}”.`}</div>}
       <div className="dg-fab-lista">
-        {filtroEstado === "activos" && !esPestanaDeArmar(lista) && seccionDemorados()}
-        {filtroEstado === "fotos" ? <FotosDeListasPanel pedidos={pedidos} hoyIso={hoyTaller} listaInicial={lista} /> : (esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
+
+        {filtroEstado === "fotos" ? <FotosDeListasPanel pedidos={pedidos} hoyIso={hoyTaller} listaInicial={lista} /> : (lista === "simples" && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller, lista);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
           const diaHoyPlan = diaDeHoyDelPlan(plan);
@@ -19961,7 +20115,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 const espejosDia = dia.espejos - dia.items.filter((x) => idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0);
                 const sinHacerVisible = dia.pasado ? dia.items.filter((x) => !idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0) : 0;
                 if (dia.pasado && items.length === 0 && dia.porEmbalarU === 0) return null;
-                if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && !diasAbiertos.has(dia.fecha)) return null;
+                // Lo que Facundo sumó de otras listas a este día (interior para
+                // embalar, esmerilados para armar…): aparte, con su color.
+                const sumados = dia.pasado ? [] : sumadosDelDia(ordenFabrica, lista, dia.fecha)
+                  .map((x) => ({ ...x, pedido: pedidos.find((p) => p.id === x.id) }))
+                  .filter((x) => x.pedido && x.pedido.estado !== "Cancelado" && coincide(x.pedido));
+                if (items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && sumados.length === 0 && !diasAbiertos.has(dia.fecha)) return null;
                 // A un día que ya pasó no se le puede mandar trabajo nuevo, y
                 // a uno trabado tampoco (ni sacarle lo suyo).
                 const arrastrable = puedeArrastrar && !dia.pasado && !dia.trabada;
@@ -19982,6 +20141,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                         {dia.trabada && <span className="dg-dia-taller-trabada" title={`Trabada por ${traba?.por || "la app"}`}><Lock size={12} /> trabada</span>}
                         <span className="dg-dia-taller-mix">{espejosDia} espejo{espejosDia === 1 ? "" : "s"}</span>
                         {dia.extras > 0 && <span className="dg-dia-taller-extra-chip">+{dia.extras} extra</span>}
+                        {sumados.length > 0 && <span className="dg-dia-taller-sumados-chip">+{sumados.length} de otras listas</span>}
                         {sinHacerVisible > 0 && <span className="dg-dia-taller-vencido-chip">SIN HACER {sinHacerVisible}</span>}
                         {dia.porEmbalarU > 0 && <span className="dg-dia-taller-embalar"><Package size={12} /> falta embalar {dia.porEmbalarU}</span>}
                         {hechosU > 0 && <span className="dg-dia-taller-hechos"><Check size={12} /> {hechosU}</span>}
@@ -20062,6 +20222,42 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               {cartas(x)}
                             </div>
                           ))}
+                          {puedeOrdenar && !dia.pasado && (() => {
+                            const ya = new Set(sumados.map((x) => x.id));
+                            const grupos = LISTAS_PARA_SUMAR.map((tab) => ({ tab, items: activos.filter((p) => pestanaTaller(p) === tab && !ya.has(p.id)).sort(ordenPorDefectoPlana) }))
+                              .filter((g) => g.items.length);
+                            if (!grupos.length) return null;
+                            return (
+                              <div className="dg-sumar-extra dg-sumar-otra">
+                                <select value="" onChange={(e) => sumarDeOtraLista(dia.fecha, e.target.value)} aria-label="Sumar un espejo de otra lista a este día">
+                                  <option value="">+ Sumar de otra lista (embalar interior, armar esmerilados…)</option>
+                                  {grupos.map((g) => (
+                                    <optgroup key={g.tab} label={TITULO_SUMADOS[g.tab] || infoPestana(g.tab)?.label}>
+                                      {g.items.map((p) => (<option key={p.id} value={`${g.tab}::${p.id}`}>#{p.orden} · {p.cliente} · {medidaEspejo(p, { cm: false })}</option>))}
+                                    </optgroup>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })()}
+                          {LISTAS_PARA_SUMAR.map((tab) => {
+                            const delTab = sumados.filter((x) => x.desde === tab);
+                            if (!delTab.length) return null;
+                            return (
+                              <div className="dg-sumados" key={`sum-${tab}`} style={{ "--pc": infoPestana(tab)?.color }}>
+                                <div className="dg-sumados-tit">{TITULO_SUMADOS[tab]} <small>{delTab.length} {delTab.length === 1 ? "espejo" : "espejos"} · también siguen en su pestaña</small></div>
+                                {delTab.map((x) => (
+                                  <div className="dg-dia-item dg-dia-item-sumado" key={`sum-${tab}-${x.id}`}>
+                                    <div className="dg-dia-item-bar">
+                                      <span className="dg-dia-item-tipo">{infoPestana(tab)?.label}</span>
+                                      {puedeOrdenar && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => sacarSumado(dia.fecha, x.id)}>Sacar de este día</button>}
+                                    </div>
+                                    {tarjetasDe(x.pedido)}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
                           {!quieta && dia.hechos.length > 0 && (
                             <details className="dg-dia-hechos">
                               <summary><Check size={13} /> Terminados hoy ({hechosU})</summary>
@@ -20080,7 +20276,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               })}
             </>
           );
-        })() : (esPestanaDeArmar(lista) && filtroEstado !== "afuera" && filtroEstado !== "historial" && filtroEstado !== "demorados") ? (() => {
+        })() : (esPestanaDeArmar(lista) && filtroEstado !== "activos" && filtroEstado !== "afuera" && filtroEstado !== "historial" && filtroEstado !== "demorados") ? (() => {
           const mapaGrupos = new Map();
           visibles.forEach((p) => {
             const grupo = grupoListaArmar(p);
@@ -20140,7 +20336,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               </div>
             );
           });
-        })() : filtroEstado === "demorados" ? tarjetasDemoradas(visibles) : visibles.flatMap((p) => {
+        })() : filtroEstado === "demorados" ? tarjetasDemoradas(visibles) : filtroEstado === "activos" && lista !== "simples" ? tarjetasPlanas(visibles) : visibles.flatMap((p) => {
           const cant = Math.max(1, Number(p.cant) || 1);
           if (cant <= 1) return [renderCard(p, 1, 1)];
           if (esPedidoMultiUnidad(p)) return [renderMultiCard(p, cant)];
@@ -24483,7 +24679,7 @@ function SectorPage({
   admins, onChangeAdmins, auditoria, onRegistrar, kommoSubdominio, driveFacturasUrl, editorListas = "", linkResena = "",
   guias = {}, onChangeGuias, turnos = [], onChangeTurnos, misiones = [], onChangeMisiones,
   tareasSector = {}, onChangeTareasSector,
-  trabasTaller = {}, onCambiarTrabas, ordenSalidas = {}, onChangeOrdenSalidas,
+  trabasTaller = {}, onCambiarTrabas, ordenSalidas = {}, onChangeOrdenSalidas, ordenFabrica = {}, onChangeOrdenFabrica,
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
   deudas, onChangeDeudas, notasAnotador, onChangeNotasAnotador,
@@ -24673,7 +24869,7 @@ function SectorPage({
       )}
 
       {subpage === "pedidos" && sector.id === "fabrica" && (
-        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} editorListas={editorListas} trabasTaller={trabasTaller} onCambiarTrabas={onCambiarTrabas} auditoria={auditoria || []} />
+        canSeePedidos ? <FabricaPedidosPage pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditFabrica} puedeBorrar={puedeBorrar} session={session} onRegistrar={onRegistrar} editorListas={editorListas} trabasTaller={trabasTaller} onCambiarTrabas={onCambiarTrabas} auditoria={auditoria || []} ordenFabrica={ordenFabrica} onChangeOrdenFabrica={onChangeOrdenFabrica} />
           : <LockedPage label="Pedidos de fábrica" onLogin={onRequestLogin} />
       )}
 
@@ -25514,6 +25710,26 @@ function Style() {
       .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
       /* La tabla de reclamos tiene una columna menos y textos más largos. */
       .dg-reclamos-tabla { min-width:700px; }
+      .dg-orden-fab { display:flex; flex-direction:column; align-items:flex-start; gap:8px; margin:-4px 0 12px; }
+      .dg-orden-fab-on { border-color:var(--dg-accent); color:var(--dg-accent); }
+      .dg-orden-fab-lista { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; width:100%; max-width:420px; }
+      .dg-orden-fab-lista li { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:10px; border:1px solid rgba(var(--dg-line-rgb),.14); box-shadow:inset 3px 0 0 var(--pc); }
+      .dg-orden-fab-n { width:20px; text-align:center; font-weight:800; color:var(--dg-text-dim); font-variant-numeric:tabular-nums; }
+      .dg-orden-fab-nombre { flex:1; font-weight:600; }
+      .dg-plana-aviso { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; padding:10px 12px; border-radius:10px; font-size:13px; background:color-mix(in srgb, var(--dg-warning) 12%, transparent); border:1px solid color-mix(in srgb, var(--dg-warning) 35%, transparent); color:var(--dg-text); }
+      .dg-plana-aviso svg { flex-shrink:0; margin-top:2px; color:color-mix(in srgb, var(--dg-warning) 70%, var(--dg-text)); }
+      .dg-plana-item { margin-bottom:12px; }
+      .dg-plana-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:4px; }
+      .dg-plana-pos { display:inline-grid; place-items:center; min-width:24px; height:24px; padding:0 6px; border-radius:999px; font-size:12px; font-weight:800; background:rgba(var(--dg-line-rgb),.10); color:var(--dg-text); font-variant-numeric:tabular-nums; }
+      .dg-plana-demorado { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; background:color-mix(in srgb, var(--dg-danger) 16%, transparent); color:color-mix(in srgb, var(--dg-danger) 65%, var(--dg-text)); }
+      .dg-plana-item-demorado .dg-plana-pos { background:color-mix(in srgb, var(--dg-danger) 22%, transparent); }
+      .dg-plana-sumado { padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-text); }
+      .dg-plana-flechas { margin-left:auto; display:inline-flex; gap:2px; }
+      .dg-dia-taller-sumados-chip { padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; background:color-mix(in srgb, var(--dg-interior) 20%, transparent); color:var(--dg-text); }
+      .dg-sumados { margin:14px 0 6px; padding:10px 10px 4px; border-radius:12px; border:1px solid color-mix(in srgb, var(--pc) 45%, transparent); background:color-mix(in srgb, var(--pc) 8%, transparent); }
+      .dg-sumados-tit { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; margin-bottom:8px; font-size:13px; font-weight:800; letter-spacing:.3px; text-transform:uppercase; color:color-mix(in srgb, var(--pc) 65%, var(--dg-text)); }
+      .dg-sumados-tit small { text-transform:none; letter-spacing:0; font-weight:500; color:var(--dg-text-dim); }
+      .dg-sumar-otra select { border-color:color-mix(in srgb, var(--dg-interior) 50%, transparent); }
       .dg-dia-item-hecho { opacity:.72; }
       .dg-dia-item-hecho:hover, .dg-dia-item-hecho:focus-within { opacity:1; }
       .dg-dia-item-quieto { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; background:color-mix(in srgb, var(--dg-success) 18%, transparent); color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); }
