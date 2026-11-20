@@ -7668,6 +7668,7 @@ const CAMPOS_DEL_PEDIDO = [
 // factura cubre el pedido completo (el link de seguimiento ya la muestra así).
 // Faltaban en la lista de arriba, así que «Editar cliente y entrega» las
 // descartaba al guardar: subían la factura, tocaban Guardar y desaparecía.
+const CAMPOS_DEL_REMITO = ["remitoNumeroGuia", "remitoUrl"];
 const CAMPOS_DE_LA_VENTA = ["facturado", "tipoFactura", "facturaUrl", "facturasExtra", "ordenPapel", "pagos", "fotosEntrega", "comision", "saldoPorTransferencia", "rendicionFlete"];
 
 // Un pedido puede tener MÁS DE UNA factura: a veces el cliente la pide en
@@ -9649,6 +9650,12 @@ function prepararEntregaEditada(pedidos, grupo, editado, montosPorEspejo, regist
   const ids = new Set((grupo || []).map((p) => p.id));
   const patch = soloCamposDelPedido(editado);
   CAMPOS_DE_LA_VENTA.forEach((c) => { if (c in editado) patch[c] = editado[c]; });
+  // El remito de Vía Cargo (20/11/2026): antes se perdía al guardar desde
+  // acá. Solo se toca si cambió, para no pisar el de otro espejo del envío.
+  const antes = (grupo || [])[0] || {};
+  CAMPOS_DEL_REMITO.forEach((c) => { if (c in editado && String(editado[c] || "") !== String(antes[c] || "")) patch[c] = editado[c]; });
+  const guiaNueva = !!String(patch.remitoNumeroGuia || "").trim() && !String(antes.remitoNumeroGuia || "").trim();
+  const hoyDespacho = new Date().toISOString().slice(0, 10);
   // Con UN solo espejo no hay ambigüedad: el monto, el anticipo y el estado
   // del formulario son los de ese espejo. Con varios, el monto de cada uno
   // viene aparte (montosPorEspejo) y el estado se maneja espejo por espejo.
@@ -9666,6 +9673,11 @@ function prepararEntregaEditada(pedidos, grupo, editado, montosPorEspejo, regist
     if (!ids.has(p.id)) return p;
     const m = montos[p.id];
     let nuevo = { ...p, ...patch };
+    // Cargar la guía de un interior = ya salió: pasa a «Despachado», como
+    // cuando se carga desde PostVenta › Envíos al interior.
+    if (guiaNueva && nuevo.metodo === "Interior" && !["Entregado", "Cancelado"].includes(nuevo.estado)) {
+      nuevo = { ...nuevo, estado: "Despachado", despachadoFecha: nuevo.despachadoFecha || editado.despachadoFecha || hoyDespacho };
+    }
     if (m) nuevo = { ...nuevo, monto: m.monto, anticipo: m.anticipo };
     const cambio = ingresoPorCambioDeMonto(nuevo);
     if (cambio && registraPlata) {
@@ -10431,7 +10443,15 @@ async function leerNumeroGuiaDeImagen(archivo) {
   return null;
 }
 
-function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
+function RemitoViaCargoCampo({ pedido, canEdit, onCambiar, guardarAlSalir = false }) {
+  const [guiaEscrita, setGuiaEscrita] = useState(pedido.remitoNumeroGuia || "");
+  const escribiendoGuia = useRef(false);
+  useEffect(() => { if (!escribiendoGuia.current) setGuiaEscrita(pedido.remitoNumeroGuia || ""); }, [pedido.remitoNumeroGuia]);
+  function guardarGuiaEscrita() {
+    escribiendoGuia.current = false;
+    const v = guiaEscrita.trim();
+    if (v !== String(pedido.remitoNumeroGuia || "").trim()) aplicarCambios({ remitoNumeroGuia: v });
+  }
   const [subiendo, setSubiendo] = useState(false);
   const [leyendoGuia, setLeyendoGuia] = useState(false);
   const [borrando, setBorrando] = useState(false);
@@ -10494,12 +10514,25 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar }) {
       <div className="dg-section-header"><Package size={14} /> Remito de Vía Cargo</div>
       <div className="dg-field-grid">
         <Field label="Número de guía">
-          <input
-            disabled={!canEdit}
-            value={pedido.remitoNumeroGuia || ""}
-            onChange={(e) => aplicarCambios({ remitoNumeroGuia: e.target.value })}
-            placeholder="Ej: 999036524031"
-          />
+          {guardarAlSalir ? (
+            <input
+              disabled={!canEdit}
+              value={guiaEscrita}
+              onFocus={() => { escribiendoGuia.current = true; }}
+              onChange={(e) => setGuiaEscrita(e.target.value)}
+              onBlur={guardarGuiaEscrita}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              placeholder="Ej: 999036524031"
+              inputMode="numeric"
+            />
+          ) : (
+            <input
+              disabled={!canEdit}
+              value={pedido.remitoNumeroGuia || ""}
+              onChange={(e) => aplicarCambios({ remitoNumeroGuia: e.target.value })}
+              placeholder="Ej: 999036524031"
+            />
+          )}
         </Field>
         <Field label="Comprobante (foto o PDF)">
           <div className="dg-factura-campo">
@@ -11772,7 +11805,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
 
                               <div className="dg-salida-bloque dg-salida-bloque-ancho">
                                 <div className="dg-salida-tit">El remito de Vía Cargo</div>
-                                <RemitoViaCargoCampo pedido={f.p} canEdit={canEdit} onCambiar={(cambios) => updateGrupo(f.p, cambios)} />
+                                <RemitoViaCargoCampo pedido={f.p} canEdit={canEdit} guardarAlSalir onCambiar={(cambios) => updateGrupo(f.p, cambios)} />
                               </div>
 
                               {canEdit && (
@@ -11888,7 +11921,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
               </div>
               {guiaAbierta === clave && (
                 <div className="dg-interior-guia">
-                  <RemitoViaCargoCampo pedido={p} canEdit={canEdit} onCambiar={(cambios) => updateGrupo(p, cambios)} />
+                  <RemitoViaCargoCampo pedido={p} canEdit={canEdit} guardarAlSalir onCambiar={(cambios) => updateGrupo(p, cambios)} />
                 </div>
               )}
               </Fragment>
