@@ -12134,7 +12134,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
                 <Printer size={13} /> Rótulos ({bultosElegidos})
               </button>
               <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => abrirTirasContieneEspejo(espejosElegidos.reduce((a, p) => a + (Number(p.cant) > 1 ? p.cant : 1), 0))}>
-                <AlertTriangle size={13} /> Tiras "Contiene espejo"
+                <AlertTriangle size={13} /> Tiras "Contiene vidrio"
               </button>
               {canEdit && (
                 <button type="button" className="dg-btn-ghost dg-mini-btn dg-interior-despachar" onClick={() => marcarDespachados(elegidas)}>
@@ -28920,22 +28920,23 @@ function abrirDatosDespacho(lista) {
   abrirParaImprimir(html);
 }
 
-// 3ra impresión del despacho: tiras "CONTIENE ESPEJO" para envolver los
+// 3ra impresión del despacho: tiras "CONTIENE VIDRIO" (antes «contiene espejo —
+// frágil»; 20/11/2026 Facundo pidió solo «CONTIENE VIDRIO») para envolver los
 // paquetes, varias por hoja A4, listas para cortar.
 function abrirTirasContieneEspejo(cantidadEspejos) {
   const n = Math.max(1, Number(cantidadEspejos) || 1) * 3; // 3 tiras por cada espejo
   const tiras = Array.from({ length: n }).map(() => `
-      <div class="tira">⚠ CONTIENE ESPEJO — FRÁGIL — MANEJAR CON CUIDADO ⚠</div>`).join("");
+      <div class="tira">CONTIENE VIDRIO</div>`).join("");
 
   const html = `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Tiras — Contiene espejo</title>
+<html lang="es"><head><meta charset="utf-8"><title>Tiras — Contiene vidrio</title>
 <style>
   * { box-sizing:border-box; }
   body { font-family: Arial, Helvetica, sans-serif; margin:10mm; }
   .tira {
     width:100%; height:32mm; margin-bottom:6mm; border:3px solid #111; border-radius:6px;
     display:flex; align-items:center; justify-content:center; text-align:center;
-    font-size:22px; font-weight:800; letter-spacing:1px; color:#111;
+    font-size:44px; font-weight:900; letter-spacing:4px; color:#111;
     page-break-inside:avoid;
   }
   @media print { body { margin:6mm; } }
