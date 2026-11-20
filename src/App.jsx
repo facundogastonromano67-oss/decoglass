@@ -1805,6 +1805,8 @@ function describirCambiosReclamos(antes, despues) {
     else if (cambio(a, d, "solucionId") && d.solucionId) { accion = "Eligió la solución de un reclamo"; textos.push(RECLAMO_SOLUCIONES[d.solucionId]?.label || d.solucionId); }
     else if (cambio(a, d, "paso") && d.paso) { accion = "Avanzó un reclamo"; textos.push(`pasó a «${estadoReclamo(d)}»`); }
     else if (["fechaColecta", "fechaEntrega", "fechaVisita"].some((c) => cambio(a, d, c))) { accion = "Puso fecha en un reclamo"; }
+    else if (cambio(a, d, "origen") && d.origen) { accion = "Cargó el origen de un reclamo"; textos.push(ORIGENES_RECLAMO.find((o) => o.id === d.origen)?.label || d.origen); }
+    else if (JSON.stringify(a.costos || {}) !== JSON.stringify(d.costos || {})) { accion = "Cargó el costo de un reclamo"; textos.push(money(costoDeReclamo(d, []))); }
     else if (cambio(a, d, "pedidoOrigenId") && d.pedidoOrigenId) { accion = "Ató un reclamo a su pedido"; textos.push(`#${d.ordenOrigen || "—"}`); }
     else if (cambio(a, d, "solucion") && String(d.solucion || "").trim()) { accion = "Le ofreció una solución"; textos.push(String(d.solucion).trim().slice(0, 80)); }
     else if (cambio(a, d, "fechaEnvio")) { accion = "Puso fecha de visita"; textos.push(d.fechaEnvio ? `para el ${diaMesCorto(d.fechaEnvio)}` : "la sacó"); }
@@ -14577,6 +14579,66 @@ function salidaDeReclamo(r) {
   if (reclamoVisitaPendiente(r)) return { r, original: r, chip: "A domicilio", campoFecha: "fechaEnvio", fechaLabel: "Fecha de la visita", hecho: "Ya fuimos", avanza: false };
   return null;
 }
+// ===== Origen del problema y costo del reclamo (20/11/2026) =====
+// Sin esto los números solo dicen QUÉ se rompe; con el origen dicen POR QUÉ
+// (si siete de doce son del mismo flete, el problema es ese flete) y con el
+// costo, cuánto nos sale cada mes.
+const ORIGENES_RECLAMO = [
+  { id: "fabrica", label: "Fábrica" },
+  { id: "transporte", label: "Transporte (flete)" },
+  { id: "proveedor", label: "Proveedor (LED o insumo)" },
+  { id: "venta", label: "Venta mal cargada" },
+  { id: "cliente", label: "Uso del cliente" },
+  { id: "natural", label: "Desgaste natural del espejo" },
+];
+// Lo que suele ser, para ayudar a elegir (no se guarda solo).
+const ORIGEN_SUGERIDO_RECLAMO = { roto: "transporte", oxidado: "natural", insumo: "proveedor", error: "venta", rayado: "fabrica", pieza: "fabrica", demora: "fabrica", atencion: "venta" };
+const COSTOS_RECLAMO = [
+  { id: "espejo", label: "Espejo o materiales" },
+  { id: "viaje", label: "Viajes y flete" },
+  { id: "repuesto", label: "Repuesto" },
+  { id: "otros", label: "Otros" },
+];
+function origenDeReclamo(r) {
+  return ORIGENES_RECLAMO.find((o) => o.id === r?.origen) || null;
+}
+// El beneficio también es plata que no entra: el descuento, y el envío que
+// se dejó sin cargo (lo que costaba en el pedido).
+function beneficioDeReclamo(r, pedidos) {
+  if (!r?.beneficioAplicado) return 0;
+  if (r.solucionId === "descuento") return Math.max(0, Number(r.descuento) || 0);
+  if (r.solucionId === "envio_gratis") {
+    const origen = (pedidos || []).find((p) => p && p.id === r.pedidoOrigenId);
+    return Math.max(0, Number(origen?.costoEnvio) || 0);
+  }
+  return 0;
+}
+function costoDeReclamo(r, pedidos) {
+  const c = r?.costos || {};
+  return COSTOS_RECLAMO.reduce((t, x) => t + Math.max(0, Number(c[x.id]) || 0), 0) + beneficioDeReclamo(r, pedidos);
+}
+// Los números de los reclamos de un período: por origen, por flete, por tipo
+// de espejo y cuánto costaron.
+function numerosDeReclamos(lista, pedidos) {
+  const contar = (fn) => {
+    const m = new Map();
+    lista.forEach((r) => { const k = fn(r); if (k) m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n);
+  };
+  const porId = new Map((pedidos || []).map((p) => [p.id, p]));
+  return {
+    porOrigen: contar((r) => origenDeReclamo(r)?.label || "Sin origen cargado"),
+    porFlete: contar((r) => (r.origen === "transporte" ? (String(r.fleteOrigen || "").trim() || "Sin flete cargado") : "")),
+    porTipoEspejo: contar((r) => {
+      const p = porId.get(r.pedidoOrigenId);
+      if (!p) return "";
+      return (TALLER_MODELOS.find((m) => m.id === pedidoProcesoTaller(p)) || {}).label || "";
+    }),
+    costo: lista.reduce((t, r) => t + costoDeReclamo(r, pedidos), 0),
+    conCosto: lista.filter((r) => costoDeReclamo(r, pedidos) > 0).length,
+  };
+}
+
 // Los flujos que necesitan la dirección del cliente.
 function reclamoNecesitaDireccion(r) {
   return ["taller_retiro", "domicilio"].includes(flujoDeReclamo(r));
@@ -15189,6 +15251,42 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, onChangePedidos, ped
                                         <Bell size={13} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar otra vez" : "Avisar al equipo"}
                                       </button>
                                     </div>
+                                  </div>
+
+                                  <div className="dg-salida-bloque dg-salida-bloque-ancho">
+                                    <div className="dg-salida-tit">Origen y costo</div>
+                                    <div className="dg-reclamo-llega" style={{ marginTop: 0 }}><span>¿De dónde vino el problema?</span></div>
+                                    <div className="dg-reclamo-opciones" role="radiogroup" aria-label="Origen del problema" style={{ marginTop: 6 }}>
+                                      {ORIGENES_RECLAMO.map((o) => (
+                                        <button key={o.id} type="button" role="radio" aria-checked={r.origen === o.id}
+                                          className={`dg-reclamo-opcion ${r.origen === o.id ? "dg-reclamo-opcion-on" : ""}`}
+                                          onClick={() => setCampoReclamo(r.id, { origen: r.origen === o.id ? "" : o.id })}>
+                                          {o.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    {!r.origen && ORIGEN_SUGERIDO_RECLAMO[r.motivo] && (
+                                      <p className="dg-salida-nota">Para «{etiquetaMotivoReclamo(r)}» suele ser: {ORIGENES_RECLAMO.find((o) => o.id === ORIGEN_SUGERIDO_RECLAMO[r.motivo]).label.toLowerCase()}.</p>
+                                    )}
+                                    {r.origen === "transporte" && (
+                                      <label className="dg-reclamo-fecha" style={{ marginTop: 10 }}>
+                                        <span>Qué flete lo llevó</span>
+                                        <CampoTextoGuardado value={r.fleteOrigen} onGuardar={(v) => setCampoReclamo(r.id, { fleteOrigen: v })} placeholder="Nombre del flete" />
+                                      </label>
+                                    )}
+                                    <div className="dg-salida-campos dg-reclamo-costos" style={{ marginTop: 12 }}>
+                                      {COSTOS_RECLAMO.map((c) => (
+                                        <label key={c.id}>
+                                          <span>{c.label} ($)</span>
+                                          <CampoTextoGuardado value={r.costos?.[c.id] ? String(r.costos[c.id]) : ""} placeholder="0"
+                                            onGuardar={(v) => setCampoReclamo(r.id, { costos: { ...(r.costos || {}), [c.id]: Math.max(0, Math.round(Number(String(v).replace(/[^\d]/g, "")) || 0)) } })} />
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <p className="dg-reclamo-costo-total">
+                                      {beneficioDeReclamo(r, pedidos) > 0 && <span>Beneficio al cliente: {money(beneficioDeReclamo(r, pedidos))} · </span>}
+                                      Costo del reclamo: <strong>{money(costoDeReclamo(r, pedidos))}</strong>
+                                    </p>
                                   </div>
 
                                   <div className="dg-salida-pie">
@@ -17082,6 +17180,7 @@ function numerosPostventa(pedidos, reclamos, desde, hasta) {
     // si lo que sale del taller está saliendo bien.
     tasaReclamo: entregados > 0 ? Math.round((delPeriodo.length / entregados) * 1000) / 10 : null,
     tipos: [...porTipo.entries()].map(([tipo, n]) => ({ tipo, n })).sort((a, b) => b.n - a.n),
+    reclamos: numerosDeReclamos(delPeriodo, pedidos),
   };
 }
 
@@ -18227,6 +18326,53 @@ function TurnosPanel({ turnos, onChange, pasos, auditoria, session, isAdmin, sec
     </div>
   );
 }
+// Origen, flete, tipo de espejo y costo de los reclamos del período.
+function ReclamosEnNumeros({ r, antes }) {
+  const tabla = (titulo, Icono, filas, pista) => {
+    if (!filas.length) return null;
+    const max = filas[0].n || 1;
+    return (
+      <div className="dg-section-card">
+        <div className="dg-section-header"><Icono size={14} /> {titulo}</div>
+        <table className="dg-num-tabla">
+          <tbody>
+            {filas.map((f) => (
+              <tr key={f.label}>
+                <td className="dg-num-etapa">{f.label}</td>
+                <td className="dg-num-barra"><span style={{ width: `${Math.round((f.n / max) * 100)}%` }} /></td>
+                <td className="dg-num-dias">{f.n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {pista && <p className="dg-hint" style={{ marginTop: 10 }}>{pista}</p>}
+      </div>
+    );
+  };
+  const dif = r.costo - (antes?.costo || 0);
+  return (
+    <>
+      <div className="dg-section-card dg-pv-ahora">
+        <div className="dg-section-header"><CircleDollarSign size={14} /> Lo que costaron los reclamos</div>
+        <div className="dg-pv-ahora-grid">
+          <div className={r.costo > 0 ? "dg-pv-dato dg-pv-dato-ojo" : "dg-pv-dato"}>
+            <strong>{money(r.costo)}</strong>
+            <span>{r.conCosto} reclamo{r.conCosto === 1 ? "" : "s"} con costo cargado</span>
+          </div>
+          <div className="dg-pv-dato">
+            <strong>{dif === 0 ? "igual" : `${dif > 0 ? "+" : "−"}${money(Math.abs(dif))}`}</strong>
+            <span>contra el período anterior ({money(antes?.costo || 0)})</span>
+          </div>
+        </div>
+        <p className="dg-hint" style={{ marginTop: 10 }}>Suma lo que se carga en cada reclamo (espejo, viajes, repuesto, otros) más el descuento o el envío que se le regaló.</p>
+      </div>
+      {tabla("De dónde vienen los problemas", AlertTriangle, r.porOrigen, "Se elige en cada reclamo, en «Origen y costo». Es lo que dice qué hay que arreglar: el embalaje, un flete, un proveedor o cómo se cargan las ventas.")}
+      {tabla("Roturas por flete", Truck, r.porFlete, null)}
+      {tabla("Por tipo de espejo", Package, r.porTipoEspejo, "Solo los reclamos atados a su pedido.")}
+    </>
+  );
+}
+
 function NumerosPostventaPanel({ pedidos, reclamos }) {
   const hoy = isoLocal(new Date());
   const [periodo, setPeriodo] = useState("mes");
@@ -18322,6 +18468,8 @@ function NumerosPostventaPanel({ pedidos, reclamos }) {
               </p>
             </div>
           )}
+
+          {n.reclamosNuevos > 0 && <ReclamosEnNumeros r={n.reclamos} antes={antes.reclamos} />}
         </>
       )}
     </div>
@@ -25063,6 +25211,9 @@ function Style() {
       .dg-reclamo-ahora { margin-top:12px; padding-top:10px; border-top:1px dashed rgba(var(--dg-line-rgb),.16); display:flex; flex-direction:column; gap:8px; }
       .dg-reclamo-ahora-txt { font-size:12px; color:var(--dg-text-dim); }
       .dg-reclamo-fecha { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dg-text-dim); max-width:220px; }
+      .dg-reclamo-costos label span { white-space:nowrap; }
+      .dg-reclamo-costo-total { margin:10px 0 0; font-size:13px; color:var(--dg-text-dim); }
+      .dg-reclamo-costo-total strong { color:var(--dg-text); font-size:15px; font-variant-numeric:tabular-nums; }
       .dg-reclamo-dijo { margin-top:12px; display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dg-text-dim); }
       .dg-reclamos-tabla .dg-envios-dir { min-width:200px; color:var(--dg-text-dim); }
 
