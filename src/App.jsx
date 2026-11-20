@@ -6885,6 +6885,43 @@ function fotoListasActualizada(foto, pedidos, hoyIso, ahoraIso, quien) {
   });
   return cambio ? { ...base, fecha: hoyIso, listas } : null;
 }
+// La lista de HOY quieta (20/11/2026, Facundo: «todos los espejos que los
+// chicos tengan en una lista tienen que quedar en esa lista y en su posición;
+// no importa el botón que toquen, no pueden desaparecer. Si tienen que
+// aparecer en otra lista, que se dupliquen»). El orden sale de la copia del
+// día; lo que no estaba en la copia (se sumó después) va abajo. Cada espejo
+// dice en qué anda: falta hacer, armado esperando embalaje, o hecho / pasó a
+// otra pestaña — y ahí se ve también (duplicado).
+function listaQuietaDelDia(copiaLista, dia, pedidos) {
+  if (!dia) return null;
+  const porId = new Map((pedidos || []).map((p) => [p.id, p]));
+  const pend = new Map((dia.items || []).map((x) => [x.pedido.id, x]));
+  const emb = new Map((dia.porEmbalar || []).map((x) => [x.pedido.id, x]));
+  const hech = new Map((dia.hechos || []).map((x) => [x.pedido.id, x]));
+  const orden = [];
+  const vistos = new Set();
+  const poner = (id, base) => { if (!id || vistos.has(id)) return; vistos.add(id); orden.push({ id, base }); };
+  ((copiaLista && copiaLista.items) || []).forEach((it) => poner(it.id, it));
+  [...(dia.items || []), ...(dia.porEmbalar || []), ...(dia.hechos || [])].forEach((x) => poner(x.pedido.id, null));
+  return orden.map(({ id, base }) => {
+    const p = porId.get(id);
+    if (!p) return null; // el pedido se borró
+    const total = base?.total || Math.max(1, Number(p.cant) || 1);
+    if (pend.has(id)) return { ...pend.get(id), pedido: p, estadoQuieto: "pendiente" };
+    if (emb.has(id)) return { ...emb.get(id), pedido: p, desde: 0, total, estadoQuieto: "embalar" };
+    const unidades = hech.get(id)?.unidades || base?.unidades || 1;
+    return { pedido: p, unidades, desde: 0, total, clase: claseTaller(p), extra: !!base?.extra, estadoQuieto: "hecho" };
+  }).filter(Boolean);
+}
+// En qué anda un espejo que ya no está «para hacer» en la lista.
+function etiquetaQuietaTaller(p) {
+  if (!p) return "";
+  if (p.estado === "Cancelado") return "Cancelado";
+  if (pedidoEstaListo(p)) return "Terminado";
+  if (esperaEmbalajeInterior(p)) return "Armado · se embala en Interior p/embalar";
+  const pestana = infoPestana(pestanaTaller(p));
+  return pestana ? `En ${pestana.label}` : estadoProduccionLabel(p);
+}
 // Qué dice HOY el pedido distinto de lo que decía en la foto.
 function cambiosDesdeLaFoto(item, pedidoActual) {
   if (!pedidoActual) return ["el pedido ya no existe"];
@@ -18800,19 +18837,19 @@ function FotosDeListasPanel({ pedidos, hoyIso, listaInicial }) {
         {LISTAS_CON_DIAS.map((id) => (
           <button key={id} type="button" role="tab" aria-selected={listaId === id}
             className={`dg-reclamo-opcion ${listaId === id ? "dg-reclamo-opcion-on" : ""}`} onClick={() => setListaId(id)}>
-            {nombreLista(id)}{foto?.listas?.[id] ? <small>{espejosDe(foto.listas[id])} espejos</small> : <small>sin foto</small>}
+            {nombreLista(id)}{foto?.listas?.[id] ? <small>{espejosDe(foto.listas[id])} espejos</small> : <small>sin copia</small>}
           </button>
         ))}
       </div>
-      {foto === undefined && <div className="dg-loading" style={{ padding: 24 }}><Loader2 className="dg-spin" size={20} /><span>Buscando la foto…</span></div>}
+      {foto === undefined && <div className="dg-loading" style={{ padding: 24 }}><Loader2 className="dg-spin" size={20} /><span>Buscando la lista…</span></div>}
       {error && <div className="dg-error">{error}</div>}
       {foto !== undefined && !datos && !error && (
-        <div className="dg-empty">No hay foto de {nombreLista(listaId).toLowerCase()} de ese día. Las fotos se guardan desde el 20/11/2026: cada día, la primera vez que alguien abre la app.</div>
+        <div className="dg-empty">No hay copia de {nombreLista(listaId).toLowerCase()} de ese día. Las listas se copian desde el 20/11/2026: cada día, la primera vez que alguien abre la app.</div>
       )}
       {datos && (
         <>
           <p className="dg-fotos-listas-info">
-            Foto sacada el {fechaLargaCorta(String(datos.sacada || "").slice(0, 10)) || "—"} a las {diaLocalDe(datos.sacada) ? new Date(datos.sacada).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "—"}
+            Lista copiada el {fechaLargaCorta(String(datos.sacada || "").slice(0, 10)) || "—"} a las {diaLocalDe(datos.sacada) ? new Date(datos.sacada).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "—"}
             {datos.por ? ` (abrió ${datos.por})` : ""} · {espejosDe(datos)} espejos
             {cambiados > 0 && <span className="dg-fotos-listas-cambios"> · {cambiados} {cambiados === 1 ? "pedido cambió" : "pedidos cambiaron"} después</span>}
           </p>
@@ -18909,6 +18946,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   const [unidadParaReabrir, setUnidadParaReabrir] = useState(null);
   const [gruposArmarAbiertos, setGruposArmarAbiertos] = useState(() => new Set()); // vacío = los 3 empiezan cerrados
   const [historialAbiertos, setHistorialAbiertos] = useState(null); // null = solo el día más reciente
+  // La copia de las listas de hoy, para que la lista no se mueva (ver listaQuietaDelDia).
+  const [copiaHoy, setCopiaHoy] = useState(null);
+  const ordenVistoHoy = useRef({});
   function toggleGrupoArmar(grupo) {
     setGruposArmarAbiertos((prev) => {
       const next = new Set(prev);
@@ -19038,6 +19078,15 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     acc[item.id] = totalUnidades(baseVisibles.filter((p) => pestanaTaller(p) === item.id));
     return acc;
   }, {});
+  useEffect(() => {
+    let vivo = true;
+    const leer = () => storage.get(CLAVE_FOTO_LISTAS(hoyTaller), true)
+      .then((fila) => { if (vivo) setCopiaHoy(fila && fila.value ? JSON.parse(fila.value) : null); })
+      .catch(() => {});
+    leer();
+    const id = window.setInterval(() => { if (paginaVisible()) leer(); }, 3 * 60 * 1000);
+    return () => { vivo = false; window.clearInterval(id); };
+  }, [hoyTaller]);
   // Historial, afuera y demorados van todos juntos, sin separar por pestaña.
   let visibles = (filtroEstado === "historial" || filtroEstado === "afuera" || filtroEstado === "demorados") ? [...baseVisibles] : baseVisibles.filter((p) => pestanaTaller(p) === lista);
   visibles = filtroEstado === "historial"
@@ -19752,6 +19801,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
         {filtroEstado === "fotos" ? <FotosDeListasPanel pedidos={pedidos} hoyIso={hoyTaller} listaInicial={lista} /> : (esPestanaDeArmar(lista) && filtroEstado === "activos") ? (() => {
           const plan = planTaller(pedidos, hoyTaller, lista);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
+          const diaHoyPlan = diaDeHoyDelPlan(plan);
+          // Si la copia todavía no llegó, se respeta el orden que ya se vio en
+          // esta pantalla: nada se reacomoda al tocar un botón.
+          const claveOrdenHoy = diaHoyPlan ? `${lista}|${diaHoyPlan.fecha}` : "";
+          const copiaDeLaLista = copiaHoy?.fecha === diaHoyPlan?.fecha ? copiaHoy?.listas?.[lista] : null;
+          const ordenYaVisto = ordenVistoHoy.current[claveOrdenHoy];
+          const quietaHoy = diaHoyPlan ? listaQuietaDelDia(copiaDeLaLista || (ordenYaVisto ? { items: ordenYaVisto.map((id) => ({ id })) } : null), diaHoyPlan, pedidos) : null;
+          if (quietaHoy && claveOrdenHoy) ordenVistoHoy.current[claveOrdenHoy] = quietaHoy.map((x) => x.pedido.id);
           // Todo lo que está pendiente en esta pestaña, por si hay que sumar
           // alguno a un día a mano. Ordenado como los ve el taller.
           const pendientesDeLaLista = pedidos
@@ -19785,7 +19842,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
               {(() => {
                 const hoyPlan = diaDeHoyDelPlan(plan);
                 if (!hoyPlan) return null;
-                const filas = hoyPlan.items.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id));
+                const filas = (quietaHoy || hoyPlan.items).filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id));
                 if (filas.length === 0) return null;
                 const irATarjeta = (ev, x) => {
                   ev.stopPropagation();
@@ -19837,13 +19894,15 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               return (
                                 <Fragment key={p.id}>
                                   <tr
-                                    className={`dg-tdia-fila ${abierta ? "dg-tdia-fila-abierta" : ""} ${esUrgente(p) ? "dg-tdia-fila-urgente" : ""}`}
+                                    className={`dg-tdia-fila ${abierta ? "dg-tdia-fila-abierta" : ""} ${esUrgente(p) ? "dg-tdia-fila-urgente" : ""} ${x.estadoQuieto === "hecho" ? "dg-tdia-fila-hecha" : ""}`}
                                     onClick={() => setFilaDiaAbierta(abierta ? null : p.id)}
                                     aria-expanded={abierta}>
                                     <td className="dg-tdia-orden">
                                       <button type="button" className="dg-tdia-orden-btn" onClick={(ev) => irATarjeta(ev, x)} title="Ir a la tarjeta de este espejo">#{p.orden}</button>
                                       {esUrgente(p) && <span className="dg-pedido-flag">{p.tipoPedido === "reclamo" ? "CAMBIO" : "URGENTE"}</span>}
-                                      {estaAtrasadoTaller(p, hoyTaller) && <span className="dg-tdia-atrasado" title="Ya tendría que estar terminado">ATRASADO</span>}
+                                      {x.estadoQuieto === "hecho" && <span className="dg-tdia-hecho" title={etiquetaQuietaTaller(p)}>HECHO</span>}
+                                      {x.estadoQuieto === "embalar" && <span className="dg-tdia-hecho" title="Armado, falta embalar">ARMADO</span>}
+                                      {!x.estadoQuieto || x.estadoQuieto === "pendiente" ? (estaAtrasadoTaller(p, hoyTaller) && <span className="dg-tdia-atrasado" title="Ya tendría que estar terminado">ATRASADO</span>) : null}
                                       {aclaracionDe(p, "aclaracionTaller") && <span className="dg-tdia-aclaracion" title={p.aclaracionTaller}>NOTA</span>}
                                       {fotosPlanoDe(p).length > 0 && <span className="dg-tdia-aclaracion dg-tdia-plano" title="Tiene foto de los planos">PLANO</span>}
                                     </td>
@@ -19896,6 +19955,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 // Los demorados (lo que quedó sin hacer y lo marcado a mano)
                 // están en el bloque de arriba, no acá.
                 const items = dia.items.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id));
+                // Hoy: la lista quieta (lo hecho y lo armado se quedan en su lugar).
+                const quieta = !dia.pasado && quietaHoy && diaHoyPlan && dia.fecha === diaHoyPlan.fecha
+                  ? quietaHoy.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id)) : null;
                 const espejosDia = dia.espejos - dia.items.filter((x) => idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0);
                 const sinHacerVisible = dia.pasado ? dia.items.filter((x) => !idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0) : 0;
                 if (dia.pasado && items.length === 0 && dia.porEmbalarU === 0) return null;
@@ -19950,7 +20012,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               </div>
                             );
                           })()}
-                          {dia.porEmbalar.length > 0 && (() => {
+                          {!quieta && dia.porEmbalar.length > 0 && (() => {
                             // Los que ya tienen su tarjeta acá abajo (porque
                             // además les faltan espejos por hacer) no se
                             // repiten: desde esa misma tarjeta se embalan.
@@ -19971,9 +20033,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               </div>
                             );
                           })()}
-                          {items.map((x) => (
+                          {(quieta || items).map((x) => (
                             <div
-                              className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"} ${tarjetaMarcada === x.pedido.id ? "dg-tarjeta-marcada" : ""}`}
+                              className={`dg-dia-item ${x.clase === "simple" ? "dg-dia-item-simple" : "dg-dia-item-especial"} ${tarjetaMarcada === x.pedido.id ? "dg-tarjeta-marcada" : ""} ${x.estadoQuieto === "hecho" ? "dg-dia-item-hecho" : ""}`}
                               id={`taller-${dia.fecha}-${x.pedido.id}`}
                               key={x.pedido.id}
                               draggable={arrastrable}
@@ -19982,12 +20044,14 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                             >
                               <div className="dg-dia-item-bar">
                                 {arrastrable && <span className="dg-dia-item-agarre" title="Arrastralo a otro día" aria-hidden="true">⠿</span>}
+                                {x.estadoQuieto === "hecho" && <span className="dg-dia-item-quieto"><Check size={11} /> {etiquetaQuietaTaller(x.pedido)}</span>}
+                                {x.estadoQuieto === "embalar" && <span className="dg-dia-item-quieto"><Package size={11} /> Armado · falta embalar</span>}
                                 <span className="dg-dia-item-tipo">{x.clase === "simple" ? "Simple" : grupoListaArmar(x.pedido) === "esmerilados_armar" ? "Esmerilado · volvió del grabado" : pedidoProcesoTaller(x.pedido) === "esmerilados" ? "Esmerilado" : "Biselado"}{x.partes > 1 ? ` · ${x.unidades} de ${x.total} u.` : x.unidades > 1 ? ` · ${x.unidades} u.` : ""}</span>
                                 {x.partes > 1 && <span className="dg-dia-item-parte">parte {x.parte} de {x.partes}{x.sigue ? ` · sigue ${nombreDiaTaller(x.sigue, hoyTaller)}` : " · última"}</span>}
                                 {x.extra
                                   ? <span className="dg-dia-item-extra" title={x.pedido.diaTallerPor ? `Lo sumó ${x.pedido.diaTallerPor}` : "Sumado a mano, arriba del cupo"}>EXTRA</span>
                                   : x.fijadoAca && <span className="dg-dia-item-fijo" title={x.pedido.diaTallerPor ? `Lo fijó ${x.pedido.diaTallerPor}` : "Fijado a mano"}>fijado</span>}
-                                {canEdit && !dia.trabada && (
+                                {canEdit && !dia.trabada && (!x.estadoQuieto || x.estadoQuieto === "pendiente") && (
                                   <select className="dg-dia-item-mover" value="" onChange={(e) => { const v = e.target.value; if (v) moverADia(x.pedido.id, v === "auto" ? "" : v); }} aria-label="Pasar a otro día">
                                     <option value="">Pasar a otro día…</option>
                                     {opcionesDias.filter((d) => d !== dia.fecha && !estaTrabado(d)).map((d) => (<option key={d} value={d}>{nombreDiaTaller(d, hoyTaller)}</option>))}
@@ -19998,7 +20062,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               {cartas(x)}
                             </div>
                           ))}
-                          {dia.hechos.length > 0 && (
+                          {!quieta && dia.hechos.length > 0 && (
                             <details className="dg-dia-hechos">
                               <summary><Check size={13} /> Terminados hoy ({hechosU})</summary>
                               <ul>
@@ -25450,6 +25514,11 @@ function Style() {
       .dg-envios-nombre .dg-envios-chip-visita { margin-left:7px; }
       /* La tabla de reclamos tiene una columna menos y textos más largos. */
       .dg-reclamos-tabla { min-width:700px; }
+      .dg-dia-item-hecho { opacity:.72; }
+      .dg-dia-item-hecho:hover, .dg-dia-item-hecho:focus-within { opacity:1; }
+      .dg-dia-item-quieto { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; background:color-mix(in srgb, var(--dg-success) 18%, transparent); color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); }
+      .dg-tdia-hecho { display:inline-block; margin-left:6px; padding:0 6px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.3px; background:color-mix(in srgb, var(--dg-success) 20%, transparent); color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); }
+      .dg-tdia-fila-hecha > td { opacity:.65; }
       .dg-fotos-listas { display:flex; flex-direction:column; gap:12px; }
       .dg-fotos-listas-barra { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
       .dg-fotos-listas-barra input[type=date] { width:auto; }
