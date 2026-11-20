@@ -1,5 +1,5 @@
 import { Component, Fragment, useState, useEffect, useRef, useMemo } from "react";
-import { storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore, urlFirmada, registroStore } from "./lib/storage";
+import { seguimientoReclamos, storage, pedidosStore, pushStore, notificacionesStore, documentosStore, stockMaterialesStore, stockEspejosStore, reclamosStore, chatStore, trackingStore, urlFirmada, registroStore } from "./lib/storage";
 import { supabase } from "./lib/supabaseClient";
 import {
   Megaphone, ShoppingCart, Calculator, Factory, Truck, Headphones,
@@ -14617,6 +14617,13 @@ function saludoReclamo(r) {
   const hola = r.cliente ? `Hola ${r.cliente}!` : "Hola!";
   return `${hola} Te escribimos de DECOGLASS por tu reclamo${r.tipo ? ` (${r.tipo})` : ""}. `;
 }
+function linkSeguimientoReclamo(r) {
+  return `${window.location.origin}/seguimiento/reclamo/${r.id}`;
+}
+function mensajeLinkReclamo(r) {
+  const hola = r.cliente ? `Hola ${r.cliente}!` : "Hola!";
+  return `${hola} Te pasamos el link para que sigas tu reclamo${r.ordenOrigen ? ` del pedido #${r.ordenOrigen}` : ""}: ahí vas a ver en qué paso está y las fechas.\n\nPara entrar te pide los últimos 4 números de tu teléfono.\n\n${linkSeguimientoReclamo(r)}`;
+}
 function mensajeSolucionReclamo(r) {
   const saludo = r.cliente ? `Hola ${r.cliente}! 👋` : "Hola! 👋";
   const contexto = r.notas ? ` (${r.notas})` : "";
@@ -15169,6 +15176,14 @@ function ReclamosPanel({ reclamos, onChange, onCrearPedido, onChangePedidos, ped
                                           <MessageCircle size={13} /> {copiadoId === r.id ? "Abriendo…" : "Mandarle lo que se le dijo"}
                                         </button>
                                       )}
+                                      {tieneCelular && (
+                                        <a className="dg-btn-primary dg-mini-btn" href={`${waLink(r.celular)}?text=${encodeURIComponent(mensajeLinkReclamo(r))}`} target="_blank" rel="noopener noreferrer">
+                                          <ExternalLink size={13} /> Mandarle el link del reclamo
+                                        </a>
+                                      )}
+                                      <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => { try { navigator.clipboard.writeText(linkSeguimientoReclamo(r)); setCopiadoId(`link-${r.id}`); setTimeout(() => setCopiadoId(null), 2000); } catch (e) { window.prompt("Copiá el link:", linkSeguimientoReclamo(r)); } }}>
+                                        <Copy size={13} /> {copiadoId === `link-${r.id}` ? "Copiado" : "Copiar link"}
+                                      </button>
                                       {!tieneCelular && <span className="dg-salida-nota" style={{ margin: 0 }}>Cargale el teléfono y se le puede escribir desde acá.</span>}
                                       <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => avisarEquipo(r)} disabled={avisandoId === r.id}>
                                         <Bell size={13} /> {avisandoId === r.id ? "Avisando…" : r.avisado ? "Avisar otra vez" : "Avisar al equipo"}
@@ -27759,6 +27774,10 @@ function Style() {
       .dg-seguimiento-docs { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
       .dg-seg-fecha-aprox { display:flex; align-items:center; gap:8px; margin:10px 0 0; padding:8px 12px; border-radius:10px; font-size:13px; line-height:1.35; color:var(--dg-text); background:rgba(var(--dg-accent-rgb),.10); border:1px solid rgba(var(--dg-accent-rgb),.30); }
       .dg-seg-fecha-aprox svg { flex-shrink:0; color:var(--dg-accent); }
+      .dg-seg-reclamo .dg-seguimiento-pasos { margin-top:10px; }
+      .dg-seg-reclamo-dato { margin:6px 0 0; font-size:13px; color:var(--dg-text-dim); }
+      .dg-seg-reclamo-dato strong { color:var(--dg-text); }
+      .dg-seg-reclamo-desde { font-size:12px; color:var(--dg-text-dim); }
       .dg-seg-entrega { margin-top:16px; padding:14px 15px; border-radius:12px; background:rgba(var(--dg-line-rgb),0.04); border:1px solid rgba(var(--dg-line-rgb),0.12); }
       .dg-seg-entrega-titulo { display:flex; align-items:center; gap:7px; font-family:'Jost', sans-serif; font-weight:700; font-size:14px; color:var(--dg-text); }
       .dg-seg-entrega-titulo svg { color:var(--dg-accent); flex:none; }
@@ -29049,10 +29068,11 @@ function soloCuatro(texto) {
 // Le pregunta al servidor si este link pide clave y, si le pasamos dígitos, si
 // son los correctos. Ante cualquier falla devuelve null = "no sé", y la
 // pantalla deja pasar: un problema de red no puede dejar afuera a un cliente.
-async function preguntarPuerta({ pedido, grupo, t }) {
+async function preguntarPuerta({ pedido, grupo, reclamo, t }) {
   const params = new URLSearchParams();
   if (pedido) params.set("pedido", pedido);
   if (grupo) params.set("grupo", grupo);
+  if (reclamo) params.set("rid", reclamo);
   if (t) params.set("t", t);
   // Va a /api/factura con ?puerta=1, no a un endpoint propio: el plan de
   // Vercel admite 12 funciones y ya estábamos en 12. Está explicado en
@@ -29069,8 +29089,8 @@ async function preguntarPuerta({ pedido, grupo, t }) {
 //   abierta  → se puede cargar el pedido
 //   pide     → hay que mostrar la pantalla de los 4 dígitos
 //   clave    → los dígitos con los que entró (van en el link de la factura)
-function usePuertaSeguimiento({ pedido, grupo }) {
-  const id = pedido || grupo || "";
+function usePuertaSeguimiento({ pedido, grupo, reclamo }) {
+  const id = pedido || grupo || reclamo || "";
   const [estado, setEstado] = useState({ abierta: false, pide: false, clave: "", listo: false });
 
   useEffect(() => {
@@ -29078,7 +29098,7 @@ function usePuertaSeguimiento({ pedido, grupo }) {
     async function mirar() {
       if (!id) return;
       const guardada = claveGuardada(id);
-      const r = await preguntarPuerta({ pedido, grupo, t: guardada });
+      const r = await preguntarPuerta({ pedido, grupo, reclamo, t: guardada });
       if (!vivo) return;
       // null = no se pudo preguntar. Se deja pasar: la factura igual la
       // protege el servidor por su cuenta.
@@ -29089,12 +29109,12 @@ function usePuertaSeguimiento({ pedido, grupo }) {
     }
     mirar();
     return () => { vivo = false; };
-  }, [id, pedido, grupo]);
+  }, [id, pedido, grupo, reclamo]);
 
   async function probar(escrito) {
     const digitos = soloCuatro(escrito);
     if (digitos.length < 4) return "Son los últimos 4 números de tu teléfono.";
-    const r = await preguntarPuerta({ pedido, grupo, t: digitos });
+    const r = await preguntarPuerta({ pedido, grupo, reclamo, t: digitos });
     if (!r) return "No pudimos verificarlo. Probá de nuevo en un momento.";
     if (!r.ok) return "Esos no son los últimos 4 dígitos del teléfono del pedido.";
     guardarClave(id, digitos);
@@ -29108,7 +29128,7 @@ function usePuertaSeguimiento({ pedido, grupo }) {
 // La pantalla de los 4 dígitos. Tiene la misma cara que el seguimiento para
 // que no parezca otra página, y una salida por WhatsApp para el que no los
 // tenga (por ejemplo si el pedido lo hizo otra persona de la casa).
-function PuertaSeguimiento({ onProbar, tema }) {
+function PuertaSeguimiento({ onProbar, tema, titulo = "Para ver tu pedido" }) {
   const [valor, setValor] = useState("");
   const [error, setError] = useState("");
   const [probando, setProbando] = useState(false);
@@ -29128,7 +29148,7 @@ function PuertaSeguimiento({ onProbar, tema }) {
         <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
         <form className="dg-puerta" onSubmit={entrar}>
           <div className="dg-puerta-icono"><Lock size={22} /></div>
-          <h1>Para ver tu pedido</h1>
+          <h1>{titulo}</h1>
           <p>Escribí los <strong>últimos 4 números</strong> del teléfono con el que hiciste el pedido.</p>
           <input
             className="dg-puerta-input"
@@ -29326,6 +29346,129 @@ function EntregaPublica(props) {
   );
 }
 
+// ===== El reclamo en el link del cliente (20/11/2026) =======================
+// Los mismos pasos que ve el equipo, con el texto para el cliente («Colecta
+// programada para el lunes 24 nov», «En reparación»…).
+function PasosReclamoPublico({ r }) {
+  if (!solucionDeReclamo(r)) {
+    const cerrado = reclamoFinalizado(r);
+    return (
+      <div className="dg-seguimiento-pasos">
+        <div className={`dg-seguimiento-paso ${cerrado ? "dg-seg-hecho" : "dg-seg-actual"}`}>
+          <span className="dg-seguimiento-punto">{cerrado ? <Check size={13} /> : 1}</span>
+          <span>{textoPublicoReclamo(r)}</span>
+        </div>
+      </div>
+    );
+  }
+  const { pasos, idx } = pasoActualReclamo(r);
+  const cerrado = reclamoFinalizado(r);
+  return (
+    <div className="dg-seguimiento-pasos">
+      {pasos.map((p, i) => {
+        const hecho = i < idx || (cerrado && i === idx);
+        const actual = !cerrado && i === idx;
+        return (
+          <div key={p.id} className={`dg-seguimiento-paso ${hecho ? "dg-seg-hecho" : actual ? "dg-seg-actual" : ""}`}>
+            <span className="dg-seguimiento-punto">{hecho ? <Check size={13} /> : i + 1}</span>
+            <span>{textoPasoReclamo(p, r)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function TarjetaReclamoPublico({ r }) {
+  const sol = solucionDeReclamo(r);
+  return (
+    <section className="dg-seg-entrega dg-seg-reclamo" aria-label="Tu reclamo">
+      <div className="dg-seg-entrega-titulo"><AlertTriangle size={15} aria-hidden="true" /> Reclamo · {etiquetaMotivoReclamo(r)}</div>
+      {(r.espejoTexto || r.ordenOrigen) && <p className="dg-seg-reclamo-dato">{r.ordenOrigen ? `Pedido #${r.ordenOrigen}` : ""}{r.ordenOrigen && r.espejoTexto ? " · " : ""}{r.espejoTexto || ""}</p>}
+      {sol && <p className="dg-seg-reclamo-dato">Solución: <strong>{sol.label}</strong></p>}
+      <PasosReclamoPublico r={r} />
+      {r.detalleCliente && <p className="dg-seg-entrega-nota">Lo que nos contaste: {r.detalleCliente}</p>}
+    </section>
+  );
+}
+// Los reclamos de un pedido, dentro de su seguimiento. Si la función todavía
+// no existe en Supabase (falta correr el SQL), no muestra nada.
+function useReclamosDelPedido(ids, abierta, refrescar) {
+  const clave = (ids || []).filter(Boolean).join(",");
+  const [lista, setLista] = useState([]);
+  useEffect(() => {
+    if (!abierta || !clave) return undefined;
+    let vivo = true;
+    seguimientoReclamos.dePedidos(clave.split(","))
+      .then((l) => { if (vivo) setLista(l); })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [clave, abierta, refrescar]);
+  return lista;
+}
+function ReclamosEnSeguimiento({ ids, abierta }) {
+  const lista = useReclamosDelPedido(ids, abierta, 0);
+  if (!lista.length) return null;
+  return <>{lista.map((r) => <TarjetaReclamoPublico key={r.id} r={r} />)}</>;
+}
+function SeguimientoReclamoPublico({ reclamoId }) {
+  const [r, setR] = useState(undefined);
+  const [fallo, setFallo] = useState("");
+  const [intento, setIntento] = useState(0);
+  const [tema] = useState(() => {
+    try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { return "dark"; }
+  });
+  const puerta = usePuertaSeguimiento({ reclamo: reclamoId });
+  useEffect(() => {
+    if (!puerta.abierta) return undefined;
+    let activo = true;
+    async function cargar() {
+      try {
+        const x = await conLimiteDeTiempo(seguimientoReclamos.uno(reclamoId), 15000);
+        if (activo) { setR(x || null); setFallo(""); }
+      } catch (e) {
+        if (activo) setFallo(String(e && e.message || e).slice(0, 120) || "error de conexión");
+      }
+    }
+    cargar();
+    const interval = window.setInterval(() => { if (paginaVisible()) cargar(); }, 60000);
+    return () => { activo = false; window.clearInterval(interval); };
+  }, [reclamoId, intento, puerta.abierta]);
+
+  if (puerta.listo && !puerta.abierta) return <PuertaSeguimiento onProbar={puerta.probar} tema={tema} titulo="Para ver tu reclamo" />;
+  if (r === undefined && fallo) return <PantallaErrorSeguimiento motivo={fallo} onReintentar={() => { setFallo(""); setIntento((x) => x + 1); }} />;
+  if (r === undefined) {
+    return (
+      <div className="dg-app dg-seguimiento" data-theme={tema}>
+        <Style />
+        <div className="dg-loading"><Loader2 className="dg-spin" size={26} /><span>Buscando tu reclamo...</span></div>
+      </div>
+    );
+  }
+  const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi reclamo${r?.ordenOrigen ? ` del pedido #${r.ordenOrigen}` : ""}`)}`;
+  return (
+    <div className="dg-app dg-seguimiento" data-theme={tema}>
+      <Style />
+      <div className="dg-seguimiento-wrap">
+        <div className="dg-seguimiento-brand"><LogoMark className="dg-seg-logo" /><span>DECOGLASS</span></div>
+        {r === null ? (
+          <div className="dg-empty" style={{ marginTop: 24 }}>No encontramos este reclamo. Escribinos si creés que es un error.</div>
+        ) : (
+          <div className="dg-seguimiento-card">
+            <div className="dg-seguimiento-head">
+              <span>Tu reclamo</span>
+              {r.fecha && <span className="dg-seg-reclamo-desde">desde el {fechaEntregaCorta(String(r.fecha).slice(0, 10))}</span>}
+            </div>
+            <TarjetaReclamoPublico r={r} />
+          </div>
+        )}
+        <a className="dg-btn-primary dg-seguimiento-whatsapp" href={linkConsulta} target="_blank" rel="noopener noreferrer">
+          <MessageCircle size={15} /> Consultas por WhatsApp
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function SeguimientoPublico({ pedidoId }) {
   const [pedido, setPedido] = useState(undefined); // undefined = cargando, null = no encontrado
   const [fallo, setFallo] = useState("");            // la conexión falló (no es lo mismo que «no existe»)
@@ -29449,6 +29592,7 @@ function SeguimientoPublico({ pedidoId }) {
 
           <DatosClientePublico items={[pedido]} />
           {pedido.estado !== "Entregado" && <EntregaPublica pedido={pedido} items={[pedido]} />}
+          <ReclamosEnSeguimiento ids={[pedido.id]} abierta={puerta.abierta} />
 
           <div className="dg-verif-specs" style={{ marginTop: 16 }}>
             <div className="dg-fab-medida">
@@ -29648,6 +29792,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
 
             <DatosClientePublico items={activos} />
             {activos.some((e) => e.estado !== "Entregado") && <EntregaPublica pedido={activos.find((e) => e.estado !== "Entregado") || primero} items={activos} />}
+            <ReclamosEnSeguimiento ids={activos.map((e) => e.id)} abierta={puerta.abierta} />
 
             <div className="dg-seguimiento-docs">
               {puedeDescargarFactura && (
@@ -29723,6 +29868,8 @@ export default function Root() {
   const path = window.location.pathname;
   const matchGrupo = path.match(/^\/seguimiento\/grupo\/([^/]+)\/?$/);
   if (matchGrupo) return <ErrorSeguimiento><SeguimientoGrupoPublico grupoId={matchGrupo[1]} /></ErrorSeguimiento>;
+  const matchReclamo = path.match(/^\/seguimiento\/reclamo\/([^/]+)\/?$/);
+  if (matchReclamo) return <ErrorSeguimiento><SeguimientoReclamoPublico reclamoId={matchReclamo[1]} /></ErrorSeguimiento>;
   const match = path.match(/^\/seguimiento\/([^/]+)\/?$/);
   if (match) return <ErrorSeguimiento><SeguimientoPublico pedidoId={match[1]} /></ErrorSeguimiento>;
   return <ErrorApp><App /></ErrorApp>;

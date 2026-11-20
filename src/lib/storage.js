@@ -173,6 +173,25 @@ export const stockMaterialesStore = createRowStore("stock_materiales_rows");
 export const stockEspejosStore = createRowStore("stock_espejos_rows");
 export const reclamosStore = createRowStore("reclamos_rows");
 
+// El seguimiento de un reclamo (20/11/2026). Por función, no por tabla: la
+// tabla está cerrada y la función devuelve solo lo que puede ver el cliente
+// (supabase/seguimiento-reclamos.sql).
+export const seguimientoReclamos = {
+  async uno(id) {
+    if (!id) return null;
+    const { data, error } = await supabase.rpc("seguimiento_reclamo", { p_id: id });
+    if (error) throw error;
+    return data || null;
+  },
+  async dePedidos(ids) {
+    const lista = (ids || []).filter(Boolean);
+    if (!lista.length) return [];
+    const { data, error } = await supabase.rpc("seguimiento_reclamos_de", { p_ids: lista });
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  },
+};
+
 // De una URL pública vieja saca la ruta; si ya es una ruta, la deja igual.
 // Hace falta porque los pedidos viejos tienen guardada la URL entera.
 export function rutaDeArchivo(valor, bucket) {

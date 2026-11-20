@@ -3,6 +3,7 @@
 //   GET /api/factura?pedido=<id>&puerta=1          -> { pide: true|false }
 //   GET /api/factura?pedido=<id>&t=1234&puerta=1   -> { pide, ok: true|false }
 //   GET /api/factura?grupo=<grupoId>&puerta=1      -> idem, para el link de grupo
+//   GET /api/factura?rid=<reclamo>&puerta=1        -> idem, para el link de un reclamo
 //   GET /api/factura?pedido=<id>&t=1234            -> manda la factura
 //   GET /api/factura?pedido=<id>&t=1234&n=1        -> la segunda (si la pidió en partes)
 //   GET /api/factura?pedido=<id>&t=1234&foto=0     -> la foto del espejo terminado
@@ -75,7 +76,8 @@ export default async function handler(req, res) {
   const grupo = String(q.grupo || "").trim();
   const escrito = String(q.t || "").trim();
   const esPuerta = String(q.puerta || "") === "1";
-  if (!id && !grupo) return res.status(400).json({ error: "Falta el pedido." });
+  const rid = String(q.rid || "").trim();
+  if (!id && !grupo && !rid) return res.status(400).json({ error: "Falta el pedido." });
 
   const url = process.env.SUPABASE_URL;
   const clave = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -83,6 +85,20 @@ export default async function handler(req, res) {
 
   try {
     const supabase = createClient(url, clave, { auth: { persistSession: false } });
+
+    // El link de un reclamo (20/11/2026): la misma puerta, con el teléfono
+    // del reclamo. Solo la puerta: lo demás se pide por el pedido.
+    if (rid) {
+      if (!esPuerta) return res.status(400).json({ error: "Falta el pedido." });
+      const { data: filaR, error: errorR } = await supabase.from("reclamos_rows").select("data").eq("id", rid).maybeSingle();
+      if (errorR) throw new Error("consulta");
+      const rec = filaR ? filaR.data : null;
+      if (!rec) return res.status(200).json({ pide: false, ok: true });
+      if (!ultimos4(rec.celular)) return res.status(200).json({ pide: false, ok: true });
+      if (!escrito) return res.status(200).json({ pide: true });
+      return res.status(200).json({ pide: true, ok: coincide(rec.celular, escrito) });
+    }
+
     const pedido = await buscarPedido(supabase, { pedido: id, grupo });
 
     if (esPuerta) {
