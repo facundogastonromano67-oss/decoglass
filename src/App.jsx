@@ -725,9 +725,24 @@ function sumadosDelDia(orden, listaId, fecha) {
 }
 const TITULO_SUMADOS = {
   int_embalar: "Para embalar · Interior",
-  esm_armar: "Para armar · Esmerilados que volvieron",
+  esm_armar: "Para armar · Esmerilados y biselados que volvieron",
   esm_cortar: "Para cortar · Esmerilados",
 };
+// Un día al que se le mandó algo de otra lista pero que todavía no tiene
+// simples igual tiene que aparecer, si no lo mandado no se ve.
+function conDiasDeSumados(plan, orden, hoyIso, estaTrabado = () => false) {
+  const ya = new Set((plan || []).map((d) => d.fecha));
+  const nuevas = [...new Set(Object.entries(orden?.sumados || {})
+    .filter(([k, l]) => k.startsWith("simples|") && Array.isArray(l) && l.length)
+    .map(([k]) => k.split("|")[1]))]
+    .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f || "") && f >= hoyIso && !ya.has(f));
+  if (!nuevas.length) return plan;
+  const vacios = nuevas.map((fecha) => {
+    const [y, m, d] = fecha.split("-").map(Number);
+    return { fecha, items: [], hechos: [], porEmbalar: [], porEmbalarU: 0, extras: 0, espejos: 0, total: 0, sinHacerU: 0, pasado: false, trabada: !!estaTrabado(fecha), sabado: new Date(y, m - 1, d).getDay() === 6 };
+  });
+  return [...plan, ...vacios].sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
 // Las listas que se pueden sumar a un día de Pedidos Simples.
 const LISTAS_PARA_SUMAR = ["int_embalar", "esm_armar", "esm_cortar"];
 const esPestanaDeArmar = (id) => infoPestana(id)?.cola === "armar";
@@ -7607,6 +7622,12 @@ function siguienteDiaTaller(iso) {
   let f = new Date(y, m - 1, d + 1);
   if (f.getDay() === 0) f = new Date(f.getFullYear(), f.getMonth(), f.getDate() + 1);
   return isoLocal(f);
+}
+// Los próximos n días de trabajo (sin domingos), desde hoy.
+function proximosDiasTaller(hoyIso, n) {
+  const dias = [primerDiaTaller(hoyIso)];
+  while (dias.length < n) dias.push(siguienteDiaTaller(dias[dias.length - 1]));
+  return dias;
 }
 function primerDiaTaller(hoyIso) {
   const [y, m, d] = hoyIso.split("-").map(Number);
@@ -18994,9 +19015,9 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   }
   function sumarDeOtraLista(fecha, valor) {
     const [desde, id] = String(valor || "").split("::");
-    if (!desde || !id) return;
-    const clave = claveSumados(lista, fecha);
-    const ya = sumadosDelDia(ordenFabrica, lista, fecha);
+    if (!desde || !id || !fecha) return;
+    const clave = claveSumados("simples", fecha);
+    const ya = sumadosDelDia(ordenFabrica, "simples", fecha);
     if (ya.some((x) => x.id === id)) return;
     // Los días que ya pasaron se limpian solos.
     const sumados = Object.fromEntries(Object.entries(ordenFabrica.sumados || {}).filter(([k]) => (k.split("|")[1] || "") >= hoyTaller));
@@ -19005,8 +19026,8 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
     if (onRegistrar && p) onRegistrar("Sumó un espejo de otra lista a un día", `#${p.orden} — ${p.cliente} — ${infoPestana(desde)?.label || desde} → ${nombreDiaTaller(fecha, hoyTaller)}`);
   }
   function sacarSumado(fecha, id) {
-    const clave = claveSumados(lista, fecha);
-    onChangeOrdenFabrica({ ...ordenFabrica, sumados: { ...(ordenFabrica.sumados || {}), [clave]: sumadosDelDia(ordenFabrica, lista, fecha).filter((x) => x.id !== id) } });
+    const clave = claveSumados("simples", fecha);
+    onChangeOrdenFabrica({ ...ordenFabrica, sumados: { ...(ordenFabrica.sumados || {}), [clave]: sumadosDelDia(ordenFabrica, "simples", fecha).filter((x) => x.id !== id) } });
   }
   function cambiarTraba(fecha, trabar) {
     if (!puedoTocarElCandado) return;
@@ -19214,11 +19235,18 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
 
   // En qué día de Pedidos Simples se sumó cada espejo de otra lista (hoy o después).
   const enDiaSumado = new Map();
+  const diasSumadoDe = new Map();
   Object.entries(ordenFabrica?.sumados || {}).forEach(([k, l]) => {
     const [listaK, fechaK] = k.split("|");
     if (listaK !== "simples" || !fechaK || fechaK < hoyTaller || !Array.isArray(l)) return;
-    l.forEach((x) => { if (!enDiaSumado.has(x.id) || fechaK < enDiaSumado.get(x.id)) enDiaSumado.set(x.id, fechaK); });
+    l.forEach((x) => {
+      if (!enDiaSumado.has(x.id) || fechaK < enDiaSumado.get(x.id)) enDiaSumado.set(x.id, fechaK);
+      diasSumadoDe.set(x.id, [...(diasSumadoDe.get(x.id) || []), fechaK].sort());
+    });
   });
+  // «Mandar a una lista»: los próximos días de trabajo (hoy incluido).
+  const diasParaMandar = proximosDiasTaller(hoyTaller, 10);
+  const laListaDel = (f) => f === hoyTaller ? "la lista de hoy" : `la lista del ${nombreDiaTaller(f, hoyTaller).replace(/^Mañana · /, "").toLowerCase()}`;
   function tarjetasDe(p) {
     const cant = Math.max(1, Number(p.cant) || 1);
     if (cant <= 1) return [renderCard(p, 1, 1)];
@@ -19241,7 +19269,18 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           <div className="dg-plana-bar">
             <span className="dg-plana-pos">{i + 1}</span>
             {idsDem.has(p.id) && <span className="dg-plana-demorado"><AlertTriangle size={11} /> Demorado{diasEnEtapa(p) ? ` · ${diasEnEtapa(p)} días acá` : ""}</span>}
-            {enDiaSumado.has(p.id) && <span className="dg-plana-sumado">También en la lista del {nombreDiaTaller(enDiaSumado.get(p.id), hoyTaller).toLowerCase()}</span>}
+            {(diasSumadoDe.get(p.id) || []).map((f) => (
+              <span className="dg-plana-sumado" key={`en-${f}`}>
+                En {laListaDel(f)}
+                {puedeOrdenar && <button type="button" className="dg-plana-sacar" onClick={() => sacarSumado(f, p.id)} aria-label={`Sacarlo de ${laListaDel(f)}`} title="Sacarlo de esa lista"><X size={11} /></button>}
+              </span>
+            ))}
+            {puedeOrdenar && LISTAS_PARA_SUMAR.includes(lista) && (
+              <select className="dg-plana-mandar" value="" onChange={(e) => sumarDeOtraLista(e.target.value, `${lista}::${p.id}`)} aria-label="Mandarlo a la lista de un día">
+                <option value="">Mandar a una lista…</option>
+                {diasParaMandar.filter((f) => !(diasSumadoDe.get(p.id) || []).includes(f)).map((f) => (<option key={f} value={f}>{nombreDiaTaller(f, hoyTaller)}</option>))}
+              </select>
+            )}
             {puedeOrdenar && !busqueda.trim() && (
               <span className="dg-plana-flechas">
                 <button type="button" className="dg-icon-btn" disabled={i === 0} onClick={() => moverEnLista(ids, p.id, -1)} aria-label="Subir"><ChevronUp size={15} /></button>
@@ -19958,7 +19997,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
       <div className="dg-fab-lista">
 
         {filtroEstado === "fotos" ? <FotosDeListasPanel pedidos={pedidos} hoyIso={hoyTaller} listaInicial={lista} /> : (lista === "simples" && filtroEstado === "activos") ? (() => {
-          const plan = planTaller(pedidos, hoyTaller, lista);
+          const plan = conDiasDeSumados(planTaller(pedidos, hoyTaller, lista), ordenFabrica, hoyTaller, estaTrabado);
           const contar = (arr) => arr.reduce((t, x) => t + x.unidades, 0);
           const diaHoyPlan = diaDeHoyDelPlan(plan);
           // Si la copia todavía no llegó, se respeta el orden que ya se vio en
@@ -20161,7 +20200,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               </button>
                             </div>
                           )}
-                          {items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && <div className="dg-dia-vacio">{arrastrable ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
+                          {items.length === 0 && hechosDia.length === 0 && dia.porEmbalarU === 0 && sumados.length === 0 && <div className="dg-dia-vacio">{arrastrable ? "Nada para este día. Podés arrastrar espejos acá." : "Nada para este día."}</div>}
                           {soyEditorUnico && !dia.pasado && (() => {
                             const yaEnElDia = new Set(dia.items.map((x) => x.pedido.id));
                             const candidatos = pendientesDeLaLista.filter((p) => !yaEnElDia.has(p.id));
@@ -20254,7 +20293,7 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                 {delTab.map((x) => (
                                   <div className="dg-dia-item dg-dia-item-sumado" key={`sum-${tab}-${x.id}`}>
                                     <div className="dg-dia-item-bar">
-                                      <span className="dg-dia-item-tipo">{infoPestana(tab)?.label}</span>
+                                      <span className="dg-dia-item-tipo">{tab === "esm_armar" ? (grupoListaArmar(x.pedido) === "biselados_armar" ? "Biselado · para armar" : "Esmerilado · para armar") : infoPestana(tab)?.label}</span>
                                       {puedeOrdenar && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => sacarSumado(dia.fecha, x.id)}>Sacar de este día</button>}
                                     </div>
                                     {tarjetasDe(x.pedido)}
@@ -25730,6 +25769,10 @@ function Style() {
       .dg-plana-item-demorado .dg-plana-pos { background:color-mix(in srgb, var(--dg-danger) 22%, transparent); }
       .dg-plana-sumado { padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-text); }
       .dg-plana-flechas { margin-left:auto; display:inline-flex; gap:2px; }
+      .dg-plana-sumado { display:inline-flex; align-items:center; gap:4px; }
+      .dg-plana-sacar { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; padding:0; border:0; border-radius:999px; background:transparent; color:inherit; cursor:pointer; }
+      .dg-plana-sacar:hover, .dg-plana-sacar:focus-visible { background:rgba(var(--dg-accent-rgb),.25); }
+      .dg-plana-mandar { font-size:12px; font-weight:700; padding:4px 8px; border-radius:8px; border:1px solid var(--dg-accent); background:var(--dg-surface); color:var(--dg-accent); cursor:pointer; max-width:100%; }
       .dg-dia-taller-sumados-chip { padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; background:color-mix(in srgb, var(--dg-interior) 20%, transparent); color:var(--dg-text); }
       .dg-sumados { margin:14px 0 6px; padding:10px 10px 4px; border-radius:12px; border:1px solid color-mix(in srgb, var(--pc) 45%, transparent); background:color-mix(in srgb, var(--pc) 8%, transparent); }
       .dg-sumados-tit { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; margin-bottom:8px; font-size:13px; font-weight:800; letter-spacing:.3px; text-transform:uppercase; color:color-mix(in srgb, var(--pc) 65%, var(--dg-text)); }
