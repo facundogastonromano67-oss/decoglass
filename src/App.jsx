@@ -7977,6 +7977,11 @@ function unidadesDePedido(pedido) {
 function esperaEmbalajeInterior(p) {
   if (!p || !esEnvioInterior(p) || pedidoEstaListo(p) || p.estado === "Cancelado") return false;
   if (pedidoListaFabrica(p) !== "armar") return false;
+  // Lo que dice el pedido manda (20/11/2026): si está «armado», espera el
+  // embalaje. Las unidades guardadas pueden quedar desfasadas (por ejemplo
+  // después de embalar desde Interior y «Volver un paso»): con eso dos
+  // interiores armados quedaban en Pedidos Simples, escondidos en «Demorados».
+  if (p.produccionEtapa === "armado") return true;
   const unidades = unidadesDePedido(p);
   return unidades.length > 0
     && unidades.every((u) => unidadPasosCompletados(u) >= 2)
