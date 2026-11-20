@@ -183,6 +183,51 @@ export const seguimientoReclamos = {
     if (error) throw error;
     return data || null;
   },
+  // El cliente inicia un reclamo (20/11/2026): sube las fotos con permiso del
+  // servidor (controla los 4 dígitos), crea el reclamo y avisa al equipo.
+  // Devuelve { id } o { error } con el motivo para mostrarle.
+  async iniciar({ acceso, clave, motivo, detalle, espejoId, archivos }) {
+    const base = () => {
+      const p = new URLSearchParams();
+      if (acceso?.pedido) p.set("pedido", acceso.pedido);
+      if (acceso?.grupo) p.set("grupo", acceso.grupo);
+      if (clave) p.set("t", clave);
+      return p;
+    };
+    const fotos = [];
+    for (const archivo of (archivos || []).slice(0, 4)) {
+      const p = base();
+      p.set("reclamo", "subir");
+      p.set("mime", archivo.type || "image/jpeg");
+      let permiso;
+      try {
+        const r = await fetch(`/api/factura?${p.toString()}`);
+        permiso = await r.json().catch(() => ({}));
+        if (!r.ok) return { error: permiso?.error || "No se pudo subir la foto. Probá de nuevo." };
+      } catch (e) { return { error: "No hay conexión. Probá de nuevo en un momento." }; }
+      const { error: errorSubida } = await supabase.storage.from("facturas")
+        .uploadToSignedUrl(permiso.path, permiso.token, archivo, { contentType: archivo.type || "image/jpeg" });
+      if (errorSubida) return { error: "No se pudo subir la foto. Probá de nuevo." };
+      fotos.push(permiso.path);
+    }
+    const p = base();
+    p.set("reclamo", "nuevo");
+    try {
+      const r = await fetch(`/api/factura?${p.toString()}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo, detalle, espejoId, fotos }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        if (r.status === 403) return { error: "Volvé a entrar al link y poné los últimos 4 números de tu teléfono." };
+        return { error: d?.error || "No se pudo mandar el reclamo. Probá de nuevo." };
+      }
+      try {
+        fetch("/api/avisar-reclamo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reclamoId: d.id }), keepalive: true }).catch(() => {});
+      } catch (e) { /* el reclamo ya quedó */ }
+      return { id: d.id };
+    } catch (e) { return { error: "No hay conexión. Probá de nuevo en un momento." }; }
+  },
   async dePedidos(ids) {
     const lista = (ids || []).filter(Boolean);
     if (!lista.length) return [];

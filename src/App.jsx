@@ -27926,6 +27926,16 @@ function Style() {
       .dg-seg-fecha-aprox { display:flex; align-items:center; gap:8px; margin:10px 0 0; padding:8px 12px; border-radius:10px; font-size:13px; line-height:1.35; color:var(--dg-text); background:rgba(var(--dg-accent-rgb),.10); border:1px solid rgba(var(--dg-accent-rgb),.30); }
       .dg-seg-fecha-aprox svg { flex-shrink:0; color:var(--dg-accent); }
       .dg-seg-reclamo .dg-seguimiento-pasos { margin-top:10px; }
+      .dg-seg-reclamo-abrir { width:100%; justify-content:center; }
+      .dg-seg-reclamo-listo { display:flex; align-items:center; gap:8px; margin:0 0 10px; font-size:13px; color:color-mix(in srgb, var(--dg-success) 60%, var(--dg-text)); }
+      .dg-seg-reclamo-nuevo form { display:flex; flex-direction:column; gap:12px; }
+      .dg-seg-reclamo-motivos { display:grid; grid-template-columns:repeat(auto-fill, minmax(118px, 1fr)); }
+      .dg-seg-reclamo-motivos .dg-reclamo-opcion { font-size:12.5px; padding:8px 10px; }
+      .dg-seg-reclamo-campo { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--dg-text-dim); }
+      .dg-seg-reclamo-campo textarea, .dg-seg-reclamo-campo select { width:100%; font-size:16px; }
+      .dg-seg-reclamo-fotos { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+      .dg-seg-reclamo-fotos-n { display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--dg-text-dim); }
+      .dg-seg-reclamo-acciones { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
       .dg-seg-reclamo-dato { margin:6px 0 0; font-size:13px; color:var(--dg-text-dim); }
       .dg-seg-reclamo-dato strong { color:var(--dg-text); }
       .dg-seg-reclamo-desde { font-size:12px; color:var(--dg-text-dim); }
@@ -29556,10 +29566,91 @@ function useReclamosDelPedido(ids, abierta, refrescar) {
   }, [clave, abierta, refrescar]);
   return lista;
 }
-function ReclamosEnSeguimiento({ ids, abierta }) {
-  const lista = useReclamosDelPedido(ids, abierta, 0);
-  if (!lista.length) return null;
-  return <>{lista.map((r) => <TarjetaReclamoPublico key={r.id} r={r} />)}</>;
+// Y desde el 20/11/2026 el cliente puede iniciar el reclamo desde acá: qué
+// pasó, con cuál espejo y fotos. Entra a PostVenta › Reclamos marcado «Desde
+// el link» y le avisa al equipo.
+function ReclamosEnSeguimiento({ ids, abierta, acceso, clave, espejos = [] }) {
+  const [refrescar, setRefrescar] = useState(0);
+  const lista = useReclamosDelPedido(ids, abierta, refrescar);
+  const [formAbierto, setFormAbierto] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [detalle, setDetalle] = useState("");
+  const [espejoId, setEspejoId] = useState("");
+  const [fotos, setFotos] = useState([]);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState("");
+  const [mandado, setMandado] = useState(false);
+  async function enviar(e) {
+    e.preventDefault();
+    if (!motivo) { setError("Elegí qué pasó."); return; }
+    if (detalle.trim().length < 5) { setError("Contanos un poco más qué pasó."); return; }
+    setEnviando(true); setError("");
+    const chicas = [];
+    for (const f of fotos) { try { chicas.push(await comprimirImagen(f, 1600, 0.7)); } catch (err) { chicas.push(f); } }
+    const r = await seguimientoReclamos.iniciar({ acceso, clave, motivo, detalle: detalle.trim(), espejoId: espejoId || espejos[0]?.id || "", archivos: chicas });
+    setEnviando(false);
+    if (r.error) { setError(r.error); return; }
+    setMandado(true); setFormAbierto(false);
+    setMotivo(""); setDetalle(""); setFotos([]); setEspejoId("");
+    setRefrescar((x) => x + 1);
+  }
+  return (
+    <>
+      {lista.map((r) => <TarjetaReclamoPublico key={r.id} r={r} />)}
+      {acceso && abierta && (
+        <section className="dg-seg-entrega dg-seg-reclamo-nuevo" aria-label="Iniciar un reclamo">
+          {mandado && !formAbierto && <p className="dg-seg-reclamo-listo"><Check size={15} aria-hidden="true" /> Recibimos tu reclamo. Lo vas a ver acá, con cada paso.</p>}
+          {!formAbierto ? (
+            <button type="button" className="dg-btn-ghost dg-seg-reclamo-abrir" onClick={() => { setFormAbierto(true); setMandado(false); setError(""); }}>
+              <AlertTriangle size={14} aria-hidden="true" /> ¿Tuviste un problema con tu espejo?
+            </button>
+          ) : (
+            <form onSubmit={enviar}>
+              <div className="dg-seg-entrega-titulo"><AlertTriangle size={15} aria-hidden="true" /> Contanos qué pasó</div>
+              {espejos.length > 1 && (
+                <label className="dg-seg-reclamo-campo">
+                  <span>¿Con qué espejo?</span>
+                  <select value={espejoId || espejos[0].id} onChange={(e) => setEspejoId(e.target.value)}>
+                    {espejos.map((x, i) => <option key={x.id} value={x.id}>Espejo {i + 1}: {[medidaEspejo(x), x.forma].filter(Boolean).join(" · ")}</option>)}
+                  </select>
+                </label>
+              )}
+              <div className="dg-reclamo-opciones dg-seg-reclamo-motivos" role="radiogroup" aria-label="Qué pasó">
+                {RECLAMO_MOTIVOS.map((m) => (
+                  <button key={m.id} type="button" role="radio" aria-checked={motivo === m.id}
+                    className={`dg-reclamo-opcion ${motivo === m.id ? "dg-reclamo-opcion-on" : ""}`} onClick={() => setMotivo(m.id)}>
+                    {m.label}{m.ayuda && <small>{m.ayuda}</small>}
+                  </button>
+                ))}
+              </div>
+              <label className="dg-seg-reclamo-campo">
+                <span>Contanos con tus palabras</span>
+                <textarea rows={3} maxLength={1000} value={detalle} onChange={(e) => setDetalle(e.target.value)} placeholder="Ej: llegó con una esquina saltada" />
+              </label>
+              <div className="dg-seg-reclamo-fotos">
+                <label className="dg-btn-ghost dg-mini-btn">
+                  <Camera size={14} aria-hidden="true" /> {fotos.length ? "Sumar otra foto" : "Sumar fotos (hasta 4)"}
+                  <input type="file" accept="image/*" multiple style={{ display: "none" }} disabled={fotos.length >= 4}
+                    onChange={(e) => { const nuevas = [...(e.target.files || [])]; setFotos((prev) => [...prev, ...nuevas].slice(0, 4)); e.target.value = ""; }} />
+                </label>
+                {fotos.length > 0 && (
+                  <span className="dg-seg-reclamo-fotos-n">
+                    {fotos.length} foto{fotos.length === 1 ? "" : "s"}
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setFotos([])}>Sacar</button>
+                  </span>
+                )}
+              </div>
+              {error && <p className="dg-error" style={{ marginTop: 8 }}>{error}</p>}
+              <div className="dg-seg-reclamo-acciones">
+                <button type="button" className="dg-btn-ghost" onClick={() => { setFormAbierto(false); setError(""); }} disabled={enviando}>Cancelar</button>
+                <button type="submit" className="dg-btn-primary" disabled={enviando}>{enviando ? <><Loader2 size={14} className="dg-spin" /> Mandando…</> : "Mandar reclamo"}</button>
+              </div>
+            </form>
+          )}
+        </section>
+      )}
+    </>
+  );
 }
 function SeguimientoReclamoPublico({ reclamoId }) {
   const [r, setR] = useState(undefined);
@@ -29743,7 +29834,7 @@ function SeguimientoPublico({ pedidoId }) {
 
           <DatosClientePublico items={[pedido]} />
           {pedido.estado !== "Entregado" && <EntregaPublica pedido={pedido} items={[pedido]} />}
-          <ReclamosEnSeguimiento ids={[pedido.id]} abierta={puerta.abierta} />
+          <ReclamosEnSeguimiento ids={[pedido.id]} abierta={puerta.abierta} acceso={{ pedido: pedido.id }} clave={puerta.clave} espejos={[pedido]} />
 
           <div className="dg-verif-specs" style={{ marginTop: 16 }}>
             <div className="dg-fab-medida">
@@ -29943,7 +30034,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
 
             <DatosClientePublico items={activos} />
             {activos.some((e) => e.estado !== "Entregado") && <EntregaPublica pedido={activos.find((e) => e.estado !== "Entregado") || primero} items={activos} />}
-            <ReclamosEnSeguimiento ids={activos.map((e) => e.id)} abierta={puerta.abierta} />
+            <ReclamosEnSeguimiento ids={activos.map((e) => e.id)} abierta={puerta.abierta} acceso={{ grupo: grupoId }} clave={puerta.clave} espejos={activos} />
 
             <div className="dg-seguimiento-docs">
               {puedeDescargarFactura && (
