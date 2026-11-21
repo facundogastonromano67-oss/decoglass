@@ -12485,10 +12485,10 @@ function bloqueDeSalida(f) { return `${f.enProduccion ? "prod" : "listo"}|${diaD
 // Envíos, solo por fecha (21/11/2026, Facundo): adentro de cada día, arriba
 // los flex, en el medio los comunes y abajo, en gris, los que todavía no
 // están listos. Los que no tienen fecha van aparte, al final. Los que siguen
-// en fábrica y ya se les pasó el día van juntos, antes de los sin fecha.
+// en fábrica y ya se les pasó el día van juntos, arriba de todo.
 function claveDiaSalida(f, hoy) {
   const d = diaDeSalida(f, hoy);
-  return d === DIA_PASADOS ? "9998" : (d || "9999");
+  return d === DIA_PASADOS ? "0000" : (d || "9999");
 }
 function rangoEnElDiaSalida(f) { return f.enProduccion ? 2 : f.flex ? 0 : 1; }
 function compararSalidas(a, b, hoy) {
@@ -13580,7 +13580,6 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       const delDia = empiezaDia ? filas.filter((x) => diaDeSalida(x, semana.hoy) === dia) : [];
                       // Adentro del día, la rayita antes de los que siguen en fábrica.
                       const empiezanNoListos = f.enProduccion && dia !== DIA_PASADOS && (empiezaDia || !filas[i - 1].enProduccion);
-                      const noListosDia = empiezanNoListos ? filas.filter((x) => diaDeSalida(x, semana.hoy) === dia && x.enProduccion).length : 0;
                       return (
                         <Fragment key={f.clave}>
                         {empiezaDia && (
@@ -13592,8 +13591,8 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                           </tr>
                         )}
                         {empiezanNoListos && (
-                          <tr className="dg-envios-nolistos">
-                            <td colSpan={8}>Todavía en fábrica · {noListosDia} · no salen hasta que estén listos</td>
+                          <tr className="dg-envios-nolistos" aria-hidden="true">
+                            <td colSpan={8} />
                           </tr>
                         )}
                         <tr
@@ -25766,7 +25765,7 @@ function Style() {
       .dg-envios-dia-sinfecha > td { border-top:2px dashed rgba(var(--dg-line-rgb),.6); }
       .dg-envios-tabla tbody tr.dg-envios-nolistos { cursor:default; }
       .dg-envios-tabla tbody tr.dg-envios-nolistos:hover { background:transparent; }
-      .dg-envios-nolistos > td { padding:6px 12px; font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); border-top:1px dashed rgba(var(--dg-line-rgb),.55); white-space:normal; }
+      .dg-envios-nolistos > td { padding:0; height:0; border-top:1px dashed rgba(var(--dg-line-rgb),.7); }
       .dg-envios-fila-nolista:not(.dg-envios-fila-abierta) > td { opacity:.55; filter:grayscale(1); }
       .dg-envios-dia small { margin-left:10px; font-size:12px; color:var(--dg-text-dim); }
       .dg-envios-dia-atrasado b { color:color-mix(in srgb, var(--dg-danger) 70%, var(--dg-text)); }
