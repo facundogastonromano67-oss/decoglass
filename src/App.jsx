@@ -12482,6 +12482,22 @@ function diaDeSalida(f, hoy = isoLocal(new Date())) {
   return f?.fecha || "";
 }
 function bloqueDeSalida(f) { return `${f.enProduccion ? "prod" : "listo"}|${diaDeSalida(f) || "sin-fecha"}`; }
+// Envíos, solo por fecha (21/11/2026, Facundo): adentro de cada día, arriba
+// los flex, en el medio los comunes y abajo, en gris, los que todavía no
+// están listos. Los que no tienen fecha van aparte, al final. Los que siguen
+// en fábrica y ya se les pasó el día van juntos, antes de los sin fecha.
+function claveDiaSalida(f, hoy) {
+  const d = diaDeSalida(f, hoy);
+  return d === DIA_PASADOS ? "9998" : (d || "9999");
+}
+function rangoEnElDiaSalida(f) { return f.enProduccion ? 2 : f.flex ? 0 : 1; }
+function compararSalidas(a, b, hoy) {
+  return claveDiaSalida(a, hoy).localeCompare(claveDiaSalida(b, hoy))
+    || rangoEnElDiaSalida(a) - rangoEnElDiaSalida(b)
+    || (a.fecha || "9999").localeCompare(b.fecha || "9999")
+    || (a.grupo || 0) - (b.grupo || 0)
+    || (a.sePaso || "9999").localeCompare(b.sePaso || "9999");
+}
 function ordenarConGuardado(filas, orden) {
   const salida = [];
   let i = 0;
@@ -13516,14 +13532,11 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           // orden de GRUPOS_SALIDA: entregas, arreglos, retiros de espejos,
           // devoluciones y retiros de material.
           // y, dentro de cada uno, el que se pasó primero arriba.
-          .sort((a, b) => (a.enProduccion ? 1 : 0) - (b.enProduccion ? 1 : 0) || (a.fecha || "9999").localeCompare(b.fecha || "9999") || a.grupo - b.grupo || (a.sePaso || "9999").localeCompare(b.sePaso || "9999"));
+          .sort((a, b) => compararSalidas(a, b, semana.hoy));
         // Y adentro de cada día, el orden que dejó PostVenta arrastrando.
         const filas = ordenarConGuardado(filasSinOrden, ordenSalidas);
         // Dos partes (03/11/2026): lo que ya se puede coordinar y lo que sigue
         // en fábrica. Cada una con sus días, como siempre.
-        const hayProduccion = filas.some((x) => x.enProduccion);
-        const cuantosListos = filas.filter((x) => !x.enProduccion).length;
-        const cuantosProduccion = filas.length - cuantosListos;
         const estaSemana = filas.filter((f) => f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo).length;
         const atrasadas = filas.filter((f) => f.fecha && f.fecha < semana.hoy).length;
         // Las visitas y los arreglos a domicilio los hacemos nosotros, no el
@@ -13562,31 +13575,29 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
                       const deSemana = f.fecha && f.fecha >= semana.lunes && f.fecha <= semana.domingo;
                       const abierta = filaAbierta === f.clave;
                       // Un renglón por día con qué sale: «5 entregas · 2 retiros…».
-                      const empiezaSeccion = hayProduccion && (i === 0 || !!filas[i - 1].enProduccion !== !!f.enProduccion);
                       const dia = diaDeSalida(f, semana.hoy);
-                      const empiezaDia = empiezaSeccion || i === 0 || diaDeSalida(filas[i - 1], semana.hoy) !== dia;
-                      const delDia = empiezaDia ? filas.filter((x) => diaDeSalida(x, semana.hoy) === dia && !!x.enProduccion === !!f.enProduccion) : [];
+                      const empiezaDia = i === 0 || diaDeSalida(filas[i - 1], semana.hoy) !== dia;
+                      const delDia = empiezaDia ? filas.filter((x) => diaDeSalida(x, semana.hoy) === dia) : [];
+                      // Adentro del día, la rayita antes de los que siguen en fábrica.
+                      const empiezanNoListos = f.enProduccion && dia !== DIA_PASADOS && (empiezaDia || !filas[i - 1].enProduccion);
+                      const noListosDia = empiezanNoListos ? filas.filter((x) => diaDeSalida(x, semana.hoy) === dia && x.enProduccion).length : 0;
                       return (
                         <Fragment key={f.clave}>
-                        {empiezaSeccion && (
-                          <tr className={`dg-envios-seccion ${f.enProduccion ? "dg-envios-seccion-produccion" : ""}`}>
+                        {empiezaDia && (
+                          <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""} ${dia === DIA_PASADOS ? "dg-envios-dia-pasados" : ""} ${!dia ? "dg-envios-dia-sinfecha" : ""}`}>
                             <td colSpan={8}>
-                              {f.enProduccion
-                                ? <><b>En producción</b><small>{cuantosProduccion} · todavía en fábrica. Ya se les puede poner fecha, pero no se entregan hasta que estén listos.</small></>
-                                : <><b>Listos para coordinar</b><small>{cuantosListos} · terminados en fábrica, salidas cargadas a mano y visitas</small></>}
+                              <b>{dia === DIA_PASADOS ? "Pasados de fecha" : f.fecha ? fechaLargaCorta(f.fecha) : "Sin fecha asignada"}</b>
+                              <small>{delDia.length} {delDia.length === 1 ? "salida" : "salidas"} · {dia === DIA_PASADOS ? "ya se pasó el día que tenían y siguen en fábrica" : !dia ? "todavía no tienen día" : resumenDeSalidas(delDia)}</small>
                             </td>
                           </tr>
                         )}
-                        {empiezaDia && (
-                          <tr className={`dg-envios-dia ${atrasada ? "dg-envios-dia-atrasado" : ""} ${dia === DIA_PASADOS ? "dg-envios-dia-pasados" : ""}`}>
-                            <td colSpan={8}>
-                              <b>{dia === DIA_PASADOS ? "Pasados de fecha" : f.fecha ? fechaLargaCorta(f.fecha) : "A coordinar"}</b>
-                              <small>{delDia.length} {delDia.length === 1 ? "salida" : "salidas"} · {dia === DIA_PASADOS ? "ya se pasó el día que tenían y siguen en fábrica" : resumenDeSalidas(delDia)}</small>
-                            </td>
+                        {empiezanNoListos && (
+                          <tr className="dg-envios-nolistos">
+                            <td colSpan={8}>Todavía en fábrica · {noListosDia} · no salen hasta que estén listos</td>
                           </tr>
                         )}
                         <tr
-                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${f.manual && f.tipo.clase ? `dg-envios-fila-${f.tipo.clase}` : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""} ${arrastre?.clave === f.clave ? "dg-fila-arrastrada" : ""} ${arrastre?.sobre === f.clave && arrastre.clave !== f.clave ? (arrastre.despues ? "dg-fila-soltar-despues" : "dg-fila-soltar-antes") : ""}`}
+                          className={`dg-envios-fila ${abierta ? "dg-envios-fila-abierta" : ""} ${f.enProduccion ? "dg-envios-fila-nolista" : ""} ${atrasada ? "dg-envios-fila-atrasada" : deSemana ? "dg-envios-fila-semana" : ""} ${f.visita ? "dg-envios-fila-visita" : ""} ${f.flex ? "dg-envios-fila-flex" : ""} ${f.manual && f.tipo.clase ? `dg-envios-fila-${f.tipo.clase}` : ""} ${seleccion.has(f.clave) ? "dg-envios-fila-elegida" : ""} ${arrastre?.clave === f.clave ? "dg-fila-arrastrada" : ""} ${arrastre?.sobre === f.clave && arrastre.clave !== f.clave ? (arrastre.despues ? "dg-fila-soltar-despues" : "dg-fila-soltar-antes") : ""}`}
                           data-fila={f.clave}
                           data-bloque={bloqueDeSalida(f)}
                           onClick={() => setFilaAbierta(abierta ? null : f.clave)}
@@ -25752,6 +25763,11 @@ function Style() {
       .dg-envios-dia > td { padding:10px 12px 6px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.05); white-space:normal; }
       .dg-envios-dia b { font-size:13px; font-weight:700; color:var(--dg-text); text-transform:capitalize; }
       .dg-envios-dia-pasados b { text-transform:none; color:var(--dg-danger); }
+      .dg-envios-dia-sinfecha > td { border-top:2px dashed rgba(var(--dg-line-rgb),.6); }
+      .dg-envios-tabla tbody tr.dg-envios-nolistos { cursor:default; }
+      .dg-envios-tabla tbody tr.dg-envios-nolistos:hover { background:transparent; }
+      .dg-envios-nolistos > td { padding:6px 12px; font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); border-top:1px dashed rgba(var(--dg-line-rgb),.55); white-space:normal; }
+      .dg-envios-fila-nolista:not(.dg-envios-fila-abierta) > td { opacity:.55; filter:grayscale(1); }
       .dg-envios-dia small { margin-left:10px; font-size:12px; color:var(--dg-text-dim); }
       .dg-envios-dia-atrasado b { color:color-mix(in srgb, var(--dg-danger) 70%, var(--dg-text)); }
       .dg-cargar-salida { margin-left:auto; }
