@@ -7955,6 +7955,16 @@ function facturasDelPedido(pedido) {
 }
 // Lo inverso: de la lista a los dos campos.
 const camposDeFacturas = (lista) => ({ facturaUrl: lista[0] || "", facturasExtra: lista.slice(1) });
+// La factura se guarda en el pedido APENAS se sube (21/11/2026). Antes
+// quedaba solo en el formulario hasta tocar «Guardar», y si al pedido le
+// faltaba algún dato obligatorio (en los viejos, «¿De dónde vino?» o el tipo
+// de factura) no se podía guardar: se cerraba y la factura se perdía.
+function pedidosConFacturas(pedidos, ids, lista) {
+  const set = new Set(ids || []);
+  if (!set.size) return pedidos;
+  const campos = camposDeFacturas(lista || []);
+  return (pedidos || []).map((p) => (set.has(p.id) ? { ...p, ...campos } : p));
+}
 
 function soloCamposDelPedido(pedido) {
   const patch = {};
@@ -9763,6 +9773,7 @@ function VentasPorVendedorPanel({ pedidos, empleados, onChangePedidos, onCreateI
           canEditEstadoOnly={false}
           onClose={() => setEditando(null)}
           onSave={guardarUnEspejo}
+          onGuardarFacturas={(ids, lista) => onChangePedidos(pedidosConFacturas(pedidos, ids, lista))}
           onDelete={null}
           stockEspejos={stockEspejos}
           esNuevo={false}
@@ -9782,6 +9793,7 @@ function VentasPorVendedorPanel({ pedidos, empleados, onChangePedidos, onCreateI
           canEditEstadoOnly={false}
           onClose={() => setEditando(null)}
           onSave={guardarVenta}
+          onGuardarFacturas={(ids, lista) => onChangePedidos(pedidosConFacturas(pedidos, ids, lista))}
           onDelete={null}
           stockEspejos={stockEspejos}
           esNuevo={false}
@@ -10589,6 +10601,7 @@ function PedidosPage({ pedidos, onChange, vendedores, canEditFull, puedeBorrar =
           canEditEstadoOnly={canEditEstadoOnly}
           onClose={() => setEditandoEntrega(null)}
           onSave={guardarEntregaDelGrupo}
+          onGuardarFacturas={(ids, lista) => onChange(pedidosConFacturas(pedidos, ids, lista))}
           onDelete={null}
           stockEspejos={stockEspejos}
           esNuevo={false}
@@ -11163,8 +11176,9 @@ function LinksOrdenPapel({ pedido }) {
 // Las facturas del pedido: se ven todas, se quita cualquiera, y se suman de a
 // una o varias juntas (se pueden elegir varios PDF a la vez). onCambiar
 // recibe la lista entera, en orden.
-function SubirFacturaCampo({ pedido, canEdit, onCambiar }) {
+function SubirFacturaCampo({ pedido, canEdit, onCambiar, guardaSola = false }) {
   const [subiendo, setSubiendo] = useState(false);
+  const [guardada, setGuardada] = useState("");
   const [borrando, setBorrando] = useState("");
   const [error, setError] = useState("");
   const lista = facturasDelPedido(pedido);
@@ -11182,7 +11196,10 @@ function SubirFacturaCampo({ pedido, canEdit, onCambiar }) {
         : "No se pudo subir. Revisá la conexión e intentá de nuevo.");
     } finally {
       // Lo que sí se subió queda en el pedido aunque otra haya fallado.
-      if (subidas.length) onCambiar([...lista, ...subidas]);
+      if (subidas.length) {
+        onCambiar([...lista, ...subidas]);
+        if (guardaSola) setGuardada(subidas.length > 1 ? "Las facturas quedaron guardadas en el pedido." : "La factura quedó guardada en el pedido.");
+      }
       setSubiendo(false);
       e.target.value = "";
     }
@@ -11195,6 +11212,7 @@ function SubirFacturaCampo({ pedido, canEdit, onCambiar }) {
     try {
       await documentosStore.borrarFactura(ruta);
       onCambiar(lista.filter((x) => x !== ruta));
+      setGuardada(guardaSola ? "Se quitó del pedido." : "");
     } catch (err) {
       setError("No se pudo quitar. Revisá la conexión e intentá de nuevo.");
     } finally {
@@ -11224,6 +11242,7 @@ function SubirFacturaCampo({ pedido, canEdit, onCambiar }) {
         </label>
       )}
       {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
+      {!error && guardada && <p className="dg-hint dg-factura-guardada" role="status"><Check size={12} /> {guardada}</p>}
     </div>
   );
 }
@@ -11264,7 +11283,11 @@ function ModalMotivo({ titulo, opciones, onConfirmar, onCancelar, etapaOpciones 
 
 // modo: "todo" (como siempre) · "entrega" (cliente y envío del pedido entero)
 // · "espejo" (solo las medidas y funciones de ese espejo).
-function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1, clientes = [], grupo = [] }) {
+function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClose, onSave, onDelete, stockEspejos, esNuevo, aviso, modo = "todo", cuantosEspejos = 1, clientes = [], grupo = [], onGuardarFacturas = null }) {
+  // Siempre la última versión (la subida tarda y mientras tanto los pedidos
+  // pueden cambiar: no hay que guardar sobre una lista vieja).
+  const guardarFacturasRef = useRef(onGuardarFacturas);
+  guardarFacturasRef.current = onGuardarFacturas;
   const verEspejo = modo !== "entrega";
   const verEntrega = modo !== "espejo";
   const [draft, setDraft] = useState(() => {
@@ -11567,7 +11590,17 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
               )}
             </Field>
             <Field label="Facturas (PDF)">
-              <SubirFacturaCampo pedido={draft} canEdit={canEditFull} onCambiar={(lista) => { const c = camposDeFacturas(lista); set("facturaUrl", c.facturaUrl); set("facturasExtra", c.facturasExtra); }} />
+              <SubirFacturaCampo pedido={draft} canEdit={canEditFull} guardaSola={!esNuevo && !!onGuardarFacturas} onCambiar={(lista) => {
+                const c = camposDeFacturas(lista);
+                set("facturaUrl", c.facturaUrl); set("facturasExtra", c.facturasExtra);
+                // En un pedido que ya existe, queda guardada en el momento
+                // (en todos los espejos de la venta), sin esperar a «Guardar».
+                if (!esNuevo && guardarFacturasRef.current) {
+                  const ids = (grupo && grupo.length ? grupo : [pedido]).map((p) => p.id).filter(Boolean);
+                  guardarFacturasRef.current(ids, lista);
+                  try { baseline.current = JSON.stringify({ ...JSON.parse(baseline.current), ...c }); } catch (e) {}
+                }
+              }} />
             </Field>
             <Field label="Orden en papel (foto)">
               <OrdenPapelCampo pedido={draft} canEdit={canEditFull} onCambiar={(lista) => set("ordenPapel", lista)} />
@@ -12223,6 +12256,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
           canEditEstadoOnly={false}
           onClose={() => setEditandoVenta(null)}
           onSave={guardarVenta}
+          onGuardarFacturas={(ids, lista) => onChange(pedidosConFacturas(pedidos, ids, lista))}
           onDelete={null}
           stockEspejos={stockEspejos}
           esNuevo={false}
@@ -13745,6 +13779,7 @@ function EnviosPostventaPanel({ pedidos, onChange, canEdit, reclamos = [], onCha
           canEditEstadoOnly={false}
           onClose={() => setEditandoVenta(null)}
           onSave={guardarVenta}
+          onGuardarFacturas={(ids, lista) => onChange(pedidosConFacturas(pedidos, ids, lista))}
           onDelete={null}
           stockEspejos={stockEspejos}
           esNuevo={false}
@@ -25769,6 +25804,7 @@ function Style() {
       .dg-plana-item-demorado .dg-plana-pos { background:color-mix(in srgb, var(--dg-danger) 22%, transparent); }
       .dg-plana-sumado { padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; background:rgba(var(--dg-accent-rgb),.14); color:var(--dg-text); }
       .dg-plana-flechas { margin-left:auto; display:inline-flex; gap:2px; }
+      .dg-factura-guardada { display:flex; align-items:center; gap:4px; margin-top:4px; color:var(--dg-success); font-weight:600; }
       .dg-plana-sumado { display:inline-flex; align-items:center; gap:4px; }
       .dg-plana-sacar { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; padding:0; border:0; border-radius:999px; background:transparent; color:inherit; cursor:pointer; }
       .dg-plana-sacar:hover, .dg-plana-sacar:focus-visible { background:rgba(var(--dg-accent-rgb),.25); }
