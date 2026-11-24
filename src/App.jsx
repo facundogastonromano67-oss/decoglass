@@ -3139,7 +3139,7 @@ function App() {
           {session && <BotonNotificaciones session={session} />}
           {esDuenoDeMensajes(session) && (
             <button className="dg-icon-btn dg-theme-toggle dg-msj-btn" onClick={() => setMisMensajesOpen(true)} title="Mis mensajes para copiar" aria-label="Mis mensajes">
-              <Copy size={17} /><span>Mensajes</span>
+              <SombreroPaja size={15} /><span>Mensajes</span>
             </button>
           )}
           {session && (
@@ -3603,6 +3603,10 @@ const MENSAJES_BASE = [
     texto: "⭕ ¡Por Favor leer detenidamente! ⭕\n\n¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! Perfecto. Para envíos a localidades más lejanas trabajamos con via cargo ya que tenemos confianza con la sucursal de nuestra localidad.\n\nCada espejo lleva un embalaje reforzado de madera y telgopor (por unidad), que tiene un costo de $15.000 c/u. \n\nEl embalaje se abona al siguiente alias:\n\n{alias1}\n\nEl valor del envío nos lo informan al momento de despachar y se abona en la sucursal de destino según el peso del producto. \n\nSe retira en sucursal de Vía Cargo en destino y el envío se abona al momento de retirarlo. \n\nEsto demora de 10-15 días hábiles para la producción del embalaje y logística hasta el transporte. \n\n{pedirDatosViaCargo}\n\nGracias!" },
   { id: "no_sucursal", grupo: "Envíos al interior", titulo: "No hay sucursal de Vía Cargo", usa: ["localidad"],
     texto: "Estaba viendo que via cargo no cuenta con sucursal en “{localidad}”. Te quería consultar si tenes algún transporte de confianza para despacharlo por ese medio. \n\nSaludos y muchas gracias!" },
+  // Transportes (24/11/2026): se elige en la tabla (nombre, a qué zona llega y
+  // su dirección acá en CABA) y el mensaje se completa con esos datos.
+  { id: "transportes", grupo: "Envíos al interior", titulo: "Transportes", usa: ["transporte"],
+    texto: "¿Hola {nombre,} cómo estás? Te paso los datos del transporte con el que despachamos tu espejo:\n\nTransporte: {transporte}\nLlega a: {zonaTransporte}\nDirección en CABA: {direccionTransporte}\n\nCualquier consulta estoy a disposición. ¡Saludos!" },
   { id: "despacho", grupo: "Envíos al interior", titulo: "Despacho realizado", usa: [],
     texto: "¿Hola {nombre,} como estas? Te adjunto el remito de la encomienda. \nCon el número de guía podés hacer el seguimiento en la página de vía cargo. Se encuentra debajo del código de barras.\n\nCualquier consulta estoy a disposición. ¡Saludos!" },
   { id: "embalaje_pendiente", grupo: "Envíos al interior", titulo: "Embalaje pendiente", usa: [],
@@ -3635,7 +3639,7 @@ const VARIABLES_MENSAJE = [
   { id: "link", label: "Link de seguimiento", ej: "se completa al elegir el pedido" },
 ];
 // La lista de transportes para el interior (24/11/2026, Facundo). Se edita
-// desde «Mis mensajes › Lista de transportes»: lo editado va al kv
+// desde la tabla del mensaje «Transportes»: lo editado va al kv
 // (mis-mensajes.transportes) y esta queda como la lista original.
 const TRANSPORTES_BASE = [
   { nombre: "Astutti", destino: "Santa Fe", direccion: "Ancaste 3650" },
@@ -3650,9 +3654,6 @@ function transporteVaA(t, localidad) {
   const a = sinAcentosMsj(t?.destino).trim();
   const b = sinAcentosMsj(localidad).trim();
   return !!(a && b && (b.includes(a) || a.includes(b)));
-}
-function textoTransporte(t) {
-  return [t?.nombre, t?.direccion].map((x) => String(x || "").trim()).filter(Boolean).join(" - ");
 }
 const ETIQUETAS_ENVIO = { nombre: "Nombre completo", dni: "Dni", direccion: "Dirección", telefono: "Teléfono", cp: "Código Postal" };
 const ETIQUETAS_INTERIOR = { nombre: "Nombre", dni: "Dni", telefono: "Telefono", direccion: "Direccion exacta", localidad: "Localidad", cp: "Codigo Postal", email: "Mail" };
@@ -3701,6 +3702,8 @@ function piezasDelMensaje(datos, vars, alias) {
       ? "El envío no tiene cargo."
       : `Tiene un valor de: ${valorParaMensaje(v.valor) || "…"} que se abona unicamente por transferencia al siguiente alias: \n${alias?.alias1 || "[cargá el alias en ⚙ Alias]"}`,
     transporte: v.transporte || "…",
+    zonaTransporte: v.zonaTransporte || "…",
+    direccionTransporte: v.direccionTransporte || "…",
     link: v.link || "",
     alias1: alias?.alias1 || "[cargá el alias en ⚙ Alias]",
     alias2: alias?.alias2 || "[cargá el alias en ⚙ Alias]",
@@ -3774,8 +3777,6 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
   const [aliasAbierto, setAliasAbierto] = useState(false);
   const [aviso, setAviso] = useState("");
   const [transEdit, setTransEdit] = useState(null); // copia de la lista mientras se edita
-  const [transBusca, setTransBusca] = useState("");
-  const [transCopiado, setTransCopiado] = useState(-1);
 
   useEffect(() => {
     let vivo = true;
@@ -3794,7 +3795,6 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
   const alias = config?.alias || {};
   const partes = Array.isArray(config?.partes) ? config.partes : PARTES_PRINCIPAL.map((p) => p.id);
   const transportes = Array.isArray(config?.transportes) ? config.transportes : TRANSPORTES_BASE;
-  const verTransportes = elegido === "transportes";
   const mensaje = MENSAJES_BASE.find((m) => m.id === elegido) || MENSAJES_BASE[0];
   const piezas = piezasDelMensaje(datos, vars, alias);
   const armado = mensaje.partes ? armarMensajePrincipal(partes, textos, piezas) : completarTexto(textoBaseMensaje(mensaje.id, textos), piezas);
@@ -3845,16 +3845,9 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
     guardarConfig({ ...(config || {}), textos: nuevos });
     setEditando(null);
   }
-  // Transportes
-  async function copiarTransporte(t, i) {
-    const ok = await copiarAlPortapapeles(textoTransporte(t));
-    setTransCopiado(ok ? i : -1);
-    if (ok) window.setTimeout(() => setTransCopiado(-1), 2500);
-  }
-  function usarTransporte(t) {
-    setVars((prev) => ({ ...prev, transporte: t.nombre }));
-    setElegido("otras_localidades");
-    setEditando(null);
+  // Transportes: elegir uno de la tabla completa nombre, zona y dirección.
+  function elegirTransporte(t) {
+    setVars((prev) => ({ ...prev, transporte: t.nombre, zonaTransporte: t.destino, direccionTransporte: t.direccion }));
   }
   function guardarTransportes() {
     if (!transEdit) return;
@@ -3872,11 +3865,8 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
     guardarConfig(next);
     setTransEdit(null);
   }
-  const transFiltrados = transportes
-    .map((t, i) => ({ t, i }))
-    .filter(({ t }) => { const q = sinAcentosMsj(transBusca).trim(); return !q || sinAcentosMsj(`${t.nombre} ${t.destino} ${t.direccion}`).includes(q); });
   // Los que van a la localidad del cliente, primero.
-  const transSugeridos = [...transportes].sort((a, b) => Number(transporteVaA(b, datos.localidad)) - Number(transporteVaA(a, datos.localidad)));
+  const transOrdenados = [...transportes].sort((a, b) => Number(transporteVaA(b, datos.localidad)) - Number(transporteVaA(a, datos.localidad)));
 
   const resultados = useMemo(() => {
     const q = busca.trim();
@@ -3894,12 +3884,12 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
   const clavesEditables = mensaje.partes ? PARTES_PRINCIPAL.map((p) => ({ clave: `principal:${p.id}`, titulo: p.titulo, base: p.texto })) : [{ clave: mensaje.id, titulo: mensaje.titulo, base: mensaje.texto }];
 
   return (
-    <div className="dg-overlay" onClick={onClose}>
-      <div className="dg-modal dg-modal-mensajes" onClick={(e) => e.stopPropagation()}>
+    <div className="dg-overlay dg-op-mar" onClick={onClose}>
+      <div className="dg-modal dg-modal-mensajes dg-op" onClick={(e) => e.stopPropagation()}>
         <div className="dg-modal-head">
           <div>
-            <div className="dg-modal-title">Mis mensajes</div>
-            <div className="dg-modal-sub">Pegá lo que te mandó el cliente y el mensaje se completa solo.</div>
+            <div className="dg-modal-title"><SombreroPaja className="dg-op-sombrero" size={26} /> Mis mensajes</div>
+            <div className="dg-modal-sub">Bitácora del capitán · pegá lo que te mandó el cliente y el mensaje se arma solo.</div>
           </div>
           <div className="dg-msj-head-btns">
             <button type="button" className={`dg-btn-ghost dg-mini-btn ${aliasAbierto ? "dg-msj-on" : ""}`} onClick={() => setAliasAbierto((v) => !v)}><Settings2 size={13} /> Alias</button>
@@ -3928,63 +3918,9 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                     ))}
                   </div>
                 ))}
-                <div className="dg-msj-grupo">
-                  <div className="dg-msj-grupo-tit">Para consultar</div>
-                  <button type="button" className={`dg-msj-item ${verTransportes ? "dg-msj-item-on" : ""}`} onClick={() => { setElegido("transportes"); setEditando(null); }} aria-pressed={verTransportes}>
-                    Lista de transportes{config?.transportes && <small> · editada</small>}
-                  </button>
-                </div>
               </nav>
 
               <div className="dg-msj-cuerpo">
-                {verTransportes ? (
-                  <section className="dg-msj-caja">
-                    <div className="dg-msj-caja-tit">
-                      <span>Lista de transportes <small>· {transportes.length}</small></span>
-                      {!transEdit && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setTransEdit(transportes.map((t) => ({ ...t })))}><Pencil size={13} /> Editar la lista</button>}
-                    </div>
-                    {transEdit ? (
-                      <div className="dg-msj-editar">
-                        {transEdit.map((t, i) => (
-                          <div className="dg-msj-trans-fila" key={i}>
-                            <input value={t.nombre} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, nombre: e.target.value } : x)))} placeholder="Transporte" aria-label="Transporte" />
-                            <input value={t.destino} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, destino: e.target.value } : x)))} placeholder="Destino" aria-label="Destino" />
-                            <input value={t.direccion} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, direccion: e.target.value } : x)))} placeholder="Dirección" aria-label="Dirección" />
-                            <button type="button" className="dg-icon-btn" onClick={() => setTransEdit(transEdit.filter((_, j) => j !== i))} aria-label={`Sacar ${t.nombre || "este transporte"}`} title="Sacar de la lista"><Trash2 size={15} /></button>
-                          </div>
-                        ))}
-                        <div className="dg-msj-acciones">
-                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setTransEdit([...transEdit, { nombre: "", destino: "", direccion: "" }])}><Plus size={13} /> Agregar transporte</button>
-                        </div>
-                        <div className="dg-msj-acciones">
-                          <button type="button" className="dg-btn-primary" onClick={guardarTransportes}><Check size={14} /> Guardar</button>
-                          <button type="button" className="dg-btn-ghost" onClick={() => setTransEdit(null)}>Cancelar</button>
-                          {config?.transportes && <button type="button" className="dg-btn-ghost" onClick={transportesOriginales}><RotateCcw size={14} /> Volver a la lista original</button>}
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <input className="dg-msj-trans-buscar" value={transBusca} onChange={(e) => setTransBusca(e.target.value)} placeholder="Buscar por transporte, destino o dirección" aria-label="Buscar transporte" />
-                        <div className="dg-msj-trans-lista">
-                          {transFiltrados.map(({ t, i }) => (
-                            <div className="dg-msj-trans" key={`${t.nombre}-${i}`}>
-                              <div className="dg-msj-trans-info">
-                                <strong>{t.nombre}</strong>
-                                <span><MapPin size={12} /> {t.destino || "—"}</span>
-                                <span>{t.direccion || "—"}</span>
-                              </div>
-                              <div className="dg-msj-trans-btns">
-                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTransporte(t, i)} title={`Copia «${textoTransporte(t)}»`}>{transCopiado === i ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar</>}</button>
-                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => usarTransporte(t)} title="Lo pone en el mensaje «Otras localidades»"><Truck size={13} /> Usar<span className="dg-msj-trans-largo"> en el mensaje</span></button>
-                              </div>
-                            </div>
-                          ))}
-                          {!transFiltrados.length && <div className="dg-msj-trans-vacio">Ningún transporte coincide con «{transBusca}».</div>}
-                        </div>
-                      </>
-                    )}
-                  </section>
-                ) : (<>
                 <section className="dg-msj-caja">
                   <div className="dg-msj-caja-tit">Lo que te mandó el cliente</div>
                   <textarea className="dg-msj-pegar" rows={4} value={pegado} onChange={(e) => alPegar(e.target.value)} placeholder={"Pegá acá su mensaje. Ej:\nJuan Pérez\n30.123.456\nAv. Rivadavia 1234, Caballito\n11 5555-4444\nLuz cálida, vertical"} />
@@ -4006,7 +3942,7 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                       </label>
                     ))}
                   </div>
-                  {(pegado || Object.keys(datos).length > 0 || pedidoElegido) && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={limpiar}><RotateCcw size={13} /> Empezar de nuevo</button>}
+                  {(pegado || Object.keys(datos).length > 0 || pedidoElegido) && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={limpiar}><RotateCcw size={13} /> Zarpar de nuevo</button>}
                 </section>
 
                 {mensaje.partes && (
@@ -4027,11 +3963,11 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                   </section>
                 )}
 
-                {usaVars.length > 0 && (
+                {usaVars.some((v) => v.id !== "transporte") && (
                   <section className="dg-msj-caja">
                     <div className="dg-msj-caja-tit">Para completar</div>
                     <div className="dg-msj-datos">
-                      {usaVars.map((v) => (v.tipo === "si" ? (
+                      {usaVars.filter((v) => v.id !== "transporte").map((v) => (v.tipo === "si" ? (
                         <label key={v.id} className={`dg-msj-sicargo ${vars[v.id] ? "dg-msj-dato-ok" : ""}`}>
                           <span>{v.label}</span>
                           <span className="dg-msj-sicargo-caja">
@@ -4048,18 +3984,61 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                         </label>
                       )))}
                     </div>
-                    {(mensaje.usa || []).includes("transporte") && (
-                      <div className="dg-msj-trans-chips" aria-label="Elegir transporte">
-                        {transSugeridos.map((t, i) => {
-                          const va = transporteVaA(t, datos.localidad);
-                          return (
-                            <button type="button" key={`${t.nombre}-${i}`} className={`dg-msj-trans-chip ${va ? "dg-msj-trans-chip-va" : ""} ${vars.transporte === t.nombre ? "dg-msj-trans-chip-on" : ""}`}
-                              onClick={() => setVars({ ...vars, transporte: t.nombre })} aria-pressed={vars.transporte === t.nombre} title={va ? `Va a ${t.destino}` : t.direccion}>
-                              {t.nombre}{t.destino && <small>{t.destino}</small>}
-                            </button>
-                          );
-                        })}
+                  </section>
+                )}
+
+                {(mensaje.usa || []).includes("transporte") && (
+                  <section className="dg-msj-caja">
+                    <div className="dg-msj-caja-tit">
+                      <span>¿Qué transporte?{config?.transportes && <small> · lista editada</small>}</span>
+                      {!transEdit && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setTransEdit(transportes.map((t) => ({ ...t })))}><Pencil size={13} /> Editar la lista</button>}
+                    </div>
+                    {transEdit ? (
+                      <div className="dg-msj-editar">
+                        <div className="dg-msj-trans-fila dg-msj-trans-cabeza" aria-hidden="true"><span>Transporte</span><span>Llega a</span><span>Dirección en CABA</span><span /></div>
+                        {transEdit.map((t, i) => (
+                          <div className="dg-msj-trans-fila" key={i}>
+                            <input value={t.nombre} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, nombre: e.target.value } : x)))} placeholder="Transporte" aria-label="Transporte" />
+                            <input value={t.destino} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, destino: e.target.value } : x)))} placeholder="Zona a la que llega" aria-label="Zona a la que llega" />
+                            <input value={t.direccion} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, direccion: e.target.value } : x)))} placeholder="Dirección en CABA" aria-label="Dirección en CABA" />
+                            <button type="button" className="dg-icon-btn" onClick={() => setTransEdit(transEdit.filter((_, j) => j !== i))} aria-label={`Sacar ${t.nombre || "este transporte"}`} title="Sacar de la lista"><Trash2 size={15} /></button>
+                          </div>
+                        ))}
+                        <div className="dg-msj-acciones">
+                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setTransEdit([...transEdit, { nombre: "", destino: "", direccion: "" }])}><Plus size={13} /> Agregar transporte</button>
+                        </div>
+                        <div className="dg-msj-acciones">
+                          <button type="button" className="dg-btn-primary" onClick={guardarTransportes}><Check size={14} /> Guardar</button>
+                          <button type="button" className="dg-btn-ghost" onClick={() => setTransEdit(null)}>Cancelar</button>
+                          {config?.transportes && <button type="button" className="dg-btn-ghost" onClick={transportesOriginales}><RotateCcw size={14} /> Volver a la lista original</button>}
+                        </div>
                       </div>
+                    ) : (
+                      <>
+                        <div className="dg-msj-tabla-caja">
+                          <table className="dg-msj-tabla">
+                            <thead><tr><th><span className="dg-sr">Elegido</span></th><th>Transporte</th><th>Llega a</th><th>Dirección en CABA</th></tr></thead>
+                            <tbody>
+                              {transOrdenados.map((t, i) => {
+                                const on = vars.transporte === t.nombre;
+                                const va = transporteVaA(t, datos.localidad);
+                                return (
+                                  <tr key={`${t.nombre}-${i}`} className={`${on ? "dg-msj-fila-on" : ""} ${va ? "dg-msj-fila-va" : ""}`} onClick={() => elegirTransporte(t)}>
+                                    <td><input type="radio" name="dg-msj-transporte" checked={on} onChange={() => elegirTransporte(t)} aria-label={`Elegir ${t.nombre}`} /></td>
+                                    <td><strong>{t.nombre}</strong>{va && <span className="dg-msj-va">va para allá</span>}</td>
+                                    <td>{t.destino || "—"}</td>
+                                    <td>{t.direccion || "—"}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <label className="dg-msj-otro">
+                          <span>¿Otro?</span>
+                          <input value={transportes.some((t) => t.nombre === vars.transporte) ? "" : (vars.transporte || "")} onChange={(e) => setVars({ ...vars, transporte: e.target.value, zonaTransporte: "", direccionTransporte: "" })} placeholder="Uno que no está en la lista" />
+                        </label>
+                      </>
                     )}
                   </section>
                 )}
@@ -4095,20 +4074,31 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                       )}
                       <textarea className="dg-msj-texto" rows={14} value={texto} onChange={(e) => setFinal(e.target.value)} aria-label="Mensaje listo para copiar" />
                       <div className="dg-msj-acciones">
-                        <button type="button" className="dg-btn-primary" onClick={copiar} disabled={!texto}>{copiado ? <><Check size={14} /> Copiado</> : <><Copy size={14} /> Copiar</>}</button>
+                        <button type="button" className="dg-btn-primary" onClick={copiar} disabled={!texto}>{copiado ? <><Check size={14} /> ¡Copiado, nakama!</> : <><Copy size={14} /> Copiar</>}</button>
                         {wa && texto && <a className="dg-btn-ghost" href={`${wa}?text=${encodeURIComponent(texto)}`} target="_blank" rel="noopener noreferrer"><Send size={14} /> Abrir en WhatsApp</a>}
                         {final !== null && <button type="button" className="dg-btn-ghost" onClick={() => setFinal(null)}><RotateCcw size={14} /> Deshacer lo que toqué</button>}
                       </div>
+                      <div className="dg-op-recompensa" aria-hidden="true">Recompensa: ฿ 1.000.000.000 · un cliente feliz</div>
                     </>
                   )}
                 </section>
-                </>)}
               </div>
             </div>
           </>
         )}
       </div>
     </div>
+  );
+}
+// El sombrero de paja del tema pirata de «Mis mensajes» (dibujo propio).
+function SombreroPaja({ size, className }) {
+  const h = size || 26;
+  return (
+    <svg className={className} viewBox="0 0 64 40" width={Math.round(h * 1.6)} height={h} aria-hidden="true" focusable="false">
+      <ellipse cx="32" cy="30" rx="30" ry="8" fill="#F2C230" stroke="#8B5A2B" strokeWidth="2" />
+      <path d="M14 29 C14 9 50 9 50 29 Z" fill="#F7D35A" stroke="#8B5A2B" strokeWidth="2" />
+      <path d="M14.5 23.5 C21 20.5 43 20.5 49.5 23.5 L49.9 28.6 C43 25.8 21 25.8 14.1 28.6 Z" fill="#C8102E" />
+    </svg>
   );
 }
 // ===== FIN MIS MENSAJES ======================================================
@@ -25894,7 +25884,7 @@ const wrap = { minHeight: "100%", background: "var(--dg-bg)" };
 function Style() {
   return (
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Pirata+One&display=swap');
       /* Escala visual de la app — usá SOLO estos valores al agregar estilos:
            texto     11 · 13 · 15 · 18 · 24
            redondeo   8 · 12 · 18   (+100px pastilla, 50% círculo)
@@ -26618,22 +26608,109 @@ function Style() {
       .dg-msj-datos input:disabled { opacity:.45; }
       .dg-msj-viejo { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:8px 12px; border-radius:10px; border:1px dashed var(--dg-warning, #d9a441); font-size:13px; }
       .dg-msj-editar small { color:var(--dg-text-dim); font-size:12px; line-height:1.5; }
-      .dg-msj-trans-buscar { width:100%; }
-      .dg-msj-trans-lista { display:flex; flex-direction:column; border:1px solid rgba(var(--dg-line-rgb),.2); border-radius:10px; overflow:hidden; }
-      .dg-msj-trans { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 12px; border-bottom:1px solid rgba(var(--dg-line-rgb),.15); }
-      .dg-msj-trans:last-child { border-bottom:0; }
-      .dg-msj-trans-info { flex:1 1 380px; min-width:0; display:grid; grid-template-columns:minmax(120px, 1fr) minmax(120px, 1fr) minmax(150px, 1.4fr); gap:10px; align-items:center; font-size:14px; }
-      .dg-msj-trans-info span { display:inline-flex; align-items:center; gap:4px; color:var(--dg-text-dim); min-width:0; }
-      .dg-msj-trans-btns { display:flex; flex-wrap:wrap; gap:6px; }
-      .dg-msj-trans-vacio { padding:12px; color:var(--dg-text-dim); font-size:13px; }
       .dg-msj-trans-fila { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap:6px; align-items:center; }
       .dg-msj-trans-fila input { width:100%; }
-      .dg-msj-trans-chips { display:flex; flex-wrap:wrap; gap:6px; }
-      .dg-msj-trans-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid rgba(var(--dg-line-rgb),.3); border-radius:999px; background:transparent; color:var(--dg-text); font:inherit; font-size:13px; cursor:pointer; }
-      .dg-msj-trans-chip:focus-visible { outline:2px solid var(--dg-accent); outline-offset:1px; }
-      .dg-msj-trans-chip small { color:var(--dg-text-dim); font-size:11px; }
-      .dg-msj-trans-chip-va { border-color:var(--dg-success); }
-      .dg-msj-trans-chip-on { border-color:var(--dg-accent); background:rgba(var(--dg-line-rgb),.14); font-weight:600; }
+
+      .dg-msj-trans-cabeza span { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; opacity:.75; }
+      .dg-msj-tabla-caja { overflow-x:auto; border-radius:6px; }
+      .dg-msj-tabla { width:100%; border-collapse:collapse; font-size:14px; }
+      .dg-msj-tabla th { text-align:left; padding:8px 10px; font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; white-space:nowrap; }
+      .dg-msj-tabla td { padding:9px 10px; vertical-align:middle; }
+      .dg-msj-tabla th:first-child, .dg-msj-tabla td:first-child { width:30px; padding-right:0; }
+      .dg-msj-tabla tbody tr { cursor:pointer; }
+      .dg-msj-tabla input[type="radio"] { width:auto; margin:0; }
+      .dg-msj-va { display:inline-block; margin-left:8px; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; white-space:nowrap; }
+      .dg-msj-otro { display:flex; align-items:center; gap:8px; }
+      .dg-msj-otro span { font-size:13px; font-weight:600; white-space:nowrap; }
+      .dg-msj-otro input { flex:1; min-width:0; }
+      .dg-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+
+      /* ===== Mis mensajes · tema pirata (24/11/2026). Lo ve solo Facundo y lo
+         pidió así: mar de fondo, papel de cartel, el rojo y el dorado del
+         sombrero de paja. Colores fijos: no depende del tema claro/oscuro. */
+      .dg-overlay.dg-op-mar { background: radial-gradient(120% 80% at 50% 0%, #1B6AA0 0%, #0C3A63 45%, #061A30 100%); }
+      .dg-modal.dg-op {
+        --op-oro:#F2C230; --op-rojo:#C8102E; --op-rojo-osc:#7D0A1C; --op-tinta:#3A2412; --op-madera:#8B5A2B;
+        --op-borde:#B08550; --op-crema:#FFF6E0; --op-cielo:#8FD3FF; --op-papel-in:#FFFBF0; --op-tinta-suave:#7A5A3A;
+        background:
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='28' viewBox='0 0 120 28'%3E%3Cpath d='M0 14 Q15 6 30 14 T60 14 T90 14 T120 14' fill='none' stroke='%238FD3FF' stroke-opacity='.09' stroke-width='2'/%3E%3C/svg%3E") repeat,
+          linear-gradient(180deg, #0F4472 0%, #0B3054 55%, #082642 100%) !important;
+        background-attachment: local !important;
+        border: 3px solid var(--op-oro) !important;
+        box-shadow: 0 0 0 3px var(--op-madera), 0 24px 60px -12px rgba(0,0,0,.65);
+        border-radius: 14px;
+        color: var(--op-crema);
+        scrollbar-color: var(--op-oro) transparent;
+      }
+      .dg-modal.dg-op .dg-modal-title { display:flex; align-items:center; gap:10px; font-family:'Pirata One', Georgia, serif !important; font-weight:400 !important; font-size:30px; letter-spacing:.5px; color:var(--op-oro) !important; text-shadow:2px 2px 0 var(--op-rojo-osc); }
+      .dg-modal.dg-op .dg-modal-sub { color:var(--op-cielo) !important; }
+      .dg-op-sombrero { flex:0 0 auto; transform-origin:50% 85%; animation: dg-op-bote 3.4s ease-in-out infinite; }
+      @keyframes dg-op-bote { 0%, 100% { transform: rotate(-6deg) translateY(0); } 50% { transform: rotate(5deg) translateY(-2px); } }
+      @media (prefers-reduced-motion: reduce) { .dg-op-sombrero { animation:none; } }
+      .dg-modal.dg-op .dg-modal-head .dg-icon-btn { color:var(--op-oro) !important; }
+      .dg-modal.dg-op .dg-modal-head .dg-btn-ghost { background:transparent !important; border:1.5px solid var(--op-oro) !important; color:var(--op-oro) !important; }
+      .dg-modal.dg-op .dg-modal-head .dg-msj-on { background:var(--op-oro) !important; color:var(--op-tinta) !important; }
+      .dg-modal.dg-op .dg-loading { color:var(--op-oro); }
+      /* El menú: islas sobre el mar */
+      .dg-modal.dg-op .dg-msj-grupo-tit { font-family:'Pirata One', Georgia, serif; font-weight:400; font-size:16px; letter-spacing:.6px; text-transform:none; color:var(--op-cielo); }
+      .dg-modal.dg-op .dg-msj-item { color:var(--op-crema); border-color:rgba(143,211,255,.16); border-radius:8px; }
+      .dg-modal.dg-op .dg-msj-item:hover { background:rgba(242,194,48,.14); }
+      .dg-modal.dg-op .dg-msj-item:focus-visible { outline-color:var(--op-oro); }
+      .dg-modal.dg-op .dg-msj-item small { color:inherit; opacity:.7; }
+      .dg-modal.dg-op .dg-msj-item-on { background:var(--op-oro); border-color:var(--op-oro); color:var(--op-tinta); font-weight:700; box-shadow: inset 0 -4px 0 var(--op-rojo); }
+      /* Las cajas: papel de cartel */
+      .dg-modal.dg-op .dg-msj-caja, .dg-modal.dg-op .dg-msj-alias {
+        background: radial-gradient(130% 100% at 50% 0%, #F8EBCB 0%, #F1DDB2 60%, #E6CC96 100%);
+        border:2px solid var(--op-madera); border-radius:6px; color:var(--op-tinta);
+        box-shadow: 0 6px 0 -2px rgba(0,0,0,.28), inset 0 0 26px rgba(139,90,43,.2);
+        color-scheme: light;
+      }
+      .dg-modal.dg-op .dg-msj-caja > .dg-btn-ghost { align-self:flex-start; }
+      .dg-modal.dg-op .dg-msj-caja-tit { font-family:'Pirata One', Georgia, serif; font-weight:400; font-size:20px; letter-spacing:.3px; color:var(--op-rojo-osc); }
+      .dg-modal.dg-op .dg-msj-caja-tit small, .dg-modal.dg-op .dg-msj-caja small, .dg-modal.dg-op .dg-msj-alias small { font-family:'Jost', sans-serif; color:var(--op-tinta-suave); }
+      .dg-modal.dg-op .dg-msj-alias span, .dg-modal.dg-op .dg-msj-datos span, .dg-modal.dg-op .dg-msj-otro span, .dg-modal.dg-op .dg-msj-trans-cabeza span { color:var(--op-tinta-suave); }
+      .dg-modal.dg-op .dg-msj-dato-ok > span:first-child { color:#1E7A45; }
+      .dg-modal.dg-op .dg-msj-datos .dg-msj-sicargo-caja { color:var(--op-tinta); }
+      .dg-modal.dg-op .dg-msj-caja input:not([type="checkbox"]):not([type="radio"]),
+      .dg-modal.dg-op .dg-msj-caja textarea, .dg-modal.dg-op .dg-msj-caja select, .dg-modal.dg-op .dg-msj-alias input {
+        background:var(--op-papel-in) !important; border:1.5px solid var(--op-borde) !important; color:var(--op-tinta) !important; border-radius:6px !important; box-shadow:none !important;
+      }
+      .dg-modal.dg-op .dg-msj-datos label:not(.dg-msj-dato-ok) input { border-style:dashed !important; }
+      .dg-modal.dg-op .dg-msj-caja input:focus, .dg-modal.dg-op .dg-msj-caja textarea:focus, .dg-modal.dg-op .dg-msj-caja select:focus, .dg-modal.dg-op .dg-msj-alias input:focus {
+        outline:none !important; border-color:var(--op-rojo) !important; box-shadow:0 0 0 3px rgba(200,16,46,.2) !important;
+      }
+      .dg-modal.dg-op .dg-msj-caja input::placeholder, .dg-modal.dg-op .dg-msj-caja textarea::placeholder, .dg-modal.dg-op .dg-msj-alias input::placeholder { color:#A48562 !important; }
+      .dg-modal.dg-op input[type="checkbox"], .dg-modal.dg-op input[type="radio"] { accent-color:var(--op-rojo); }
+      /* Botones: rojo del chaleco y papel */
+      .dg-modal.dg-op .dg-btn-primary { background:var(--op-rojo) !important; color:var(--op-crema) !important; border:none !important; border-bottom:3px solid var(--op-rojo-osc) !important; box-shadow:0 4px 14px -4px rgba(200,16,46,.6) !important; border-radius:8px; letter-spacing:.2px; }
+      .dg-modal.dg-op .dg-btn-primary:hover { filter:brightness(1.1); }
+      .dg-modal.dg-op .dg-btn-primary:active { transform:translateY(1px); }
+      .dg-modal.dg-op .dg-btn-primary:disabled { opacity:.5; }
+      .dg-modal.dg-op .dg-msj-caja .dg-btn-ghost { background:#FFF3D6 !important; border:1.5px solid var(--op-madera) !important; color:#4A2C12 !important; border-radius:8px; }
+      .dg-modal.dg-op .dg-msj-caja .dg-btn-ghost:hover { background:#FFE7A8 !important; }
+      .dg-modal.dg-op .dg-msj-caja .dg-icon-btn { color:var(--op-rojo-osc) !important; }
+      .dg-modal.dg-op .dg-btn-primary:focus-visible, .dg-modal.dg-op .dg-btn-ghost:focus-visible { outline:2px solid var(--op-oro); outline-offset:2px; }
+      .dg-modal.dg-op .dg-msj-parte { background:#FFF8E6; border-color:var(--op-borde); color:var(--op-tinta); }
+      .dg-modal.dg-op .dg-msj-parte-on { background:var(--op-oro); border-color:var(--op-rojo); font-weight:600; }
+      .dg-modal.dg-op .dg-msj-parte small { color:var(--op-tinta-suave); }
+      .dg-modal.dg-op .dg-msj-resultados { border-color:var(--op-borde); }
+      .dg-modal.dg-op .dg-msj-resultados button { background:#FFF8E6; color:var(--op-tinta); border-bottom-color:rgba(139,90,43,.25); }
+      .dg-modal.dg-op .dg-msj-resultados button:hover { background:#FFE7A8; }
+      .dg-modal.dg-op .dg-msj-aviso { background:#FFE1DC; color:var(--op-rojo-osc); border:1.5px solid var(--op-rojo); }
+      .dg-modal.dg-op .dg-msj-viejo { border-color:var(--op-rojo); background:rgba(255,251,240,.6); }
+      /* El mensaje listo: cartel de «se busca» */
+      .dg-modal.dg-op .dg-msj-final { border:3px solid #6B4423; }
+      .dg-modal.dg-op .dg-msj-final .dg-msj-caja-tit > span { font-size:24px; }
+      .dg-op-recompensa { font-family:'Pirata One', Georgia, serif; text-align:center; font-size:17px; letter-spacing:1px; color:var(--op-rojo-osc); border-top:1.5px dashed var(--op-borde); padding-top:8px; }
+      /* La tabla de transportes: bitácora */
+      .dg-modal.dg-op .dg-msj-tabla-caja { border:1.5px solid var(--op-madera); background:var(--op-papel-in); }
+      .dg-modal.dg-op .dg-msj-tabla th { background:#6B4423; color:var(--op-crema); }
+      .dg-modal.dg-op .dg-msj-tabla td { border-top:1px solid rgba(139,90,43,.28); color:var(--op-tinta); }
+      .dg-modal.dg-op .dg-msj-tabla tbody tr:nth-child(even) { background:rgba(139,90,43,.07); }
+      .dg-modal.dg-op .dg-msj-tabla tbody tr:hover { background:rgba(242,194,48,.28); }
+      .dg-modal.dg-op .dg-msj-tabla tbody tr.dg-msj-fila-on { background:var(--op-oro); box-shadow: inset 0 -3px 0 var(--op-rojo); }
+      .dg-modal.dg-op .dg-msj-va { background:#1E7A45; color:#FFFFFF; }
+
       @media (max-width: 760px) {
         .dg-msj-grid { grid-template-columns:minmax(0, 1fr); }
         .dg-msj-lista { position:static; flex-direction:row; flex-wrap:wrap; gap:6px; }
@@ -26642,11 +26719,18 @@ function Style() {
         .dg-msj-item { border-color:rgba(var(--dg-line-rgb),.3); font-size:13px; padding:6px 10px; }
         .dg-msj-btn span { display:none; }
         .dg-msj-datos { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-        .dg-msj-pegar, .dg-msj-texto, .dg-msj-editar textarea, .dg-msj-datos input, .dg-msj-pedido input, .dg-msj-alias input, .dg-msj-trans-buscar, .dg-msj-trans-fila input { font-size:16px; }
-        .dg-msj-trans-info { flex-basis:100%; grid-template-columns:minmax(0, 1fr); gap:2px; }
-        .dg-msj-trans-btns { flex-basis:100%; display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
-        .dg-msj-trans-largo { display:none; }
-        .dg-msj-trans-btns button { justify-content:center; min-width:0; padding-left:8px; padding-right:8px; }
+        .dg-msj-pegar, .dg-msj-texto, .dg-msj-editar textarea, .dg-msj-datos input, .dg-msj-pedido input, .dg-msj-alias input, .dg-msj-trans-fila input, .dg-msj-otro input { font-size:16px; }
+        .dg-msj-trans-cabeza { display:none !important; }
+        .dg-msj-tabla thead { display:none; }
+        .dg-msj-tabla, .dg-msj-tabla tbody { display:block; }
+        .dg-msj-tabla tr { display:grid; grid-template-columns:30px minmax(0, 1fr); padding:8px 10px; }
+        .dg-msj-tabla tbody tr + tr { border-top:1px solid rgba(139,90,43,.28); }
+        .dg-msj-tabla td { display:block; padding:1px 0; border:0 !important; }
+        .dg-msj-tabla td:first-child { grid-row:1 / span 3; align-self:center; width:auto; }
+        .dg-msj-tabla td:nth-child(3)::before { content:"Llega a: "; opacity:.7; }
+        .dg-msj-tabla td:nth-child(4)::before { content:"En CABA: "; opacity:.7; }
+        .dg-modal.dg-op .dg-modal-title { font-size:23px; white-space:nowrap; gap:7px; }
+        .dg-modal.dg-op .dg-modal-head { align-items:flex-start; gap:8px; }
         .dg-msj-trans-fila { grid-template-columns:minmax(0, 1fr) auto; padding-bottom:8px; border-bottom:1px solid rgba(var(--dg-line-rgb),.15); }
         .dg-msj-trans-fila input:not(:first-child) { grid-column:1; }
         .dg-msj-trans-fila .dg-icon-btn { grid-column:2; grid-row:1; }
