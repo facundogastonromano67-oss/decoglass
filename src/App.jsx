@@ -6966,26 +6966,80 @@ function fotoListasActualizada(foto, pedidos, hoyIso, ahoraIso, quien) {
 // día; lo que no estaba en la copia (se sumó después) va abajo. Cada espejo
 // dice en qué anda: falta hacer, armado esperando embalaje, o hecho / pasó a
 // otra pestaña — y ahí se ve también (duplicado).
-function listaQuietaDelDia(copiaLista, dia, pedidos) {
+//
+// 24/11/2026 (Facundo): «si yo paso un pedido a la lista de otro día a mano,
+// ahí sí que desaparezca de la lista primera» y un botón «Terminado» para
+// sacarlo. Vale para todos los días que vienen, no solo hoy. `sacados`: los
+// ids a los que les tocaron «Terminado» en este día; `enOtroDia`: los que hoy
+// el plan tiene en otro día (los pasaron a mano).
+function listaQuietaDelDia(copiaLista, dia, pedidos, sacados, enOtroDia) {
   if (!dia) return null;
+  const fuera = new Set(sacados || []);
   const porId = new Map((pedidos || []).map((p) => [p.id, p]));
   const pend = new Map((dia.items || []).map((x) => [x.pedido.id, x]));
   const emb = new Map((dia.porEmbalar || []).map((x) => [x.pedido.id, x]));
-  const hech = new Map((dia.hechos || []).map((x) => [x.pedido.id, x]));
+  const hech = new Map([...(dia.alInterior || []), ...(dia.hechos || [])].map((x) => [x.pedido.id, x]));
   const orden = [];
   const vistos = new Set();
   const poner = (id, base) => { if (!id || vistos.has(id)) return; vistos.add(id); orden.push({ id, base }); };
   ((copiaLista && copiaLista.items) || []).forEach((it) => poner(it.id, it));
-  [...(dia.items || []), ...(dia.porEmbalar || []), ...(dia.hechos || [])].forEach((x) => poner(x.pedido.id, null));
+  // Lo que no estaba en la copia va abajo, en un orden que no cambia con el
+  // trabajo (cortarlo no lo sube arriba de todo).
+  const resto = [...(dia.items || []), ...(dia.porEmbalar || []), ...(dia.hechos || []), ...(dia.alInterior || [])].map((x) => x.pedido);
+  if (!copiaLista) resto.sort(ordenQuietoTaller);
+  resto.forEach((p) => poner(p.id, null));
   return orden.map(({ id, base }) => {
     const p = porId.get(id);
     if (!p) return null; // el pedido se borró
+    if (fuera.has(id)) return null; // le tocaron «Terminado»
     const total = base?.total || Math.max(1, Number(p.cant) || 1);
     if (pend.has(id)) return { ...pend.get(id), pedido: p, estadoQuieto: "pendiente" };
     if (emb.has(id)) return { ...emb.get(id), pedido: p, desde: 0, total, estadoQuieto: "embalar" };
+    // Lo pasaron a otro día: ahí sí sale de esta lista.
+    if (!hech.has(id) && ((enOtroDia && enOtroDia.has(id)) || (p.diaTaller && p.diaTaller !== dia.fecha))) return null;
     const unidades = hech.get(id)?.unidades || base?.unidades || 1;
     return { pedido: p, unidades, desde: 0, total, clase: claseTaller(p), extra: !!base?.extra, estadoQuieto: "hecho" };
   }).filter(Boolean);
+}
+// El orden de la lista que no se mueve: como la prioridad del taller, pero sin
+// subir arriba lo que ya empezaron (si no, al marcarlo cortado saltaba).
+function ordenQuietoTaller(a, b) {
+  const ua = esUrgente(a) ? 0 : 1, ub = esUrgente(b) ? 0 : 1;
+  if (ua !== ub) return ua - ub;
+  const fa = a.listo || "9999-12-31", fb = b.listo || "9999-12-31";
+  if (fa !== fb) return fa < fb ? -1 : 1;
+  const ca = a.fecha || "9999-12-31", cb = b.fecha || "9999-12-31";
+  if (ca !== cb) return ca < cb ? -1 : 1;
+  return (Number(a.orden) || 0) - (Number(b.orden) || 0);
+}
+// Al marcar un paso (cortado, armado, embalado…) en un espejo que todavía no
+// tiene día anotado, se le anota el día en el que estaba. Si no, al empezarlo
+// el reparto lo podía llevar a otro día (lo empezado va primero) y al armarlo
+// caía en el día del armado (24/11/2026).
+const CAMPOS_TRABAJO_TALLER = ["produccionEtapa", "produccionCortadoFecha", "produccionArmadoFecha", "produccionEmbaladoFecha", "unidades", "estado"];
+function fijarDiaAlTrabajar(antes, despues, hoyIso) {
+  if (!Array.isArray(antes) || !Array.isArray(despues)) return despues;
+  const previo = new Map(antes.map((p) => [p.id, p]));
+  const tocados = despues.filter((p) => {
+    const a = previo.get(p.id);
+    return a && a !== p && !diaPuesto(a) && !diaPuesto(p) && CAMPOS_TRABAJO_TALLER.some((c) => a[c] !== p[c]);
+  });
+  if (!tocados.length) return despues;
+  const primero = primerDiaTaller(hoyIso);
+  const diaDe = new Map();
+  planTaller(antes, hoyIso, "simples").forEach((d) => {
+    if (d.pasado || d.fecha < primero) return;
+    d.items.forEach((x) => { if (!(x.partes > 1) && !diaDe.has(x.pedido.id)) diaDe.set(x.pedido.id, d.fecha); });
+  });
+  const fijar = new Map(tocados.filter((p) => diaDe.has(p.id)).map((p) => [p.id, diaDe.get(p.id)]));
+  if (!fijar.size) return despues;
+  return despues.map((p) => (fijar.has(p.id) ? { ...p, diaPlan: fijar.get(p.id) } : p));
+}
+// «orden-fabrica».terminados: { "simples|fecha": [ids] } — los que sacaron de
+// la lista de ese día con «Terminado».
+function sacadosDelDia(orden, listaId, fecha) {
+  const l = orden?.terminados?.[claveSumados(listaId, fecha)];
+  return Array.isArray(l) ? l : [];
 }
 // En qué anda un espejo que ya no está «para hacer» en la lista.
 function etiquetaQuietaTaller(p) {
@@ -7776,9 +7830,32 @@ function planTaller(pedidos, hoyIso, listaId = "simples", trabas = trabasDeLaLis
     const d = diaDe(p);
     return !!d && d < primero;
   };
+  // Y lo que es de un día que viene tampoco cae en la lista de hoy aunque lo
+  // terminen hoy (24/11/2026): se queda en su día (ver más abajo).
+  const esDeDespues = (p) => {
+    const d = diaDe(p);
+    return !!d && d > primero;
+  };
   const hechosHoy = primero === hoyIso
-    ? (pedidos || []).filter((p) => esDeLaPestanaOriginal(p, listaId) && !eraDeAntes(p)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
+    ? (pedidos || []).filter((p) => esDeLaPestanaOriginal(p, listaId) && !eraDeAntes(p) && !esDeDespues(p)).map((p) => ({ pedido: p, unidades: unidadesHechasTallerEl(p, hoyIso), clase: claseTaller(p) })).filter((x) => x.unidades > 0)
     : [];
+  // Lo terminado antes de su día (24/11/2026, Facundo: «no quiero que se
+  // muevan de su lugar cuando lo marcan como cortado o armado o embalado»):
+  // sigue en SU día como hecho, ocupando su lugar, hasta que tocan
+  // «Terminado». Los del interior armados se ven ahí también (se embalan en
+  // «Interior p/embalar», pero no desaparecen de su día).
+  const yaHechoHoy = new Set(hechosHoy.map((x) => x.pedido.id));
+  const adelantadosPorDia = new Map();
+  const alInteriorPorDia = new Map();
+  (pedidos || []).forEach((p) => {
+    if (!p || p.estado === "Cancelado" || yaHechoHoy.has(p.id) || !esDeLaPestanaOriginal(p, listaId)) return;
+    const d = diaDe(p);
+    if (!d || d < primero) return;
+    const destino = pedidoEstaListo(p) ? adelantadosPorDia : (entraEnPlanTaller(p) && esperaEmbalajeInterior(p)) ? alInteriorPorDia : null;
+    if (!destino) return;
+    if (!destino.has(d)) destino.set(d, []);
+    destino.get(d).push({ pedido: p, unidades: Math.max(1, Number(p.cant) || 1), clase: claseTaller(p) });
+  });
 
   const ultimoFijado = pool.map((x) => x.fijado).filter(Boolean).sort().pop() || primero;
   const hastaSabado = sabadoDeLaSemana(primero);
@@ -7796,7 +7873,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples", trabas = trabasDeLaLis
   for (let vuelta = 0; vuelta < 400; vuelta++) {
     const quedan = pool.filter((x) => x.restantes > 0);
     if (!quedan.length && fecha > ultimoFijado && fecha > hastaSabado) break;
-    const hechos = fecha === hoyIso ? hechosHoy : [];
+    const hechos = [...(fecha === hoyIso ? hechosHoy : []), ...(adelantadosPorDia.get(fecha) || [])];
     // Día trabado: entran solo los pedidos que tenía cuando lo trabaron. Lo
     // que llegó después sigue de largo al primer día sin trabar.
     const trabada = trabas.get(fecha) || null;
@@ -7859,6 +7936,7 @@ function planTaller(pedidos, hoyIso, listaId = "simples", trabas = trabasDeLaLis
     items.sort((a, b) => (b.fijadoAca ? 1 : 0) - (a.fijadoAca ? 1 : 0) || compararPrioridadTaller(a.pedido, b.pedido));
     dias.push({
       fecha, items, hechos, sabado, base, arrastre, porEmbalar, extras,
+      alInterior: alInteriorPorDia.get(fecha) || [],
       porEmbalarU: porEmbalar.reduce((t, x) => t + x.unidades, 0),
       sinHacerU: 0, pasado: false, trabada: !!trabada,
       max: maxDia,
@@ -19029,8 +19107,11 @@ function FotosDeListasPanel({ pedidos, hoyIso, listaInicial }) {
   );
 }
 
-function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas, auditoria = [], ordenFabrica = {}, onChangeOrdenFabrica }) {
+function FabricaPedidosPage({ pedidos, onChange: onChangeSinDia, canEdit, puedeBorrar = true, session, onRegistrar, editorListas = "", trabasTaller = {}, onCambiarTrabas, auditoria = [], ordenFabrica = {}, onChangeOrdenFabrica }) {
   const [quienPaso, setQuienPaso] = useState(null);
+  // Todo cambio que sale de Fábrica le anota el día al espejo que empezaron a
+  // trabajar (ver fijarDiaAlTrabajar): así no se cambia de día por marcarlo.
+  const onChange = (next) => onChangeSinDia(fijarDiaAlTrabajar(pedidos, next, isoLocal(new Date())));
   // El "editor único" de las listas: la única persona que puede meter espejos
   // de más en un día cuando surge una urgencia. Se configura por nombre en
   // Ajustes; si no hay nadie puesto, no puede nadie.
@@ -19073,6 +19154,20 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
   function sacarSumado(fecha, id) {
     const clave = claveSumados("simples", fecha);
     onChangeOrdenFabrica({ ...ordenFabrica, sumados: { ...(ordenFabrica.sumados || {}), [clave]: sumadosDelDia(ordenFabrica, "simples", fecha).filter((x) => x.id !== id) } });
+  }
+  // «Terminado»: lo saca de la lista de ese día (24/11/2026). Lo puede tocar
+  // el taller. Los días que ya pasaron se limpian solos.
+  function marcarTerminadoEnLista(fecha, p, volver = false) {
+    if (!onChangeOrdenFabrica || !canEdit || !p) return;
+    const clave = claveSumados("simples", fecha);
+    const ya = sacadosDelDia(ordenFabrica, "simples", fecha).filter((id) => id !== p.id);
+    const terminados = Object.fromEntries(Object.entries(ordenFabrica.terminados || {}).filter(([k]) => (k.split("|")[1] || "") >= hoyTaller));
+    onChangeOrdenFabrica({ ...ordenFabrica, terminados: { ...terminados, [clave]: volver ? ya : [...ya, p.id] } });
+    if (onRegistrar) onRegistrar(volver ? "Volvió a poner un espejo en la lista" : "Sacó un espejo terminado de la lista", `#${p.orden} — ${p.cliente} — ${nombreDiaTaller(fecha, hoyTaller)}`);
+  }
+  function terminadoSumado(fecha, x) {
+    sacarSumado(fecha, x.id);
+    if (onRegistrar && x.pedido) onRegistrar("Sacó un espejo terminado de la lista", `#${x.pedido.orden} — ${x.pedido.cliente} — ${nombreDiaTaller(fecha, hoyTaller)}`);
   }
   function cambiarTraba(fecha, trabar) {
     if (!puedoTocarElCandado) return;
@@ -20047,11 +20142,22 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
           const diaHoyPlan = diaDeHoyDelPlan(plan);
           // Si la copia todavía no llegó, se respeta el orden que ya se vio en
           // esta pantalla: nada se reacomoda al tocar un botón.
-          const claveOrdenHoy = diaHoyPlan ? `${lista}|${diaHoyPlan.fecha}` : "";
           const copiaDeLaLista = copiaHoy?.fecha === diaHoyPlan?.fecha ? copiaHoy?.listas?.[lista] : null;
-          const ordenYaVisto = ordenVistoHoy.current[claveOrdenHoy];
-          const quietaHoy = diaHoyPlan ? listaQuietaDelDia(copiaDeLaLista || (ordenYaVisto ? { items: ordenYaVisto.map((id) => ({ id })) } : null), diaHoyPlan, pedidos) : null;
-          if (quietaHoy && claveOrdenHoy) ordenVistoHoy.current[claveOrdenHoy] = quietaHoy.map((x) => x.pedido.id);
+          // En qué días está cada espejo (para saber cuál pasaron a otro día).
+          const diasDelEspejo = new Map();
+          plan.forEach((d) => [...d.items, ...d.porEmbalar].forEach((x) => {
+            if (!diasDelEspejo.has(x.pedido.id)) diasDelEspejo.set(x.pedido.id, new Set());
+            diasDelEspejo.get(x.pedido.id).add(d.fecha);
+          }));
+          const enOtroDiaQue = (fecha) => new Set([...diasDelEspejo].filter(([, fs]) => [...fs].some((f) => f !== fecha)).map(([id]) => id));
+          const quietaDe = (d, copia) => {
+            const clave = `${lista}|${d.fecha}`;
+            const visto = ordenVistoHoy.current[clave];
+            const q = listaQuietaDelDia(copia || (visto ? { items: visto.map((id) => ({ id })) } : null), d, pedidos, sacadosDelDia(ordenFabrica, "simples", d.fecha), enOtroDiaQue(d.fecha));
+            if (q) ordenVistoHoy.current[clave] = q.map((x) => x.pedido.id);
+            return q;
+          };
+          const quietaHoy = diaHoyPlan ? quietaDe(diaHoyPlan, copiaDeLaLista) : null;
           // Todo lo que está pendiente en esta pestaña, por si hay que sumar
           // alguno a un día a mano. Ordenado como los ve el taller.
           const pendientesDeLaLista = pedidos
@@ -20198,9 +20304,12 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                 // Los demorados (lo que quedó sin hacer y lo marcado a mano)
                 // están en el bloque de arriba, no acá.
                 const items = dia.items.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id));
-                // Hoy: la lista quieta (lo hecho y lo armado se quedan en su lugar).
-                const quieta = !dia.pasado && quietaHoy && diaHoyPlan && dia.fecha === diaHoyPlan.fecha
-                  ? quietaHoy.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id)) : null;
+                // Hoy y los días que vienen: la lista quieta (lo hecho y lo
+                // armado se quedan en su lugar; sale solo lo que pasaron a
+                // otro día o lo que marcaron «Terminado»).
+                const quietaDia = dia.pasado ? null : (diaHoyPlan && dia.fecha === diaHoyPlan.fecha) ? quietaHoy : quietaDe(dia, null);
+                const quieta = quietaDia ? quietaDia.filter((x) => coincide(x.pedido) && !idsDemorados.has(x.pedido.id)) : null;
+                const sacadosDia = dia.pasado ? [] : sacadosDelDia(ordenFabrica, "simples", dia.fecha).map((id) => pedidos.find((p) => p.id === id)).filter(Boolean);
                 const espejosDia = dia.espejos - dia.items.filter((x) => idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0);
                 const sinHacerVisible = dia.pasado ? dia.items.filter((x) => !idsDemorados.has(x.pedido.id)).reduce((t, x) => t + x.unidades, 0) : 0;
                 if (dia.pasado && items.length === 0 && dia.porEmbalarU === 0) return null;
@@ -20300,6 +20409,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                 {x.extra
                                   ? <span className="dg-dia-item-extra" title={x.pedido.diaTallerPor ? `Lo sumó ${x.pedido.diaTallerPor}` : "Sumado a mano, arriba del cupo"}>EXTRA</span>
                                   : x.fijadoAca && <span className="dg-dia-item-fijo" title={x.pedido.diaTallerPor ? `Lo fijó ${x.pedido.diaTallerPor}` : "Fijado a mano"}>fijado</span>}
+                                {canEdit && onChangeOrdenFabrica && x.estadoQuieto === "hecho" && (
+                                  <button type="button" className="dg-btn-ghost dg-mini-btn dg-dia-item-terminado" onClick={() => marcarTerminadoEnLista(dia.fecha, x.pedido)} title="Sacarlo de esta lista">
+                                    <Check size={13} /> Terminado
+                                  </button>
+                                )}
                                 {canEdit && !dia.trabada && (!x.estadoQuieto || x.estadoQuieto === "pendiente") && (
                                   <select className="dg-dia-item-mover" value="" onChange={(e) => { const v = e.target.value; if (v) moverADia(x.pedido.id, v === "auto" ? "" : v); }} aria-label="Pasar a otro día">
                                     <option value="">Pasar a otro día…</option>
@@ -20339,6 +20453,11 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                                   <div className="dg-dia-item dg-dia-item-sumado" key={`sum-${tab}-${x.id}`}>
                                     <div className="dg-dia-item-bar">
                                       <span className="dg-dia-item-tipo">{tab === "esm_armar" ? (grupoListaArmar(x.pedido) === "biselados_armar" ? "Biselado · para armar" : "Esmerilado · para armar") : infoPestana(tab)?.label}</span>
+                                      {canEdit && (pedidoEstaListo(x.pedido) || pestanaTaller(x.pedido) !== x.desde) && (
+                                        <button type="button" className="dg-btn-ghost dg-mini-btn dg-dia-item-terminado" onClick={() => terminadoSumado(dia.fecha, x)} title="Sacarlo de esta lista">
+                                          <Check size={13} /> Terminado
+                                        </button>
+                                      )}
                                       {puedeOrdenar && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => sacarSumado(dia.fecha, x.id)}>Sacar de este día</button>}
                                     </div>
                                     {tarjetasDe(x.pedido)}
@@ -20347,6 +20466,19 @@ function FabricaPedidosPage({ pedidos, onChange, canEdit, puedeBorrar = true, se
                               </div>
                             );
                           })}
+                          {sacadosDia.length > 0 && (
+                            <details className="dg-dia-hechos dg-dia-sacados">
+                              <summary><Check size={13} /> Terminados, sacados de la lista ({sacadosDia.length})</summary>
+                              <ul>
+                                {sacadosDia.map((p) => (
+                                  <li key={p.id}>
+                                    <span>#{p.orden} {p.cliente} · {medidaEspejo(p, { cm: false })}</span>
+                                    {canEdit && onChangeOrdenFabrica && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => marcarTerminadoEnLista(dia.fecha, p, true)}>Volver a la lista</button>}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          )}
                           {!quieta && dia.hechos.length > 0 && (
                             <details className="dg-dia-hechos">
                               <summary><Check size={13} /> Terminados hoy ({hechosU})</summary>
@@ -25762,6 +25894,8 @@ function Style() {
       .dg-envios-dia > td { padding:10px 12px 6px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.05); white-space:normal; }
       .dg-envios-dia b { font-size:13px; font-weight:700; color:var(--dg-text); text-transform:capitalize; }
       .dg-envios-dia-pasados b { text-transform:none; color:var(--dg-danger); }
+      .dg-dia-item-terminado { margin-left:auto; color:var(--dg-success); border-color:rgba(var(--dg-success-rgb, 34,160,90),.45); }
+      .dg-dia-sacados li { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
       .dg-envios-dia-sinfecha > td { border-top:2px dashed rgba(var(--dg-line-rgb),.6); }
       .dg-envios-tabla tbody tr.dg-envios-nolistos { cursor:default; }
       .dg-envios-tabla tbody tr.dg-envios-nolistos:hover { background:transparent; }
