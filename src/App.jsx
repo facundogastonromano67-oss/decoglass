@@ -3607,10 +3607,12 @@ const MENSAJES_BASE = [
     texto: "¿Hola {nombre,} como estas? Te adjunto el remito de la encomienda. \nCon el número de guía podés hacer el seguimiento en la página de vía cargo. Se encuentra debajo del código de barras.\n\nCualquier consulta estoy a disposición. ¡Saludos!" },
   { id: "embalaje_pendiente", grupo: "Envíos al interior", titulo: "Embalaje pendiente", usa: [],
     texto: "Buenas tardes, como estas? Te quería avisar que me notificaron que está pendiente el pago del embalaje reforzado.\n\nUna vez realizado te adjuntamos el seguimiento.\n\nCualquier consulta estoy a disposición. ¡Saludos!" },
-  { id: "envio_caba", grupo: "Envíos CABA y GBA", titulo: "Envío CABA o cercanías", usa: ["valor", "dia", "alias1"],
-    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nEl envio tiene un valor de {valor}\n\nY lo podemos enviar a partir del dia {dia} de 13 a 17hs\n\nEl envio unicamente se abona por transferencia al siguiente alias: {alias1}\n\n¡Saludos y muchas gracias!" },
-  { id: "flex", grupo: "Envíos CABA y GBA", titulo: "Envío Flex", usa: ["valorFlex", "alias1"],
-    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nEl envio lo podemos realizar en el horario de entrega de Mercado libre de 15 a 21hs y tiene un valor de: {valorFlex}\n\nEl envio unicamente se abona por transferencia al siguiente alias: \n{alias1}\n\nAvísame y confirmamos una fecha. ¡Saludos y muchas gracias!" },
+  // CABA y Flex (24/11/2026): fecha y valor a completar, o «sin cargo»
+  // ({costoEnvio} se arma solo). Flex con el texto que dejó Facundo.
+  { id: "envio_caba", grupo: "Envíos CABA y GBA", titulo: "Envío CABA o cercanías", usa: ["dia", "valor", "sinCargo"],
+    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nLo podemos enviar a partir del dia {dia} de 13 a 17hs\n\n{costoEnvio}\n\n¡Saludos y muchas gracias!" },
+  { id: "flex", grupo: "Envíos CABA y GBA", titulo: "Envío Flex", usa: ["dia", "valor", "sinCargo"],
+    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nEl envio lo podemos realizar el dia: {dia}\n\nY el horario de entrega es el de Mercado libre de 15 a 21hs \n\n{costoEnvio}\n\nAvísame y confirmamos una fecha. ¡Saludos y muchas gracias!" },
   { id: "comparacion", grupo: "Envíos CABA y GBA", titulo: "Comparación Flex / flete", usa: ["valorFlex", "valor", "alias2"],
     texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nDebido a la lejania te paso 2 opciones de envio:\n\nEnvíos Flex: Entregan de 15 a 21hs y tiene un valor de: {valorFlex}\nY se abona únicamente transferencia previo a la entrega.\n\nFlete particular: Entrega de 13 a 17hs y tiene un valor de: {valor}\nY se puede abonar en efectivo o transferencia al siguiente alias: {alias2}\n\nLas diferencias son el horario de entrega y la comunicación con el flete, siendo el particular el que podemos contactar para consultarle en qué estado está el envío y Flex siendo logística de mercado libre pudiendo presentar demoras.\n\nAvísame y confirmamos una fecha. ¡Saludos y muchas gracias!" },
   { id: "reprogramar", grupo: "Envíos CABA y GBA", titulo: "Reprogramar envío", usa: [],
@@ -3625,15 +3627,31 @@ const MENSAJES_BASE = [
     texto: "Hola buenos días, mi nombre es Facundo Romano de ROMANO ALUMINIOS y DECOGLASS. Les comento que tenemos una fábrica de aberturas de aluminio y quería saber cuál es el mínimo de compra para traernos a nuestra fabrica en Boedo, CABA. Estamos armando un proyecto para vender aberturas estándar en Línea Módena además de nuestro principal foco en obras. También tenemos demanda en ángulos de 32x32 para la fabricación de bastidores de espejos iluminados.\nAguardo su respuesta, desde ya muchas gracias.\n¡Saludos!\n\nFacundo Romano" },
 ];
 const VARIABLES_MENSAJE = [
-  { id: "valor", label: "Valor del envío / flete", ej: "$ 12.000" },
-  { id: "valorFlex", label: "Valor Flex", ej: "$ 9.500" },
-  { id: "dia", label: "Día", ej: "jueves 27/11" },
+  { id: "dia", label: "Fecha de entrega", tipo: "fecha" },
+  { id: "valor", label: "Valor del envío", ej: "30000" },
+  { id: "sinCargo", label: "Sin cargo", tipo: "si" },
+  { id: "valorFlex", label: "Valor Flex", ej: "9500" },
   { id: "transporte", label: "Transporte", ej: "Expreso…" },
   { id: "link", label: "Link de seguimiento", ej: "se completa al elegir el pedido" },
 ];
 const ETIQUETAS_ENVIO = { nombre: "Nombre completo", dni: "Dni", direccion: "Dirección", telefono: "Teléfono", cp: "Código Postal" };
 const ETIQUETAS_INTERIOR = { nombre: "Nombre", dni: "Dni", telefono: "Telefono", direccion: "Direccion exacta", localidad: "Localidad", cp: "Codigo Postal", email: "Mail" };
 const PEDIR_DATOS = "También te voy a pedir unos datos para proceder al momento de despachar:";
+// «2026-11-27» → «viernes 27/11». Lo escrito a mano queda como está.
+function fechaParaMensaje(v) {
+  const t = String(v || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const [y, m, d] = t.split("-").map(Number);
+  const dias = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  return `${dias[new Date(y, m - 1, d).getDay()]} ${d}/${m}`;
+}
+// «30000» o «$ 30.000» → «$30.000».
+function valorParaMensaje(v) {
+  const t = String(v || "").trim();
+  if (!/^\$?\s*[\d.]+$/.test(t)) return t;
+  const n = Number(t.replace(/[^\d]/g, ""));
+  return n ? `$${n.toLocaleString("es-AR")}` : t;
+}
 // Las piezas que se arman solas con los datos del cliente.
 function piezasDelMensaje(datos, vars, alias) {
   const d = datos || {};
@@ -3656,9 +3674,12 @@ function piezasDelMensaje(datos, vars, alias) {
     "nombre": pila,
     "nombre,": pila ? `${pila},` : "",
     localidad: d.localidad || "…",
-    valor: v.valor || "…",
-    valorFlex: v.valorFlex || "…",
-    dia: v.dia || "…",
+    valor: valorParaMensaje(v.valor) || "…",
+    valorFlex: valorParaMensaje(v.valorFlex) || "…",
+    dia: fechaParaMensaje(v.dia) || "…",
+    costoEnvio: v.sinCargo
+      ? "El envío no tiene cargo."
+      : `Tiene un valor de: ${valorParaMensaje(v.valor) || "…"} que se abona unicamente por transferencia al siguiente alias: \n${alias?.alias1 || "[cargá el alias en ⚙ Alias]"}`,
     transporte: v.transporte || "…",
     link: v.link || "",
     alias1: alias?.alias1 || "[cargá el alias en ⚙ Alias]",
@@ -3899,12 +3920,22 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                   <section className="dg-msj-caja">
                     <div className="dg-msj-caja-tit">Para completar</div>
                     <div className="dg-msj-datos">
-                      {usaVars.map((v) => (
+                      {usaVars.map((v) => (v.tipo === "si" ? (
+                        <label key={v.id} className={`dg-msj-sicargo ${vars[v.id] ? "dg-msj-dato-ok" : ""}`}>
+                          <span>{v.label}</span>
+                          <span className="dg-msj-sicargo-caja">
+                            <input type="checkbox" checked={!!vars[v.id]} onChange={(e) => setVars({ ...vars, [v.id]: e.target.checked })} />
+                            El envío no se cobra
+                          </span>
+                        </label>
+                      ) : (
                         <label key={v.id} className={vars[v.id] ? "dg-msj-dato-ok" : ""}>
                           <span>{v.label}</span>
-                          <input value={vars[v.id] || ""} onChange={(e) => setVars({ ...vars, [v.id]: e.target.value })} placeholder={v.ej} />
+                          <input type={v.tipo === "fecha" ? "date" : "text"} inputMode={v.id === "valor" || v.id === "valorFlex" ? "numeric" : undefined}
+                            value={vars[v.id] || ""} onChange={(e) => setVars({ ...vars, [v.id]: e.target.value })} placeholder={v.ej}
+                            disabled={v.id === "valor" && !!vars.sinCargo && (mensaje.usa || []).includes("sinCargo")} />
                         </label>
-                      ))}
+                      )))}
                     </div>
                   </section>
                 )}
@@ -3924,7 +3955,7 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                         </select>
                       )}
                       <textarea rows={12} value={editando.texto} onChange={(e) => setEditando({ ...editando, texto: e.target.value })} />
-                      <small>Se completan solos: {"{nombre}"} {"{nombre,}"} {"{localidad}"} {"{valor}"} {"{valorFlex}"} {"{dia}"} {"{transporte}"} {"{link}"} {"{alias1}"} {"{alias2}"} {"{preguntasEspejo}"} {"{faltanEnvio}"} {"{pedirDatosInterior}"} {"{pedirDatosViaCargo}"}</small>
+                      <small>Se completan solos: {"{nombre}"} {"{nombre,}"} {"{localidad}"} {"{dia}"} {"{costoEnvio}"} (el valor y el alias, o «sin cargo») {"{valor}"} {"{valorFlex}"} {"{transporte}"} {"{link}"} {"{alias1}"} {"{alias2}"} {"{preguntasEspejo}"} {"{faltanEnvio}"} {"{pedirDatosInterior}"} {"{pedirDatosViaCargo}"}</small>
                       <div className="dg-msj-acciones">
                         <button type="button" className="dg-btn-primary" onClick={guardarEdicion}><Check size={14} /> Guardar</button>
                         {textos[editando.clave] !== undefined && <button type="button" className="dg-btn-ghost" onClick={() => volverAlOriginal(editando.clave)}><RotateCcw size={14} /> Volver al original</button>}
@@ -3932,6 +3963,12 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                     </div>
                   ) : (
                     <>
+                      {(mensaje.usa || []).includes("sinCargo") && textos[mensaje.id] !== undefined && !textos[mensaje.id].includes("{costoEnvio}") && (
+                        <div className="dg-msj-viejo">
+                          <span>Tu texto editado tiene el valor escrito a mano, así que la fecha, el valor y «sin cargo» no se completan solos.</span>
+                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => volverAlOriginal(mensaje.id)}><RotateCcw size={13} /> Usar el texto nuevo</button>
+                        </div>
+                      )}
                       <textarea className="dg-msj-texto" rows={14} value={texto} onChange={(e) => setFinal(e.target.value)} aria-label="Mensaje listo para copiar" />
                       <div className="dg-msj-acciones">
                         <button type="button" className="dg-btn-primary" onClick={copiar} disabled={!texto}>{copiado ? <><Check size={14} /> Copiado</> : <><Copy size={14} /> Copiar</>}</button>
@@ -26434,6 +26471,10 @@ function Style() {
       .dg-msj-acciones { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
       .dg-msj-acciones a { text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
       .dg-msj-editar { display:flex; flex-direction:column; gap:8px; }
+      .dg-msj-datos .dg-msj-sicargo-caja { display:flex; align-items:center; gap:8px; min-height:38px; font-size:14px; text-transform:none; letter-spacing:0; font-weight:400; color:var(--dg-text); cursor:pointer; }
+      .dg-msj-sicargo-caja input { width:auto; margin:0; }
+      .dg-msj-datos input:disabled { opacity:.45; }
+      .dg-msj-viejo { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:8px 12px; border-radius:10px; border:1px dashed var(--dg-warning, #d9a441); font-size:13px; }
       .dg-msj-editar small { color:var(--dg-text-dim); font-size:12px; line-height:1.5; }
       @media (max-width: 760px) {
         .dg-msj-grid { grid-template-columns:minmax(0, 1fr); }
