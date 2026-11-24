@@ -2165,6 +2165,7 @@ function App() {
   }, [session]);
 
   const [chatEquipoSinLeer, setChatEquipoSinLeer] = useState(0);
+  const [misMensajesOpen, setMisMensajesOpen] = useState(false);
   const [activeSectorId, setActiveSectorId] = useState(null);
   const syncVersionsRef = useRef({});
   const incomesRef = useRef(null);
@@ -3136,6 +3137,11 @@ function App() {
             <span>{theme === "dark" ? "Claro" : "Oscuro"}</span>
           </button>
           {session && <BotonNotificaciones session={session} />}
+          {esDuenoDeMensajes(session) && (
+            <button className="dg-icon-btn dg-theme-toggle dg-msj-btn" onClick={() => setMisMensajesOpen(true)} title="Mis mensajes para copiar" aria-label="Mis mensajes">
+              <Copy size={17} /><span>Mensajes</span>
+            </button>
+          )}
           {session && (
             <button className="dg-icon-btn" onClick={() => setBuscadorOpen(true)} title="Buscar pedido o reclamo">
               <Search size={17} />
@@ -3347,6 +3353,7 @@ function App() {
       </div>
 
       {panelNotifOpen && session && <PanelNotificaciones session={session} onClose={() => setPanelNotifOpen(false)} />}
+      {misMensajesOpen && esDuenoDeMensajes(session) && <MisMensajesPanel pedidos={pedidos} onClose={() => setMisMensajesOpen(false)} />}
 
       {buscadorOpen && session && (
         <BuscadorGlobal
@@ -3450,6 +3457,499 @@ function detalleItemTexto(item) {
   if (item.cantidad !== undefined) return `${item.cantidad} / mínimo ${item.minimo} ${item.unidad || ""}`;
   return item.metodo || "";
 }
+
+// ===== MIS MENSAJES (24/11/2026) ============================================
+// Facundo: «un apartado solo para mí para copiar y pegar mensajes más fácil»
+// y «pasar lo que me dice el cliente y que la app me complete el mensaje».
+// Los textos son los suyos. Se pueden editar: lo editado y los alias se
+// guardan en el kv «mis-mensajes» (los alias NO van en el código, que es
+// público). El mensaje principal va por partes: nunca lo manda entero.
+const CLAVE_MIS_MENSAJES = "mis-mensajes";
+function esDuenoDeMensajes(session) {
+  return session?.role === "admin" && /facu/i.test(String(session?.nombre || ""));
+}
+const DATOS_CLIENTE = [
+  { id: "nombre", label: "Nombre completo" },
+  { id: "dni", label: "DNI" },
+  { id: "telefono", label: "Teléfono" },
+  { id: "direccion", label: "Dirección" },
+  { id: "localidad", label: "Localidad" },
+  { id: "cp", label: "Código postal" },
+  { id: "email", label: "Mail" },
+  { id: "tono", label: "Tono del led" },
+  { id: "posicion", label: "Posición" },
+];
+// [dato, etiqueta, ¿alcanza con un espacio después?]. Las que pueden ser el
+// principio de un nombre o de una calle («Ciudad Evita») piden «:» o «-».
+const ETIQUETAS_DATOS_CLIENTE = [
+  ["nombre", /^(?:nombre\s+y\s+apellido|apellido\s+y\s+nombre|nombre\s+completo|nombre|apellido)\b/i, false],
+  ["dni", /^(?:dni|d\.\s?n\.\s?i\.?|documento|cuit|cuil)(?![a-z])/i, true],
+  ["telefono", /^(?:tel[eé]fono|tel\.?|cel(?:ular)?|whats?app|n[uú]mero(?:\s+de\s+(?:tel[eé]fono|cel(?:ular)?))?)(?![a-z])/i, true],
+  ["direccion", /^(?:direcci[oó]n(?:\s+exacta)?|domicilio)\b/i, true],
+  ["cp", /^(?:c[oó]digo\s+postal|c\.?\s?p\.?)(?![a-z])/i, true],
+  ["localidad", /^(?:localidad|ciudad|barrio|partido|provincia)\b/i, false],
+  ["email", /^(?:e-?mail|mail|correo(?:\s+electr[oó]nico)?)\b/i, true],
+  ["tono", /^(?:tono(?:\s+del?\s+led)?|luz|led)(?![a-z])/i, false],
+  ["posicion", /^(?:posici[oó]n|orientaci[oó]n)\b/i, false],
+];
+// Palabras que dicen que una línea NO es un nombre ni una localidad.
+const NO_ES_NOMBRE = new Set(["hola", "buenas", "buenos", "gracias", "saludos", "perfecto", "dale", "ok", "listo", "luz", "fria", "calida", "neutra", "vertical", "horizontal", "envio", "envios", "retiro", "retirar", "quiero", "espejo", "led", "datos", "paso", "mando", "aca", "tardes", "dias", "noches", "si", "no", "bueno", "genial", "muchas", "abrazo", "te", "les", "mis", "mi", "son", "estos", "pago", "transferencia", "comprobante", "localidad", "provincia", "barrio", "partido", "direccion", "nombre", "apellido", "telefono", "mail", "tono", "posicion"]);
+const sinAcentosMsj = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+function normalizarDatoCliente(id, valor) {
+  let v = String(valor || "").trim().replace(/^[:\-–=]\s*/, "").trim();
+  if (!v) return "";
+  if (id === "tono") {
+    const s = sinAcentosMsj(v);
+    return /fri/.test(s) ? "Fría" : /calid/.test(s) ? "Cálida" : /neutr/.test(s) ? "Neutra" : v;
+  }
+  if (id === "posicion") {
+    const s = sinAcentosMsj(v);
+    return /vertic/.test(s) ? "Vertical" : /horiz/.test(s) ? "Horizontal" : v;
+  }
+  if (id === "dni") return v.replace(/[^\d]/g, "") || v;
+  if (id === "cp") return v.toUpperCase();
+  if (id === "email") return v.toLowerCase();
+  return v;
+}
+// Lee lo que mandó el cliente (con o sin «Nombre:», «Dni:»…) y devuelve los
+// datos que encontró. Sin servicios pagos: reglas, como el anotador.
+function leerDatosCliente(texto) {
+  const out = {};
+  const poner = (id, v) => { const n = normalizarDatoCliente(id, v); if (n && !out[id]) out[id] = n; };
+  const lineas = String(texto || "").split(/\r?\n/)
+    .map((l) => l.replace(/^\s*(?:\d{1,2}[.)]\s+|[-•*·✓✔️]+\s*)/, "").replace(/\*/g, "").trim())
+    .filter(Boolean);
+  const sueltas = [];
+  // 1) Las que traen etiqueta («Dni: 30.123.456»).
+  lineas.forEach((l) => {
+    for (const [id, re, conEspacio] of ETIQUETAS_DATOS_CLIENTE) {
+      const m = l.match(re);
+      if (!m) continue;
+      const resto = l.slice(m[0].length);
+      if (!/^\s*[:\-–=]/.test(resto) && !(conEspacio && /^\s+\S/.test(resto))) continue;
+      const v = resto.replace(/^\s*[:\-–=]?\s*/, "").replace(/^(?:es|son)\s+/i, "");
+      if (v) { poner(id, v); return; }
+    }
+    sueltas.push(l);
+  });
+  const todo = lineas.join("\n");
+  // 2) Dentro de una frase («mi dni es 30123456»).
+  const mail = todo.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
+  if (mail) poner("email", mail[0]);
+  const dni = todo.match(/\bd\.?\s?n\.?\s?i\.?\b[^\d\n]{0,15}([\d.\s]{7,12})/i);
+  if (dni) poner("dni", dni[1]);
+  const tel = todo.match(/\b(?:tel[eé]fono|tel|cel(?:ular)?|whats?app|n[uú]mero)\b[^\d\n+]{0,15}(\+?[\d\s\-()]{8,})/i);
+  if (tel) poner("telefono", tel[1]);
+  const tono = sinAcentosMsj(todo).match(/\b(fria|calida|neutra)\b/);
+  if (tono) poner("tono", tono[1]);
+  const pos = sinAcentosMsj(todo).match(/\b(vertical|horizontal)\b/);
+  if (pos) poner("posicion", pos[1]);
+  // 3) Las sueltas, por cómo son.
+  let yaHayNombre = !!out.nombre;
+  sueltas.forEach((l) => {
+    if (/@/.test(l)) return;
+    const digitos = l.replace(/\D/g, "");
+    if (/^[\d\s.\-+()]+$/.test(l)) {
+      if (digitos.length >= 10) poner("telefono", l);
+      // 4555-1234 es un teléfono fijo; 30.123.456 o 30123456, un DNI.
+      else if (digitos.length === 8 && /\d[\s-]\d/.test(l)) poner("telefono", l);
+      else if (digitos.length >= 7 && digitos.length <= 8) poner("dni", l);
+      else if (digitos.length === 4) poner("cp", l);
+      return;
+    }
+    if (/^[a-z]\d{4}[a-z]{3}$/i.test(l.replace(/\s/g, ""))) { poner("cp", l.replace(/\s/g, "")); return; }
+    const palabras = sinAcentosMsj(l).replace(/[^a-zñ'\s]/g, " ").split(/\s+/).filter(Boolean);
+    const soloLetras = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'.\s,]+$/.test(l);
+    const pareceFrase = palabras.some((w) => NO_ES_NOMBRE.has(w));
+    if (/\d/.test(l) && /[a-záéíóúñ]{3,}\.?\s+\d{1,5}\b/i.test(l) && !out.direccion) {
+      const partes = l.split(",").map((x) => x.trim()).filter(Boolean);
+      const ultima = partes.length > 1 ? partes[partes.length - 1] : "";
+      if (ultima && /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ.\s]+$/.test(ultima) && !/^(piso|dto|depto|dpto|departamento|torre|casa|lote|pb)\b/i.test(ultima)) {
+        poner("localidad", ultima);
+        poner("direccion", partes.slice(0, -1).join(", "));
+      } else poner("direccion", l);
+      return;
+    }
+    if (!soloLetras || pareceFrase) return;
+    if (!yaHayNombre && palabras.length >= 2 && palabras.length <= 5) { poner("nombre", l.replace(/,/g, " ").replace(/\s+/g, " ")); yaHayNombre = true; return; }
+    if (yaHayNombre && !out.localidad && palabras.length >= 1 && palabras.length <= 5) poner("localidad", l);
+  });
+  return out;
+}
+function nombreDePila(nombre) {
+  const p = String(nombre || "").trim().split(/\s+/)[0] || "";
+  return p ? p.charAt(0).toUpperCase() + p.slice(1).toLowerCase() : "";
+}
+const faltanDatos = (datos, ids) => ids.filter((id) => !String(datos?.[id] || "").trim());
+const lineasParaCompletar = (ids, etiquetas) => ids.map((id) => `${etiquetas[id]}:`).join("\n");
+
+// Las partes del mensaje principal.
+const PARTES_PRINCIPAL = [
+  { id: "aviso", titulo: "Leer detenidamente", texto: "¡Por favor leer detenidamente para continuar con su compra!" },
+  { id: "saludo", titulo: "Saludo", texto: "¡Hola {nombre}, muchas gracias por tu compra! Mi nombre es Facu de DECOGLASS." },
+  { id: "espejo", titulo: "Datos del espejo (tono, posición, teléfono)", texto: "Para comenzar a preparar tu espejo necesitamos saber:\n\n{preguntasEspejo}\nSi compraste un espejo sin led u otro producto desestima estos datos." },
+  { id: "envio", titulo: "Datos para el envío en CABA", texto: "Para coordinar envíos en CABA o alrededores e informarte el costo de envío necesitamos saber:\n\n{faltanEnvio}" },
+  { id: "retiro", titulo: "Retiro por el local", texto: "También podés retirar por nuestro local, en la fecha que te indiquemos luego de la confirmación de los datos, la dirección es: \nJosé Mármol 1660, Boedo CABA, entre Inclán y Salcedo (vidriera blanca, portero eléctrico) \n\nLunes a viernes 8:30 a 12hs y 14:15 a 17hs\nSábados de 10 a 12:30hs" },
+  { id: "canal", titulo: "Canal de atención", texto: "Por cualquier problema o consulta nuestro canal de atención es 11 7059-4088 (Solo WhatsApp) Siempre vamos a responder más rápido que cualquier otra opción." },
+  { id: "automatico", titulo: "Es un mensaje automático", texto: "Este es un mensaje automático, luego que nos respondas te escribiremos. Recordar que si es fin de semana o después de las 18hs posiblemente nos contactaremos el lunes o al día siguiente." },
+  { id: "firma", titulo: "Firma", texto: "¡Saludos cordiales!\nFacundo Romano\nDECOGLASS SRL" },
+];
+const GRUPOS_MENSAJES = ["Mensaje principal", "Envíos al interior", "Envíos CABA y GBA", "Retira en el local", "Otros"];
+const MENSAJES_BASE = [
+  { id: "principal", grupo: "Mensaje principal", titulo: "Mensaje principal", partes: true, usa: [] },
+  { id: "otras_localidades", grupo: "Envíos al interior", titulo: "Otras localidades (sin Vía Cargo)", usa: ["transporte", "alias2"],
+    texto: "⭕ ¡Por Favor leer detenidamente! ⭕\n\n¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! El envio a tu localidad lo podemos realizar mediante: {transporte}\n\nCada espejo lleva un embalaje reforzado de madera y telgopor (por unidad), que tiene un costo de $15.000 c/u. \n\nEl embalaje se abona al siguiente alias:\n\n{alias2}\n\nEsto demora de 10-15 días hábiles para la producción del embalaje y logística hasta el transporte. \nEl envío se abona al transporte al momento de recibir.\n\n{pedirDatosInterior}\n\nGracias!" },
+  { id: "via_cargo", grupo: "Envíos al interior", titulo: "Vía Cargo", usa: ["alias1"],
+    texto: "⭕ ¡Por Favor leer detenidamente! ⭕\n\n¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! Perfecto. Para envíos a localidades más lejanas trabajamos con via cargo ya que tenemos confianza con la sucursal de nuestra localidad.\n\nCada espejo lleva un embalaje reforzado de madera y telgopor (por unidad), que tiene un costo de $15.000 c/u. \n\nEl embalaje se abona al siguiente alias:\n\n{alias1}\n\nEl valor del envío nos lo informan al momento de despachar y se abona en la sucursal de destino según el peso del producto. \n\nSe retira en sucursal de Vía Cargo en destino y el envío se abona al momento de retirarlo. \n\nEsto demora de 10-15 días hábiles para la producción del embalaje y logística hasta el transporte. \n\n{pedirDatosViaCargo}\n\nGracias!" },
+  { id: "no_sucursal", grupo: "Envíos al interior", titulo: "No hay sucursal de Vía Cargo", usa: ["localidad"],
+    texto: "Estaba viendo que via cargo no cuenta con sucursal en “{localidad}”. Te quería consultar si tenes algún transporte de confianza para despacharlo por ese medio. \n\nSaludos y muchas gracias!" },
+  { id: "despacho", grupo: "Envíos al interior", titulo: "Despacho realizado", usa: [],
+    texto: "¿Hola {nombre,} como estas? Te adjunto el remito de la encomienda. \nCon el número de guía podés hacer el seguimiento en la página de vía cargo. Se encuentra debajo del código de barras.\n\nCualquier consulta estoy a disposición. ¡Saludos!" },
+  { id: "embalaje_pendiente", grupo: "Envíos al interior", titulo: "Embalaje pendiente", usa: [],
+    texto: "Buenas tardes, como estas? Te quería avisar que me notificaron que está pendiente el pago del embalaje reforzado.\n\nUna vez realizado te adjuntamos el seguimiento.\n\nCualquier consulta estoy a disposición. ¡Saludos!" },
+  { id: "envio_caba", grupo: "Envíos CABA y GBA", titulo: "Envío CABA o cercanías", usa: ["valor", "dia", "alias1"],
+    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nEl envio tiene un valor de {valor}\n\nY lo podemos enviar a partir del dia {dia} de 13 a 17hs\n\nEl envio unicamente se abona por transferencia al siguiente alias: {alias1}\n\n¡Saludos y muchas gracias!" },
+  { id: "flex", grupo: "Envíos CABA y GBA", titulo: "Envío Flex", usa: ["valorFlex", "alias1"],
+    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nEl envio lo podemos realizar en el horario de entrega de Mercado libre de 15 a 21hs y tiene un valor de: {valorFlex}\n\nEl envio unicamente se abona por transferencia al siguiente alias: \n{alias1}\n\nAvísame y confirmamos una fecha. ¡Saludos y muchas gracias!" },
+  { id: "comparacion", grupo: "Envíos CABA y GBA", titulo: "Comparación Flex / flete", usa: ["valorFlex", "valor", "alias2"],
+    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! \n\nDebido a la lejania te paso 2 opciones de envio:\n\nEnvíos Flex: Entregan de 15 a 21hs y tiene un valor de: {valorFlex}\nY se abona únicamente transferencia previo a la entrega.\n\nFlete particular: Entrega de 13 a 17hs y tiene un valor de: {valor}\nY se puede abonar en efectivo o transferencia al siguiente alias: {alias2}\n\nLas diferencias son el horario de entrega y la comunicación con el flete, siendo el particular el que podemos contactar para consultarle en qué estado está el envío y Flex siendo logística de mercado libre pudiendo presentar demoras.\n\nAvísame y confirmamos una fecha. ¡Saludos y muchas gracias!" },
+  { id: "reprogramar", grupo: "Envíos CABA y GBA", titulo: "Reprogramar envío", usa: [],
+    texto: "Hola {nombre,} como estas? Hoy temprano me aviso el chofer que no le está arrancando el auto, estoy informando a cada cliente para reprogramar el día del envío. \nLamentos el inconveniente.\n\nTe quería consultar que día tendrías disponibilidad para recibir en el transcurso de la semana entrante.\n\nDesde ya discúlpame el inconveniente.\nAguardo su confirmación. \n\nSaludos y muchas gracias" },
+  { id: "retiro_sin_stock", grupo: "Retira en el local", titulo: "Sin stock", usa: ["dia"],
+    texto: "¿Hola {nombre,} como estas? ¡Gracias por tu compra! \n\nLo podemos tener listo para retirar el {dia} así lo armamos con las especificaciones indicadas.\n\nLa dirección y horarios se encuentran en el mensaje principal.\n\nCualquier consulta estamos a disposición. ¡Saludos, DECOGLASS!" },
+  { id: "retiro_stock", grupo: "Retira en el local", titulo: "Con stock", usa: [],
+    texto: "¿Hola {nombre,} cómo estás? ¡Gracias por tu compra! Podes retirarlo a partir de hoy ya que contamos con stock. \n\nNuestra dirección es José Mármol 1660 (entre Inclán y Salcedo).  \nLun a Vie de 9 a 12hs o 14:15 a 17hs\nSábados de 10 a 12:30hs" },
+  { id: "link_seguimiento", grupo: "Otros", titulo: "Link de seguimiento", usa: ["link"],
+    texto: "Por otro lado te envio el link del seguimiento de la produccion para que puedas ver el estado del espejo en directo. \n{link}\n\nPara acceder te pide los ultimos 4 digitos de tu celu, adentro podes encontrar: \n- La Garantia\n- La factura de compra\n- Un chat interno para consultas\n- Link directo al seguimiento en la pagina de via cargo" },
+  { id: "proveedores", grupo: "Otros", titulo: "Mensaje a proveedores", usa: [],
+    texto: "Hola buenos días, mi nombre es Facundo Romano de ROMANO ALUMINIOS y DECOGLASS. Les comento que tenemos una fábrica de aberturas de aluminio y quería saber cuál es el mínimo de compra para traernos a nuestra fabrica en Boedo, CABA. Estamos armando un proyecto para vender aberturas estándar en Línea Módena además de nuestro principal foco en obras. También tenemos demanda en ángulos de 32x32 para la fabricación de bastidores de espejos iluminados.\nAguardo su respuesta, desde ya muchas gracias.\n¡Saludos!\n\nFacundo Romano" },
+];
+const VARIABLES_MENSAJE = [
+  { id: "valor", label: "Valor del envío / flete", ej: "$ 12.000" },
+  { id: "valorFlex", label: "Valor Flex", ej: "$ 9.500" },
+  { id: "dia", label: "Día", ej: "jueves 27/11" },
+  { id: "transporte", label: "Transporte", ej: "Expreso…" },
+  { id: "link", label: "Link de seguimiento", ej: "se completa al elegir el pedido" },
+];
+const ETIQUETAS_ENVIO = { nombre: "Nombre completo", dni: "Dni", direccion: "Dirección", telefono: "Teléfono", cp: "Código Postal" };
+const ETIQUETAS_INTERIOR = { nombre: "Nombre", dni: "Dni", telefono: "Telefono", direccion: "Direccion exacta", localidad: "Localidad", cp: "Codigo Postal", email: "Mail" };
+const PEDIR_DATOS = "También te voy a pedir unos datos para proceder al momento de despachar:";
+// Las piezas que se arman solas con los datos del cliente.
+function piezasDelMensaje(datos, vars, alias) {
+  const d = datos || {};
+  const v = vars || {};
+  const pila = nombreDePila(d.nombre);
+  const preguntas = [];
+  if (!d.tono) preguntas.push("Tono del Led: Luz Fría o cálida");
+  if (!d.posicion) preguntas.push("Posición: Vertical u Horizontal (Solo para espejos rectangulares)");
+  if (!d.telefono) preguntas.push("Teléfono: ");
+  const faltanEnvio = faltanDatos(d, ["nombre", "dni", "direccion", "telefono", "cp"]);
+  const faltanInterior = faltanDatos(d, ["nombre", "dni", "telefono", "direccion", "localidad", "cp"]);
+  const camposVC = ["nombre", "dni", "telefono", "email", "localidad", "cp"];
+  const faltanVC = faltanDatos(d, camposVC);
+  const algunoVC = faltanVC.length < camposVC.length;
+  let pedirVC;
+  if (!faltanVC.length) pedirVC = "Los datos están perfectos.";
+  else if (algunoVC && faltanVC.length === 1 && faltanVC[0] === "email") pedirVC = "Los datos estan perfectos, me quedaría saber una dirección de email para que el correo le informe cuando está el espejo en la sucursal.";
+  else pedirVC = `${algunoVC ? "Me faltarían estos datos" : PEDIR_DATOS.replace(/:$/, "")}:\n\n${lineasParaCompletar(faltanVC, ETIQUETAS_INTERIOR)}`;
+  return {
+    "nombre": pila,
+    "nombre,": pila ? `${pila},` : "",
+    localidad: d.localidad || "…",
+    valor: v.valor || "…",
+    valorFlex: v.valorFlex || "…",
+    dia: v.dia || "…",
+    transporte: v.transporte || "…",
+    link: v.link || "",
+    alias1: alias?.alias1 || "[cargá el alias en ⚙ Alias]",
+    alias2: alias?.alias2 || "[cargá el alias en ⚙ Alias]",
+    preguntasEspejo: preguntas.map((t, i) => `${i + 1}. ${t}`).join("\n"),
+    faltanEnvio: lineasParaCompletar(faltanEnvio, ETIQUETAS_ENVIO),
+    pedirDatosInterior: faltanInterior.length
+      ? `${faltanInterior.length < 6 ? "Me faltarían estos datos para proceder al momento de despachar" : PEDIR_DATOS.replace(/:$/, "")}:\n\n${lineasParaCompletar(faltanInterior, ETIQUETAS_INTERIOR)}`
+      : "",
+    pedirDatosViaCargo: pedirVC,
+    // Para saber si una parte del principal tiene algo para preguntar.
+    _hayPreguntas: preguntas.length > 0,
+    _hayEnvio: faltanEnvio.length > 0,
+  };
+}
+function completarTexto(plantilla, piezas) {
+  return String(plantilla || "")
+    .replace(/\{([A-Za-z0-9]+,?)\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(piezas, k) ? String(piezas[k]) : m))
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ ,/g, ",")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+function armarMensajePrincipal(partesElegidas, textos, piezas) {
+  return PARTES_PRINCIPAL
+    .filter((p) => partesElegidas.includes(p.id))
+    .filter((p) => (p.id === "espejo" ? piezas._hayPreguntas : p.id === "envio" ? piezas._hayEnvio : true))
+    .map((p) => completarTexto(textos?.[`principal:${p.id}`] ?? p.texto, piezas))
+    .filter(Boolean)
+    .join("\n\n");
+}
+function textoBaseMensaje(id, textos) {
+  const m = MENSAJES_BASE.find((x) => x.id === id);
+  return textos?.[id] ?? m?.texto ?? "";
+}
+function datosDesdePedido(p) {
+  if (!p) return {};
+  const tel = String(p.celular || "").trim();
+  return Object.fromEntries(Object.entries({
+    nombre: String(p.cliente || "").trim(),
+    telefono: tel,
+    dni: String(p.dniCuit || "").replace(/[^\d]/g, ""),
+    direccion: String(p.detalleEntrega || "").trim(),
+    localidad: String(p.localidad || p.barrio || "").trim(),
+    cp: String(p.codigoPostal || "").trim(),
+    tono: p.tono ? normalizarDatoCliente("tono", p.tono) : "",
+  }).filter(([, v]) => v));
+}
+async function copiarAlPortapapeles(texto) {
+  try { await navigator.clipboard.writeText(texto); return true; } catch (e) { /* sigue abajo */ }
+  try {
+    const t = document.createElement("textarea");
+    t.value = texto; t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(t);
+    return ok;
+  } catch (e) { return false; }
+}
+
+function MisMensajesPanel({ pedidos = [], onClose }) {
+  const [config, setConfig] = useState(null); // { alias: {alias1, alias2}, textos: {}, partes: [] }
+  const [elegido, setElegido] = useState("principal");
+  const [pegado, setPegado] = useState("");
+  const [datos, setDatos] = useState({});
+  const [vars, setVars] = useState({});
+  const [busca, setBusca] = useState("");
+  const [pedidoElegido, setPedidoElegido] = useState(null);
+  const [final, setFinal] = useState(null); // lo que tocó a mano en el texto final
+  const [copiado, setCopiado] = useState(false);
+  const [editando, setEditando] = useState(null); // { clave, texto }
+  const [aliasAbierto, setAliasAbierto] = useState(false);
+  const [aviso, setAviso] = useState("");
+
+  useEffect(() => {
+    let vivo = true;
+    storage.get(CLAVE_MIS_MENSAJES, true)
+      .then((fila) => { if (!vivo) return; let v = {}; try { v = fila?.value ? JSON.parse(fila.value) : {}; } catch (e) { v = {}; } setConfig(v && typeof v === "object" ? v : {}); })
+      .catch(() => { if (vivo) setConfig({}); });
+    return () => { vivo = false; };
+  }, []);
+  async function guardarConfig(next) {
+    setConfig(next);
+    try { await storage.set(CLAVE_MIS_MENSAJES, JSON.stringify(next), true); setAviso(""); }
+    catch (e) { setAviso("No se pudo guardar. Revisá la conexión y probá de nuevo."); }
+  }
+
+  const textos = config?.textos || {};
+  const alias = config?.alias || {};
+  const partes = Array.isArray(config?.partes) ? config.partes : PARTES_PRINCIPAL.map((p) => p.id);
+  const mensaje = MENSAJES_BASE.find((m) => m.id === elegido) || MENSAJES_BASE[0];
+  const piezas = piezasDelMensaje(datos, vars, alias);
+  const armado = mensaje.partes ? armarMensajePrincipal(partes, textos, piezas) : completarTexto(textoBaseMensaje(mensaje.id, textos), piezas);
+  const texto = final ?? armado;
+  // Si cambia lo que arma el mensaje, se descarta lo tocado a mano.
+  useEffect(() => { setFinal(null); setCopiado(false); }, [armado]);
+
+  function alPegar(t) {
+    setPegado(t);
+    const leidos = leerDatosCliente(t);
+    setDatos((prev) => ({ ...prev, ...leidos }));
+  }
+  function elegirPedido(p) {
+    setPedidoElegido(p);
+    setDatos((prev) => ({ ...prev, ...datosDesdePedido(p) }));
+    setVars((prev) => ({
+      ...prev,
+      link: linkSeguimiento(p),
+      ...(p.costoEnvio ? { valor: `$ ${Number(p.costoEnvio).toLocaleString("es-AR")}` } : {}),
+    }));
+    setBusca("");
+  }
+  function limpiar() {
+    setPegado(""); setDatos({}); setVars({}); setPedidoElegido(null); setFinal(null);
+  }
+  async function copiar() {
+    const ok = await copiarAlPortapapeles(texto);
+    setCopiado(ok);
+    if (ok) window.setTimeout(() => setCopiado(false), 2500);
+  }
+  function togglePart(id) {
+    const next = partes.includes(id) ? partes.filter((x) => x !== id) : PARTES_PRINCIPAL.map((p) => p.id).filter((x) => x === id || partes.includes(x));
+    guardarConfig({ ...(config || {}), partes: next });
+  }
+  function guardarEdicion() {
+    if (!editando) return;
+    const base = editando.clave.startsWith("principal:")
+      ? PARTES_PRINCIPAL.find((p) => `principal:${p.id}` === editando.clave)?.texto
+      : MENSAJES_BASE.find((m) => m.id === editando.clave)?.texto;
+    const nuevos = { ...textos };
+    if (editando.texto === base) delete nuevos[editando.clave]; else nuevos[editando.clave] = editando.texto;
+    guardarConfig({ ...(config || {}), textos: nuevos });
+    setEditando(null);
+  }
+  function volverAlOriginal(clave) {
+    const nuevos = { ...textos };
+    delete nuevos[clave];
+    guardarConfig({ ...(config || {}), textos: nuevos });
+    setEditando(null);
+  }
+
+  const resultados = useMemo(() => {
+    const q = busca.trim();
+    if (q.length < 2) return [];
+    const vistos = new Set();
+    return (pedidos || [])
+      .filter((p) => p && p.estado !== "Cancelado" && coincidePedido(p, q))
+      .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")))
+      .filter((p) => { const k = p.grupoId || p.id; if (vistos.has(k)) return false; vistos.add(k); return true; })
+      .slice(0, 6);
+  }, [busca, pedidos]);
+
+  const wa = waLink(datos.telefono);
+  const usaVars = VARIABLES_MENSAJE.filter((v) => (mensaje.usa || []).includes(v.id));
+  const clavesEditables = mensaje.partes ? PARTES_PRINCIPAL.map((p) => ({ clave: `principal:${p.id}`, titulo: p.titulo, base: p.texto })) : [{ clave: mensaje.id, titulo: mensaje.titulo, base: mensaje.texto }];
+
+  return (
+    <div className="dg-overlay" onClick={onClose}>
+      <div className="dg-modal dg-modal-mensajes" onClick={(e) => e.stopPropagation()}>
+        <div className="dg-modal-head">
+          <div>
+            <div className="dg-modal-title">Mis mensajes</div>
+            <div className="dg-modal-sub">Pegá lo que te mandó el cliente y el mensaje se completa solo.</div>
+          </div>
+          <div className="dg-msj-head-btns">
+            <button type="button" className={`dg-btn-ghost dg-mini-btn ${aliasAbierto ? "dg-msj-on" : ""}`} onClick={() => setAliasAbierto((v) => !v)}><Settings2 size={13} /> Alias</button>
+            <button type="button" className="dg-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
+          </div>
+        </div>
+        {config === null ? <div className="dg-loading" style={{ minHeight: 120 }}><Loader2 className="dg-spin" size={22} /></div> : (
+          <>
+            {aviso && <div className="dg-msj-aviso">{aviso}</div>}
+            {aliasAbierto && (
+              <div className="dg-msj-alias">
+                <label><span>Alias a tu nombre</span><input value={alias.alias1 || ""} onChange={(e) => setConfig({ ...config, alias: { ...alias, alias1: e.target.value } })} onBlur={() => guardarConfig(config)} placeholder="Ej: ALIAS  -  (A nombre de …)" /></label>
+                <label><span>Alias del embalaje y el flete</span><input value={alias.alias2 || ""} onChange={(e) => setConfig({ ...config, alias: { ...alias, alias2: e.target.value } })} onBlur={() => guardarConfig(config)} placeholder="Ej: ALIAS2  -  (…)" /></label>
+                <small>Se guardan en tu cuenta, no en la app. Van donde el mensaje dice el alias.</small>
+              </div>
+            )}
+            <div className="dg-msj-grid">
+              <nav className="dg-msj-lista" aria-label="Mensajes">
+                {GRUPOS_MENSAJES.map((g) => (
+                  <div className="dg-msj-grupo" key={g}>
+                    {g !== "Mensaje principal" && <div className="dg-msj-grupo-tit">{g}</div>}
+                    {MENSAJES_BASE.filter((m) => m.grupo === g).map((m) => (
+                      <button type="button" key={m.id} className={`dg-msj-item ${elegido === m.id ? "dg-msj-item-on" : ""}`} onClick={() => { setElegido(m.id); setEditando(null); }} aria-pressed={elegido === m.id}>
+                        {m.titulo}{textos[m.id] !== undefined && <small> · editado</small>}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </nav>
+
+              <div className="dg-msj-cuerpo">
+                <section className="dg-msj-caja">
+                  <div className="dg-msj-caja-tit">Lo que te mandó el cliente</div>
+                  <textarea className="dg-msj-pegar" rows={4} value={pegado} onChange={(e) => alPegar(e.target.value)} placeholder={"Pegá acá su mensaje. Ej:\nJuan Pérez\n30.123.456\nAv. Rivadavia 1234, Caballito\n11 5555-4444\nLuz cálida, vertical"} />
+                  <div className="dg-msj-pedido">
+                    <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder={pedidoElegido ? `Pedido #${pedidoElegido.orden} · ${pedidoElegido.cliente}` : "O buscá el pedido (nombre o número) para traer sus datos y el link"} aria-label="Buscar pedido" />
+                    {resultados.length > 0 && (
+                      <div className="dg-msj-resultados">
+                        {resultados.map((p) => (
+                          <button type="button" key={p.id} onClick={() => elegirPedido(p)}>#{p.orden} · {p.cliente}{p.localidad ? ` · ${p.localidad}` : ""}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="dg-msj-datos">
+                    {DATOS_CLIENTE.map((c) => (
+                      <label key={c.id} className={datos[c.id] ? "dg-msj-dato-ok" : ""}>
+                        <span>{c.label}</span>
+                        <input value={datos[c.id] || ""} onChange={(e) => setDatos({ ...datos, [c.id]: e.target.value })} placeholder="falta" />
+                      </label>
+                    ))}
+                  </div>
+                  {(pegado || Object.keys(datos).length > 0 || pedidoElegido) && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={limpiar}><RotateCcw size={13} /> Empezar de nuevo</button>}
+                </section>
+
+                {mensaje.partes && (
+                  <section className="dg-msj-caja">
+                    <div className="dg-msj-caja-tit">Qué partes van</div>
+                    <div className="dg-msj-partes">
+                      {PARTES_PRINCIPAL.map((p) => {
+                        const sinNada = (p.id === "espejo" && !piezas._hayPreguntas) || (p.id === "envio" && !piezas._hayEnvio);
+                        return (
+                          <label key={p.id} className={`dg-msj-parte ${partes.includes(p.id) ? "dg-msj-parte-on" : ""}`}>
+                            <input type="checkbox" checked={partes.includes(p.id)} onChange={() => togglePart(p.id)} />
+                            <span>{p.titulo}</span>
+                            {partes.includes(p.id) && sinNada && <small>ya lo pasó, no va</small>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+
+                {usaVars.length > 0 && (
+                  <section className="dg-msj-caja">
+                    <div className="dg-msj-caja-tit">Para completar</div>
+                    <div className="dg-msj-datos">
+                      {usaVars.map((v) => (
+                        <label key={v.id} className={vars[v.id] ? "dg-msj-dato-ok" : ""}>
+                          <span>{v.label}</span>
+                          <input value={vars[v.id] || ""} onChange={(e) => setVars({ ...vars, [v.id]: e.target.value })} placeholder={v.ej} />
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <section className="dg-msj-caja dg-msj-final">
+                  <div className="dg-msj-caja-tit">
+                    <span>{mensaje.titulo}{final !== null && <small> · lo tocaste a mano</small>}</span>
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setEditando(editando ? null : { clave: clavesEditables[0].clave, texto: textos[clavesEditables[0].clave] ?? clavesEditables[0].base })}>
+                      <Pencil size={13} /> {editando ? "Cerrar edición" : "Editar el texto base"}
+                    </button>
+                  </div>
+                  {editando ? (
+                    <div className="dg-msj-editar">
+                      {clavesEditables.length > 1 && (
+                        <select value={editando.clave} onChange={(e) => { const c = clavesEditables.find((x) => x.clave === e.target.value); setEditando({ clave: c.clave, texto: textos[c.clave] ?? c.base }); }} aria-label="Qué parte editar">
+                          {clavesEditables.map((c) => <option key={c.clave} value={c.clave}>{c.titulo}</option>)}
+                        </select>
+                      )}
+                      <textarea rows={12} value={editando.texto} onChange={(e) => setEditando({ ...editando, texto: e.target.value })} />
+                      <small>Se completan solos: {"{nombre}"} {"{nombre,}"} {"{localidad}"} {"{valor}"} {"{valorFlex}"} {"{dia}"} {"{transporte}"} {"{link}"} {"{alias1}"} {"{alias2}"} {"{preguntasEspejo}"} {"{faltanEnvio}"} {"{pedirDatosInterior}"} {"{pedirDatosViaCargo}"}</small>
+                      <div className="dg-msj-acciones">
+                        <button type="button" className="dg-btn-primary" onClick={guardarEdicion}><Check size={14} /> Guardar</button>
+                        {textos[editando.clave] !== undefined && <button type="button" className="dg-btn-ghost" onClick={() => volverAlOriginal(editando.clave)}><RotateCcw size={14} /> Volver al original</button>}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <textarea className="dg-msj-texto" rows={14} value={texto} onChange={(e) => setFinal(e.target.value)} aria-label="Mensaje listo para copiar" />
+                      <div className="dg-msj-acciones">
+                        <button type="button" className="dg-btn-primary" onClick={copiar} disabled={!texto}>{copiado ? <><Check size={14} /> Copiado</> : <><Copy size={14} /> Copiar</>}</button>
+                        {wa && texto && <a className="dg-btn-ghost" href={`${wa}?text=${encodeURIComponent(texto)}`} target="_blank" rel="noopener noreferrer"><Send size={14} /> Abrir en WhatsApp</a>}
+                        {final !== null && <button type="button" className="dg-btn-ghost" onClick={() => setFinal(null)}><RotateCcw size={14} /> Deshacer lo que toqué</button>}
+                      </div>
+                    </>
+                  )}
+                </section>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+// ===== FIN MIS MENSAJES ======================================================
 
 function PanelNotificaciones({ session, onClose }) {
   const [resumen, setResumen] = useState(undefined);
@@ -25894,6 +26394,57 @@ function Style() {
       .dg-envios-dia > td { padding:10px 12px 6px; border-top:1px solid rgba(var(--dg-line-rgb),.14); background:rgba(var(--dg-line-rgb),.05); white-space:normal; }
       .dg-envios-dia b { font-size:13px; font-weight:700; color:var(--dg-text); text-transform:capitalize; }
       .dg-envios-dia-pasados b { text-transform:none; color:var(--dg-danger); }
+      .dg-modal.dg-modal-mensajes { max-width:1060px; width:calc(100vw - 32px); }
+      .dg-msj-head-btns { display:flex; align-items:center; gap:8px; }
+      .dg-msj-on { border-color:var(--dg-accent); color:var(--dg-accent); }
+      .dg-msj-aviso { padding:8px 12px; border-radius:10px; background:rgba(var(--dg-danger-rgb, 220,70,70),.12); color:var(--dg-danger); font-size:13px; margin-bottom:10px; }
+      .dg-msj-alias { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px; padding:12px; border:1px solid rgba(var(--dg-line-rgb),.25); border-radius:12px; margin-bottom:12px; }
+      .dg-msj-alias label, .dg-msj-datos label { display:flex; flex-direction:column; gap:4px; min-width:0; }
+      .dg-msj-alias span, .dg-msj-datos span { font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--dg-text-dim); }
+      .dg-msj-alias small { grid-column:1 / -1; color:var(--dg-text-dim); font-size:12px; }
+      .dg-msj-grid { display:grid; grid-template-columns:230px minmax(0, 1fr); gap:16px; align-items:start; }
+      .dg-msj-lista { display:flex; flex-direction:column; gap:12px; position:sticky; top:0; }
+      .dg-msj-grupo { display:flex; flex-direction:column; gap:4px; }
+      .dg-msj-grupo-tit { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--dg-text-dim); padding:0 10px; }
+      .dg-msj-item { text-align:left; padding:8px 10px; border-radius:10px; border:1px solid transparent; background:transparent; color:var(--dg-text); font:inherit; font-size:14px; cursor:pointer; }
+      .dg-msj-item:hover { background:rgba(var(--dg-line-rgb),.12); }
+      .dg-msj-item:focus-visible { outline:2px solid var(--dg-accent); outline-offset:1px; }
+      .dg-msj-item-on { border-color:var(--dg-accent); background:rgba(var(--dg-line-rgb),.12); font-weight:600; }
+      .dg-msj-item small { color:var(--dg-text-dim); font-weight:400; }
+      .dg-msj-cuerpo { display:flex; flex-direction:column; gap:12px; min-width:0; }
+      .dg-msj-caja { border:1px solid rgba(var(--dg-line-rgb),.25); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; min-width:0; }
+      .dg-msj-caja-tit { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; font-size:13px; font-weight:700; }
+      .dg-msj-caja-tit small { font-weight:400; color:var(--dg-text-dim); }
+      .dg-msj-pegar, .dg-msj-texto, .dg-msj-editar textarea { width:100%; resize:vertical; font:inherit; font-size:14px; line-height:1.45; }
+      .dg-msj-texto { min-height:260px; }
+      .dg-msj-pedido { position:relative; }
+      .dg-msj-pedido input { width:100%; }
+      .dg-msj-resultados { display:flex; flex-direction:column; margin-top:4px; border:1px solid rgba(var(--dg-line-rgb),.3); border-radius:10px; overflow:hidden; }
+      .dg-msj-resultados button { text-align:left; padding:8px 10px; background:var(--dg-surface-2); color:var(--dg-text); border:0; border-bottom:1px solid rgba(var(--dg-line-rgb),.15); font:inherit; font-size:13px; cursor:pointer; }
+      .dg-msj-resultados button:hover { background:rgba(var(--dg-line-rgb),.15); }
+      .dg-msj-datos { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:8px; }
+      .dg-msj-datos input { width:100%; }
+      .dg-msj-datos label:not(.dg-msj-dato-ok) input { border-style:dashed; }
+      .dg-msj-dato-ok span { color:var(--dg-success); }
+      .dg-msj-partes { display:flex; flex-wrap:wrap; gap:6px; }
+      .dg-msj-parte { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid rgba(var(--dg-line-rgb),.3); border-radius:999px; font-size:13px; cursor:pointer; }
+      .dg-msj-parte input { width:auto; margin:0; }
+      .dg-msj-parte-on { border-color:var(--dg-accent); }
+      .dg-msj-parte small { color:var(--dg-text-dim); font-size:11px; }
+      .dg-msj-acciones { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+      .dg-msj-acciones a { text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+      .dg-msj-editar { display:flex; flex-direction:column; gap:8px; }
+      .dg-msj-editar small { color:var(--dg-text-dim); font-size:12px; line-height:1.5; }
+      @media (max-width: 760px) {
+        .dg-msj-grid { grid-template-columns:minmax(0, 1fr); }
+        .dg-msj-lista { position:static; flex-direction:row; flex-wrap:wrap; gap:6px; }
+        .dg-msj-grupo { flex-direction:row; flex-wrap:wrap; align-items:center; gap:4px; }
+        .dg-msj-grupo-tit { width:100%; padding:4px 0 0; }
+        .dg-msj-item { border-color:rgba(var(--dg-line-rgb),.3); font-size:13px; padding:6px 10px; }
+        .dg-msj-btn span { display:none; }
+        .dg-msj-datos { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+        .dg-msj-pegar, .dg-msj-texto, .dg-msj-editar textarea, .dg-msj-datos input, .dg-msj-pedido input, .dg-msj-alias input { font-size:16px; }
+      }
       .dg-dia-item-terminado { margin-left:auto; color:var(--dg-success); border-color:rgba(var(--dg-success-rgb, 34,160,90),.45); }
       .dg-dia-sacados li { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
       .dg-envios-dia-sinfecha > td { border-top:2px dashed rgba(var(--dg-line-rgb),.6); }
