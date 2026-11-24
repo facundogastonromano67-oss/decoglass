@@ -34,7 +34,7 @@
 // Variables de entorno: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from "@supabase/supabase-js";
-import { ultimos4, coincide } from "./_telefono.js";
+import { ultimos4, coincide, telefonoParaClave } from "./_telefono.js";
 import { BUCKET_CHAT, MAX_ADJUNTOS, carpetaDeHilo, extensionDe, chatCerrado } from "./_chat-adjuntos.js";
 
 const BUCKET = "facturas";
@@ -111,9 +111,9 @@ export default async function handler(req, res) {
       if (errorR) throw new Error("consulta");
       const rec = filaR ? filaR.data : null;
       if (!rec) return res.status(200).json({ pide: false, ok: true });
-      if (!ultimos4(rec.celular)) return res.status(200).json({ pide: false, ok: true });
+      if (!ultimos4(telefonoParaClave(rec))) return res.status(200).json({ pide: false, ok: true });
       if (!escrito) return res.status(200).json({ pide: true });
-      return res.status(200).json({ pide: true, ok: coincide(rec.celular, escrito) });
+      return res.status(200).json({ pide: true, ok: coincide(telefonoParaClave(rec), escrito) });
     }
 
     const pedido = await buscarPedido(supabase, { pedido: id, grupo });
@@ -122,10 +122,10 @@ export default async function handler(req, res) {
       // Un pedido que NO EXISTE contesta igual que uno sin teléfono: así el
       // link tampoco sirve para ir probando ids a ver cuáles existen.
       if (!pedido) return res.status(200).json({ pide: false, ok: true });
-      const esperado = ultimos4(pedido.celular);
+      const esperado = ultimos4(telefonoParaClave(pedido));
       if (!esperado) return res.status(200).json({ pide: false, ok: true });
       if (!escrito) return res.status(200).json({ pide: true });
-      return res.status(200).json({ pide: true, ok: coincide(pedido.celular, escrito) });
+      return res.status(200).json({ pide: true, ok: coincide(telefonoParaClave(pedido), escrito) });
     }
 
     if (!pedido) return res.status(404).json({ error: "No encontramos ese pedido." });
@@ -134,7 +134,7 @@ export default async function handler(req, res) {
     // control viviera solo en el navegador, alcanzaría con escribir la URL de
     // la factura a mano para saltearlo. Un pedido sin teléfono cargado no
     // puede pedir nada (coincide() da true) y queda como estaba.
-    if (!coincide(pedido.celular, escrito)) {
+    if (!coincide(telefonoParaClave(pedido), escrito)) {
       return res.status(403).json({ error: "Para ver la factura hacen falta los últimos 4 dígitos de tu teléfono." });
     }
 

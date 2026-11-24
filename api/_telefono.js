@@ -9,7 +9,16 @@
 // (puede ser "s/d", un interno, basura): ahí devuelve "" y no se pide nada.
 export function ultimos4(tel) {
   const d = String(tel || "").replace(/\D/g, "");
+  // Un número de relleno (00000000, 1111111111…) tampoco es un teléfono: es
+  // lo que se carga cuando el cliente no tiene (24/11/2026).
+  if (/^(\d)\1+$/.test(d)) return "";
   return d.length >= 8 ? d.slice(-4) : "";
+}
+
+// El teléfono contra el que se compara la clave. Un pedido marcado «No tiene
+// celular» no pide clave en el seguimiento (24/11/2026, Facundo).
+export function telefonoParaClave(registro) {
+  return registro && registro.sinCelular ? "" : (registro && registro.celular) || "";
 }
 
 // Acepta los 4 dígitos o el número entero, con guiones o sin ellos.

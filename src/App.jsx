@@ -6502,7 +6502,7 @@ function textoComparable(value) {
    =========================================================================== */
 const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
 // "A confirmar" no es un método de entrega: es que todavía no se sabe.
-const DATOS_QUE_SE_REPITEN = ["celular", "celular2", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "canalVenta", "tipoFactura"];
+const DATOS_QUE_SE_REPITEN = ["celular", "sinCelular", "celular2", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "canalVenta", "tipoFactura"];
 
 function clientesDeLosPedidos(pedidos) {
   const mapa = new Map();
@@ -9615,11 +9615,20 @@ function BotonNotificaciones({ session }) {
 
 // El mensaje para pegarle al cliente con el link (12/11/2026, texto de
 // Facundo). Si va al interior, suma la línea de Vía Cargo.
+// El seguimiento pide clave solo si hay un teléfono de verdad (la misma regla
+// que el servidor, api/_telefono.js): ni «No tiene celular» ni un número de
+// relleno como 00000000.
+function celularParaClave(p) {
+  if (!p || p.sinCelular) return "";
+  const d = String(p.celular || "").replace(/\D/g, "");
+  if (d.length < 8 || /^(\d)\1+$/.test(d)) return "";
+  return String(p.celular);
+}
 function mensajeSeguimientoCliente(pedido, link) {
   const lineas = [
     "Por otro lado te envío el link del seguimiento de la producción para que puedas ver el estado del espejo en directo.",
     "",
-    "Para acceder te pide los últimos 4 dígitos de tu celu, adentro podés encontrar:",
+    celularParaClave(pedido) ? "Para acceder te pide los últimos 4 dígitos de tu celu, adentro podés encontrar:" : "Adentro podés encontrar:",
     "- La garantía",
     "- La factura de compra",
     "- Un chat interno para consultas",
@@ -10461,7 +10470,7 @@ function validarPedido(p) {
   const errores = {};
   const falta = (v) => v === undefined || v === null || String(v).trim() === "";
   if (falta(p.cliente)) errores.cliente = "Falta el nombre del cliente";
-  if (falta(p.celular)) errores.celular = "Falta el celular de contacto";
+  if (falta(p.celular) && !p.sinCelular) errores.celular = "Falta el celular (o marcá «No tiene celular»)";
   if (falta(p.vendedor)) errores.vendedor = "Falta indicar quién vendió";
   if (falta(p.canalVenta)) errores.canalVenta = "Falta de dónde vino la venta";
   if (falta(p.stockEspejoId)) {
@@ -12192,7 +12201,13 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 {Object.entries(CANALES_VENTA).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
               </select>
             </Field>
-            <Field label="Celular" error={err("celular")}><input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} /></Field>
+            <Field label="Celular" error={err("celular")}>
+              <input disabled={!canEditFull} value={draft.celular} onChange={(e) => set("celular", e.target.value)} placeholder={draft.sinCelular ? "No tiene" : ""} />
+              <label className="dg-sin-celular" title="El link de seguimiento no le va a pedir los últimos 4 números">
+                <input type="checkbox" disabled={!canEditFull} checked={!!draft.sinCelular} onChange={(e) => set("sinCelular", e.target.checked)} />
+                No tiene celular · el seguimiento no pide clave
+              </label>
+            </Field>
             <Field label="Otro teléfono"><input disabled={!canEditFull} inputMode="tel" value={draft.celular2 || ""} onChange={(e) => set("celular2", e.target.value)} placeholder="Opcional" /></Field>
             <Field label="DNI/CUIT"><input disabled={!canEditFull} value={draft.dniCuit} onChange={(e) => set("dniCuit", e.target.value)} /></Field>
             <Field label="Tipo factura" error={err("tipoFactura")}><select disabled={!canEditFull} value={draft.tipoFactura} onChange={(e) => set("tipoFactura", e.target.value)}>{TIPOFACTURA_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
@@ -26471,6 +26486,8 @@ function Style() {
       .dg-msj-acciones { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
       .dg-msj-acciones a { text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
       .dg-msj-editar { display:flex; flex-direction:column; gap:8px; }
+      .dg-field label.dg-sin-celular { display:flex; align-items:center; gap:6px; margin:6px 0 0; font-size:12px; font-weight:500; text-transform:none; letter-spacing:0; color:var(--dg-text-dim); cursor:pointer; }
+      .dg-sin-celular input { width:auto; margin:0; }
       .dg-msj-datos .dg-msj-sicargo-caja { display:flex; align-items:center; gap:8px; min-height:38px; font-size:14px; text-transform:none; letter-spacing:0; font-weight:400; color:var(--dg-text); cursor:pointer; }
       .dg-msj-sicargo-caja input { width:auto; margin:0; }
       .dg-msj-datos input:disabled { opacity:.45; }
@@ -31269,7 +31286,7 @@ function SeguimientoPublico({ pedidoId }) {
 
           <ChatClientePublico
             hiloId={pedido.id}
-            meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", celular: pedido.celular || "", entregadoAt: pedido.entregadoFecha || null }}
+            meta={{ pedidoId: pedido.id, grupoId: null, orden: `#${pedido.orden}`, clienteNombre: pedido.cliente || "", celular: celularParaClave(pedido), entregadoAt: pedido.entregadoFecha || null }}
             cerrado={chatClienteCerrado(pedido)}
             yaVerificado={!!puerta.clave}
             acceso={{ pedido: pedido.id }}
@@ -31455,7 +31472,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
         {!todosCancelados && (
           <ChatClientePublico
             hiloId={`grupo:${grupoId}`}
-            meta={{ pedidoId: primero.id, grupoId, orden: `#${primero.orden}`, clienteNombre: primero.cliente || "", celular: primero.celular || "", entregadoAt: primero.entregadoFecha || null }}
+            meta={{ pedidoId: primero.id, grupoId, orden: `#${primero.orden}`, clienteNombre: primero.cliente || "", celular: celularParaClave(primero), entregadoAt: primero.entregadoFecha || null }}
             cerrado={chatClienteCerrado(primero)}
             yaVerificado={!!puerta.clave}
             acceso={{ grupo: grupoId }}
