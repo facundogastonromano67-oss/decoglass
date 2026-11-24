@@ -3634,6 +3634,26 @@ const VARIABLES_MENSAJE = [
   { id: "transporte", label: "Transporte", ej: "Expreso…" },
   { id: "link", label: "Link de seguimiento", ej: "se completa al elegir el pedido" },
 ];
+// La lista de transportes para el interior (24/11/2026, Facundo). Se edita
+// desde «Mis mensajes › Lista de transportes»: lo editado va al kv
+// (mis-mensajes.transportes) y esta queda como la lista original.
+const TRANSPORTES_BASE = [
+  { nombre: "Astutti", destino: "Santa Fe", direccion: "Ancaste 3650" },
+  { nombre: "Santa Rosa", destino: "Santa Fe", direccion: "Pergamino 3751" },
+  { nombre: "Cruz del Sur", destino: "Tierra del Fuego", direccion: "Pergamino 3751" },
+  { nombre: "Transporte Arias", destino: "Santa Fe", direccion: "Pergamino 3751, Módulo 49" },
+  { nombre: "Transportes Unión", destino: "Comodoro Rivadavia", direccion: "Av. Lisandro de la Torre 3945" },
+  { nombre: "Expreso Sur", destino: "Río Negro", direccion: "Portela 1871" },
+];
+// ¿Este transporte va a la localidad del cliente? («Rosario, Santa Fe» → Astutti, Santa Rosa, Arias)
+function transporteVaA(t, localidad) {
+  const a = sinAcentosMsj(t?.destino).trim();
+  const b = sinAcentosMsj(localidad).trim();
+  return !!(a && b && (b.includes(a) || a.includes(b)));
+}
+function textoTransporte(t) {
+  return [t?.nombre, t?.direccion].map((x) => String(x || "").trim()).filter(Boolean).join(" - ");
+}
 const ETIQUETAS_ENVIO = { nombre: "Nombre completo", dni: "Dni", direccion: "Dirección", telefono: "Teléfono", cp: "Código Postal" };
 const ETIQUETAS_INTERIOR = { nombre: "Nombre", dni: "Dni", telefono: "Telefono", direccion: "Direccion exacta", localidad: "Localidad", cp: "Codigo Postal", email: "Mail" };
 const PEDIR_DATOS = "También te voy a pedir unos datos para proceder al momento de despachar:";
@@ -3753,6 +3773,9 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
   const [editando, setEditando] = useState(null); // { clave, texto }
   const [aliasAbierto, setAliasAbierto] = useState(false);
   const [aviso, setAviso] = useState("");
+  const [transEdit, setTransEdit] = useState(null); // copia de la lista mientras se edita
+  const [transBusca, setTransBusca] = useState("");
+  const [transCopiado, setTransCopiado] = useState(-1);
 
   useEffect(() => {
     let vivo = true;
@@ -3770,6 +3793,8 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
   const textos = config?.textos || {};
   const alias = config?.alias || {};
   const partes = Array.isArray(config?.partes) ? config.partes : PARTES_PRINCIPAL.map((p) => p.id);
+  const transportes = Array.isArray(config?.transportes) ? config.transportes : TRANSPORTES_BASE;
+  const verTransportes = elegido === "transportes";
   const mensaje = MENSAJES_BASE.find((m) => m.id === elegido) || MENSAJES_BASE[0];
   const piezas = piezasDelMensaje(datos, vars, alias);
   const armado = mensaje.partes ? armarMensajePrincipal(partes, textos, piezas) : completarTexto(textoBaseMensaje(mensaje.id, textos), piezas);
@@ -3820,6 +3845,38 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
     guardarConfig({ ...(config || {}), textos: nuevos });
     setEditando(null);
   }
+  // Transportes
+  async function copiarTransporte(t, i) {
+    const ok = await copiarAlPortapapeles(textoTransporte(t));
+    setTransCopiado(ok ? i : -1);
+    if (ok) window.setTimeout(() => setTransCopiado(-1), 2500);
+  }
+  function usarTransporte(t) {
+    setVars((prev) => ({ ...prev, transporte: t.nombre }));
+    setElegido("otras_localidades");
+    setEditando(null);
+  }
+  function guardarTransportes() {
+    if (!transEdit) return;
+    const limpia = transEdit
+      .map((t) => ({ nombre: String(t.nombre || "").trim(), destino: String(t.destino || "").trim(), direccion: String(t.direccion || "").trim() }))
+      .filter((t) => t.nombre);
+    const next = { ...(config || {}) };
+    if (JSON.stringify(limpia) === JSON.stringify(TRANSPORTES_BASE)) delete next.transportes; else next.transportes = limpia;
+    guardarConfig(next);
+    setTransEdit(null);
+  }
+  function transportesOriginales() {
+    const next = { ...(config || {}) };
+    delete next.transportes;
+    guardarConfig(next);
+    setTransEdit(null);
+  }
+  const transFiltrados = transportes
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => { const q = sinAcentosMsj(transBusca).trim(); return !q || sinAcentosMsj(`${t.nombre} ${t.destino} ${t.direccion}`).includes(q); });
+  // Los que van a la localidad del cliente, primero.
+  const transSugeridos = [...transportes].sort((a, b) => Number(transporteVaA(b, datos.localidad)) - Number(transporteVaA(a, datos.localidad)));
 
   const resultados = useMemo(() => {
     const q = busca.trim();
@@ -3871,9 +3928,63 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                     ))}
                   </div>
                 ))}
+                <div className="dg-msj-grupo">
+                  <div className="dg-msj-grupo-tit">Para consultar</div>
+                  <button type="button" className={`dg-msj-item ${verTransportes ? "dg-msj-item-on" : ""}`} onClick={() => { setElegido("transportes"); setEditando(null); }} aria-pressed={verTransportes}>
+                    Lista de transportes{config?.transportes && <small> · editada</small>}
+                  </button>
+                </div>
               </nav>
 
               <div className="dg-msj-cuerpo">
+                {verTransportes ? (
+                  <section className="dg-msj-caja">
+                    <div className="dg-msj-caja-tit">
+                      <span>Lista de transportes <small>· {transportes.length}</small></span>
+                      {!transEdit && <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setTransEdit(transportes.map((t) => ({ ...t })))}><Pencil size={13} /> Editar la lista</button>}
+                    </div>
+                    {transEdit ? (
+                      <div className="dg-msj-editar">
+                        {transEdit.map((t, i) => (
+                          <div className="dg-msj-trans-fila" key={i}>
+                            <input value={t.nombre} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, nombre: e.target.value } : x)))} placeholder="Transporte" aria-label="Transporte" />
+                            <input value={t.destino} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, destino: e.target.value } : x)))} placeholder="Destino" aria-label="Destino" />
+                            <input value={t.direccion} onChange={(e) => setTransEdit(transEdit.map((x, j) => (j === i ? { ...x, direccion: e.target.value } : x)))} placeholder="Dirección" aria-label="Dirección" />
+                            <button type="button" className="dg-icon-btn" onClick={() => setTransEdit(transEdit.filter((_, j) => j !== i))} aria-label={`Sacar ${t.nombre || "este transporte"}`} title="Sacar de la lista"><Trash2 size={15} /></button>
+                          </div>
+                        ))}
+                        <div className="dg-msj-acciones">
+                          <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setTransEdit([...transEdit, { nombre: "", destino: "", direccion: "" }])}><Plus size={13} /> Agregar transporte</button>
+                        </div>
+                        <div className="dg-msj-acciones">
+                          <button type="button" className="dg-btn-primary" onClick={guardarTransportes}><Check size={14} /> Guardar</button>
+                          <button type="button" className="dg-btn-ghost" onClick={() => setTransEdit(null)}>Cancelar</button>
+                          {config?.transportes && <button type="button" className="dg-btn-ghost" onClick={transportesOriginales}><RotateCcw size={14} /> Volver a la lista original</button>}
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <input className="dg-msj-trans-buscar" value={transBusca} onChange={(e) => setTransBusca(e.target.value)} placeholder="Buscar por transporte, destino o dirección" aria-label="Buscar transporte" />
+                        <div className="dg-msj-trans-lista">
+                          {transFiltrados.map(({ t, i }) => (
+                            <div className="dg-msj-trans" key={`${t.nombre}-${i}`}>
+                              <div className="dg-msj-trans-info">
+                                <strong>{t.nombre}</strong>
+                                <span><MapPin size={12} /> {t.destino || "—"}</span>
+                                <span>{t.direccion || "—"}</span>
+                              </div>
+                              <div className="dg-msj-trans-btns">
+                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => copiarTransporte(t, i)} title={`Copia «${textoTransporte(t)}»`}>{transCopiado === i ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar</>}</button>
+                                <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => usarTransporte(t)} title="Lo pone en el mensaje «Otras localidades»"><Truck size={13} /> Usar<span className="dg-msj-trans-largo"> en el mensaje</span></button>
+                              </div>
+                            </div>
+                          ))}
+                          {!transFiltrados.length && <div className="dg-msj-trans-vacio">Ningún transporte coincide con «{transBusca}».</div>}
+                        </div>
+                      </>
+                    )}
+                  </section>
+                ) : (<>
                 <section className="dg-msj-caja">
                   <div className="dg-msj-caja-tit">Lo que te mandó el cliente</div>
                   <textarea className="dg-msj-pegar" rows={4} value={pegado} onChange={(e) => alPegar(e.target.value)} placeholder={"Pegá acá su mensaje. Ej:\nJuan Pérez\n30.123.456\nAv. Rivadavia 1234, Caballito\n11 5555-4444\nLuz cálida, vertical"} />
@@ -3937,6 +4048,19 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                         </label>
                       )))}
                     </div>
+                    {(mensaje.usa || []).includes("transporte") && (
+                      <div className="dg-msj-trans-chips" aria-label="Elegir transporte">
+                        {transSugeridos.map((t, i) => {
+                          const va = transporteVaA(t, datos.localidad);
+                          return (
+                            <button type="button" key={`${t.nombre}-${i}`} className={`dg-msj-trans-chip ${va ? "dg-msj-trans-chip-va" : ""} ${vars.transporte === t.nombre ? "dg-msj-trans-chip-on" : ""}`}
+                              onClick={() => setVars({ ...vars, transporte: t.nombre })} aria-pressed={vars.transporte === t.nombre} title={va ? `Va a ${t.destino}` : t.direccion}>
+                              {t.nombre}{t.destino && <small>{t.destino}</small>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </section>
                 )}
 
@@ -3978,6 +4102,7 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                     </>
                   )}
                 </section>
+                </>)}
               </div>
             </div>
           </>
@@ -26493,6 +26618,22 @@ function Style() {
       .dg-msj-datos input:disabled { opacity:.45; }
       .dg-msj-viejo { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:8px 12px; border-radius:10px; border:1px dashed var(--dg-warning, #d9a441); font-size:13px; }
       .dg-msj-editar small { color:var(--dg-text-dim); font-size:12px; line-height:1.5; }
+      .dg-msj-trans-buscar { width:100%; }
+      .dg-msj-trans-lista { display:flex; flex-direction:column; border:1px solid rgba(var(--dg-line-rgb),.2); border-radius:10px; overflow:hidden; }
+      .dg-msj-trans { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 12px; border-bottom:1px solid rgba(var(--dg-line-rgb),.15); }
+      .dg-msj-trans:last-child { border-bottom:0; }
+      .dg-msj-trans-info { flex:1 1 380px; min-width:0; display:grid; grid-template-columns:minmax(120px, 1fr) minmax(120px, 1fr) minmax(150px, 1.4fr); gap:10px; align-items:center; font-size:14px; }
+      .dg-msj-trans-info span { display:inline-flex; align-items:center; gap:4px; color:var(--dg-text-dim); min-width:0; }
+      .dg-msj-trans-btns { display:flex; flex-wrap:wrap; gap:6px; }
+      .dg-msj-trans-vacio { padding:12px; color:var(--dg-text-dim); font-size:13px; }
+      .dg-msj-trans-fila { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap:6px; align-items:center; }
+      .dg-msj-trans-fila input { width:100%; }
+      .dg-msj-trans-chips { display:flex; flex-wrap:wrap; gap:6px; }
+      .dg-msj-trans-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid rgba(var(--dg-line-rgb),.3); border-radius:999px; background:transparent; color:var(--dg-text); font:inherit; font-size:13px; cursor:pointer; }
+      .dg-msj-trans-chip:focus-visible { outline:2px solid var(--dg-accent); outline-offset:1px; }
+      .dg-msj-trans-chip small { color:var(--dg-text-dim); font-size:11px; }
+      .dg-msj-trans-chip-va { border-color:var(--dg-success); }
+      .dg-msj-trans-chip-on { border-color:var(--dg-accent); background:rgba(var(--dg-line-rgb),.14); font-weight:600; }
       @media (max-width: 760px) {
         .dg-msj-grid { grid-template-columns:minmax(0, 1fr); }
         .dg-msj-lista { position:static; flex-direction:row; flex-wrap:wrap; gap:6px; }
@@ -26501,7 +26642,14 @@ function Style() {
         .dg-msj-item { border-color:rgba(var(--dg-line-rgb),.3); font-size:13px; padding:6px 10px; }
         .dg-msj-btn span { display:none; }
         .dg-msj-datos { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-        .dg-msj-pegar, .dg-msj-texto, .dg-msj-editar textarea, .dg-msj-datos input, .dg-msj-pedido input, .dg-msj-alias input { font-size:16px; }
+        .dg-msj-pegar, .dg-msj-texto, .dg-msj-editar textarea, .dg-msj-datos input, .dg-msj-pedido input, .dg-msj-alias input, .dg-msj-trans-buscar, .dg-msj-trans-fila input { font-size:16px; }
+        .dg-msj-trans-info { flex-basis:100%; grid-template-columns:minmax(0, 1fr); gap:2px; }
+        .dg-msj-trans-btns { flex-basis:100%; display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
+        .dg-msj-trans-largo { display:none; }
+        .dg-msj-trans-btns button { justify-content:center; min-width:0; padding-left:8px; padding-right:8px; }
+        .dg-msj-trans-fila { grid-template-columns:minmax(0, 1fr) auto; padding-bottom:8px; border-bottom:1px solid rgba(var(--dg-line-rgb),.15); }
+        .dg-msj-trans-fila input:not(:first-child) { grid-column:1; }
+        .dg-msj-trans-fila .dg-icon-btn { grid-column:2; grid-row:1; }
       }
       .dg-dia-item-terminado { margin-left:auto; color:var(--dg-success); border-color:rgba(var(--dg-success-rgb, 34,160,90),.45); }
       .dg-dia-sacados li { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
