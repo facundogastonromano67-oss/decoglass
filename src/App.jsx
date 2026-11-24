@@ -3885,7 +3885,7 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
 
   return (
     <div className="dg-overlay dg-op-mar" onClick={onClose}>
-      <div className="dg-modal dg-modal-mensajes dg-op" onClick={(e) => e.stopPropagation()}>
+      <div className={`dg-modal dg-modal-mensajes dg-op ${copiado ? "dg-op-festejo" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="dg-modal-head">
           <div>
             <div className="dg-modal-title"><SombreroPaja className="dg-op-sombrero" size={26} /> Mis mensajes</div>
@@ -3910,7 +3910,7 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
               <nav className="dg-msj-lista" aria-label="Mensajes">
                 {GRUPOS_MENSAJES.map((g) => (
                   <div className="dg-msj-grupo" key={g}>
-                    {g !== "Mensaje principal" && <div className="dg-msj-grupo-tit">{g}</div>}
+                    {g !== "Mensaje principal" && <div className="dg-msj-grupo-tit"><span>{g}</span></div>}
                     {MENSAJES_BASE.filter((m) => m.grupo === g).map((m) => (
                       <button type="button" key={m.id} className={`dg-msj-item ${elegido === m.id ? "dg-msj-item-on" : ""}`} onClick={() => { setElegido(m.id); setEditando(null); }} aria-pressed={elegido === m.id}>
                         {m.titulo}{textos[m.id] !== undefined && <small> · editado</small>}
@@ -4074,7 +4074,7 @@ function MisMensajesPanel({ pedidos = [], onClose }) {
                       )}
                       <textarea className="dg-msj-texto" rows={14} value={texto} onChange={(e) => setFinal(e.target.value)} aria-label="Mensaje listo para copiar" />
                       <div className="dg-msj-acciones">
-                        <button type="button" className="dg-btn-primary" onClick={copiar} disabled={!texto}>{copiado ? <><Check size={14} /> ¡Copiado, nakama!</> : <><Copy size={14} /> Copiar</>}</button>
+                        <button type="button" className={`dg-btn-primary ${copiado ? "dg-op-pop" : ""}`} onClick={copiar} disabled={!texto}>{copiado ? <><Check size={14} /> ¡Copiado, nakama!</> : <><Copy size={14} /> Copiar</>}</button>
                         {wa && texto && <a className="dg-btn-ghost" href={`${wa}?text=${encodeURIComponent(texto)}`} target="_blank" rel="noopener noreferrer"><Send size={14} /> Abrir en WhatsApp</a>}
                         {final !== null && <button type="button" className="dg-btn-ghost" onClick={() => setFinal(null)}><RotateCcw size={14} /> Deshacer lo que toqué</button>}
                       </div>
@@ -26652,12 +26652,64 @@ function Style() {
       .dg-modal.dg-op .dg-modal-head .dg-msj-on { background:var(--op-oro) !important; color:var(--op-tinta) !important; }
       .dg-modal.dg-op .dg-loading { color:var(--op-oro); }
       /* El menú: islas sobre el mar */
-      .dg-modal.dg-op .dg-msj-grupo-tit { font-family:'Pirata One', Georgia, serif; font-weight:400; font-size:16px; letter-spacing:.6px; text-transform:none; color:var(--op-cielo); }
-      .dg-modal.dg-op .dg-msj-item { color:var(--op-crema); border-color:rgba(143,211,255,.16); border-radius:8px; }
-      .dg-modal.dg-op .dg-msj-item:hover { background:rgba(242,194,48,.14); }
-      .dg-modal.dg-op .dg-msj-item:focus-visible { outline-color:var(--op-oro); }
-      .dg-modal.dg-op .dg-msj-item small { color:inherit; opacity:.7; }
-      .dg-modal.dg-op .dg-msj-item-on { background:var(--op-oro); border-color:var(--op-oro); color:var(--op-tinta); font-weight:700; box-shadow: inset 0 -4px 0 var(--op-rojo); }
+      /* Títulos de grupo: una cinta roja. Los mensajes: tablones de madera
+         (antes quedaban perdidos sobre el mar, 24/11/2026). */
+      .dg-modal.dg-op .dg-msj-grupo-tit { padding:6px 0 2px; text-transform:none; letter-spacing:0; }
+      .dg-modal.dg-op .dg-msj-grupo-tit > span {
+        display:inline-block; font-family:'Pirata One', Georgia, serif; font-weight:400; font-size:17px; letter-spacing:.6px; line-height:1.2;
+        color:var(--op-crema); text-shadow:1px 1px 0 var(--op-rojo-osc);
+        background:linear-gradient(180deg, #D81E3A 0%, var(--op-rojo) 55%, #A30D26 100%);
+        padding:4px 22px 4px 12px; border-radius:4px 0 0 4px;
+        clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 50%, 100% 100%, 0 100%);
+        box-shadow: 0 2px 0 var(--op-rojo-osc);
+      }
+      .dg-modal.dg-op .dg-msj-item {
+        color:var(--op-crema); font-weight:600; text-shadow:0 1px 0 rgba(0,0,0,.45);
+        background: repeating-linear-gradient(180deg, rgba(255,255,255,0) 0 9px, rgba(0,0,0,.07) 9px 10px), linear-gradient(180deg, #7A4E28 0%, #5E3B1D 100%);
+        border:1.5px solid #3E2611; border-radius:8px;
+        box-shadow: inset 0 1px 0 rgba(255,220,160,.25), 0 2px 0 rgba(0,0,0,.35);
+      }
+      .dg-modal.dg-op .dg-msj-item:hover { background: repeating-linear-gradient(180deg, rgba(255,255,255,0) 0 9px, rgba(0,0,0,.07) 9px 10px), linear-gradient(180deg, #8C5A2E 0%, #6B4423 100%); border-color:var(--op-oro); }
+      .dg-modal.dg-op .dg-msj-item:focus-visible { outline:2px solid var(--op-oro); outline-offset:2px; }
+      .dg-modal.dg-op .dg-msj-item small { color:inherit; opacity:.75; }
+      .dg-modal.dg-op .dg-msj-item-on, .dg-modal.dg-op .dg-msj-item-on:hover { background:var(--op-oro); border-color:#B8860B; color:var(--op-tinta); font-weight:700; text-shadow:none; box-shadow: inset 0 -4px 0 var(--op-rojo), 0 0 0 2px rgba(242,194,48,.35), 0 3px 10px rgba(0,0,0,.35); }
+      /* El título del mensaje listo, también en cinta */
+      .dg-modal.dg-op .dg-msj-final .dg-msj-caja-tit > span:first-child {
+        color:var(--op-crema); text-shadow:1px 1px 0 var(--op-rojo-osc);
+        background:linear-gradient(180deg, #D81E3A 0%, var(--op-rojo) 55%, #A30D26 100%);
+        padding:3px 26px 3px 14px; border-radius:4px 0 0 4px; box-shadow:0 2px 0 var(--op-rojo-osc);
+        clip-path: polygon(0 0, 100% 0, calc(100% - 12px) 50%, 100% 100%, 0 100%);
+      }
+      .dg-modal.dg-op .dg-msj-final .dg-msj-caja-tit > span:first-child small { color:#FFE7A8; text-shadow:none; }
+
+      /* ===== Animaciones del tema pirata */
+      .dg-modal.dg-op { animation: dg-op-zarpa .5s cubic-bezier(.2,.9,.3,1.15); }
+      @keyframes dg-op-zarpa { from { opacity:0; transform: translateY(40px) rotate(-1.2deg); } 60% { opacity:1; transform: translateY(-4px) rotate(.4deg); } to { transform:none; } }
+      .dg-modal.dg-op .dg-msj-item { transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease; }
+      .dg-modal.dg-op .dg-msj-item:hover { transform: translateX(3px) rotate(-.6deg); }
+      .dg-modal.dg-op .dg-msj-item:active { transform: scale(.97); }
+      .dg-modal.dg-op .dg-msj-item-on { animation: dg-op-izar .5s cubic-bezier(.3,1.6,.5,1); }
+      @keyframes dg-op-izar { 0% { transform: scale(.92) rotate(-2deg); } 60% { transform: scale(1.05) rotate(1deg); } 100% { transform:none; } }
+      .dg-modal.dg-op .dg-btn-primary, .dg-modal.dg-op .dg-btn-ghost, .dg-modal.dg-op .dg-msj-parte { transition: transform .15s ease, filter .15s ease, background .15s ease, box-shadow .15s ease; }
+      .dg-modal.dg-op .dg-btn-primary:hover:not(:disabled), .dg-modal.dg-op .dg-btn-ghost:hover, .dg-modal.dg-op .dg-msj-parte:hover { transform: translateY(-2px); }
+      .dg-modal.dg-op .dg-btn-primary:active:not(:disabled), .dg-modal.dg-op .dg-btn-ghost:active, .dg-modal.dg-op .dg-msj-parte:active { transform: translateY(1px) scale(.97); }
+      .dg-modal.dg-op .dg-btn-primary { position:relative; overflow:hidden; }
+      .dg-modal.dg-op .dg-btn-primary::after { content:""; position:absolute; top:0; bottom:0; left:-60%; width:40%; background:linear-gradient(100deg, transparent, rgba(255,246,224,.45), transparent); transform:skewX(-20deg); pointer-events:none; }
+      .dg-modal.dg-op .dg-btn-primary:hover:not(:disabled)::after { animation: dg-op-brillo .7s ease; }
+      @keyframes dg-op-brillo { to { left:130%; } }
+      .dg-op-pop { animation: dg-op-pop .55s cubic-bezier(.3,1.8,.5,1); }
+      @keyframes dg-op-pop { 0% { transform: scale(1); } 35% { transform: scale(1.14) rotate(-2deg); } 70% { transform: scale(.96) rotate(1deg); } 100% { transform: scale(1); } }
+      .dg-op-festejo .dg-op-sombrero { animation: dg-op-salto .8s cubic-bezier(.3,1.4,.5,1); }
+      @keyframes dg-op-salto { 0% { transform:none; } 40% { transform: translateY(-12px) rotate(-200deg); } 70% { transform: translateY(-4px) rotate(-340deg); } 100% { transform: rotate(-360deg); } }
+      .dg-modal.dg-op .dg-msj-tabla tbody tr { transition: background .15s ease; }
+      .dg-modal.dg-op .dg-msj-tabla tbody tr.dg-msj-fila-on td { animation: dg-op-fila .45s ease-out; }
+      @keyframes dg-op-fila { from { background: rgba(255,246,224,.9); } to { background: transparent; } }
+      .dg-modal.dg-op .dg-msj-caja { animation: dg-op-papel .4s ease-out both; }
+      @keyframes dg-op-papel { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform:none; } }
+      @media (prefers-reduced-motion: reduce) {
+        .dg-modal.dg-op, .dg-modal.dg-op *, .dg-modal.dg-op *::after { animation:none !important; transition:none !important; }
+        .dg-modal.dg-op .dg-msj-item:hover, .dg-modal.dg-op .dg-btn-primary:hover, .dg-modal.dg-op .dg-btn-ghost:hover, .dg-modal.dg-op .dg-msj-parte:hover { transform:none; }
+      }
       /* Las cajas: papel de cartel */
       .dg-modal.dg-op .dg-msj-caja, .dg-modal.dg-op .dg-msj-alias {
         background: radial-gradient(130% 100% at 50% 0%, #F8EBCB 0%, #F1DDB2 60%, #E6CC96 100%);
