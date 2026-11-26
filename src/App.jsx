@@ -795,7 +795,7 @@ function confirmarEmbaladoInterior(pedido) {
   if (!esEnvioInterior(pedido)) return true;
   return window.confirm(
     `ENVÍO AL INTERIOR — #${pedido.orden || "?"} ${pedido.cliente || ""}\n\n` +
-    "Este pedido NO sale con el flete: se despacha por Vía Cargo.\n\n" +
+    `Este pedido NO sale con el flete: se despacha por ${nombreTransporte(pedido)}.\n\n` +
     "¿Lo embalaste para viajar al interior?"
   );
 }
@@ -804,6 +804,18 @@ function confirmarEmbaladoInterior(pedido) {
 // se lo llevan a la casa. Cada uno pide datos distintos. Los pedidos viejos no
 // tienen el tipo: si tienen dirección cargada, eran a domicilio.
 const TIPOS_INTERIOR = { sucursal: "Sucursal de Vía Cargo", domicilio: "A domicilio" };
+// Interior por OTRO transporte (26/11/2026, Facundo: «a veces no mandamos por
+// Vía Cargo pero tenemos que cargar el remito igual»). Sigue siendo un envío
+// al interior (misma lista, mismos rótulos), pero el cliente descarga el
+// remito directo y nada lo manda a la página de Vía Cargo.
+function vaPorOtroTransporte(p) { return p?.metodo === "Interior" && !!p?.otroTransporte; }
+function nombreTransporte(p) {
+  if (!vaPorOtroTransporte(p)) return "Vía Cargo";
+  return String(p.transporteInterior || "").trim() || "otro transporte";
+}
+function tiposInteriorDe(p) {
+  return vaPorOtroTransporte(p) ? { ...TIPOS_INTERIOR, sucursal: "Retira en el transporte" } : TIPOS_INTERIOR;
+}
 function tipoInterior(p) {
   if (p?.interiorTipo === "sucursal" || p?.interiorTipo === "domicilio") return p.interiorTipo;
   return String(p?.detalleEntrega || "").trim() ? "domicilio" : "";
@@ -1773,7 +1785,7 @@ function cambiosDeUnPedido(a, d) {
     const espejo = cambiosEnElEspejo(a, d);
     if (espejo.length) pon(ACCION_CAMBIO_VERIFICADO, espejo.join(" · "));
   }
-  if (cambio(a, d, "estado")) pon(ESTADO_A_ACCION[d.estado] || "Cambió el estado", `pasó a «${d.estado}»`);
+  if (cambio(a, d, "estado")) pon(d.estado === "Despachado" && vaPorOtroTransporte(d) ? `Despachó por ${nombreTransporte(d)}` : (ESTADO_A_ACCION[d.estado] || "Cambió el estado"), `pasó a «${d.estado}»`);
   [["produccionCortadoFecha", "cortado"], ["produccionArmadoFecha", "armado"], ["produccionEmbaladoFecha", "embalado"]].forEach(([c, label]) => {
     if (prendio(a, d, c)) pon("Actualizó producción", label);
     if (apago(a, d, c)) pon("Reabrió producción", `deshizo ${label}`);
@@ -1804,12 +1816,12 @@ function cambiosDeUnPedido(a, d) {
   if ((Array.isArray(d.fotosEntrega) ? d.fotosEntrega.length : 0) > (Array.isArray(a.fotosEntrega) ? a.fotosEntrega.length : 0)) pon("Sacó la foto de la entrega");
   if ((Array.isArray(d.pagos) ? d.pagos.length : 0) > (Array.isArray(a.pagos) ? a.pagos.length : 0)) pon("Registró un pago");
   if (ordenesPapelDe(d).length < ordenesPapelDe(a).length) pon("Quitó la foto de la orden");
-  if (["detalleEntrega", "barrio", "piso", "celular", "celular2", "localidad", "provincia", "codigoPostal", "interiorTipo", "sucursalViaCargo"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
+  if (["detalleEntrega", "barrio", "piso", "celular", "celular2", "localidad", "provincia", "codigoPostal", "interiorTipo", "sucursalViaCargo", "otroTransporte", "transporteInterior"].some((c) => cambio(a, d, c))) pon("Editó los datos de entrega");
   const plata = [];
   if (cambio(a, d, "monto")) plata.push(`monto ${money(Number(d.monto) || 0)}`);
   if (cambio(a, d, "anticipo")) plata.push(`anticipo ${money(Number(d.anticipo) || 0)}`);
   if (plata.length) pon("Cambió la plata del pedido", plata.join(", "));
-  if (cambio(a, d, "remitoNumeroGuia") && d.remitoNumeroGuia) pon("Cargó la guía de Vía Cargo", d.remitoNumeroGuia);
+  if (cambio(a, d, "remitoNumeroGuia") && d.remitoNumeroGuia) pon(vaPorOtroTransporte(d) ? `Cargó la guía de ${nombreTransporte(d)}` : "Cargó la guía de Vía Cargo", d.remitoNumeroGuia);
   if (cambio(a, d, "remitoUrl") && d.remitoUrl) pon("Subió el remito");
   ACLARACIONES.forEach((x) => {
     if (cambio(a, d, x.campo)) pon("Cambió una aclaración", `${x.label.toLowerCase()}: ${String(d[x.campo] || "").trim().slice(0, 60) || "la borró"}`);
@@ -6617,7 +6629,7 @@ function textoComparable(value) {
    =========================================================================== */
 const soloNumeros = (v) => String(v ?? "").replace(/\D/g, "");
 // "A confirmar" no es un método de entrega: es que todavía no se sabe.
-const DATOS_QUE_SE_REPITEN = ["celular", "sinCelular", "celular2", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "canalVenta", "tipoFactura"];
+const DATOS_QUE_SE_REPITEN = ["celular", "sinCelular", "celular2", "dniCuit", "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "otroTransporte", "transporteInterior", "canalVenta", "tipoFactura"];
 
 function clientesDeLosPedidos(pedidos) {
   const mapa = new Map();
@@ -8665,7 +8677,7 @@ function fechaEntregaAutomatica(pedido, pedidos, hoyIso) {
 const CAMPOS_DEL_PEDIDO = [
   "cliente", "celular", "celular2", "dniCuit", "vendedor", "canalVenta", "fecha", "listo",
   "metodo", "barrio", "detalleEntrega", "piso", "horarioEntrega", "fechaEnvio",
-  "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "costoEnvio", "envioSinCargo", "envioPagado", "envioCobro", "destinoLat", "destinoLng",
+  "provincia", "localidad", "codigoPostal", "interiorTipo", "sucursalViaCargo", "otroTransporte", "transporteInterior", "costoEnvio", "envioSinCargo", "envioPagado", "envioCobro", "destinoLat", "destinoLng",
   "aclaracionEntrega", "aclaracionInterna",
 ];
 // La factura y la comisión son de la venta entera, no de cada espejo: una
@@ -9748,7 +9760,7 @@ function mensajeSeguimientoCliente(pedido, link) {
     "- La factura de compra",
     "- Un chat interno para consultas",
   ];
-  if (pedido?.metodo === "Interior") lineas.push("- Link directo al seguimiento en la página de Vía Cargo");
+  if (pedido?.metodo === "Interior") lineas.push(vaPorOtroTransporte(pedido) ? "- El remito del envío para descargar, cuando lo despachemos" : "- Link directo al seguimiento en la página de Vía Cargo");
   lineas.push("", link);
   return lineas.join("\n");
 }
@@ -9943,9 +9955,9 @@ function FlujoPedido({ pedido, canEdit = false, onVerificar, onClienteConfirmado
       <PasoPedido
         key="logistica"
         numero={4}
-        titulo={pedido.metodo === "Interior" ? (envioConfirmado ? "Listo para despachar por Vía Cargo" : "Esperando confirmación de envío") : (envioConfirmado ? "Disponible para el fletero" : "Esperando confirmación de envío")}
+        titulo={pedido.metodo === "Interior" ? (envioConfirmado ? `Listo para despachar por ${nombreTransporte(pedido)}` : "Esperando confirmación de envío") : (envioConfirmado ? "Disponible para el fletero" : "Esperando confirmación de envío")}
         detalle={pedido.metodo === "Interior"
-          ? (envioConfirmado ? "Se despacha por Vía Cargo desde PostVenta. No entra en la lista del flete propio." : listo ? "PostVenta debe confirmar el envío." : "Se habilita después de producción y la coordinación con el cliente.")
+          ? (envioConfirmado ? `Se despacha por ${nombreTransporte(pedido)} desde PostVenta. No entra en la lista del flete propio.` : listo ? "PostVenta debe confirmar el envío." : "Se habilita después de producción y la coordinación con el cliente.")
           : (envioConfirmado ? "El pedido ya aparece en la lista de Logística para organizar la entrega." : listo ? "PostVenta debe confirmar el envío para habilitarlo en Logística." : "Se habilita después de producción y la coordinación con el cliente.")}
         estado={envioConfirmado ? "done" : listo && clienteConfirmado ? "active" : "pending"}
       />,
@@ -11496,7 +11508,9 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar, guardarAlSalir = fals
   function aplicarCambios(cambios) {
     const yaTieneGuia = pedido.remitoNumeroGuia?.trim();
     const nuevaGuia = cambios.remitoNumeroGuia?.trim();
-    if (nuevaGuia && !yaTieneGuia && pedido.metodo === "Interior" && pedido.estado !== "Despachado" && pedido.estado !== "Entregado") {
+    // Con otro transporte puede no haber guía: alcanza con subir el remito.
+    const nuevoRemito = vaPorOtroTransporte(pedido) && cambios.remitoUrl && !pedido.remitoUrl;
+    if ((nuevaGuia && !yaTieneGuia || nuevoRemito) && pedido.metodo === "Interior" && pedido.estado !== "Despachado" && pedido.estado !== "Entregado") {
       onCambiar({ ...cambios, estado: "Despachado", despachadoFecha: new Date().toISOString().slice(0, 10) });
     } else {
       onCambiar(cambios);
@@ -11511,7 +11525,8 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar, guardarAlSalir = fals
       const url = await documentosStore.subirRemito(pedido.id, archivo);
       const cambios = { remitoUrl: url };
 
-      if (archivo.type.startsWith("image/") && !pedido.remitoNumeroGuia?.trim()) {
+      // La lectura automática conoce el remito de Vía Cargo, no el de otros.
+      if (archivo.type.startsWith("image/") && !pedido.remitoNumeroGuia?.trim() && !vaPorOtroTransporte(pedido)) {
         setSubiendo(false); setLeyendoGuia(true);
         try {
           const guia = await leerNumeroGuiaDeImagen(archivo);
@@ -11544,9 +11559,9 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar, guardarAlSalir = fals
 
   return (
     <div className="dg-section-card">
-      <div className="dg-section-header"><Package size={14} /> Remito de Vía Cargo</div>
+      <div className="dg-section-header"><Package size={14} /> Remito de {nombreTransporte(pedido)}</div>
       <div className="dg-field-grid">
-        <Field label="Número de guía">
+        <Field label={vaPorOtroTransporte(pedido) ? "Número de guía (si tiene)" : "Número de guía"}>
           {guardarAlSalir ? (
             <input
               disabled={!canEdit}
@@ -11593,14 +11608,19 @@ function RemitoViaCargoCampo({ pedido, canEdit, onCambiar, guardarAlSalir = fals
             )}
           </div>
           {error && <div className="dg-error" style={{ marginTop: 4 }}>{error}</div>}
-          {canEdit && !pedido.remitoNumeroGuia?.trim() && pedido.metodo === "Interior" && (
+          {canEdit && !pedido.remitoNumeroGuia?.trim() && pedido.metodo === "Interior" && vaPorOtroTransporte(pedido) && !pedido.remitoUrl && (
+            <p className="dg-hint" style={{ marginTop: 6, fontSize: 11 }}>
+              En cuanto subas el remito, el pedido pasa solo a "Despachado" y el cliente lo puede descargar desde su link. No lo manda a la página de Vía Cargo.
+            </p>
+          )}
+          {canEdit && !pedido.remitoNumeroGuia?.trim() && pedido.metodo === "Interior" && !vaPorOtroTransporte(pedido) && (
             <p className="dg-hint" style={{ marginTop: 6, fontSize: 11 }}>
               Si subís una foto (no un PDF), el número de guía se completa solo — revisalo antes de guardar por si lo leyó mal. En cuanto quede cargada la guía, el pedido pasa solo a "Despachado" y sale de la lista general.
             </p>
           )}
         </Field>
       </div>
-      {pedido.remitoNumeroGuia?.trim() && (
+      {pedido.remitoNumeroGuia?.trim() && !vaPorOtroTransporte(pedido) && (
         <a href={linkViaCargo(pedido.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer" className="dg-link-ecomapp" style={{ marginTop: 10 }}>
           <ExternalLink size={12} /> Ver seguimiento en Vía Cargo
         </a>
@@ -12427,7 +12447,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                 <div className={`dg-field dg-field-ancho dg-interior-tipo ${err("interiorTipo") ? "dg-field-error" : ""}`}>
                   <label>Envío al interior{err("interiorTipo") ? " *" : ""}</label>
                   <div className="dg-salida-turnos">
-                    {Object.entries(TIPOS_INTERIOR).map(([id, label]) => (
+                    {Object.entries(tiposInteriorDe(draft)).map(([id, label]) => (
                       <button type="button" key={id} disabled={!canEditFull}
                         className={`dg-salida-turno ${tipoInterior(draft) === id ? "dg-salida-turno-on" : ""}`}
                         onClick={() => set("interiorTipo", id)}>
@@ -12437,11 +12457,15 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
                   </div>
                   {err("interiorTipo") && <span className="dg-field-error-msg">{err("interiorTipo")}</span>}
                 </div>
+                <div className="dg-field dg-field-ancho">
+                  <label>Transporte</label>
+                  <ElegirTransporteInterior pedido={draft} canEdit={canEditFull} onCambiar={(cambios) => setDraft((d) => ({ ...d, ...cambios }))} />
+                </div>
                 <Field label="Provincia" error={err("provincia")}><input disabled={!canEditFull} value={draft.provincia || ""} onChange={(e) => set("provincia", e.target.value)} placeholder="Ej: Córdoba" /></Field>
                 <Field label="Localidad" error={err("localidad")}><input disabled={!canEditFull} value={draft.localidad || ""} onChange={(e) => set("localidad", e.target.value)} placeholder="Ej: Río Cuarto" /></Field>
                 <Field label="Código postal"><input disabled={!canEditFull} value={draft.codigoPostal || ""} onChange={(e) => set("codigoPostal", e.target.value)} placeholder="Ej: 5800" /></Field>
                 {tipoInterior(draft) === "sucursal" && (
-                  <Field label="Sucursal de Vía Cargo" error={err("sucursalViaCargo")}><input disabled={!canEditFull} value={draft.sucursalViaCargo || ""} onChange={(e) => set("sucursalViaCargo", e.target.value)} placeholder="Nombre o dirección de la sucursal" /></Field>
+                  <Field label={vaPorOtroTransporte(draft) ? `Sucursal de ${nombreTransporte(draft)}` : "Sucursal de Vía Cargo"} error={err("sucursalViaCargo")}><input disabled={!canEditFull} value={draft.sucursalViaCargo || ""} onChange={(e) => set("sucursalViaCargo", e.target.value)} placeholder="Nombre o dirección de la sucursal" /></Field>
                 )}
                 {tipoInterior(draft) === "domicilio" && (
                   <>
@@ -12618,6 +12642,35 @@ function despachadoDesdeInterior(p, hoy) {
   return { ...p, estado: "Despachado", despachadoFecha: p.despachadoFecha || hoy };
 }
 
+// ¿Con qué transporte va? Vía Cargo (lo de siempre) u otro. Con otro se
+// anota cuál; la lista sugiere los de «Mis mensajes».
+function ElegirTransporteInterior({ pedido, canEdit, onCambiar, campoTexto = false }) {
+  const otro = vaPorOtroTransporte(pedido);
+  return (
+    <div className="dg-interior-transporte">
+      {campoTexto && <span className="dg-interior-transporte-tit">¿Con qué transporte va?</span>}
+      <div className="dg-salida-turnos">
+        <button type="button" disabled={!canEdit} className={`dg-salida-turno ${!otro ? "dg-salida-turno-on" : ""}`}
+          onClick={() => otro && onCambiar({ otroTransporte: false })}>Vía Cargo</button>
+        <button type="button" disabled={!canEdit} className={`dg-salida-turno ${otro ? "dg-salida-turno-on" : ""}`}
+          onClick={() => !otro && onCambiar({ otroTransporte: true })}>Otro transporte</button>
+      </div>
+      {otro && (
+        <label className="dg-interior-transporte-cual">
+          <span>¿Cuál?</span>
+          {campoTexto
+            ? <CampoTextoGuardado value={pedido.transporteInterior} onGuardar={(v) => onCambiar({ transporteInterior: v.trim() })} placeholder="Ej: Astutti" list="dg-transportes-sugeridos" />
+            : <input disabled={!canEdit} value={pedido.transporteInterior || ""} onChange={(e) => onCambiar({ transporteInterior: e.target.value })} placeholder="Ej: Astutti" list="dg-transportes-sugeridos" />}
+          <datalist id="dg-transportes-sugeridos">
+            {TRANSPORTES_BASE.map((t) => <option key={t.nombre} value={t.nombre}>{t.destino}</option>)}
+          </datalist>
+        </label>
+      )}
+      {otro && <small className="dg-hint">El cliente descarga el remito desde su link. No se lo manda a Vía Cargo ni entra en la planilla para Vía Cargo.</small>}
+    </div>
+  );
+}
+
 function grupoInteriorCompleto(pedido, todos) {
   const grupo = pedido?.grupoId;
   if (!grupo) return pedidoEstaListo(pedido);
@@ -12660,11 +12713,12 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
     const lista = (filasElegidas || []).filter((f) => f.completo);
     if (!lista.length) return;
     const nombres = lista.map((f) => `${f.ordenes} ${f.p.cliente || ""}`.trim()).join("\n• ");
-    if (!window.confirm(`¿Ya ${lista.length === 1 ? "salió" : "salieron"} hacia Vía Cargo?\n\n• ${nombres}\n\nPasa${lista.length === 1 ? "" : "n"} a «Despachados». Cuando tengas el número de guía, cargalo ahí así el cliente lo puede seguir.`)) return;
+    const hacia = [...new Set(lista.map((f) => nombreTransporte(f.p)))].join(" / ");
+    if (!window.confirm(`¿Ya ${lista.length === 1 ? "salió" : "salieron"} hacia ${hacia}?\n\n• ${nombres}\n\nPasa${lista.length === 1 ? "" : "n"} a «Despachados». Cuando tengas el número de guía, cargalo ahí así el cliente lo puede seguir.`)) return;
     const hoy = isoLocal(new Date());
     const ids = new Set(lista.flatMap((f) => f.items.map((e) => e.id)));
     onChange(pedidos.map((p) => (ids.has(p.id) ? despachadoDesdeInterior(p, hoy) : p)));
-    if (onRegistrar) onRegistrar("Marcó despachado", `${lista.map((f) => `${f.ordenes} ${f.p.cliente || ""}`.trim()).join(", ")} (Vía Cargo)`);
+    if (onRegistrar) onRegistrar("Marcó despachado", `${lista.map((f) => `${f.ordenes} ${f.p.cliente || ""}`.trim()).join(", ")} (${hacia})`);
     setSeleccion(new Set());
     setFilaAbierta(null);
   }
@@ -12741,13 +12795,15 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
       espejos: totalUnidades(items),
       hechos: listos.length,
       bultos: completo ? bultosDeEnvios(listos) : 0,
-      destino: [[p.localidad, p.provincia].filter(Boolean).join(", "), tipoInterior(p) === "sucursal" ? "sucursal" : tipoInterior(p) === "domicilio" ? "domicilio" : ""].filter(Boolean).join(" · "),
+      destino: [[p.localidad, p.provincia].filter(Boolean).join(", "), tipoInterior(p) === "sucursal" ? "sucursal" : tipoInterior(p) === "domicilio" ? "domicilio" : "", vaPorOtroTransporte(p) ? `por ${nombreTransporte(p)}` : ""].filter(Boolean).join(" · "),
     };
   });
   const elegidas = filas.filter((f) => f.completo && seleccion.has(f.clave));
   // Lo que se le manda a Vía Cargo son los espejos, no los pedidos.
   const espejosElegidos = elegidas.flatMap((f) => f.items.filter(pedidoEstaListo));
   const bultosElegidos = bultosDeEnvios(espejosElegidos);
+  // La planilla es para que Vía Cargo arme sus remitos: los de otro transporte no van.
+  const espejosParaViaCargo = espejosElegidos.filter((e) => !vaPorOtroTransporte(e));
   const listosSinElegir = filas.filter((f) => f.completo && !seleccion.has(f.clave)).length;
 
   return (
@@ -12842,7 +12898,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
                               <div className="dg-salida-bloque dg-salida-bloque-ancho">
                                 <div className="dg-salida-tit">A dónde va</div>
                                 <div className="dg-salida-turnos" style={{ marginBottom: 10 }}>
-                                  {Object.entries(TIPOS_INTERIOR).map(([id, label]) => (
+                                  {Object.entries(tiposInteriorDe(f.p)).map(([id, label]) => (
                                     <button type="button" key={id} disabled={!canEdit}
                                       className={`dg-salida-turno ${tipoInterior(f.p) === id ? "dg-salida-turno-on" : ""}`}
                                       onClick={() => updateGrupo(f.p, { interiorTipo: id })}>
@@ -12850,20 +12906,21 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
                                     </button>
                                   ))}
                                 </div>
+                                <ElegirTransporteInterior pedido={f.p} canEdit={canEdit} campoTexto onCambiar={(cambios) => updateGrupo(f.p, cambios)} />
                                 <div className="dg-salida-campos">
-                                  {tipoInterior(f.p) === "sucursal" && <label><span>Sucursal de Vía Cargo</span><CampoTextoGuardado value={f.p.sucursalViaCargo} onGuardar={(v) => updateGrupo(f.p, { sucursalViaCargo: v })} placeholder="Nombre o dirección" /></label>}
+                                  {tipoInterior(f.p) === "sucursal" && <label><span>{vaPorOtroTransporte(f.p) ? `Sucursal de ${nombreTransporte(f.p)}` : "Sucursal de Vía Cargo"}</span><CampoTextoGuardado value={f.p.sucursalViaCargo} onGuardar={(v) => updateGrupo(f.p, { sucursalViaCargo: v })} placeholder="Nombre o dirección" /></label>}
                                   {tipoInterior(f.p) === "domicilio" && <label><span>Dirección</span><CampoTextoGuardado value={f.p.detalleEntrega} onGuardar={(v) => updateGrupo(f.p, { detalleEntrega: v })} placeholder="Calle y número" /></label>}
                                   {tipoInterior(f.p) === "domicilio" && <label><span>Piso / Depto</span><CampoTextoGuardado value={f.p.piso} onGuardar={(v) => updateGrupo(f.p, { piso: v })} placeholder="Ej: 3 B — o casa" /></label>}
                                   <label><span>Provincia</span><CampoTextoGuardado value={f.p.provincia} onGuardar={(v) => updateGrupo(f.p, { provincia: v })} placeholder="Ej: Córdoba" /></label>
                                   <label><span>Localidad</span><CampoTextoGuardado value={f.p.localidad} onGuardar={(v) => updateGrupo(f.p, { localidad: v })} placeholder="Ej: Río Cuarto" /></label>
                                   <label><span>Código postal</span><CampoTextoGuardado value={f.p.codigoPostal} onGuardar={(v) => updateGrupo(f.p, { codigoPostal: v })} placeholder="Ej: 5800" /></label>
                                   <label><span>Teléfono</span><CampoTextoGuardado value={f.p.celular} onGuardar={(v) => updateGrupo(f.p, { celular: v })} placeholder="Ej: 1122334455" /></label>
-                                  <label><span>DNI / CUIT</span><CampoTextoGuardado value={f.p.dniCuit} onGuardar={(v) => updateGrupo(f.p, { dniCuit: v })} placeholder="Lo pide Vía Cargo" /></label>
+                                  <label><span>DNI / CUIT</span><CampoTextoGuardado value={f.p.dniCuit} onGuardar={(v) => updateGrupo(f.p, { dniCuit: v })} placeholder={vaPorOtroTransporte(f.p) ? "Lo pide el transporte" : "Lo pide Vía Cargo"} /></label>
                                 </div>
                               </div>
 
                               <div className="dg-salida-bloque dg-salida-bloque-ancho">
-                                <div className="dg-salida-tit">El remito de Vía Cargo</div>
+                                <div className="dg-salida-tit">El remito de {nombreTransporte(f.p)}</div>
                                 <RemitoViaCargoCampo pedido={f.p} canEdit={canEdit} guardarAlSalir onCambiar={(cambios) => updateGrupo(f.p, cambios)} />
                               </div>
 
@@ -12926,9 +12983,11 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
                 <small> · {bultosElegidos} {bultosElegidos === 1 ? "bulto" : "bultos"}</small>
                 {listosSinElegir > 0 && <small> · quedan {listosSinElegir} listos para otro viaje</small>}
               </span>
-              <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => abrirDatosDespacho(espejosElegidos)}>
-                <FileText size={13} /> Datos para Vía Cargo
-              </button>
+              {espejosParaViaCargo.length > 0 && (
+                <button type="button" className="dg-btn-primary dg-mini-btn" onClick={() => abrirDatosDespacho(espejosParaViaCargo)}>
+                  <FileText size={13} /> Datos para Vía Cargo
+                </button>
+              )}
               <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => abrirRotulos(espejosElegidos)}>
                 <Printer size={13} /> Rótulos ({bultosElegidos})
               </button>
@@ -12952,7 +13011,7 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
 
       <div className="dg-section-card" style={{ marginTop: 22 }}>
         <div className="dg-section-header"><Check size={14} /> Despachados ({gruposDespachados.length})</div>
-        <p className="dg-hint" style={{ marginBottom: 10 }}>Ya salieron hacia Vía Cargo. No aparecen en la lista general de pedidos para no hacer bulto. Marcá "Confirmar entrega" recién cuando sepas que el cliente ya lo recibió.</p>
+        <p className="dg-hint" style={{ marginBottom: 10 }}>Ya salieron hacia el transporte. No aparecen en la lista general de pedidos para no hacer bulto. Marcá "Confirmar entrega" recién cuando sepas que el cliente ya lo recibió.</p>
         {gruposDespachados.length === 0 && <div className="dg-empty">Todavía no despachaste ninguno.</div>}
         <div className="dg-task-list" style={{ marginBottom: 0 }}>
           {gruposDespachados.map((items) => {
@@ -12961,19 +13020,20 @@ function EnviosInteriorPanel({ pedidos, onChange, canEdit, onCreateIncome, onReg
             const total = totalUnidades(items);
             const clave = p.grupoId || p.id;
             const sinGuia = !p.remitoNumeroGuia?.trim();
+            const otro = vaPorOtroTransporte(p);
             return (
               <Fragment key={clave}>
               <div className="dg-task dg-pago-row">
                 <div className="dg-pago-info">
                   <span>{ordenes} · {p.cliente}{total > 1 ? ` · ${total} espejos` : ""}</span>
-                  <span className="dg-pago-meta">Despachado el {p.despachadoFecha ? fechaLargaCorta(p.despachadoFecha) : "—"} · Guía: {sinGuia ? <span className="dg-envios-falta">falta cargarla</span> : p.remitoNumeroGuia} · {p.localidad || "—"}{p.provincia ? `, ${p.provincia}` : ""}</span>
+                  <span className="dg-pago-meta">Despachado el {p.despachadoFecha ? fechaLargaCorta(p.despachadoFecha) : "—"}{otro ? <> · Por {nombreTransporte(p)} · Remito: {p.remitoUrl ? "cargado" : <span className="dg-envios-falta">falta cargarlo</span>}{sinGuia ? "" : ` · Guía ${p.remitoNumeroGuia}`}</> : <> · Guía: {sinGuia ? <span className="dg-envios-falta">falta cargarla</span> : p.remitoNumeroGuia}</>} · {p.localidad || "—"}{p.provincia ? `, ${p.provincia}` : ""}</span>
                 </div>
-                {!sinGuia && (
+                {!sinGuia && !otro && (
                   <a className="dg-btn-ghost dg-mini-btn" href={linkViaCargo(p.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><ExternalLink size={13} /> Ver en Vía Cargo</a>
                 )}
                 {canEdit && (
                   <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => setGuiaAbierta(guiaAbierta === clave ? null : clave)} aria-expanded={guiaAbierta === clave}>
-                    <FileText size={13} /> {sinGuia ? "Cargar la guía" : "Remito"}
+                    <FileText size={13} /> {otro ? (p.remitoUrl ? "Remito" : "Cargar el remito") : sinGuia ? "Cargar la guía" : "Remito"}
                   </button>
                 )}
                 <button className="dg-btn-primary dg-mini-btn" onClick={() => marcarEntregadoGrupo(p)}><CheckCircle2 size={13} /> Confirmar entrega</button>
@@ -14781,11 +14841,12 @@ function historialDeEnvios(pedidos, salidas) {
         : [p.barrio, direccion].filter(Boolean).join(" · "),
       espejos: totalUnidades(items),
       productos: items.map((x) => `${Number(x.cant) > 1 ? `${x.cant}× ` : ""}${medidaEspejo(x) || "espejo"}`).join(", "),
-      fletero: f.tipo === "interior" ? "Vía Cargo" : (items.map((x) => String(x.fletero || "").trim()).find(Boolean) || ""),
+      fletero: f.tipo === "interior" ? nombreTransporte(p) : (items.map((x) => String(x.fletero || "").trim()).find(Boolean) || ""),
       cobrado: cobro ? cobro.saldo + cobro.envioEnLaPuerta : 0,
       porTransferencia: !!cobro?.porTransferencia,
       rendicion: items.map((x) => x.rendicionFlete).find(Boolean) || null,
       guia: String(p.remitoNumeroGuia || "").trim(),
+      otroTransporte: f.tipo === "interior" && vaPorOtroTransporte(p),
       recibido: f.tipo === "interior" && items.every((x) => x.estado === "Entregado"),
       horario: p.horarioEntrega || "",
       metodo: p.metodo,
@@ -14972,7 +15033,7 @@ function HistorialEnviosPanel({ pedidos, salidas = [] }) {
                         <ul>
                           {f.celular && <li><span>Teléfono</span><a href={`tel:${String(f.celular).replace(/\D/g, "")}`}>{f.celular}</a></li>}
                           {f.horario && <li><span>Horario</span>{f.horario}</li>}
-                          {f.tipo === "interior" && <li><span>Guía</span>{f.guia ? <a href={linkViaCargo(f.guia)} target="_blank" rel="noopener noreferrer">{f.guia} · ver en Vía Cargo</a> : "sin cargar"}</li>}
+                          {f.tipo === "interior" && <li><span>Guía</span>{f.guia && f.otroTransporte ? `${f.guia} · ${f.fletero}` : f.guia ? <a href={linkViaCargo(f.guia)} target="_blank" rel="noopener noreferrer">{f.guia} · ver en Vía Cargo</a> : "sin cargar"}</li>}
                           {f.rendicion && <li><span>Rendición</span>{f.rendicion.fletero || "El flete"} entregó {money(f.rendicion.entregado)} el {fechaEntregaCorta(String(f.rendicion.fecha || "").slice(0, 10))}</li>}
                           {f.tipo === "salida" && f.salida && <li><span>Tipo</span>{f.salida.label}</li>}
                           {f.aMano && <li><span>Cómo</span>Marcado entregado{f.desde ? ` desde «${f.desde}»` : " a mano"}, sin pasar por la lista de Envíos (sin aviso al cliente ni envío confirmado).</li>}
@@ -15746,7 +15807,7 @@ function mensajeSolucionReclamo(r) {
 // Input que solo guarda al salir del campo (onBlur), no en cada tecla.
 // Evita que el guardado automático + la sincronización en vivo te pisen lo
 // que estás escribiendo letra por letra.
-function CampoTextoGuardado({ value, onGuardar, placeholder, className }) {
+function CampoTextoGuardado({ value, onGuardar, placeholder, className, list }) {
   const [draft, setDraft] = useState(value || "");
   const editando = useRef(false);
   useEffect(() => { if (!editando.current) setDraft(value || ""); }, [value]);
@@ -15755,6 +15816,7 @@ function CampoTextoGuardado({ value, onGuardar, placeholder, className }) {
       className={className}
       value={draft}
       placeholder={placeholder}
+      list={list}
       onFocus={() => { editando.current = true; }}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => { editando.current = false; if (draft !== (value || "")) onGuardar(draft); }}
@@ -27075,6 +27137,11 @@ function Style() {
       .dg-interior-espejo-txt { flex:1; min-width:0; }
       .dg-interior-espejo-txt small { color:var(--dg-warning); }
       .dg-interior-embalar { display:inline-flex; align-items:center; gap:4px; color:var(--dg-success); border-color:rgba(var(--dg-success-rgb),.35); }
+      .dg-interior-transporte { display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
+      .dg-interior-transporte-tit { font-size:12px; color:var(--dg-text-dim); }
+      .dg-interior-transporte-cual { display:flex; flex-direction:column; gap:4px; max-width:280px; }
+      .dg-interior-transporte-cual span { font-size:12px; color:var(--dg-text-dim); }
+      .dg-interior-transporte-cual input { width:100%; min-width:0; padding:6px 9px; font-size:13px; }
       .dg-interior-guia { margin:-2px 0 10px; padding:12px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:10px; background:rgba(var(--dg-line-rgb),.03); }
       .dg-interior-espejos b { color:var(--dg-text); font-weight:600; }
       /* Lo que se le ofrece al cliente es el campo más importante del reclamo:
@@ -29906,7 +29973,8 @@ function pasosPublicosDe(pedido) {
 function pasoPublicoDe(pedido) {
   if (!pedido) return 0;
   const esInterior = pedido.metodo === "Interior";
-  const despachado = !!pedido.remitoNumeroGuia?.trim();
+  // Con otro transporte puede no haber guía: el remito o el despacho alcanzan.
+  const despachado = !!pedido.remitoNumeroGuia?.trim() || (vaPorOtroTransporte(pedido) && (!!pedido.remitoUrl || pedido.estado === "Despachado"));
   if (pedido.estado === "Entregado") return esInterior ? 5 : 4; // todos los pasos con tilde
   if (esInterior && despachado) return 4; // listo + despachado, falta entregado
   if (pedidoEstaListo(pedido)) return 3; // confirmado + producción + listo, los 3 con tilde
@@ -31113,7 +31181,7 @@ function datosEntregaPublica(p) {
     const lugar = [texto(x.localidad), texto(x.provincia)].filter(Boolean).join(", ") + (texto(x.codigoPostal) ? ` (CP ${texto(x.codigoPostal)})` : "");
     const t = tipoInterior(x);
     return {
-      tipo: "interior", titulo: "Envío al interior por Vía Cargo",
+      tipo: "interior", titulo: `Envío al interior por ${nombreTransporte(x)}`,
       filas: [
         t === "sucursal"
           ? fila("Retirás en la sucursal", x.sucursalViaCargo || "A confirmar")
@@ -31521,12 +31589,12 @@ function SeguimientoPublico({ pedidoId }) {
           )}
           {pasoActual === 3 && esInterior && (
             <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
-              <strong>Espejo listo. Lo estamos preparando para despachar por Vía Cargo.</strong>
+              <strong>Espejo listo. Lo estamos preparando para despachar por {nombreTransporte(pedido)}.</strong>
             </p>
           )}
           {pasoActual === 4 && esInterior && (
             <p className="dg-hint" style={{ marginTop: 10, color: "var(--dg-success)" }}>
-              <strong>{pedido.remitoNumeroGuia?.trim() ? "Despachado. Ya podés seguirlo con el número de guía más abajo." : "Despachado por Vía Cargo. En cuanto tengamos el número de guía lo vas a ver acá."}</strong>
+              <strong>{vaPorOtroTransporte(pedido) ? `Despachado por ${nombreTransporte(pedido)}.${pedido.remitoUrl ? " Podés descargar el remito más abajo." : " En cuanto tengamos el remito lo vas a ver acá."}` : pedido.remitoNumeroGuia?.trim() ? "Despachado. Ya podés seguirlo con el número de guía más abajo." : "Despachado por Vía Cargo. En cuanto tengamos el número de guía lo vas a ver acá."}</strong>
             </p>
           )}
 
@@ -31558,9 +31626,9 @@ function SeguimientoPublico({ pedidoId }) {
                 : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
             )}
             {pedido.metodo === "Interior" && pedido.remitoUrl && (
-              <a className="dg-btn-ghost" href={pedido.remitoUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar remito de Vía Cargo</a>
+              <a className="dg-btn-ghost" href={pedido.remitoUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> {vaPorOtroTransporte(pedido) ? "Descargar remito" : "Descargar remito de Vía Cargo"}</a>
             )}
-            {pedido.metodo === "Interior" && pedido.remitoNumeroGuia?.trim() && (
+            {pedido.metodo === "Interior" && pedido.remitoNumeroGuia?.trim() && !vaPorOtroTransporte(pedido) && (
               <a className="dg-btn-ghost" href={linkViaCargo(pedido.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><Truck size={14} /> Seguir envío en Vía Cargo</a>
             )}
             <button className="dg-btn-ghost" onClick={() => abrirGarantia(pedido)}><ShieldCheck size={14} /> Descargar garantía</button>
@@ -31655,6 +31723,7 @@ function SeguimientoGrupoPublico({ grupoId }) {
   const activos = espejos.filter((e) => e.estado !== "Cancelado");
   const conFacturaUrl = espejos.find((e) => e.facturaUrl);
   const conRemito = espejos.find((e) => e.remitoNumeroGuia?.trim());
+  const conArchivoRemito = espejos.find((e) => e.remitoUrl);
   const puedeDescargarFactura = primero.tipoFactura === "Cons. Final / B" || primero.tipoFactura === "Factura A";
   const linkConsulta = `${waLink(WHATSAPP_CONSULTAS)}?text=${encodeURIComponent(`Hola! Tengo una consulta sobre mi pedido #${primero.orden}`)}`;
 
@@ -31721,10 +31790,10 @@ function SeguimientoGrupoPublico({ grupoId }) {
                       : <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo para coordinar entrega.</strong></p>
                   )}
                   {pasoActual === 3 && esInterior && (
-                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo. Lo estamos preparando para despachar por Vía Cargo.</strong></p>
+                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>Espejo listo. Lo estamos preparando para despachar por {nombreTransporte(pedido)}.</strong></p>
                   )}
                   {pasoActual === 4 && esInterior && (
-                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>{conRemito ? "Despachado. Ya podés seguirlo con el número de guía más abajo." : "Despachado por Vía Cargo. En cuanto tengamos el número de guía lo vas a ver acá."}</strong></p>
+                    <p className="dg-hint" style={{ marginTop: 8, color: "var(--dg-success)" }}><strong>{vaPorOtroTransporte(pedido) ? `Despachado por ${nombreTransporte(pedido)}.${conArchivoRemito ? " Podés descargar el remito más abajo." : " En cuanto tengamos el remito lo vas a ver acá."}` : conRemito ? "Despachado. Ya podés seguirlo con el número de guía más abajo." : "Despachado por Vía Cargo. En cuanto tengamos el número de guía lo vas a ver acá."}</strong></p>
                   )}
                 </div>
               );
@@ -31740,10 +31809,10 @@ function SeguimientoGrupoPublico({ grupoId }) {
                   ? <LinksDeFacturas pedido={conFacturaUrl} clave={puerta.clave} />
                   : <span className="dg-pago-meta dg-seguimiento-doc-pendiente">La factura todavía no fue cargada. Consultanos por WhatsApp.</span>
               )}
-              {conRemito?.remitoUrl && (
-                <a className="dg-btn-ghost" href={conRemito.remitoUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> Descargar remito de Vía Cargo</a>
+              {conArchivoRemito && (
+                <a className="dg-btn-ghost" href={conArchivoRemito.remitoUrl} target="_blank" rel="noopener noreferrer"><FileText size={14} /> {vaPorOtroTransporte(conArchivoRemito) ? "Descargar remito" : "Descargar remito de Vía Cargo"}</a>
               )}
-              {conRemito && (
+              {conRemito && !vaPorOtroTransporte(conRemito) && (
                 <a className="dg-btn-ghost" href={linkViaCargo(conRemito.remitoNumeroGuia)} target="_blank" rel="noopener noreferrer"><Truck size={14} /> Seguir envío en Vía Cargo</a>
               )}
               <button className="dg-btn-ghost" onClick={() => abrirGarantia(activos)}><ShieldCheck size={14} /> Descargar garantía</button>
