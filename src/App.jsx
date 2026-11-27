@@ -79,6 +79,7 @@ function LogoMark({ className, strokeWidth = 5 }) {
 const METODO_ICONS = { "Retira": Building2, "Envío": Truck, "Envío flex": Truck, "Interior": Truck, "Colocación": Wrench, "Otro": Package };
 const QUICK_ICONS = { MessageCircle, Check, ShoppingCart };
 const SUBPAGE_ICONS = {
+  meli: ShoppingCart,
   presupuestador: Calculator,
   pedidos: ClipboardList,
   crm: Users,
@@ -998,6 +999,7 @@ const SECTOR_SUBPAGES = {
     { id: "presupuestador", label: "Presupuestador" },
     { id: "pedidos", label: "Pedidos" },
     { id: "clientes", label: "Clientes" },
+    { id: "meli", label: "Mercado Libre" },
     { id: "turno", label: "Mi turno" },
     { id: "crm", label: "CRM (Kommo)" },
     { id: "recursos", label: "Catálogos y precios" },
@@ -1029,6 +1031,7 @@ const SECTOR_SUBPAGES = {
     { id: "envios", label: "Envíos" },
     { id: "interior", label: "Envíos al interior" },
     { id: "retiros", label: "Retiros en el local" },
+    { id: "meli", label: "Mercado Libre" },
     { id: "rendicion", label: "Rendición del flete" },
     { id: "historial", label: "Historial de envíos" },
     { id: "numeros", label: "Números" },
@@ -1983,6 +1986,7 @@ function App() {
   const [quotes, setQuotes] = useState(null);
   const [leads, setLeads] = useState(null);
   const [vendedores, setVendedores] = useState(null);
+  const [abrirML, setAbrirML] = useState(0);
   const [proveedores, setProveedores] = useState(null);
   const [gastosFijosPlantillas, setGastosFijosPlantillas] = useState(null);
   const [bibliotecaMarketing, setBibliotecaMarketing] = useState(null);
@@ -2226,6 +2230,11 @@ function App() {
     }
     if (params.get("consultas") === "1") {
       setVistaConsultas(true); setActiveSectorId(null); setVistaPanel(false); setVistaPendientes(false);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    // El aviso de Mercado Libre (y la vuelta de conectar la cuenta) abre su pestaña.
+    if (params.get("mercadolibre") === "1") {
+      setAbrirML(Date.now());
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -3066,6 +3075,15 @@ function App() {
   const canQuote = isAdmin || isVentas;
   const canSeePedidos = !!session;
   const canEditPedidoFull = isAdmin || isVentas;
+  // Mercado Libre: cada 5 minutos mira si hay ventas nuevas y arma su pedido.
+  const ml = useMercadoLibre(session, pedidos, persistPedidosAnotado, registrarActividad);
+  // El link del aviso (o la vuelta de conectar): abre el sector de quien entra
+  // (PostVenta si es de PostVenta; si no, Ventas) en la pestaña Mercado Libre.
+  useEffect(() => {
+    if (!abrirML || !puedeVerML(session)) return;
+    setActiveSectorId(session.sectorId === "postventa" ? "postventa" : "ventas");
+    setVistaPanel(false); setVistaPendientes(false); setVistaConsultas(false);
+  }, [abrirML, session?.sectorId, session?.role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (errorCarga) {
     return (
@@ -3265,6 +3283,7 @@ function App() {
             onRequestLogin={() => setLoginOpen(true)}
             onBack={() => setActiveSectorId(null)}
             pedidos={pedidos} onChangePedidos={persistPedidosAnotado} onRegistrar={registrarActividad}
+            ml={ml} abrirML={abrirML} onMLAbierto={() => setAbrirML(0)}
             vendedores={vendedores} onChangeVendedores={persistVendedores}
             incomes={incomes} onChangeIncomes={persistIncomes}
             purchases={purchases} onChangePurchases={persistPurchases}
@@ -4114,6 +4133,598 @@ function SombreroPaja({ size, className }) {
   );
 }
 // ===== FIN MIS MENSAJES ======================================================
+// ===== MERCADO LIBRE (27/11/2026) =============================================
+// Facundo: «desde la app quiero poder ver las ventas que llegan, leer el chat
+// para ver qué tono de luz piden y qué tipo de envío quieren según la
+// ubicación… contestarlos y que la app me recomiende qué mensaje enviarle…
+// y que se carguen los pedidos automáticamente a fábrica».
+// El servidor es api/ml/[accion].js. Acá van las reglas que leen la venta y el
+// chat (sin servicios pagos, como el anotador) y la pantalla. Lo eligió él:
+// la venta se arma sola como pedido «Sin pasar a fábrica» y alguien da el OK;
+// lo ven el administrador, Ventas y PostVenta.
+const ML_MAX_MENSAJE = 350;
+const SECTORES_ML = ["ventas", "postventa"];
+function puedeVerML(session) {
+  return !!session && (session.role === "admin" || SECTORES_ML.includes(session.sectorId));
+}
+
+// Mercado Libre acepta mensajes de hasta 350 letras: lo largo se manda en
+// partes, cortando por párrafos y oraciones (igual que el servidor).
+function partirMensajeML(texto, max = ML_MAX_MENSAJE) {
+  const limpio = String(texto || "").replace(/\r/g, "").trim();
+  if (!limpio) return [];
+  if (limpio.length <= max) return [limpio];
+  const piezas = [];
+  limpio.split(/\n{2,}/).forEach((par) => {
+    if (par.length <= max) { piezas.push(par); return; }
+    par.split(/(?<=[.!?])\s+|\n/).forEach((or) => {
+      if (or.length <= max) { piezas.push(or); return; }
+      let linea = "";
+      or.split(/\s+/).forEach((w) => {
+        if ((linea + " " + w).trim().length > max) { if (linea) piezas.push(linea); linea = w.slice(0, max); }
+        else linea = (linea + " " + w).trim();
+      });
+      if (linea) piezas.push(linea);
+    });
+  });
+  const partes = [];
+  let actual = "";
+  piezas.forEach((p) => {
+    const junto = actual ? `${actual}\n\n${p}` : p;
+    if (junto.length <= max) actual = junto;
+    else { if (actual) partes.push(actual); actual = p; }
+  });
+  if (actual) partes.push(actual);
+  return partes;
+}
+
+// El espejo, leído del título de la publicación («Espejo Led 80x60 Redondo
+// Touch Desempañante»). Lo que no dice el título queda para completar.
+function espejoDesdeTituloML(titulo, variacion) {
+  const t = sinAcentosMsj(`${titulo || ""} · ${variacion || ""}`);
+  const out = {};
+  const m = t.match(/(\d{2,3}(?:[.,]\d)?)\s*(?:cm)?\s*[x×*]\s*(\d{2,3}(?:[.,]\d)?)/);
+  if (m) {
+    out.ancho = String(Math.round(Number(m[1].replace(",", "."))));
+    out.alto = String(Math.round(Number(m[2].replace(",", "."))));
+  } else {
+    const d = t.match(/(\d{2,3})\s*(?:cm)?\s*(?:de\s+)?diametro/) || t.match(/diametro\D{0,6}(\d{2,3})/);
+    if (d) { out.ancho = d[1]; out.alto = d[1]; }
+  }
+  if (/capilla/.test(t)) out.forma = "Capilla Arriba";
+  else if (/pastilla/.test(t)) out.forma = "Pastilla";
+  else if (/soft/.test(t) && /organic/.test(t)) out.forma = "Soft Orgánico";
+  else if (/organic/.test(t)) out.forma = "Orgánico";
+  else if (/ovalad|\boval\b/.test(t)) out.forma = "Ovalado";
+  else if (/redond|circular|circulo|diametro/.test(t)) out.forma = "Circular";
+  else if (/puntas? curvas|esquinas? redondead|bordes? redondead/.test(t)) out.forma = "P. Curvas";
+  else out.forma = "Rectangular";
+  if (/sin (led|luz)/.test(t)) { out.tipo = "Sin led"; out.tono = "Sin led"; }
+  else if (/bisel/.test(t)) out.tipo = "Biselado";
+  else if (/esmerilad/.test(t)) out.tipo = "Esm.";
+  else out.tipo = "Simple";
+  if (/touch|tactil/.test(t)) out.touch = "Touch";
+  if (/desempan|antiempan/.test(t)) out.desemp = "Desempañante";
+  if (/hora|temperatura|reloj/.test(t)) out.horaTemp = "Hora y Temperatura";
+  if (/(2|dos) parlantes/.test(t)) out.bluetooth = "Bluetooth 2 parlantes";
+  else if (/bluetooth|parlante/.test(t)) out.bluetooth = "Bluetooth 1 parlante";
+  if (!out.tono) {
+    if (/(3|tres) tonos|tritono/.test(t)) out.tono = "3 tonos";
+    else {
+      const tonos = [/calid|amarill/.test(t) && "Cálida", /\bfri[oa]\b/.test(t) && "Fría", /neutr/.test(t) && "Neutra"].filter(Boolean);
+      if (tonos.length === 1) out.tono = tonos[0];
+    }
+  }
+  return out;
+}
+
+// CABA, Gran Buenos Aires o interior, por el código postal o la provincia.
+function zonaDeEnvioML(cp, provincia) {
+  const n = Number(String(cp || "").replace(/\D/g, "").slice(0, 4));
+  if (n >= 1000 && n < 1500) return "caba";
+  if (n >= 1600 && n <= 1899) return "gba";
+  if (n >= 1000) return "interior";
+  const p = sinAcentosMsj(provincia);
+  if (/capital federal|ciudad autonoma|\bcaba\b/.test(p)) return "caba";
+  if (p && !/buenos aires/.test(p)) return "interior";
+  return "";
+}
+
+// Lo que dijo el cliente en el chat (solo sus mensajes) + los datos del envío
+// de Mercado Libre. Lo del envío manda en la dirección; el chat completa.
+function textoClienteML(mensajes) {
+  return (mensajes || []).filter((m) => !m.deNosotros).map((m) => m.texto).join("\n");
+}
+function datosDeVentaML(venta, mensajes) {
+  const e = venta?.envio || {};
+  const chat = leerDatosCliente(textoClienteML(mensajes));
+  const tel = String(e.telefono || "").replace(/\D/g, "");
+  const delEnvio = Object.fromEntries(Object.entries({
+    nombre: e.nombre || venta?.comprador?.nombre || "",
+    direccion: e.calle || "",
+    localidad: e.ciudad || "",
+    cp: e.cp || "",
+    telefono: tel.length >= 8 ? tel : "",
+  }).filter(([, v]) => v));
+  return { ...chat, ...delEnvio, provincia: e.provincia || "", ...(chat.nombre && !delEnvio.nombre ? { nombre: chat.nombre } : {}) };
+}
+
+// Qué envío corresponde: por cómo se vendió en Mercado Libre y, si es
+// «acordar con el vendedor», por dónde vive o lo que dijo en el chat.
+function envioSugeridoML(venta, datos, mensajes) {
+  const e = venta?.envio || {};
+  const lugar = [datos?.localidad, datos?.provincia || e.provincia].filter(Boolean).join(", ");
+  if (e.logistica === "self_service") return { metodo: "Envío flex", zona: zonaDeEnvioML(datos?.cp, e.provincia), lugar, motivo: "Se vendió con Envío Flex" };
+  if (e.logistica === "fulfillment") return { metodo: "Otro", zona: "", lugar, motivo: "Es una venta Full: la entrega la hace Mercado Libre" };
+  if (["cross_docking", "drop_off", "xd_drop_off"].includes(e.logistica)) return { metodo: "Otro", zona: "", lugar, motivo: "Va por Mercado Envíos (colecta o correo)" };
+  const t = sinAcentosMsj(textoClienteML(mensajes));
+  if (/\bretir|paso a buscar|lo busco|voy a buscar|por el local|lo paso a buscar/.test(t)) return { metodo: "Retira", zona: "", lugar, motivo: "Dijo que lo retira en el local" };
+  const zona = zonaDeEnvioML(datos?.cp, datos?.provincia || e.provincia);
+  if (zona === "caba") return { metodo: "Envío", zona, lugar, motivo: `Vive en CABA${lugar ? ` (${lugar})` : ""}` };
+  if (zona === "gba") return { metodo: "Envío", zona, lugar, motivo: `Vive en el Gran Buenos Aires${lugar ? ` (${lugar})` : ""}` };
+  if (zona === "interior") return { metodo: "Interior", zona, lugar, motivo: `Vive en el interior${lugar ? ` (${lugar})` : ""}` };
+  return { metodo: "A confirmar", zona: "", lugar, motivo: "Todavía no se sabe dónde vive" };
+}
+
+// Qué mensaje de «Mis mensajes» le conviene mandar, según lo que dijo.
+function recomendarMensajesML({ mensajes = [], pedido, sugerido }) {
+  const rec = [];
+  const pon = (id, motivo) => { if (!rec.some((r) => r.id === id) && MENSAJES_BASE.some((m) => m.id === id)) rec.push({ id, motivo }); };
+  const yaLeEscribimos = mensajes.some((m) => m.deNosotros);
+  const delCliente = mensajes.filter((m) => !m.deNosotros);
+  const ultimo = sinAcentosMsj(delCliente[delCliente.length - 1]?.texto || "");
+  const todo = sinAcentosMsj(textoClienteML(mensajes));
+  if (!yaLeEscribimos) pon("principal", "Todavía no le escribimos: va el mensaje principal");
+  if (pedido?.estado === "Despachado" && pedido?.metodo === "Interior") pon(vaPorOtroTransporte(pedido) ? "transportes" : "despacho", "El pedido ya salió");
+  if (/seguimiento|como va|cuando (llega|sale|esta)|novedad|demora|estado del|para cuando/.test(ultimo)) pon("link_seguimiento", "Pregunta cómo va su pedido");
+  const metodo = sugerido?.metodo;
+  if (metodo === "Retira") pon(pedido && pedidoEstaListo(pedido) ? "retiro_stock" : "retiro_sin_stock", "Lo retira en el local");
+  if (metodo === "Envío flex") pon("flex", "Se vendió con Envío Flex");
+  if (metodo === "Envío") {
+    pon("envio_caba", sugerido.motivo);
+    if (sugerido.zona === "gba") pon("comparacion", "Si queda lejos, le podés dar las dos opciones");
+  }
+  if (metodo === "Interior") {
+    if (/no hay sucursal|no tiene sucursal|no llega|otro transporte|expreso|transporte de confianza/.test(todo)) pon("otras_localidades", "Vía Cargo no le sirve: otro transporte");
+    else pon("via_cargo", sugerido.motivo);
+  }
+  return rec.slice(0, 3);
+}
+
+// Las ventas nuevas se arman solas como pedidos «Sin pasar a fábrica». Solo
+// las pagadas y las de DESPUÉS de conectar la cuenta (las de antes ya se
+// cargaron a mano). El id sale de la venta, así dos compus abiertas a la vez
+// arman el mismo pedido y no uno repetido.
+function pedidosNuevosDeVentasML(ventas, pedidos, desde) {
+  const ya = new Set((pedidos || []).filter((p) => p.mlOrderId).map((p) => String(p.mlOrderId)));
+  const corte = desde ? new Date(desde).getTime() : Infinity;
+  let orden = (pedidos || []).reduce((m, p) => Math.max(m, Number(p.orden) || 0), 0);
+  const nuevos = [];
+  (ventas || [])
+    .filter((v) => v && v.estado === "paid" && !ya.has(String(v.id)) && new Date(v.fecha).getTime() >= corte)
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
+    .forEach((v) => {
+      orden += 1;
+      const datos = datosDeVentaML(v, []);
+      const sug = envioSugeridoML(v, datos, []);
+      const varios = (v.items || []).length > 1;
+      (v.items || []).forEach((it, i) => {
+        const esp = espejoDesdeTituloML(it.titulo, it.variacion);
+        const base = emptyPedido({
+          cliente: datos.nombre || v.comprador?.apodo || "Cliente de Mercado Libre",
+          celular: datos.telefono || "",
+          canalVenta: "meli", tipoFactura: "Cons. Final / B",
+          metodo: sug.metodo, provincia: v.envio?.provincia || "", localidad: datos.localidad || "",
+          codigoPostal: datos.cp || "", detalleEntrega: datos.direccion || "",
+        });
+        nuevos.push({
+          ...base, ...esp,
+          id: `ml${v.id}${varios ? `-${i + 1}` : ""}`,
+          grupoId: varios ? `ml${v.id}` : null,
+          orden,
+          fecha: String(v.fecha || "").slice(0, 10) || base.fecha,
+          tono: esp.tono || "",
+          cant: it.cantidad || 1,
+          monto: String(Math.round((Number(it.precio) || 0) * (it.cantidad || 1))),
+          aclaracionInterna: `Venta de Mercado Libre #${v.id}${v.comprador?.apodo ? ` (${v.comprador.apodo})` : ""}: ${it.titulo}${it.variacion ? ` · ${it.variacion}` : ""}`,
+          mlOrderId: String(v.id), mlPack: String(v.pack || v.id), mlComprador: v.comprador?.id || null, mlApodo: v.comprador?.apodo || "",
+        });
+      });
+    });
+  return nuevos;
+}
+
+// Lo que falta para que el taller pueda arrancar.
+function faltaParaFabricaML(p) {
+  const f = [];
+  if (!p) return ["el pedido"];
+  if (!Number(p.ancho) || !Number(p.alto)) f.push("la medida");
+  if (!p.tono) f.push("el tono de luz");
+  if (!p.metodo || p.metodo === "A confirmar") f.push("cómo se entrega");
+  if (!String(p.vendedor || "").trim()) f.push("el vendedor");
+  return f;
+}
+
+// Las llamadas al servidor, con la sesión de quien está usando la app.
+async function llamarML(accion, { metodo = "GET", query = "", body } = {}) {
+  const { data: ses } = await supabase.auth.getSession();
+  const r = await fetch(`/api/ml/${accion}${query ? `?${query}` : ""}`, {
+    method: metodo,
+    headers: { ...(body ? { "Content-Type": "application/json" } : {}), Authorization: `Bearer ${ses?.session?.access_token || ""}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `Error ${r.status}`);
+  return d;
+}
+
+// Vive en la App: mira cada 5 minutos si hay ventas nuevas (mientras alguien
+// del equipo tenga la app abierta) y arma sus pedidos. Ni las ventas ni los
+// chats se guardan en Supabase: se le piden a Mercado Libre.
+function useMercadoLibre(session, pedidos, onChangePedidos, onRegistrar) {
+  const habilitado = puedeVerML(session);
+  const [estado, setEstado] = useState(null);
+  const [ventas, setVentas] = useState(null);
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const pedidosRef = useRef(pedidos);
+  pedidosRef.current = pedidos;
+  const cambiarRef = useRef(onChangePedidos);
+  cambiarRef.current = onChangePedidos;
+  const registrarRef = useRef(onRegistrar);
+  registrarRef.current = onRegistrar;
+  const enCurso = useRef(false);
+
+  async function refrescar() {
+    if (!habilitado || enCurso.current) return;
+    enCurso.current = true; setCargando(true);
+    try {
+      const est = await llamarML("estado");
+      setEstado(est);
+      if (!est.conectado) { setVentas(null); setError(""); return; }
+      const d = await llamarML("ventas");
+      setVentas(d.ventas || []);
+      setError("");
+      const actuales = pedidosRef.current;
+      if (Array.isArray(actuales)) {
+        const nuevos = pedidosNuevosDeVentasML(d.ventas, actuales, d.desde || est.desde);
+        if (nuevos.length) {
+          cambiarRef.current([...actuales, ...nuevos]);
+          const porVenta = [...new Set(nuevos.map((p) => `#${p.orden} ${p.cliente}`))];
+          if (registrarRef.current) registrarRef.current("Cargó ventas de Mercado Libre", porVenta.join(", "));
+        }
+      }
+    } catch (e) {
+      setError(e.message || "No se pudo hablar con Mercado Libre.");
+    } finally {
+      enCurso.current = false; setCargando(false);
+    }
+  }
+  useEffect(() => {
+    if (!habilitado) return undefined;
+    refrescar();
+    const t = window.setInterval(() => { if (document.visibilityState === "visible") refrescar(); }, 5 * 60 * 1000);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [habilitado]);
+  // Cuando llegan los pedidos por primera vez, se arman los que falten.
+  const pedidosCargados = Array.isArray(pedidos);
+  useEffect(() => {
+    if (!pedidosCargados || !Array.isArray(ventas) || !estado?.conectado) return;
+    const nuevos = pedidosNuevosDeVentasML(ventas, pedidosRef.current, estado.desde);
+    if (nuevos.length) cambiarRef.current([...pedidosRef.current, ...nuevos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidosCargados]);
+  return { habilitado, estado, ventas, error, cargando, refrescar };
+}
+
+function fechaHoraML(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("es-AR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function MercadoLibrePanel({ ml, pedidos = [], onChangePedidos, onRegistrar, session, vendedores = [] }) {
+  const { estado, ventas, error, cargando, refrescar } = ml || {};
+  const [elegida, setElegida] = useState(null);
+  const [chat, setChat] = useState(null); // { mensajes, bloqueado }
+  const [chatError, setChatError] = useState("");
+  const [cargandoChat, setCargandoChat] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [mensajeElegido, setMensajeElegido] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [aviso, setAviso] = useState("");
+  const [config, setConfig] = useState(null);
+  const [conectando, setConectando] = useState(false);
+
+  // Las plantillas y los alias de «Mis mensajes» (los textos que edita Facundo).
+  useEffect(() => {
+    let vivo = true;
+    storage.get(CLAVE_MIS_MENSAJES, true)
+      .then((fila) => { if (!vivo) return; let v = {}; try { v = fila?.value ? JSON.parse(fila.value) : {}; } catch (e) { v = {}; } setConfig(v && typeof v === "object" ? v : {}); })
+      .catch(() => { if (vivo) setConfig({}); });
+    return () => { vivo = false; };
+  }, []);
+
+  const venta = (ventas || []).find((v) => v.id === elegida) || null;
+  const espejos = venta ? pedidos.filter((p) => String(p.mlOrderId || "") === venta.id).sort((a, b) => String(a.id).localeCompare(String(b.id))) : [];
+  const principal = espejos[0] || null;
+
+  async function cargarChat(v) {
+    if (!v) return;
+    setCargandoChat(true); setChatError("");
+    try { setChat(await llamarML("chat", { query: `pack=${encodeURIComponent(v.pack)}` })); }
+    catch (e) { setChat(null); setChatError(e.message); }
+    finally { setCargandoChat(false); }
+  }
+  function abrir(v) {
+    setElegida(v.id); setChat(null); setTexto(""); setMensajeElegido(""); setAviso("");
+    cargarChat(v);
+  }
+
+  const mensajes = chat?.mensajes || [];
+  const datos = venta ? datosDeVentaML(venta, mensajes) : {};
+  const sugerido = venta ? envioSugeridoML(venta, datos, mensajes) : null;
+  const recomendados = venta ? recomendarMensajesML({ mensajes, pedido: principal, sugerido }) : [];
+
+  function armarTexto(id) {
+    const m = MENSAJES_BASE.find((x) => x.id === id);
+    if (!m) return "";
+    const textos = config?.textos || {};
+    const vars = { ...(principal ? { link: linkSeguimiento(principal) } : {}), ...(principal?.costoEnvio ? { valor: String(principal.costoEnvio) } : {}) };
+    const piezas = piezasDelMensaje(datos, vars, config?.alias || {});
+    const partes = Array.isArray(config?.partes) ? config.partes : PARTES_PRINCIPAL.map((p) => p.id);
+    return m.partes ? armarMensajePrincipal(partes, textos, piezas) : completarTexto(textoBaseMensaje(m.id, textos), piezas);
+  }
+  function usarMensaje(id) { setMensajeElegido(id); setTexto(armarTexto(id)); setAviso(""); }
+
+  async function enviar() {
+    if (!venta || !texto.trim()) return;
+    if (/…/.test(texto) && !window.confirm("El mensaje tiene partes sin completar («…»). ¿Lo mandás igual?")) return;
+    setEnviando(true); setAviso("");
+    try {
+      const d = await llamarML("enviar", { metodo: "POST", body: { pack: venta.pack, comprador: venta.comprador?.id, texto } });
+      setTexto(""); setMensajeElegido("");
+      setAviso(d.partes > 1 ? `Enviado en ${d.partes} partes.` : "Enviado.");
+      if (onRegistrar) onRegistrar("Contestó en Mercado Libre", `${venta.comprador?.apodo || ""} — venta #${venta.id}`);
+      cargarChat(venta);
+    } catch (e) {
+      setAviso(e.message);
+    } finally { setEnviando(false); }
+  }
+
+  // Cambiar un dato en todos los espejos de la venta.
+  function cambiarPedido(patch) {
+    if (!espejos.length) return;
+    const ids = new Set(espejos.map((p) => p.id));
+    onChangePedidos(pedidos.map((p) => (ids.has(p.id) ? { ...p, ...patch } : p)));
+  }
+  // Lo leído en el chat y el envío, en los datos vacíos del pedido.
+  function completarConElChat() {
+    if (!espejos.length) return;
+    const ids = new Set(espejos.map((p) => p.id));
+    onChangePedidos(pedidos.map((p) => {
+      if (!ids.has(p.id)) return p;
+      const c = {};
+      if (!p.tono && datos.tono) c.tono = datos.tono;
+      if ((!p.metodo || p.metodo === "A confirmar") && sugerido?.metodo && sugerido.metodo !== "A confirmar") c.metodo = sugerido.metodo;
+      if (!p.dniCuit && datos.dni) c.dniCuit = datos.dni;
+      if (!p.celular && datos.telefono) c.celular = datos.telefono;
+      if (!p.detalleEntrega && datos.direccion) c.detalleEntrega = datos.direccion;
+      if (!p.localidad && datos.localidad) c.localidad = datos.localidad;
+      if (!p.codigoPostal && datos.cp) c.codigoPostal = datos.cp;
+      if (datos.nombre && (!p.cliente || p.cliente === p.mlApodo || p.cliente === "Cliente de Mercado Libre")) c.cliente = datos.nombre;
+      if (datos.posicion && !/posici/i.test(p.grabado || "")) c.grabado = [p.grabado, `Posición: ${datos.posicion}`].filter(Boolean).join(" · ");
+      return Object.keys(c).length ? { ...p, ...c } : p;
+    }));
+    setAviso("Listo: se completó el pedido con lo del chat.");
+  }
+  // El OK: pasa a fábrica igual que «Verificar pedido».
+  function pasarAFabrica() {
+    const faltan = [...new Set(espejos.flatMap(faltaParaFabricaML))];
+    if (faltan.length) { window.alert(`Antes de pasarlo a fábrica falta ${faltan.join(", ")}.`); return; }
+    if (!window.confirm(`¿Pasar a fábrica el pedido #${principal.orden} de ${principal.cliente}?`)) return;
+    const quien = session?.nombre || "";
+    const ahora = new Date().toISOString();
+    const ids = new Set(espejos.filter((p) => p.estado === "Sin pasar a fábrica").map((p) => p.id));
+    const despues = pedidos.map((p) => (ids.has(p.id)
+      ? { ...p, estado: (pedidoProcesoTaller(p) === "biselados" && !biseladoPrearmado(p)) ? "Sin pedir" : "Verificado", pedidoVerificadoFecha: ahora, pedidoVerificadoPor: quien }
+      : p));
+    onChangePedidos(guardarPaso(pedidos, despues, "Verificado", quien));
+    if (onRegistrar) onRegistrar("Verificó un pedido", `#${principal.orden} — ${principal.cliente} — de Mercado Libre, habilitado para fábrica`);
+    setAviso("Pasó a fábrica.");
+  }
+
+  async function conectar() {
+    setConectando(true);
+    try { const d = await llamarML("conectar", { metodo: "POST" }); window.location.href = d.url; }
+    catch (e) { window.alert(e.message); setConectando(false); }
+  }
+
+  if (!estado && cargando) return <div className="dg-page"><div className="dg-empty"><Loader2 size={16} className="dg-spin" /> Hablando con Mercado Libre…</div></div>;
+  if (!estado && error) return <div className="dg-page"><div className="dg-empty">{error}</div></div>;
+  if (estado && !estado.configurado) {
+    return (
+      <div className="dg-page">
+        <div className="dg-section-card dg-ml-intro">
+          <div className="dg-section-header"><ShoppingCart size={14} /> Mercado Libre todavía no está conectado</div>
+          <p className="dg-hint">Falta crear la aplicación en Mercado Libre y cargar sus dos claves en Vercel (ML_CLIENT_ID y ML_CLIENT_SECRET). Es un paso que hace el administrador una sola vez.</p>
+        </div>
+      </div>
+    );
+  }
+  if (estado && !estado.conectado) {
+    return (
+      <div className="dg-page">
+        <div className="dg-section-card dg-ml-intro">
+          <div className="dg-section-header"><ShoppingCart size={14} /> Conectar la cuenta de Mercado Libre</div>
+          <p className="dg-hint">Te lleva a Mercado Libre para que autorices a la app. Desde ese momento, las ventas nuevas se arman solas como pedidos y los chats se leen y se contestan desde acá.</p>
+          {estado.puedeConectar
+            ? <button type="button" className="dg-btn-primary" onClick={conectar} disabled={conectando}>{conectando ? <Loader2 size={14} className="dg-spin" /> : <ExternalLink size={14} />} Conectar Mercado Libre</button>
+            : <p className="dg-hint">La conecta el administrador.</p>}
+        </div>
+      </div>
+    );
+  }
+
+  const lista = ventas || [];
+  return (
+    <div className="dg-page dg-ml">
+      <div className="dg-ml-barra">
+        <span className="dg-ml-cuenta"><ShoppingCart size={14} /> {estado?.cuenta || "Mercado Libre"} · {lista.length} ventas recientes</span>
+        <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={() => refrescar && refrescar()} disabled={cargando}>
+          {cargando ? <Loader2 size={13} className="dg-spin" /> : <RotateCcw size={13} />} Actualizar
+        </button>
+      </div>
+      {error && <div className="dg-error" style={{ marginBottom: 10 }}>{error}</div>}
+
+      <div className={`dg-ml-grid ${venta ? "dg-ml-con-venta" : ""}`}>
+        <div className="dg-ml-lista" role="list">
+          {lista.length === 0 && <div className="dg-empty">No hay ventas recientes.</div>}
+          {lista.map((v) => {
+            const ped = pedidos.find((p) => String(p.mlOrderId || "") === v.id);
+            const titulo = v.items?.[0]?.titulo || "Producto";
+            return (
+              <button type="button" role="listitem" key={v.id} className={`dg-ml-venta ${elegida === v.id ? "dg-ml-venta-on" : ""}`} onClick={() => abrir(v)}>
+                <span className="dg-ml-venta-arriba">
+                  <b>{v.envio?.nombre || v.comprador?.nombre || v.comprador?.apodo || "Cliente"}</b>
+                  <small>{fechaHoraML(v.fecha)}</small>
+                </span>
+                <span className="dg-ml-venta-prod">{titulo}{(v.items?.length || 0) > 1 ? ` y ${v.items.length - 1} más` : ""}</span>
+                <span className="dg-ml-venta-chips">
+                  <span className="dg-ml-chip">{money(v.total)}</span>
+                  {v.estado !== "paid" && <span className="dg-ml-chip dg-ml-chip-aviso">{v.estado === "cancelled" ? "cancelada" : "sin pagar"}</span>}
+                  {ped
+                    ? <span className={`dg-ml-chip ${ped.estado === "Sin pasar a fábrica" ? "dg-ml-chip-aviso" : "dg-ml-chip-ok"}`}>#{ped.orden} · {ped.estado === "Sin pasar a fábrica" ? "falta el OK" : ped.estado}</span>
+                    : v.estado === "paid" && <span className="dg-ml-chip">sin pedido</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {venta && (
+          <div className="dg-ml-detalle">
+            <button type="button" className="dg-btn-ghost dg-mini-btn dg-ml-volver" onClick={() => setElegida(null)}><ArrowLeft size={13} /> Ventas</button>
+
+            <div className="dg-section-card">
+              <div className="dg-section-header"><Package size={14} /> La venta</div>
+              <ul className="dg-ml-items">
+                {venta.items.map((it, i) => (
+                  <li key={i}><b>{it.cantidad > 1 ? `${it.cantidad}× ` : ""}{it.titulo}</b>{it.variacion && <small>{it.variacion}</small>}<span>{money(it.precio * it.cantidad)}</span></li>
+                ))}
+              </ul>
+              <div className="dg-ml-leido">
+                <div><span>Cliente</span><b>{datos.nombre || venta.comprador?.apodo || "—"}</b></div>
+                <div><span>Tono de luz</span><b className={datos.tono ? "" : "dg-ml-falta"}>{datos.tono || "todavía no lo dijo"}</b></div>
+                {datos.posicion && <div><span>Posición</span><b>{datos.posicion}</b></div>}
+                <div><span>Entrega</span><b className={sugerido?.metodo === "A confirmar" ? "dg-ml-falta" : ""}>{sugerido?.metodo === "A confirmar" ? "todavía no se sabe" : sugerido?.metodo}</b><small>{sugerido?.motivo}</small></div>
+                {(datos.direccion || datos.localidad || datos.cp) && <div><span>Dirección</span><b>{[datos.direccion, datos.localidad, datos.provincia, datos.cp && `CP ${datos.cp}`].filter(Boolean).join(", ")}</b></div>}
+                {datos.dni && <div><span>DNI</span><b>{datos.dni}</b></div>}
+                {datos.telefono && <div><span>Teléfono</span><b>{datos.telefono}</b></div>}
+              </div>
+            </div>
+
+            <div className="dg-section-card">
+              <div className="dg-section-header"><Factory size={14} /> El pedido</div>
+              {!principal && venta.estado === "paid" && <p className="dg-hint">Se arma solo en unos segundos (las ventas de antes de conectar la cuenta no se cargan, para no repetir las que ya están).</p>}
+              {!principal && venta.estado !== "paid" && <p className="dg-hint">Se arma cuando la venta esté pagada.</p>}
+              {principal && (
+                <>
+                  <div className="dg-ml-pedido-tit">
+                    <b>#{principal.orden}</b> · {espejos.map((p) => `${medidaEspejo(p) || "sin medida"} ${p.forma || ""}`.trim()).join(" + ")}
+                    <span className={`dg-ml-chip ${principal.estado === "Sin pasar a fábrica" ? "dg-ml-chip-aviso" : "dg-ml-chip-ok"}`}>{principal.estado === "Sin pasar a fábrica" ? "Falta el OK" : principal.estado}</span>
+                  </div>
+                  <div className="dg-ml-campos">
+                    <label><span>Tono</span>
+                      <select value={principal.tono || ""} onChange={(e) => cambiarPedido({ tono: e.target.value })}>
+                        {!principal.tono && <option value="">— Falta elegir —</option>}
+                        {TONO_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+                      </select>
+                    </label>
+                    <label><span>Entrega</span>
+                      <select value={principal.metodo || "A confirmar"} onChange={(e) => cambiarPedido({ metodo: e.target.value })}>
+                        {METODO_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+                      </select>
+                    </label>
+                    <label><span>Vendedor</span>
+                      <select value={principal.vendedor || ""} onChange={(e) => cambiarPedido({ vendedor: e.target.value })}>
+                        <option value="">— Elegir —</option>
+                        {vendedores.map((v) => { const n = typeof v === "string" ? v : v?.nombre; return n ? <option key={n}>{n}</option> : null; })}
+                      </select>
+                    </label>
+                  </div>
+                  {principal.estado === "Sin pasar a fábrica" && faltaParaFabricaML(principal).length > 0 && (
+                    <p className="dg-hint dg-ml-falta-txt">Falta {faltaParaFabricaML(principal).join(", ")}.</p>
+                  )}
+                  <div className="dg-ml-acciones">
+                    <button type="button" className="dg-btn-ghost dg-mini-btn" onClick={completarConElChat}><Sparkles size={13} /> Completar con lo del chat</button>
+                    {principal.estado === "Sin pasar a fábrica" && (
+                      <button type="button" className="dg-btn-primary dg-mini-btn" onClick={pasarAFabrica}><CheckCircle2 size={13} /> Pasar a fábrica</button>
+                    )}
+                  </div>
+                  <p className="dg-hint" style={{ fontSize: 11 }}>El resto (medida, funciones, plata) se edita en Pedidos, buscándolo por #{principal.orden}.</p>
+                </>
+              )}
+            </div>
+
+            <div className="dg-section-card dg-ml-chat-card">
+              <div className="dg-section-header"><MessageCircle size={14} /> El chat</div>
+              {cargandoChat && !chat && <div className="dg-empty"><Loader2 size={14} className="dg-spin" /> Trayendo los mensajes…</div>}
+              {chatError && <div className="dg-error">{chatError}</div>}
+              {chat && (
+                <div className="dg-ml-chat">
+                  {mensajes.length === 0 && <div className="dg-empty">Todavía no hay mensajes.</div>}
+                  {mensajes.map((m) => (
+                    <div key={m.id} className={`dg-ml-burbuja ${m.deNosotros ? "dg-ml-nuestra" : ""}`}>
+                      <p>{m.texto || (m.adjuntos ? "📎 Archivo adjunto" : "")}</p>
+                      <small>{m.deNosotros ? "Nosotros · " : ""}{fechaHoraML(m.fecha)}</small>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {chat?.bloqueado && <p className="dg-hint dg-ml-falta-txt">Mercado Libre tiene el chat de esta venta bloqueado{chat.motivo ? ` (${chat.motivo})` : ""}.</p>}
+
+              {recomendados.length > 0 && (
+                <div className="dg-ml-recomendados">
+                  <span className="dg-ml-rec-tit"><Sparkles size={13} /> Te recomiendo mandar</span>
+                  {recomendados.map((r) => {
+                    const m = MENSAJES_BASE.find((x) => x.id === r.id);
+                    return (
+                      <button type="button" key={r.id} className={`dg-ml-rec ${mensajeElegido === r.id ? "dg-ml-rec-on" : ""}`} onClick={() => usarMensaje(r.id)}>
+                        <b>{m?.titulo}</b><small>{r.motivo}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="dg-ml-escribir">
+                <select value={mensajeElegido} onChange={(e) => (e.target.value ? usarMensaje(e.target.value) : setMensajeElegido(""))} aria-label="Elegir uno de mis mensajes">
+                  <option value="">Elegir otro de mis mensajes…</option>
+                  {GRUPOS_MENSAJES.map((g) => (
+                    <optgroup key={g} label={g}>
+                      {MENSAJES_BASE.filter((m) => m.grupo === g && m.id !== "proveedores").map((m) => <option key={m.id} value={m.id}>{m.titulo}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+                <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={7} placeholder="Escribí o elegí un mensaje…" />
+                <div className="dg-ml-enviar">
+                  <small>{texto.length} letras{partirMensajeML(texto).length > 1 ? ` · va en ${partirMensajeML(texto).length} partes (Mercado Libre acepta hasta ${ML_MAX_MENSAJE} por mensaje)` : ""}</small>
+                  <button type="button" className="dg-btn-primary dg-mini-btn" onClick={enviar} disabled={enviando || !texto.trim()}>
+                    {enviando ? <Loader2 size={13} className="dg-spin" /> : <Send size={13} />} Enviar
+                  </button>
+                </div>
+                {aviso && <p className="dg-hint dg-ml-aviso">{aviso}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+// ===== FIN MERCADO LIBRE =======================================================
+
 
 function PanelNotificaciones({ session, onClose }) {
   const [resumen, setResumen] = useState(undefined);
@@ -4887,7 +5498,7 @@ function UsuariosPanel({ usuarios, onChange, session, sectors }) {
     setMsgSol("");
     try {
       const { data: ses } = await supabase.auth.getSession();
-      const resp = await fetch("/api/rechazar-cuenta", {
+      const resp = await fetch("/api/cuentas/rechazar", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${ses?.session?.access_token || ""}` },
         body: JSON.stringify({ id }),
@@ -12237,7 +12848,7 @@ function PedidoModal({ pedido, vendedores, canEditFull, canEditEstadoOnly, onClo
             )}
             <Field label="Hora / Temp"><select disabled={!canEditFull} value={draft.horaTemp} onChange={(e) => set("horaTemp", e.target.value)}>{HORATEMP_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
             <Field label="Bluetooth"><select disabled={!canEditFull} value={draft.bluetooth} onChange={(e) => set("bluetooth", e.target.value)}>{BLUETOOTH_PEDIDO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
-            <Field label="Tono de luz"><select disabled={!canEditFull} value={draft.tono} onChange={(e) => set("tono", e.target.value)}>{TONO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
+            <Field label="Tono de luz"><select disabled={!canEditFull} value={draft.tono || ""} onChange={(e) => set("tono", e.target.value)}>{!draft.tono && <option value="">— Falta elegir —</option>}{TONO_OPTIONS.map((o) => (<option key={o}>{o}</option>))}</select></Field>
           </div>
         </div>}
 
@@ -25450,7 +26061,7 @@ function LoginModal({ usuarios, sectors, onClose, onCreateUsuario, onSuccess }) 
     if (clave !== clave2) return setError("Las claves no coinciden.");
     setCargando(true);
     try {
-      const resp = await fetch("/api/solicitar-cuenta", {
+      const resp = await fetch("/api/cuentas/solicitar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ usuario: nombre.trim(), clave, rol, sectorId }),
@@ -25633,9 +26244,11 @@ function SectorPage({
   proveedores, onChangeProveedores, gastosFijosPlantillas, onChangeGastosFijosPlantillas,
   bibliotecaMarketing, onChangeBibliotecaMarketing, contenidoMarketing, onChangeContenidoMarketing,
   deudas, onChangeDeudas, notasAnotador, onChangeNotasAnotador,
+  ml, abrirML = 0, onMLAbierto,
 }) {
   const tabs = (SECTOR_SUBPAGES[sector.id] || [{ id: "tareas", label: "Tareas" }]).filter((t) => !t.soloAdmin || isAdmin);
   const [subpage, setSubpage] = useState(tabs[0].id);
+  useEffect(() => { if (abrirML && tabs.some((t) => t.id === "meli")) { setSubpage("meli"); if (onMLAbierto) onMLAbierto(); } }, [abrirML]); // eslint-disable-line react-hooks/exhaustive-deps
   // Un presupuesto que se está pasando a pedido (ver «PRESUPUESTOS QUE SE
   // SIGUEN»): el presupuestador lo deja acá y Pedidos lo abre.
   const [presupuestoAPedido, setPresupuestoAPedido] = useState(null);
@@ -25901,6 +26514,12 @@ function SectorPage({
       {subpage === "envios" && sector.id === "postventa" && (
         canSeePedidos ? <EnviosPostventaPanel pedidos={pedidos} onChange={onChangePedidos} canEdit={canEditPostventa} reclamos={reclamos} onChangeReclamos={onChangeReclamos} onCreateIncome={onCreateIncome} onRegistrar={onRegistrar} salidas={enviosLogistica || []} onChangeSalidas={onChangeEnviosLogistica} proveedores={proveedores || []} vendedores={vendedores} stockEspejos={stockEspejos} ordenSalidas={ordenSalidas} onChangeOrdenSalidas={onChangeOrdenSalidas} />
           : <LockedPage label="Envíos" onLogin={onRequestLogin} />
+      )}
+
+      {subpage === "meli" && (
+        puedeVerML(session)
+          ? <MercadoLibrePanel ml={ml} pedidos={pedidos} onChangePedidos={onChangePedidos} onRegistrar={onRegistrar} session={session} vendedores={vendedores} />
+          : <LockedPage label="Mercado Libre" onLogin={onRequestLogin} />
       )}
 
       {subpage === "interior" && sector.id === "postventa" && (
@@ -27142,6 +27761,63 @@ function Style() {
       .dg-interior-transporte-cual { display:flex; flex-direction:column; gap:4px; max-width:280px; }
       .dg-interior-transporte-cual span { font-size:12px; color:var(--dg-text-dim); }
       .dg-interior-transporte-cual input { width:100%; min-width:0; padding:6px 9px; font-size:13px; }
+      .dg-ml-barra { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+      .dg-ml-cuenta { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--dg-text-dim); }
+      .dg-ml-grid { display:grid; grid-template-columns:minmax(250px, 340px) 1fr; gap:14px; align-items:start; }
+      .dg-ml-lista { display:flex; flex-direction:column; gap:6px; max-height:75vh; overflow:auto; padding-right:2px; }
+      .dg-ml-venta { display:flex; flex-direction:column; gap:4px; text-align:left; padding:10px 12px; border-radius:10px; border:1px solid rgba(var(--dg-line-rgb),.12); background:rgba(var(--dg-line-rgb),.03); color:var(--dg-text); cursor:pointer; font:inherit; }
+      .dg-ml-venta:hover { border-color:rgba(var(--dg-line-rgb),.28); }
+      .dg-ml-venta-on { border-color:var(--dg-accent); background:rgba(var(--dg-line-rgb),.07); }
+      .dg-ml-venta-arriba { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+      .dg-ml-venta-arriba small { color:var(--dg-text-dim); font-size:11px; white-space:nowrap; }
+      .dg-ml-venta-prod { font-size:12px; color:var(--dg-text-dim); overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+      .dg-ml-venta-chips { display:flex; gap:5px; flex-wrap:wrap; }
+      .dg-ml-chip { font-size:11px; padding:2px 7px; border-radius:999px; background:rgba(var(--dg-line-rgb),.08); color:var(--dg-text-dim); white-space:nowrap; }
+      .dg-ml-chip-aviso { color:var(--dg-warning); background:rgba(var(--dg-line-rgb),.06); border:1px solid currentColor; }
+      .dg-ml-chip-ok { color:var(--dg-success); border:1px solid currentColor; background:transparent; }
+      .dg-ml-detalle { display:flex; flex-direction:column; gap:12px; min-width:0; }
+      .dg-ml-volver { display:none; align-self:flex-start; }
+      .dg-ml-items { list-style:none; margin:0 0 10px; padding:0; display:flex; flex-direction:column; gap:6px; }
+      .dg-ml-items li { display:grid; grid-template-columns:1fr auto; gap:2px 10px; font-size:13px; }
+      .dg-ml-items li small { grid-column:1; color:var(--dg-text-dim); font-size:11px; }
+      .dg-ml-items li span { grid-column:2; grid-row:1; font-variant-numeric:tabular-nums; }
+      .dg-ml-leido { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:8px 14px; }
+      .dg-ml-leido > div { display:flex; flex-direction:column; gap:1px; min-width:0; }
+      .dg-ml-leido span { font-size:11px; color:var(--dg-text-dim); }
+      .dg-ml-leido b { font-size:13px; overflow-wrap:anywhere; }
+      .dg-ml-leido small { font-size:11px; color:var(--dg-text-dim); }
+      .dg-ml-falta { color:var(--dg-warning); font-weight:500; }
+      .dg-ml-falta-txt { color:var(--dg-warning); }
+      .dg-ml-pedido-tit { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:13px; }
+      .dg-ml-campos { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin-bottom:8px; }
+      .dg-ml-campos label { display:flex; flex-direction:column; gap:4px; }
+      .dg-ml-campos label span { font-size:12px; color:var(--dg-text-dim); }
+      .dg-ml-campos select { width:100%; min-width:0; padding:6px 9px; font-size:13px; }
+      .dg-ml-acciones { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0; }
+      .dg-ml-chat { display:flex; flex-direction:column; gap:8px; max-height:420px; overflow:auto; padding:4px 2px 8px; }
+      .dg-ml-burbuja { align-self:flex-start; max-width:82%; padding:8px 11px; border-radius:12px 12px 12px 4px; background:rgba(var(--dg-line-rgb),.07); }
+      .dg-ml-burbuja p { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.45; }
+      .dg-ml-burbuja small { display:block; margin-top:3px; font-size:10.5px; color:var(--dg-text-dim); }
+      .dg-ml-nuestra { align-self:flex-end; border-radius:12px 12px 4px 12px; background:rgba(var(--dg-line-rgb),.14); }
+      .dg-ml-recomendados { display:flex; flex-direction:column; gap:6px; margin:10px 0; }
+      .dg-ml-rec-tit { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--dg-accent); font-weight:600; }
+      .dg-ml-rec { display:flex; flex-direction:column; gap:2px; text-align:left; padding:8px 11px; border-radius:10px; border:1px dashed rgba(var(--dg-line-rgb),.3); background:transparent; color:var(--dg-text); cursor:pointer; font:inherit; }
+      .dg-ml-rec small { color:var(--dg-text-dim); font-size:11.5px; }
+      .dg-ml-rec-on, .dg-ml-rec:hover { border-style:solid; border-color:var(--dg-accent); }
+      .dg-ml-escribir { display:flex; flex-direction:column; gap:8px; }
+      .dg-ml-escribir select, .dg-ml-escribir textarea { width:100%; min-width:0; font-size:13px; }
+      .dg-ml-escribir textarea { resize:vertical; line-height:1.45; padding:8px 10px; }
+      .dg-ml-enviar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+      .dg-ml-enviar small { color:var(--dg-text-dim); font-size:11.5px; }
+      .dg-ml-aviso { margin:0; }
+      @media (max-width: 760px) {
+        .dg-ml-grid { grid-template-columns:1fr; }
+        .dg-ml-con-venta .dg-ml-lista { display:none; }
+        .dg-ml-volver { display:inline-flex; }
+        .dg-ml-lista { max-height:none; }
+        .dg-ml-burbuja { max-width:92%; }
+        .dg-ml-escribir select, .dg-ml-escribir textarea, .dg-ml-campos select { font-size:16px; }
+      }
       .dg-interior-guia { margin:-2px 0 10px; padding:12px; border:1px solid rgba(var(--dg-line-rgb),.12); border-radius:10px; background:rgba(var(--dg-line-rgb),.03); }
       .dg-interior-espejos b { color:var(--dg-text); font-weight:600; }
       /* Lo que se le ofrece al cliente es el campo más importante del reclamo:

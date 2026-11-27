@@ -1,8 +1,22 @@
 {
   "rewrites": [
-    { "source": "/((?!api/|sw\\.js|manifest\\.json|icon-192\\.png|icon-512\\.png).*)", "destination": "/index.html" }
+    {
+      "source": "/api/solicitar-cuenta",
+      "destination": "/api/cuentas/solicitar"
+    },
+    {
+      "source": "/api/rechazar-cuenta",
+      "destination": "/api/cuentas/rechazar"
+    },
+    {
+      "source": "/((?!api/|sw\\.js|manifest\\.json|icon-192\\.png|icon-512\\.png).*)",
+      "destination": "/index.html"
+    }
   ],
   "crons": [
-    { "path": "/api/check-alerts", "schedule": "0 10 * * *" }
+    {
+      "path": "/api/check-alerts",
+      "schedule": "0 10 * * *"
+    }
   ]
 }
